@@ -1,0 +1,13 @@
+
+
+def fibo(x : i32) : i32 {
+    if (x<=1) ret x
+    ret fibo(x-1) + fibo(x-2)
+}
+
+
+res := 0
+res = fibo 40
+
+printf("res: %d\n", res)
+

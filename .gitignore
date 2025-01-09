@@ -1,0 +1,11 @@
+.vscode
+build/
+*.code-workspace
+/*.json
+/*.bc
+/*.ll
+/*.s
+/*.txt
+/*.out
+/*.log
+/*.lo

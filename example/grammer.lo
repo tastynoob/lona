@@ -1,0 +1,78 @@
+// base type
+u8 i8 u16 i16 u32 i32 u64 i64 int uint
+f32 f64
+bool
+str
+
+// variable
+a i32 = unsafe // uninitialize variable
+a const i32 = 1 // property type infer
+a i32 = i32 1 // value copy
+a i32 = 1 // error assign const int to int, Implicit variable cast initialization is not allowed
+
+// auto variable
+a := 1 // const i32
+a := int 1 // i32
+a := getData()
+
+// array
+a u32[] = {}
+a u32[,] = {{}}
+
+// array index and splice
+b := a(1)
+b := a(1,2)
+
+// tuple
+a [u32; str] = []
+a [u32; str][] = {[], []} // tuple array
+a [u32; str]* // tuple pointer
+a [u32] // one element tuple is not allowed
+
+// pointer
+a u32* // variable pointer
+a u32[]* // array pointer
+a u32*[] // pointer array
+
+// function pointer
+a ()* // with no params and no return function pointer 
+a (u32)* // with params and no return function pointer
+a (u32)*[] // with params and no return function pointer array
+a (u32)*[]* // with params and no return function pointer array's pointer
+a ()* u32 // with return and no params function pointer
+a ()* ()* // with return and params function pointer's array, return type is ()*
+a ()*[] u32 // with return and no params function pointer's array, return type is u32
+a (u32, u32)*[] u32 // with return and params function pointer's array, return type is u32
+a (u32)*[] (u32)*[] u32 // with return and params function pointer's array, return type is (u32)*[] u32
+a (u32)* u32
+a ([u32, u32]*[])*[] ([u32, u32]*[])* u32
+
+// reference only to stack variable
+// reference must set initialize value
+a := ref b
+
+t := if (a == 0) 1 else 2
+t := if a == 0 { 1 } else { 2 }
+
+for bool type { }
+for iter type { }
+for loop(0) { } // for (Iter i = Loop(10); bool(i); i.next()) {}
+for range(0, 10) {}
+for stride(0, 10, 2) {}
+for a := range(array.begin, array.end) {} // for (Iter i = until(array.begin, array.end); bool(i); i.next()) {}
+
+// normal method
+def test(a i32) = i32 {
+    ret 0
+}
+
+// iterator method
+iter loop<T>(times T) = T {
+    times -= 1
+    ret times != 0
+}
+
+iter range<T>(cur T, end T) = T {
+    cur += 1
+    ret cur != end
+}
