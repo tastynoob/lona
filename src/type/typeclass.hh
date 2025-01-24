@@ -6,8 +6,9 @@
 
 namespace lona {
 
-typedef llvm::Value *(*TypeOps)(llvm::Value *left, llvm::Value *right);
+typedef llvm::Value *(*TypeOps)(llvm::IRBuilder<> &builder, BaseVariable* left, BaseVariable* right);
 
+class BaseVariable;
 
 class TypeClass {
     llvm::Type *llvmType;
@@ -16,6 +17,7 @@ public:
     TypeClass(llvm::Type *llvmType) : llvmType(llvmType) {}
     llvm::Type *getllvmType() { return llvmType; }
     virtual bool is(TypeClass *t) { return this == t; }
+    virtual BaseVariable* binaryOperation(llvm::IRBuilder<> &builder, BaseVariable* left, token_type op, BaseVariable* right) = 0;
 };
 
 class BaseType : public TypeClass {

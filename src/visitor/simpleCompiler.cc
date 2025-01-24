@@ -128,11 +128,16 @@ public:
         return nullptr;
     }
 
-    BaseVariable *visit(AstBinOper *node) override {}
+    BaseVariable *visit(AstBinOper *node) override {
+        auto left = node->left->accept(*this);
+        auto right = node->right->accept(*this);
+        return left->getType()->binaryOperation(builder, left, node->op, right);;
+    }
 
     BaseVariable *visit(AstUnaryOper *node) override {}
 
     BaseVariable *visit(AstVarDecl *node) override {
+        auto right = node->right ? node->right->accept(*this) : nullptr;
         BaseVariable *var = nullptr;
         if (node->typeHelper) {
             auto type = typeMgr->getTypeClass(node->typeHelper);
@@ -140,17 +145,16 @@ public:
             var = new BaseVariable(val, type);
             varMgr->addVariable(node->field, var);
         }
-
         if (node->right) {
-            auto right = node->right->accept(*this);
-            auto alloc = builder.CreateAlloca(right->getType()->getllvmType());
             if (!var) {
                 // auto infer
+                auto alloc = builder.CreateAlloca(right->getType()->getllvmType());
                 var = new BaseVariable(alloc, right->getType());
                 varMgr->addVariable(node->field, var);
             }
             var->write(builder, right);
         }
+
         return var;
     }
 

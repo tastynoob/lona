@@ -21,7 +21,7 @@ BaseVariable::write(llvm::IRBuilder<> &builder, BaseVariable *src) {
     if (this->getType() != src->getType()) {
         throw "type mismatch";
     }
-    builder.CreateStore(src->val, val);
+    builder.CreateStore(src->read(builder), val);
 }
 
 BaseVariable *

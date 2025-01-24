@@ -31,8 +31,8 @@ main(int argc, char *argv[]) {
         std::ofstream out("ast.json");
         out << json.dump(4) << std::endl;
 
-        // std::ofstream out2("ir.ll");
-        // lona::compile(tree, filename, out2);
+        std::ofstream out2("ir.ll");
+        lona::compile(tree, filename, out2);
     }
 
     return 0;
