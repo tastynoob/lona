@@ -4,7 +4,9 @@
 #include <FlexLexer.h>
 #endif
 
+
 #include "parser.hh"
+#include <queue>
 
 namespace lona {
 

@@ -24,13 +24,6 @@ BaseVariable::write(llvm::IRBuilder<> &builder, BaseVariable *src) {
     builder.CreateStore(src->val, val);
 }
 
-bool
-BaseVariable::typeEqual(BaseVariable *src) {
-    if (type != src->type) return false;
-    return true;
-}
-
-
 BaseVariable *
 VariableManger::getVariable(llvm::StringRef name) {
     assert(!variables.empty());

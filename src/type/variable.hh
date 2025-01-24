@@ -27,8 +27,6 @@ public:
     void write(llvm::IRBuilder<> &builder, BaseVariable *src);
     // cast src'type to this
     BaseVariable *castToSelf(BaseVariable *src);
-
-    virtual bool typeEqual(BaseVariable *src);
 };
 
 class VariableManger {

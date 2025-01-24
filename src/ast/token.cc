@@ -54,4 +54,30 @@ strEscape(const std::string &str) {
     return ss.str();
 }
 
+
+int
+strToSymbol(const char *str) {
+    if (strcmp(str, "+") == 0) return '+';
+    if (strcmp(str, "-") == 0) return '-';
+    if (strcmp(str, "*") == 0) return '*';
+    if (strcmp(str, "/") == 0) return '/';
+    throw std::runtime_error("Invalid symbol");
+}
+
+std::string
+symbolToStr(int symbol) {
+    switch (symbol) {
+        case '+':
+            return "+";
+        case '-':
+            return "-";
+        case '*':
+            return "*";
+        case '/':
+            return "/";
+        default:
+            return "Unknown";
+    }
+}
+
 }  // namespace lona

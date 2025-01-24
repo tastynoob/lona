@@ -66,16 +66,13 @@ void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
     root["field"] = this->field;
-    root["typestr"] = "Unsupported";
-}
-
-void
-AstVarInitAssign::toJson(Json &root) {
-    root["type"] = "VarInitAssign";
-    root["var"] = Json::object();
-    left->toJson(root["var"]);
-    root["expr"] = Json::object();
-    right->toJson(root["expr"]);
+    if (typeHelper) {
+        root["typestr"] = typeHelper->toString();
+    }
+    if (right) {
+        root["right"] = Json::object();
+        this->right->toJson(root["right"]);
+    }
 }
 
 void

@@ -8,29 +8,35 @@
 #include <type_traits>
 
 #include "ast/token.hh"
+#include "location.hh"
 
 using Json = nlohmann::ordered_json;
 
 namespace lona {
+class AstNode;
 class AstVisitor;
 class BaseVariable;
+using token_type = int;
 
-const uint64_t pointerType_pointer = UINT64_MAX - 1;
-const uint64_t pointerType_autoArray = UINT64_MAX - 2;
+const int pointerType_pointer = 1;
+const int pointerType_autoArray = 2;
+const int pointerType_fixedArray = 3;
 struct TypeHelper {
-    std::string const typeName;
-    std::vector<uint64_t> levels;
-    TypeHelper* func_retType = nullptr;
-    TypeHelper(std::string typeName) : typeName(std::move(typeName)) {}
-    bool isPointerOrArray() { return levels.size() > 0; }
+    std::vector<std::string> typeName;
+    std::vector<TypeHelper *> *func_args = nullptr;
+    TypeHelper *func_retType = nullptr;
+    std::vector<std::pair<int, AstNode *>> *levels = nullptr;
+    TypeHelper(std::string typeName) { this->typeName.push_back(typeName); }
+    std::string toString();
+    bool isPointerOrArray() { return levels->size() > 0; }
 };
 
 class AstNode {
-    int row = -1, col = -1;
+    location loc;
 
 public:
     AstNode() {}
-    AstNode(int row, int col) : row(row), col(col) {}
+    AstNode(location loc) : loc(loc) {}
 
     virtual BaseVariable *accept(AstVisitor &visitor) = 0;
     virtual void toJson(Json &root) {};
@@ -81,6 +87,7 @@ class AstField : public AstNode {
 public:
     std::string const name;
     AstField(AstToken &token);
+    AstField(std::string &token);
     void toJson(Json &root) override;
 
     BaseVariable *accept(AstVisitor &visitor) override;
@@ -99,9 +106,9 @@ public:
 class AstBinOper : public AstNode {
 public:
     AstNode *const left;
-    SymbolTable const op;
+    token_type const op;
     AstNode *const right;
-    AstBinOper(AstNode *left, AstToken &op, AstNode *right);
+    AstBinOper(AstNode *left, token_type op, AstNode *right);
     void toJson(Json &root) override;
 
     BaseVariable *accept(AstVisitor &visitor) override;
@@ -109,11 +116,10 @@ public:
 
 class AstUnaryOper : public AstNode {
 public:
-    SymbolTable const op;
+    token_type const op;
     AstNode *const expr;
 
-    AstUnaryOper(AstToken &op, AstNode *expr);
-    AstUnaryOper(SymbolTable op, AstNode *expr);
+    AstUnaryOper(token_type op, AstNode *expr);
     void toJson(Json &root) override;
 
     BaseVariable *accept(AstVisitor &visitor) override;
@@ -122,20 +128,11 @@ public:
 class AstVarDecl : public AstNode {
 public:
     std::string const field;
-    TypeHelper* const typeHelper;
+    TypeHelper *const typeHelper;
+    AstNode *const right;
 
-    AstVarDecl(AstToken &field, TypeHelper* typeHelper);
-    void toJson(Json &root) override;
-
-    BaseVariable *accept(AstVisitor &visitor) override;
-};
-
-class AstVarInitAssign : public AstNode {
-public:
-    AstNode*const left;
-    AstNode*const right;
-    bool const isAutoInfer;
-    AstVarInitAssign(AstNode* left, AstNode* right);
+    AstVarDecl(AstToken &field, TypeHelper *typeHelper,
+               AstNode *right = nullptr);
     void toJson(Json &root) override;
 
     BaseVariable *accept(AstVisitor &visitor) override;
@@ -165,7 +162,7 @@ public:
     AstTypeDecl(AstTypeDecl &&other)
         : name(std::move(other.name)), type(std::move(other.type)) {}
     AstTypeDecl(AstToken &name, AstToken &type)
-        : name(name.getText()), type(type.getText()) {}
+        : name(name.text), type(type.text) {}
 
     AstTypeDecl &operator=(AstTypeDecl &&other) {
         name = std::move(other.name);
@@ -185,7 +182,7 @@ public:
     std::string &getRetType() { return retType; }
     bool hasArgs() const { return argdecl != nullptr; }
     std::list<AstTypeDecl> &getArgs() { return *argdecl; }
-    void setRetType(AstToken &retType) { this->retType = retType.getText(); }
+    void setRetType(AstToken &retType) { this->retType = retType.text; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::list<AstTypeDecl> *args = nullptr);

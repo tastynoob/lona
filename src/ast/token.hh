@@ -5,6 +5,8 @@
 #include <string.h>
 #include <string>
 
+#include "location.hh"
+
 namespace lona {
 
 enum class TokenType {
@@ -53,88 +55,28 @@ tokenTypeToStr(TokenType type) {
 }
 
 class AstToken {
-    TokenType type = TokenType::Invalid;
-    std::string text;
-    int row = -1, col = -1;
-
 public:
+    TokenType const type = TokenType::Invalid;
+    std::string const text;
+    location const loc;
     AstToken() {}
-    AstToken(TokenType type, const char *text, int row, int col)
-        : type(type), text(text), row(row), col(col) {}
+    AstToken(TokenType type, const char *text, location loc)
+        : type(type), text(text), loc(loc) {}
     void toString(std::ostream &os) const {
         os << "AstToken(" << tokenTypeToStr(type) << ", " << text << ")";
     }
 
-    const TokenType &getType() { return type; }
-    const std::string &getText() { return text; }
     const int toInt() { return std::stoi(text); }
 };
 
 std::ostream &
 operator<<(std::ostream &os, const AstToken &token);
 
-enum class SymbolTable {
-    ADD,  // +
-    SUB,  // -
-    MUL,  // *
-    DIV,  // /
-    MOD,  // %
-    LT,   // <
-    GT,   // >
-    LE,   // <=
-    GE,   // >=
-    EQ,   // ==
-    NE,   // !=
-    AND,  // &&
-    OR,   // ||
-    NOT,  // !
-    NEG,  // ~
-    Invalid
-};
+int
+strToSymbol(const char *str);
 
-SymbolTable inline strToSymbol(const char *str) {
-    if (strcmp(str, "+") == 0) return SymbolTable::ADD;
-    if (strcmp(str, "-") == 0) return SymbolTable::SUB;
-    if (strcmp(str, "*") == 0) return SymbolTable::MUL;
-    if (strcmp(str, "/") == 0) return SymbolTable::DIV;
-    if (strcmp(str, "%") == 0) return SymbolTable::MOD;
-    if (strcmp(str, "<") == 0) return SymbolTable::LT;
-    if (strcmp(str, ">") == 0) return SymbolTable::GT;
-    if (strcmp(str, "<=") == 0) return SymbolTable::LE;
-    if (strcmp(str, ">=") == 0) return SymbolTable::GE;
-    if (strcmp(str, "==") == 0) return SymbolTable::EQ;
-    if (strcmp(str, "!=") == 0) return SymbolTable::NE;
-    if (strcmp(str, "&&") == 0) return SymbolTable::AND;
-    if (strcmp(str, "||") == 0) return SymbolTable::OR;
-    if (strcmp(str, "!") == 0) return SymbolTable::NOT;
-    if (strcmp(str, "~") == 0) return SymbolTable::NEG;
-    throw std::runtime_error("Invalid symbol");
-}
-
-std::string inline symbolToStr(SymbolTable symbol) {
-    switch (symbol) {
-        case SymbolTable::ADD:
-            return "+";
-        case SymbolTable::SUB:
-            return "-";
-        case SymbolTable::MUL:
-            return "*";
-        case SymbolTable::DIV:
-            return "/";
-        case SymbolTable::MOD:
-            return "%";
-        case SymbolTable::LT:
-            return "<";
-        case SymbolTable::GT:
-            return ">";
-        case SymbolTable::LE:
-            return "<=";
-        case SymbolTable::GE:
-            return ">=";
-        default:
-            return "Unknown";
-    }
-}
+std::string
+symbolToStr(int symbol);
 
 std::string
 strEscape(const std::string &str);

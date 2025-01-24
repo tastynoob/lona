@@ -5,16 +5,19 @@
 {
     namespace lona {
         class Driver;
+        class AstToken;
+        class AstNode;
+        class TypeHelper;
     }
 
-    #include "ast/token.hh"
-    #include "ast/astnode.hh"
+    #include <cstdint>
 }
-
 
 %code
 {
     #include "scan/driver.hh"
+    #include "ast/token.hh"
+    #include "ast/astnode.hh"
 
     #undef yylex
     #define yylex driver.token
@@ -22,41 +25,51 @@
     #define YY_NULLPTR nullptr
 }
 
+%union {
+    AstToken* token;
+    AstNode* node;
+    TypeHelper* type_helper;
+    std::vector<AstNode*>* seq;
+    std::vector<TypeHelper*>* type_seq;
+    std::vector<std::pair<int, AstNode*>>* pointer_suffix;
+}
+
 %locations
-%define api.namespace {lona}
-%define api.parser.class {Parser}
-%define api.value.type variant
+%define api.namespace { lona }
+%define api.parser.class { Parser }
 %parse-param { Driver &driver }
 
-%token <lona::AstToken> CONST FIELD
-%token <lona::AstToken> OPERLV0 OPERLV1 OPERLV2 OPERLV3 OPERUNARY
+%token <token> CONST FIELD
+%token LOGIC_AND LOGIC_OR
 %token TRUE FALSE
 %token IF ELSE FOR
 %token DEF RET
 %token NEWLINE
 
+%nonassoc type_suffix
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 %right '='
-%left OPERLV3 // && ||
-%left OPERLV2 // < > <= >= == !=
-%left OPERLV1 // + -
-%left '*' OPERLV0 // * /
+%left '&' '|'
+%left '+' '-' // + -
+%left '*' '/' // * /
+%left '.'
+%left '(' ')' '[' ']'
 %right unary
-%right '(' ')' '[' ']'
 
-%type <lona::AstNode*> pragram
-%type <lona::AstNode*> func_decl
-%type <lona::AstNode*> stat_list stat stat_compound stat_if stat_ret stat_expr
-%type <lona::AstNode*> var_init_assign field_call
-%type <lona::AstNode*> final_expr expr expr_left expr_assign expr_binOp expr_unary 
-%type <lona::AstNode*> expr_paren single_value field_call_simple
-%type <lona::AstVarDecl*> var_decl
+%type <node> pragram
+%type <node> func_decl
+%type <node> stat_list stat stat_compound stat_if stat_ret stat_expr
+%type <node> field_call
+%type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary 
+%type <node> expr_paren single_value field_selector simple_selector
+%type <node> var_decl
 
-%type <lona::TypeHelper*> single_type func_ptr_head type_name
-%type <std::vector<uint64_t>*> pointer_suffix
+%type <type_helper> single_type func_ptr_head type_name
+%type <pointer_suffix> ptr_suffix
 
-%type field_seq expr_seq var_decl_seq
+%type <seq> expr_seq var_decl_seq
+%type <type_seq> type_name_seq
 
 %start pragram
 
@@ -87,8 +100,8 @@ stat_compound
     ;
 
 stat_if
-    : IF '(' expr ')' stat %prec LOWER_THAN_ELSE { $$ = new AstIf($3, $5); }
-    | IF '(' expr ')' stat ELSE stat { $$ = new AstIf($3, $5, $7); }
+    : IF expr_paren stat %prec LOWER_THAN_ELSE { $$ = new AstIf($2, $3); }
+    | IF expr_paren stat ELSE stat { $$ = new AstIf($2, $3, $5); }
     ;
 
 stat_ret
@@ -97,60 +110,63 @@ stat_ret
     ;
 
 func_decl
-    : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl($2, $5); }
-    | DEF FIELD '(' ')' ':' FIELD stat_compound { auto __t = new AstFuncDecl($2, $7); __t->setRetType($6); $$ = __t; }
+    : FIELD DEF '(' ')' stat_compound { }
+    | FIELD DEF '(' ')' '=' type_name stat_compound { }
+    | FIELD DEF '(' var_decl_seq ')' stat_compound { }
+    | FIELD DEF '(' var_decl_seq ')' '=' type_name stat_compound { }
     ;
 
 var_decl
-    : FIELD type_name { $$ = new AstVarDecl($1, $2); }
+    : FIELD type_name { $$ = new AstVarDecl(*$1, $2); }
+    | FIELD type_name '=' expr { $$ = new AstVarDecl(*$1, $2, $4); }
+    | FIELD ':' '=' expr { $$ = new AstVarDecl(*$1, nullptr, $4); }
     ;
 
 stat_expr
     : final_expr NEWLINE { $$ = $1; }
-    ;
-
-var_init_assign
-    : FIELD ':' '=' expr { $$ = new AstVarInitAssign(new AstField($1), $4);  } // auto type inference 
-    | var_decl '=' expr { $$ = new AstVarInitAssign($1, $3); }
+    | var_decl NEWLINE { $$ = $1; }
     ;
 
 final_expr
-    : expr {}
-    | expr_assign {}
-    | var_init_assign {}
+    : expr { $$ = $1; }
+    | expr_assign { $$ = $1; }
     ;
 
 expr
-    : expr_paren { $$ = $1; }
-    | expr_binOp { $$ = $1; }
+    : expr_binOp { $$ = $1; }
     | expr_unary { $$ = $1; }
     | single_value { $$ = $1; }
-    | field_call_simple {}
-    ;
-
-expr_left
-    : FIELD { $$ = new AstField($1); }
+    | error { std::cout<<yylhs.location; exit(-1); }
     ;
 
 expr_assign
-    : expr_left '=' expr { $$ = new AstAssign($1, $3); }
+    : expr_assign_left '=' expr { }
+    ;
+
+expr_assign_left
+    : variable { $$ = $1; }
+    | expr_getpointee { $$ = $1; }
     ;
 
 expr_binOp
-    : expr OPERLV0 expr { $$ = new AstBinOper($1, $2, $3); }
-    | expr OPERLV1 expr { $$ = new AstBinOper($1, $2, $3); }
-    | expr OPERLV2 expr { $$ = new AstBinOper($1, $2, $3); }
-    | expr OPERLV3 expr { $$ = new AstBinOper($1, $2, $3); }
-    | expr '*' expr {}
+    : expr '*' expr { $$ = new AstBinOper($1, '*', $3); }
+    | expr '/' expr { $$ = new AstBinOper($1, '/', $3); }
+    | expr '+' expr { $$ = new AstBinOper($1, '+', $3); }
+    | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
+    | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
     ;
 
 expr_unary
-    : OPERUNARY expr_paren %prec unary { $$ = new AstUnaryOper($1, $2); }
-    | OPERLV1 expr_paren %prec unary { $$ = new AstUnaryOper($1, $2); }
-    | OPERUNARY single_value %prec unary { $$ = new AstUnaryOper($1, $2); }
-    | OPERLV1 single_value %prec unary { $$ = new AstUnaryOper($1, $2); }
-    | '*' FIELD %prec unary {}
-    | '*' expr_paren %prec unary {}
+    : '!' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    | '~' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    | '+' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    | '-' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    | '&' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    | expr_getpointee {}
+    ;
+
+expr_getpointee
+    : '*' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
     ;
 
 expr_paren
@@ -158,18 +174,32 @@ expr_paren
     ;
 
 single_value
-    : FIELD { $$ = new AstField($1); }
-    | CONST { $$ = new AstConst($1); }
+    : variable { $$ = $1; }
+    | CONST { $$ = new AstConst(*$1); }
+    | TRUE {}
+    | FALSE {}
     | field_call { $$ = $1; }
+    | expr_paren {}
+    | '(' expr ',' expr_seq ')' {} // tuple
     ;
 
 field_call
-    : FIELD '(' ')' {  }
-    | FIELD '(' expr_seq ')' { }
+    : single_value '(' ')' { }
+    | single_value '(' expr_seq ')' { }
     ;
 
-field_call_simple
-    : FIELD single_value {}
+variable
+    : FIELD { $$ = new AstField(*$1); }
+    | field_selector {}
+    ;
+
+field_selector
+    : single_value '.' FIELD {}
+    ;
+
+simple_selector
+    : FIELD '.' FIELD {}
+    | simple_selector '.' FIELD {}
     ;
 
 %include type.sub.yacc

@@ -62,6 +62,9 @@ public:
     using AstVisitor::visit;
 
     BaseVariable *visit(AstProgram *node) override {
+        // first scan the type
+        scanningType(typeMgr, node);
+
         // create main function
         llvm::FunctionType *funcType =
             llvm::FunctionType::get(builder.getInt32Ty(), false);
@@ -130,31 +133,25 @@ public:
     BaseVariable *visit(AstUnaryOper *node) override {}
 
     BaseVariable *visit(AstVarDecl *node) override {
-        auto type = typeMgr->getTypeClass(node->typeHelper->typeName);
-        auto val = builder.CreateAlloca(type->getllvmType());
-        auto var = new BaseVariable(val, type);
-        varMgr->addVariable(node->field, var);
-        return var;
-    }
-
-    BaseVariable* visit(AstVarInitAssign* node) override {
-        auto right = node->right->accept(*this);
-        if (node->isAutoInfer) {
-            AstField& field = node->left->as<AstField>();
-            auto type = right->getType();
-            if (right->isConst()) {
-                varMgr->addVariable(field.name, right);
-            }
-            else {
-                auto val = builder.CreateAlloca(type->getllvmType());
-                auto var = new BaseVariable(val, type);
-                varMgr->addVariable(field.name, var);
-            }
-        } else {
-            auto left = node->left->accept(*this);
-            left->write(builder, right);
+        BaseVariable *var = nullptr;
+        if (node->typeHelper) {
+            auto type = typeMgr->getTypeClass(node->typeHelper);
+            auto val = builder.CreateAlloca(type->getllvmType());
+            var = new BaseVariable(val, type);
+            varMgr->addVariable(node->field, var);
         }
-        return nullptr;
+
+        if (node->right) {
+            auto right = node->right->accept(*this);
+            auto alloc = builder.CreateAlloca(right->getType()->getllvmType());
+            if (!var) {
+                // auto infer
+                var = new BaseVariable(alloc, right->getType());
+                varMgr->addVariable(node->field, var);
+            }
+            var->write(builder, right);
+        }
+        return var;
     }
 
 

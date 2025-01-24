@@ -1,6 +1,15 @@
 #include "type/typeclass.hh"
+#include "typeclass.hh"
 
 namespace lona {
+
+bool
+lona::PointerType::is(TypeClass *t) {
+    if (auto right = dynamic_cast<PointerType *>(t)) {
+        return originalType->is(right) && pointerLevels == right->pointerLevels;
+    }
+    return false;
+}
 
 TypeManger::TypeManger(llvm::IRBuilder<> &builder) : builder(builder) {
     typeMap.insert({"i8", new BaseType(builder.getInt8Ty(), BaseType::I8)});
@@ -18,8 +27,8 @@ TypeManger::TypeManger(llvm::IRBuilder<> &builder) : builder(builder) {
 }
 
 TypeClass *
-TypeManger::getTypeClass(std::string &full_typename) {
-    auto it = typeMap.find(full_typename);
+TypeManger::getTypeClass(std::string *const full_typename) {
+    auto it = typeMap.find(*full_typename);
     if (it != typeMap.end()) {
         return it->second;
     }
@@ -34,9 +43,23 @@ TypeManger::getTypeClass(std::string const full_typename) {
     return nullptr;
 }
 
-llvm::Value *
-BaseType::binaryOper(SymbolTable symbol, llvm::Value *right) {
-    return nullptr;
+
+
+TypeClass *
+TypeManger::getTypeClass(TypeHelper *const type) {
+    std::string *final_type = nullptr;
+    for (auto &it : type->typeName) {
+        final_type = &it;
+    }
+
+    TypeClass *original_type = nullptr;
+    if (final_type->front() == '!') {
+        // function
+    } else {
+        // normal type
+        original_type = getTypeClass(final_type);
+    }
+    return original_type;
 }
 
 }  // namespace lona

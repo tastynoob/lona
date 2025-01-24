@@ -33,48 +33,45 @@ using token = lona::Parser::token::token_kind_type;
 (class) {}
 
 [0-9]+ {
-    lval->build<AstToken>(AstToken(TokenType::ConstInt32, yytext, 0, 0));
+    lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);
     return token::CONST;
 }
 
 [0-9]+\.[0-9]+ {
-    lval->build<AstToken>(AstToken(TokenType::ConstFP32, yytext, 0, 0));
+    lval->token = new AstToken(TokenType::ConstFP32, yytext, *loc);
     return token::CONST;
 }
 
 (\"[^\"]*\") {
     char* strpos = yytext + 1;
     yytext[yyleng - 1] = '\0';
-    lval->build<AstToken>(AstToken(TokenType::ConstStr, strEscape(std::string(strpos)).c_str(), 0, 0));
+    lval->token = new AstToken(TokenType::ConstStr, strEscape(std::string(strpos)).c_str(), *loc);
     return token::CONST;
 }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
-    lval->build<AstToken>(AstToken(TokenType::Field, yytext, 0, 0));
+    lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::FIELD;
 }
 
-(\*|\/) {
-    lval->build<AstToken>(AstToken(TokenType::Operlv0, yytext, 0, 0));
-    return token::OPERLV0;
+(\+|-|\*|\/|!|~|<|>|\||&|^) {
+    // + - * / ! ~ < > | & ^
+    return yytext[0];
 }
 
-(\+|-) {
-    lval->build<AstToken>(AstToken(TokenType::Operlv1, yytext, 0, 0));
-    return token::OPERLV1;
+(&&) {
+    return token::LOGIC_AND;
 }
 
-(<|>|<=|>=|==|!=) {    lval->build<AstToken>(AstToken(TokenType::Operlv2, yytext, 0, 0));
-    return token::OPERLV2;
+(\|\|) {
+    return token::LOGIC_OR;
 }
 
-(!|~) {
-    lval->build<AstToken>(AstToken(TokenType::OperUnary, yytext, 0, 0));
-    return token::OPERUNARY;
+(:|=|\(|\)|\[|\]|\{|\}|@|#|,|\.) {
+    // : = ( ) [ ] { } @ # , .
+    return yytext[0];
 }
 
-(:|=|\(|\)|\[|\]|\{|\}|<|>|@|#|,|\.) { return yytext[0]; } /* : = ( ) [ ] { } <> @ # , . */
-     
 ([ ]*\n[ \n]*) {
     /* count \n */
     int count = 0;
