@@ -1,55 +1,63 @@
 #include "type/typeclass.hh"
-#include "typeclass.hh"
 #include "type/buildin.hh"
+#include "typeclass.hh"
 
 namespace lona {
 
+Object *
+TypeClass::newObj(llvm::Value *val) {
+    return new Variable(val, this); 
+}
+
 bool
-lona::PointerType::is(TypeClass *t) {
+PointerType::is(TypeClass *t) {
     if (auto right = dynamic_cast<PointerType *>(t)) {
         return originalType->is(right) && pointerLevels == right->pointerLevels;
     }
     return false;
 }
 
-TypeManger::TypeManger(llvm::IRBuilder<> &builder) : builder(builder) {
-    typeMap.insert({"i32", new I32Type(builder)});
+Object *
+StructType::newObj(llvm::Value *val) {
+    return new StructVar(val, this);
 }
 
-TypeClass *
-TypeManger::getTypeClass(std::string *const full_typename) {
-    auto it = typeMap.find(*full_typename);
-    if (it != typeMap.end()) {
-        return it->second;
+Object *
+StructType::fieldSelect(llvm::IRBuilder<> &builder, Object *value,
+                        const std::string &field) {
+
+    if (members.find(field) == members.end()) {
+        throw "Has no such member: " + field;
     }
-    return nullptr;
-}
-TypeClass *
-TypeManger::getTypeClass(std::string const full_typename) {
-    auto it = typeMap.find(full_typename);
-    if (it != typeMap.end()) {
-        return it->second;
-    }
-    return nullptr;
+    auto [membertype, index] = members[field];
+
+    auto ret = builder.CreateStructGEP(this->getllvmType(),
+                                       value->read(builder), index);
+    return new Variable(ret, membertype);
 }
 
-
-
-TypeClass *
-TypeManger::getTypeClass(TypeHelper *const type) {
-    std::string *final_type = nullptr;
-    for (auto &it : type->typeName) {
-        final_type = &it;
+Object *
+FuncType::callOperation(llvm::IRBuilder<> &builder, Object *value,
+                        std::vector<Object *> args) {
+    assert(dynamic_cast<Functional *>(value));
+    auto func = dynamic_cast<Functional *>(value);
+    std::vector<llvm::Value *> llvmargs;
+    // check args type
+    if (argTypes.size() == args.size())
+        for (int i = 0; i < args.size(); i++) {
+            if (args[i]->getType() != argTypes[i]) {
+                throw "Call argument type mismatch";
+            }
+            llvmargs.push_back(args[i]->read(builder));
+        }
+    else {
+        throw "Call argument number mismatch";
     }
 
-    TypeClass *original_type = nullptr;
-    if (final_type->front() == '!') {
-        // function
-    } else {
-        // normal type
-        original_type = getTypeClass(final_type);
-    }
-    return original_type;
+    auto ret =
+        builder.CreateCall((llvm::Function *)func->read(builder), llvmargs);
+
+    return new Variable(ret, retType);
 }
 
 }  // namespace lona

@@ -27,6 +27,7 @@ using token = lona::Parser::token::token_kind_type;
 (if) { return token::IF; }
 (else) { return token::ELSE; }
 (for) { return token::FOR; }
+(struct) { return token::STRUCT; }
 (case) {}
 (pass) {}
 (cast) {}
@@ -59,6 +60,10 @@ using token = lona::Parser::token::token_kind_type;
     return yytext[0];
 }
 
+(==) {
+    return token::LOGIC_EQUAL;
+}
+
 (&&) {
     return token::LOGIC_AND;
 }
@@ -84,6 +89,7 @@ using token = lona::Parser::token::token_kind_type;
     return token::NEWLINE;
 }
 
+\/\/[^\n]* { }
 [ \t]+ { /* ignore */ }
 
 .|\n {

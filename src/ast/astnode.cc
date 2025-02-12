@@ -1,12 +1,13 @@
 #include "ast/astnode.hh"
 #include "astnode.hh"
-#include "visitor/base.hh"
+#include "codegen/base.hh"
+#include "type/scope.hh"
 
 namespace lona {
 
-#define DEF_ACCEPT(classname)                              \
-    BaseVariable *classname::accept(AstVisitor &visitor) { \
-        return visitor.visit(this);                        \
+#define DEF_ACCEPT(classname)                        \
+    Object *classname::accept(AstVisitor &visitor) { \
+        return visitor.visit(this);                  \
     }
 
 DEF_ACCEPT(AstNode)
@@ -17,15 +18,16 @@ DEF_ACCEPT(AstField)
 DEF_ACCEPT(AstAssign)
 DEF_ACCEPT(AstBinOper)
 DEF_ACCEPT(AstUnaryOper)
+DEF_ACCEPT(AstStructDecl)
 DEF_ACCEPT(AstVarDecl)
 DEF_ACCEPT(AstFuncDecl)
 DEF_ACCEPT(AstRet)
 DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFieldCall)
-
+DEF_ACCEPT(AstSelector)
 
 std::string
-lona::TypeHelper::toString() {
+TypeHelper::toString() {
 
     std::string full_type = typeName.front();
     for (size_t i = 1; i < typeName.size(); i++) {
@@ -51,9 +53,11 @@ lona::TypeHelper::toString() {
                 full_type += "[]";
             } else if (it.first == pointerType_fixedArray) {
                 full_type += "[";
-                full_type += std::string(it.second->is<AstConst>()
-                                 ? it.second->as<AstConst>().getBuf()
-                                 : "x") + "<";
+                full_type +=
+                    std::string(it.second->is<AstConst>()
+                                    ? it.second->as<AstConst>().getBuf()
+                                    : "x") +
+                    "<";
                 full_type += "]";
             }
         }
@@ -65,7 +69,7 @@ AstProgram::AstProgram(AstNode *body) : body(&body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
 }
 
-AstConst::AstConst(AstToken &token) {
+AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
     const int a = 1;
     switch (token.type) {
         case TokenType::ConstInt32:
@@ -86,11 +90,9 @@ AstConst::AstConst(AstToken &token) {
     }
 }
 
-AstField::AstField(AstToken &token) : name(token.text) {
+AstField::AstField(AstToken &token) : AstNode(token.loc), name(token.text) {
     assert(token.type == TokenType::Field);
 }
-
-AstField::AstField(std::string &token) : name(token) {}
 
 AstAssign::AstAssign(AstNode *left, AstNode *right)
     : left(left), right(right) {}
@@ -101,7 +103,10 @@ AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr) : op(op), expr(expr) {}
 
 AstVarDecl::AstVarDecl(AstToken &field, TypeHelper *typeHelper, AstNode *right)
-    : field(field.text), typeHelper(typeHelper), right(right) {}
+    : AstNode(field.loc),
+      field(field.text),
+      typeHelper(typeHelper),
+      right(right) {}
 
 void
 AstStatList::push(AstNode *node) {
@@ -110,23 +115,52 @@ AstStatList::push(AstNode *node) {
 
 AstStatList::AstStatList(AstNode *node) { this->body.push_back(node); }
 
-AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
-                         std::list<AstTypeDecl> *args) {
-    assert(body->is<AstStatList>());
-    this->name = name.text;
-    this->body = body;
-    this->argdecl = args;
+Functional *
+AstFuncDecl::createFunc(Scope &scope) {
+    // create function type
+    auto &builder = scope.getBuilder();
+    std::vector<llvm::Type *> args;
+    std::vector<TypeClass *> loargs;
+    llvm::Type *retType = builder.getVoidTy();
+    TypeClass *loretType = nullptr;
+    if (this->args)
+        for (auto it : *this->args) {
+            auto decl = dynamic_cast<AstVarDecl *>(it);
+            assert(decl);
+            if (!decl->typeHelper) {
+                throw "type of argument is not allowed auto infer";
+            }
+            auto type = scope.getType(decl->typeHelper);
+            args.push_back(type->getllvmType());
+            loargs.push_back(type);
+        }
+    if (this->retType) {
+        loretType = scope.getType(this->retType);
+        retType = loretType->getllvmType();
+    }
+    llvm::FunctionType *funcType =
+        llvm::FunctionType::get(retType, args, false);
+
+    std::string func_name = scope.getName() + '.' + this->name;
+    // create function
+    llvm::Function *func =
+        llvm::Function::Create(funcType, llvm::Function::ExternalLinkage,
+                               func_name, scope.getModule());
+
+    return new Functional(func,
+                          new FuncType(funcType, std::move(loargs), loretType));
 }
+
+AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
+                         std::vector<AstNode *> *args, TypeHelper *retType)
+    : name(name.text), body(body), args(args), retType(retType) {}
 
 AstRet::AstRet(AstNode *expr) { this->expr = expr; }
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : condition(condition), then(then), els(els) {}
 
-AstFieldCall::AstFieldCall(AstToken &field, std::list<AstNode *> *args) {
-    assert(field.type == TokenType::Field);
-    this->name = field.text;
-    this->args = args;
-}
+AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
+    : value(value), args(args) {}
 
 }

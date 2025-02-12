@@ -1,0 +1,14 @@
+
+
+
+
+
+
+
+
+
+
+
+class sharedPtr<T> {
+
+}

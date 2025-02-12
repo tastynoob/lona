@@ -15,7 +15,9 @@ using Json = nlohmann::ordered_json;
 namespace lona {
 class AstNode;
 class AstVisitor;
-class BaseVariable;
+class Object;
+class Scope;
+class Functional;
 using token_type = int;
 
 const int pointerType_pointer = 1;
@@ -32,13 +34,12 @@ struct TypeHelper {
 };
 
 class AstNode {
-    location loc;
-
 public:
+    location const loc;
     AstNode() {}
     AstNode(location loc) : loc(loc) {}
 
-    virtual BaseVariable *accept(AstVisitor &visitor) = 0;
+    virtual Object *accept(AstVisitor &visitor) = 0;
     virtual void toJson(Json &root) {};
 
     template<typename T>
@@ -59,7 +60,7 @@ public:
     AstProgram(AstNode *body);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstConst : public AstNode {
@@ -80,17 +81,17 @@ public:
     AstConst(AstToken &token);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstField : public AstNode {
 public:
     std::string const name;
     AstField(AstToken &token);
-    AstField(std::string &token);
+    // AstField(std::string &token);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstAssign : public AstNode {
@@ -100,7 +101,7 @@ public:
     AstAssign(AstNode *left, AstNode *right);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstBinOper : public AstNode {
@@ -111,7 +112,7 @@ public:
     AstBinOper(AstNode *left, token_type op, AstNode *right);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstUnaryOper : public AstNode {
@@ -122,7 +123,17 @@ public:
     AstUnaryOper(token_type op, AstNode *expr);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstStructDecl : public AstNode {
+public:
+    std::string const name;
+    AstNode *const body;
+
+    AstStructDecl(AstToken &field, AstNode *body)
+        : name(field.text), body(body) {}
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstVarDecl : public AstNode {
@@ -135,7 +146,7 @@ public:
                AstNode *right = nullptr);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstStatList : public AstNode {
@@ -150,45 +161,25 @@ public:
     AstStatList(AstNode *node);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
-};
-
-class AstTypeDecl {
-    // function args declaration
-public:
-    std::string name;
-    std::string type;
-    AstTypeDecl() {}
-    AstTypeDecl(AstTypeDecl &&other)
-        : name(std::move(other.name)), type(std::move(other.type)) {}
-    AstTypeDecl(AstToken &name, AstToken &type)
-        : name(name.text), type(type.text) {}
-
-    AstTypeDecl &operator=(AstTypeDecl &&other) {
-        name = std::move(other.name);
-        type = std::move(other.type);
-        return *this;
-    }
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstFuncDecl : public AstNode {
-    std::string name;
-    std::list<AstTypeDecl> *argdecl = nullptr;
-    AstNode *body;
-    std::string retType = "void";
-
 public:
-    std::string &getName() { return name; }
-    std::string &getRetType() { return retType; }
-    bool hasArgs() const { return argdecl != nullptr; }
-    std::list<AstTypeDecl> &getArgs() { return *argdecl; }
-    void setRetType(AstToken &retType) { this->retType = retType.text; }
+    std::string const name;
+    std::vector<AstNode *> *const args = nullptr;
+    AstNode *const body;
+    TypeHelper *const retType;
+    std::string getName() { return name; }
+    bool hasArgs() const { return args != nullptr; }
+    Functional *createFunc(Scope &scope);
 
     AstFuncDecl(AstToken &name, AstNode *body,
-                std::list<AstTypeDecl> *args = nullptr);
+                std::vector<AstNode *> *args = nullptr,
+                TypeHelper *retType = nullptr);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstRet : public AstNode {
@@ -200,7 +191,7 @@ public:
     AstRet(AstNode *expr);
     void toJson(Json &root) override;
 
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstIf : public AstNode {
@@ -212,22 +203,28 @@ public:
     AstIf(AstNode *condition, AstNode *then, AstNode *els = nullptr);
 
     void toJson(Json &root) override;
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstFieldCall : public AstNode {
-    std::string name;
-    std::list<AstNode *> *args = nullptr;
-
 public:
-    std::string &getName() { return name; }
-    bool hasArgs() const { return args != nullptr; }
-    std::list<AstNode *> &getArgs() { return *args; }
+    AstNode *const value;
+    std::vector<AstNode *> *const args = nullptr;
 
-    AstFieldCall(AstToken &field, std::list<AstNode *> *args = nullptr);
+    AstFieldCall(AstNode *value, std::vector<AstNode *> *args = nullptr);
 
     void toJson(Json &root) override;
-    BaseVariable *accept(AstVisitor &visitor) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstSelector : public AstNode {
+public:
+    AstNode *const parent;
+    AstToken *const field;
+    AstSelector(AstNode *parent, AstToken *field)
+        : parent(parent), field(field) {}
+
+    Object *accept(AstVisitor &visitor) override;
 };
 
 }  // namespace lona

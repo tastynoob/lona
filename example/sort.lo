@@ -1,7 +1,25 @@
 
 
-
-
-def sort(arr int[]) {
-    for 
+def qsort(arr i32[], low i32, high i32)
+{
+    if low < high {
+        i := low
+        j := high
+        k := arr(low)
+        for i < j {
+            for i < j && arr(j) >= k {
+                j -= 1;
+            }
+            i < j ? arr(i) = arr(j)
+            i += 1;
+            for i < j && arr(i) < k {
+                i += 1;
+            }
+            i < j ? arr(j) = arr(i)
+            j -= 1;
+        }
+        arr(i) = k
+        qsort(arr, low, i - 1)
+        qsort(arr, i + 1, high)
+    }
 }

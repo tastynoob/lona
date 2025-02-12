@@ -54,7 +54,6 @@ strEscape(const std::string &str) {
     return ss.str();
 }
 
-
 int
 strToSymbol(const char *str) {
     if (strcmp(str, "+") == 0) return '+';

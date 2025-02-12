@@ -40,10 +40,10 @@
 %parse-param { Driver &driver }
 
 %token <token> CONST FIELD
-%token LOGIC_AND LOGIC_OR
+%token LOGIC_EQUAL LOGIC_AND LOGIC_OR
 %token TRUE FALSE
 %token IF ELSE FOR
-%token DEF RET
+%token DEF RET STRUCT
 %token NEWLINE
 
 %nonassoc type_suffix
@@ -58,11 +58,11 @@
 %right unary
 
 %type <node> pragram
-%type <node> func_decl
+%type <node> struct_decl func_decl
 %type <node> stat_list stat stat_compound stat_if stat_ret stat_expr
 %type <node> field_call
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary 
-%type <node> expr_paren single_value field_selector simple_selector
+%type <node> expr_paren single_value field_selector type_selector
 %type <node> var_decl
 
 %type <type_helper> single_type func_ptr_head type_name
@@ -88,6 +88,7 @@ stat_list
 
 stat
     : stat_expr { $$ = $1; }
+    | struct_decl { $$ = $1; }
     | func_decl { $$ = $1; }
     | stat_ret { $$ = $1; }
     | stat_compound { $$ = $1; }
@@ -110,10 +111,14 @@ stat_ret
     ;
 
 func_decl
-    : FIELD DEF '(' ')' stat_compound { }
-    | FIELD DEF '(' ')' '=' type_name stat_compound { }
-    | FIELD DEF '(' var_decl_seq ')' stat_compound { }
-    | FIELD DEF '(' var_decl_seq ')' '=' type_name stat_compound { }
+    : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
+    | DEF FIELD '(' ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, nullptr, $6); }
+    | DEF FIELD '(' var_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
+    | DEF FIELD '(' var_decl_seq ')' type_name '=' stat_compound { $$ = new AstFuncDecl(*$2, $8, $4, $6); }
+    ;
+
+struct_decl
+    : STRUCT FIELD stat_compound { $$ = new AstStructDecl(*$2, $3); }
     ;
 
 var_decl
@@ -140,7 +145,7 @@ expr
     ;
 
 expr_assign
-    : expr_assign_left '=' expr { }
+    : expr_assign_left '=' expr { $$ = new AstAssign($1, $3); }
     ;
 
 expr_assign_left
@@ -184,22 +189,22 @@ single_value
     ;
 
 field_call
-    : single_value '(' ')' { }
-    | single_value '(' expr_seq ')' { }
+    : single_value '(' ')' { $$ = new AstFieldCall($1); }
+    | single_value '(' expr_seq ')' { $$ = new AstFieldCall($1, $3); }
     ;
 
 variable
     : FIELD { $$ = new AstField(*$1); }
-    | field_selector {}
+    | field_selector { $$ = $1; }
     ;
 
 field_selector
-    : single_value '.' FIELD {}
+    : single_value '.' FIELD { $$ = new AstSelector($1, $3); }
     ;
 
-simple_selector
+type_selector
     : FIELD '.' FIELD {}
-    | simple_selector '.' FIELD {}
+    | type_selector '.' FIELD {}
     ;
 
 %include type.sub.yacc

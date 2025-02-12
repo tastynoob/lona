@@ -1,6 +1,6 @@
 single_type
     : FIELD { $$ = new TypeHelper($1->text); }
-    | simple_selector { }
+    | type_selector { }
     ;
 
 ptr_suffix

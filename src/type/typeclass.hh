@@ -1,23 +1,53 @@
 #pragma once
 
 #include "ast/astnode.hh"
-#include "llvm.hh"
-#include "visitor/base.hh"
+#include "codegen/base.hh"
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Value.h>
 
 namespace lona {
 
-typedef llvm::Value *(*TypeOps)(llvm::IRBuilder<> &builder, BaseVariable* left, BaseVariable* right);
+typedef llvm::Value *(*TypeOps)(llvm::IRBuilder<> &builder, Object *left,
+                                Object *right);
 
-class BaseVariable;
+class Object;
 
 class TypeClass {
     llvm::Type *llvmType;
 
 public:
     TypeClass(llvm::Type *llvmType) : llvmType(llvmType) {}
+
     llvm::Type *getllvmType() { return llvmType; }
+
+    virtual Object *newObj(llvm::Value *val);
+
     virtual bool is(TypeClass *t) { return this == t; }
-    virtual BaseVariable* binaryOperation(llvm::IRBuilder<> &builder, BaseVariable* left, token_type op, BaseVariable* right) = 0;
+
+    virtual Object *binaryOperation(llvm::IRBuilder<> &builder, Object *left,
+                                    token_type op, Object *right) {
+        return nullptr;
+    }
+
+    virtual Object *unaryOperation(llvm::IRBuilder<> &builder, token_type op,
+                                   Object *value) {
+        return nullptr;
+    }
+
+    virtual Object *assignOperation(llvm::IRBuilder<> &builder, Object *left,
+                                    Object *right) {
+        return nullptr;
+    }
+
+    virtual Object *callOperation(llvm::IRBuilder<> &builder, Object *value,
+                                  std::vector<Object *> args) {
+        return nullptr;
+    }
+
+    virtual Object *fieldSelect(llvm::IRBuilder<> &builder, Object *value,
+                                const std::string &field) {
+        return nullptr;
+    }
 };
 
 class BaseType : public TypeClass {
@@ -27,13 +57,34 @@ public:
         : TypeClass(llvmType), type(type) {}
 };
 
-class FuncType : public TypeClass {
-    std::vector<TypeClass *> args;
-    TypeClass *retType;
+class StructType : public TypeClass {
+    llvm::StringMap<std::pair<TypeClass *, int>> members;
+
+public:
+    StructType(llvm::Type *llvmType,
+               llvm::StringMap<std::pair<TypeClass *, int>> &&members)
+        : TypeClass(llvmType), members(members) {}
+
+    Object *newObj(llvm::Value *val) override;
+
+    Object *fieldSelect(llvm::IRBuilder<> &builder, Object *value,
+                        const std::string &field) override;
 };
 
-class CompositeType : public TypeClass {
-    llvm::StringMap<TypeClass *> fields;
+// local type
+class FuncType : public TypeClass {
+    std::vector<TypeClass *> argTypes;
+    TypeClass *retType;
+
+public:
+    FuncType(llvm::Type *llvmType, std::vector<TypeClass *> &&args,
+             TypeClass *retType)
+        : TypeClass(llvmType), argTypes(args), retType(retType) {}
+
+    Object *newObj(llvm::Value *val) override { assert(false); }
+
+    Object *callOperation(llvm::IRBuilder<> &builder, Object *value,
+                          std::vector<Object *> args) override;
 };
 
 // local type, local type will not be add to typelist
@@ -44,7 +95,8 @@ class PointerType : public TypeClass {
 
 public:
     // -1 is mean pointer
-    PointerType(TypeClass *originalType, uint64_t array_size = -1)
+    PointerType(TypeClass *originalType,
+                uint64_t array_size = pointerType_pointer)
         : TypeClass(originalType->getllvmType()->getPointerTo()),
           originalType(originalType) {
         assert(!originalType->getllvmType()->isPointerTy());
@@ -52,21 +104,6 @@ public:
     }
     TypeClass *getOriginalType() { return originalType; }
     bool is(TypeClass *t) override;
-};
-
-class TypeManger {
-    llvm::IRBuilder<> &builder;
-    llvm::StringMap<TypeClass *> typeMap;
-
-public:
-    TypeManger(llvm::IRBuilder<> &builder);
-    void addTypeClass(std::string &full_typename, TypeClass *type);
-    TypeClass *getTypeClass(std::string *const full_typename);
-    TypeClass *getTypeClass(std::string const full_typename);
-    TypeClass *getTypeClass(TypeHelper *const type);
-    TypeClass *getPointerType(TypeClass *originalType,
-                              std::vector<uint64_t> &pointerLevels);
-    TypeClass *getTupleOrStructType(std::vector<TypeClass *> &fields);
 };
 
 }  // namespace lona

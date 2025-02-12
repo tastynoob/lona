@@ -90,11 +90,12 @@ void
 AstFuncDecl::toJson(Json &root) {
     root["type"] = "FuncDecl";
     root["name"] = this->name;
-    root["ret"] = this->retType;
-    if (hasArgs()) {
+    if (this->retType) root["ret"] = this->retType->toString();
+    if (args) {
         root["args"] = Json::array();
-        for (auto &it : *this->argdecl) {
-            root["args"].push_back(it.name + ":" + it.type);
+        for (auto &it : *this->args) {
+            root["args"].push_back(Json::object());
+            it->toJson(root["args"].back());
         }
     } else {
         root["args"] = "none";
@@ -126,8 +127,9 @@ AstIf::toJson(Json &root) {
 void
 AstFieldCall::toJson(Json &root) {
     root["type"] = "FieldCall";
-    root["field"] = this->name;
-    if (this->hasArgs()) {
+    root["value"] = Json::object();
+    this->value->toJson(root["value"]);
+    if (this->args) {
         root["args"] = Json::array();
         for (auto &it : *this->args) {
             Json arg = Json::object();
