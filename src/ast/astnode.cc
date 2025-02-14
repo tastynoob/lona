@@ -115,47 +115,11 @@ AstStatList::push(AstNode *node) {
 
 AstStatList::AstStatList(AstNode *node) { this->body.push_back(node); }
 
-Functional *
-AstFuncDecl::createFunc(Scope &scope) {
-    // create function type
-    auto &builder = scope.getBuilder();
-    std::vector<llvm::Type *> args;
-    std::vector<TypeClass *> loargs;
-    llvm::Type *retType = builder.getVoidTy();
-    TypeClass *loretType = nullptr;
-    if (this->args)
-        for (auto it : *this->args) {
-            auto decl = dynamic_cast<AstVarDecl *>(it);
-            assert(decl);
-            if (!decl->typeHelper) {
-                throw "type of argument is not allowed auto infer";
-            }
-            auto type = scope.getType(decl->typeHelper);
-            args.push_back(type->getllvmType());
-            loargs.push_back(type);
-        }
-    if (this->retType) {
-        loretType = scope.getType(this->retType);
-        retType = loretType->getllvmType();
-    }
-    llvm::FunctionType *funcType =
-        llvm::FunctionType::get(retType, args, false);
-
-    std::string func_name = scope.getName() + '.' + this->name;
-    // create function
-    llvm::Function *func =
-        llvm::Function::Create(funcType, llvm::Function::ExternalLinkage,
-                               func_name, scope.getModule());
-
-    return new Functional(func,
-                          new FuncType(funcType, std::move(loargs), loretType));
-}
-
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstNode *> *args, TypeHelper *retType)
     : name(name.text), body(body), args(args), retType(retType) {}
 
-AstRet::AstRet(AstNode *expr) { this->expr = expr; }
+AstRet::AstRet(AstNode *expr) : expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : condition(condition), then(then), els(els) {}

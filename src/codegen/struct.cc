@@ -12,15 +12,19 @@ class StructVisitor : public AstVisitorAny {
 
 public:
     StructVisitor(Scope* scope, AstStructDecl* node)
-        : scope(scope), builder(scope->getBuilder()) {
+        : scope(scope), builder(scope->builder) {
         this->node = node;
         this->visit(node->body);
     }
 
     StructType* getStruct() {
-        auto structTy = llvm::StructType::create(
-            builder.getContext(), llvmmembers, "struct." + node->name);
-        return new StructType(structTy, std::move(members));
+        std::string struct_name = "struct." + node->name;
+        auto structTy = llvm::StructType::create(builder.getContext(),
+                                                 llvmmembers, struct_name);
+        auto typesize =
+            scope->module.getDataLayout().getTypeSizeInBits(structTy) / 8;
+        return new StructType(structTy, std::move(members), struct_name,
+                              typesize);
     }
 
     using AstVisitorAny::visit;
@@ -34,11 +38,15 @@ public:
     }
 
     Object* visit(AstVarDecl* node) override {
+        if (!node->typeHelper) {
+            throw "Not allowed auto infer type";
+        }
+
         // add struct member
         auto& name = node->field;
         auto type = scope->getType(node->typeHelper);
 
-        llvmmembers.push_back(type->getllvmType());
+        llvmmembers.push_back(type->llvmType);
         members.insert({name, {type, llvmmembers.size() - 1}});
 
         return nullptr;

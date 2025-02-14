@@ -12,25 +12,25 @@ I32Type::binaryOperation(llvm::IRBuilder<>& builder, Object* left,
     llvm::Value* val = nullptr;
     switch (op) {
         case '+':
-            val = builder.CreateAdd(left->read(builder), right->read(builder));
+            val = builder.CreateAdd(left->get(builder), right->get(builder));
             break;
         case '-':
-            val = builder.CreateSub(left->read(builder), right->read(builder));
+            val = builder.CreateSub(left->get(builder), right->get(builder));
             break;
         case '*':
-            val = builder.CreateMul(left->read(builder), right->read(builder));
+            val = builder.CreateMul(left->get(builder), right->get(builder));
             break;
         case '/':
-            val = builder.CreateSDiv(left->read(builder), right->read(builder));
+            val = builder.CreateSDiv(left->get(builder), right->get(builder));
             break;
         case Parser::token_type::LOGIC_EQUAL:
-            val =
-                builder.CreateICmpEQ(left->read(builder), right->read(builder));
-            return new RValue(val, boolTy, Object::READ_NO_LOAD);
+            val = builder.CreateICmpEQ(left->get(builder), right->get(builder));
+            return new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
         default:
             break;
     }
-    return new RValue(val, left->getType(), Object::READ_NO_LOAD);
+    return new BaseVar(val, left->getType(),
+                       Object::REG_VAL | Object::READONLY);
 }
 
 Object*
@@ -39,20 +39,23 @@ I32Type::unaryOperation(llvm::IRBuilder<>& builder, token_type op,
     if (!value->getType()->is(this)) throw "Type mismatch";
     Object* val = nullptr;
     switch (op) {
+        case '+':
+            val = value;
+        case '-':
+            val = new BaseVar(builder.CreateNeg(value->get(builder)), this,
+                              Object::REG_VAL | Object::READONLY);
+            break;
         case '!':
-
+            val = new BaseVar(builder.CreateNot(value->get(builder)), boolTy,
+                              Object::REG_VAL | Object::READONLY);
             break;
         case '~':
-
+            val = new BaseVar(builder.CreateNot(value->get(builder)), this,
+                              Object::REG_VAL | Object::READONLY);
             break;
         case '*':
-
             break;
         case '&':
-            if (!value->isVariable()) throw "Can't take address of const value";
-            val = new RValue(value->getllvmValue(),
-                             new PointerType(value->getType()),
-                             Object::READ_NO_LOAD);
             break;
         default:
             break;
@@ -63,7 +66,7 @@ I32Type::unaryOperation(llvm::IRBuilder<>& builder, token_type op,
 Object*
 I32Type::assignOperation(llvm::IRBuilder<>& builder, Object* dst, Object* src) {
     if (!dst->getType()->is(this)) throw "Type mismatch";
-    builder.CreateStore(src->read(builder), dst->getllvmValue());
+    builder.CreateStore(src->get(builder), dst->getllvmValue());
     return nullptr;
 }
 
@@ -72,8 +75,8 @@ BoolType* boolTy = nullptr;
 
 void
 initBuildinType(Scope* scope) {
-    if (!i32Ty) i32Ty = new I32Type(scope->getBuilder().getInt32Ty());
-    if (!boolTy) boolTy = new BoolType(scope->getBuilder().getInt1Ty());
+    if (!i32Ty) i32Ty = new I32Type(scope->builder.getInt32Ty());
+    if (!boolTy) boolTy = new BoolType(scope->builder.getInt1Ty());
     scope->addType("i32", i32Ty);
     scope->addType("bool", boolTy);
 }

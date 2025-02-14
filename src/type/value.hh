@@ -8,7 +8,7 @@ namespace lona {
 
 class AstFuncDecl;
 class TypeClass;
-class Variable;
+class BaseVar;
 
 class Object {
 protected:
@@ -20,40 +20,36 @@ public:
     enum Specifier : uint32_t {
         EMPTY = 0,
         VARIABLE = 1 << 0,
-        READ_NO_LOAD = 1 << 1,
+        REG_VAL = 1 << 1,
+        READONLY = 1 << 2,
     };
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : val(val), type(type), specifiers(specifiers) {}
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }
     bool isVariable() { return specifiers & VARIABLE; }
-    bool isReadNoLoad() { return specifiers & READ_NO_LOAD; }
+    bool isRegVal() { return specifiers & REG_VAL; }
+    bool isReadOnly() { return specifiers & READONLY; }
 
-    virtual llvm::Value *read(llvm::IRBuilder<> &builder);
-    virtual void write(llvm::IRBuilder<> &builder, Object *src);
+    virtual llvm::Value *ptr() {
+        assert(val->getType()->isPointerTy());
+        return val;
+    }
+    virtual llvm::Value *get(llvm::IRBuilder<> &builder);
+    virtual void set(llvm::IRBuilder<> &builder, Object *src);
 };
 
-class RValue : public Object {
+class BaseVar : public Object {
 public:
-    RValue(llvm::Value *val, TypeClass *type, uint32_t specifiers)
-        : Object(val, type, specifiers) {}
-    void write(llvm::IRBuilder<> &builder, Object *src) override {
-        throw "readonly literal value";
-    };
-};
-
-class Variable : public Object {
-public:
-    Variable(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
+    BaseVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(val, type, specifiers | VARIABLE) {}
 };
 
 class StructVar : public Object {
 public:
     StructVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
-        : Object(val, type, specifiers | READ_NO_LOAD) {}
-    llvm::Value *read(llvm::IRBuilder<> &builder) override { return val; }
-    void write(llvm::IRBuilder<> &builder, Object *src) override;
+        : Object(val, type, specifiers) {}
+    void set(llvm::IRBuilder<> &builder, Object *src) override;
 };
 
 class Functional : public Object {
@@ -62,9 +58,9 @@ class Functional : public Object {
 public:
     Functional(llvm::Function *val, TypeClass *type) : Object(val, type) {}
 
-    llvm::Value *read(llvm::IRBuilder<> &builder) override { return val; }
+    llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
 
-    void write(llvm::IRBuilder<> &builder, Object *src) override {
+    void set(llvm::IRBuilder<> &builder, Object *src) override {
         throw "readonly literal value";
     }
 };

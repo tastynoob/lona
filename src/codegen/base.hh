@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ast/astnode.hh"
-#include "type/typeclass.hh"
+#include "type/type.hh"
 
 namespace lona {
 
@@ -55,6 +55,10 @@ public:
 class Scope;
 class AstNode;
 class StructType;
+class Functional;
+
+Functional *
+createFunc(Scope &scope, AstFuncDecl *root);
 
 void
 scanningType(Scope *global, AstNode *root);

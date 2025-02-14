@@ -9,6 +9,7 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Pass.h>
 #include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/raw_os_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
@@ -19,6 +20,12 @@
 
 namespace lona {
 
+llvm::PassBuilder passBuilder;
+llvm::ModuleAnalysisManager moduleAM;
+llvm::CGSCCAnalysisManager cgsccAM;
+llvm::FunctionAnalysisManager functionAM;
+llvm::LoopAnalysisManager loopAM;
+
 // compiler for one file
 class Compiler : public AstVisitor {
     llvm::LLVMContext &context;
@@ -26,7 +33,7 @@ class Compiler : public AstVisitor {
     llvm::IRBuilder<> builder;
 
     GlobalScope *globalScope = nullptr;
-    Scope *headScope = nullptr;
+    FuncScope *headScope = nullptr;
 
     Object *struObj = nullptr;
 
@@ -48,12 +55,7 @@ public:
 
     void printResult(std::ostream &os) {
         llvm::raw_os_ostream raw_os(os);
-        // llvm::legacy::PassManager pass;
-        // pass.add(llvm::createPromoteMemoryToRegisterPass());  // mem2reg
-        // pass.add(llvm::createCFGSimplificationPass());        // simplify cfg
-        // pass.add(llvm::createDeadCodeEliminationPass());      // dead code
-        //                                                       // elimination
-        // pass.run(module);
+
         module.print(raw_os, nullptr);
     }
 
@@ -90,17 +92,20 @@ public:
             llvm::GlobalVariable *strval = new llvm::GlobalVariable(
                 module, str->getType(), true, llvm::GlobalValue::PrivateLinkage,
                 str);
-            auto var = new RValue(strval, lotype, Object::READ_NO_LOAD);
+            auto var =
+                new BaseVar(strval, lotype, Object::REG_VAL | Object::READONLY);
             return var;
         } else if (node->getType() == AstConst::Type::FP32) {
             auto lotype = headScope->getType("f32");
-            auto fpval = llvm::ConstantFP::get(lotype->getllvmType(),
-                                               *node->getBuf<float>());
-            return new RValue(fpval, lotype, Object::READ_NO_LOAD);
+            auto fpval =
+                llvm::ConstantFP::get(lotype->llvmType, *node->getBuf<float>());
+            return new BaseVar(fpval, lotype,
+                               Object::REG_VAL | Object::READONLY);
         } else if (node->getType() == AstConst::Type::INT32) {
-            auto intval = llvm::ConstantInt::get(i32Ty->getllvmType(),
-                                                 *node->getBuf<int>());
-            return new RValue(intval, i32Ty, Object::READ_NO_LOAD);
+            auto intval =
+                llvm::ConstantInt::get(i32Ty->llvmType, *node->getBuf<int>());
+            return new BaseVar(intval, i32Ty,
+                               Object::REG_VAL | Object::READONLY);
         } else {
             assert(false);
         }
@@ -112,6 +117,7 @@ public:
         if (auto var = headScope->getObj(node->name)) {
             return var;
         } else {
+            std::cout << node->loc << "Has no such variable: " << node->name << std::endl;
             assert(false);
         }
         return nullptr;
@@ -122,7 +128,7 @@ public:
         auto dst = node->left->accept(*this);
         auto src = node->right->accept(*this);
 
-        dst->write(builder, src);
+        dst->set(builder, src);
         return nullptr;
     }
 
@@ -135,30 +141,30 @@ public:
 
     Object *visit(AstUnaryOper *node) override {}
 
-    Object *visit(AstStructDecl *node) override {
-        auto structTy = createStruct(headScope, node);
-        headScope->addType(node->name, structTy);
-        return nullptr;
-    }
-
     Object *visit(AstVarDecl *node) override {
         auto right = node->right ? node->right->accept(*this) : nullptr;
 
         try {
             Object *val = nullptr;
+
             if (node->typeHelper) {
                 auto type = headScope->getType(node->typeHelper);
-                val = headScope->allocate(type);
-                headScope->addObj(node->field, val);
-            }
-
-            if (node->right) {
-                if (!val) {
-                    // auto infer
-                    val = headScope->allocate(right->getType());
-                    headScope->addObj(node->field, val);
+                if (!right || right->isRegVal()) {
+                    val = headScope->allocate(type);
+                } else {
+                    // TODO: check type match
+                    val = right;
                 }
-                val->write(builder, right);
+                headScope->addObj(node->field, val);
+            } else if (node->right) {
+                // auto infer
+                if (right->isRegVal()) {
+                    val = headScope->allocate(right->getType());
+                    val->set(builder, right);
+                } else {
+                    val = right;
+                }
+                headScope->addObj(node->field, val);
             }
 
             return val;
@@ -177,16 +183,19 @@ public:
         return final;
     }
 
+    // ignore this
+    Object *visit(AstStructDecl *node) override { return nullptr; }
+
     Object *visit(AstFuncDecl *node) override {
         // create function head
         Functional *func =
             dynamic_cast<Functional *>(headScope->getObj(node->name));
         auto llvmfunc = (llvm::Function *)nullptr;
         if (func) {
-            llvmfunc = (llvm::Function *)func->read(builder);
+            llvmfunc = (llvm::Function *)func->get(builder);
         } else {
-            func = node->createFunc(*headScope);
-            llvmfunc = (llvm::Function *)func->read(builder);
+            func = createFunc(*headScope, node);
+            llvmfunc = (llvm::Function *)func->get(builder);
             headScope->addObj(node->name, func);
         }
 
@@ -194,14 +203,20 @@ public:
         auto upperScope = headScope;
         auto upperBB = builder.GetInsertBlock();
         headScope = new FuncScope(globalScope);
-        llvm::BasicBlock *entry =
-            llvm::BasicBlock::Create(context, "entry", llvmfunc);
+        auto *entry = llvm::BasicBlock::Create(context, "entry", llvmfunc);
         builder.SetInsertPoint(entry);
+        auto retBB = llvm::BasicBlock::Create(context);
+        headScope->initRetBlock(retBB);
+        // make return alloca
+        if (node->retType) {
+            auto retType = headScope->getType(node->retType);
+            headScope->initRetVal(headScope->allocate(retType));
+        }
         // make args alloca
         for (int i = 0; i < llvmfunc->arg_size(); i++) {
             auto decl = dynamic_cast<AstVarDecl *>(node->args->at(i));
             auto lotype = headScope->getType(decl->typeHelper);
-            auto llvmtype = lotype->getllvmType();
+            auto llvmtype = lotype->llvmType;
             auto val = headScope->allocate(lotype);
             builder.CreateStore(llvmfunc->getArg(i), val->getllvmValue());
             headScope->addObj(decl->field, val);
@@ -209,13 +224,15 @@ public:
         // create function body
         scanningType(headScope, node->body);
         node->body->accept(*this);
+        // set retbb to func's end
+        // builder.CreateBr(retBB);
+        retBB->insertInto(llvmfunc);
+        builder.SetInsertPoint(retBB);
         if (!node->retType) {
             builder.CreateRetVoid();
         } else {
             // TODO:
-            auto retBB = llvm::BasicBlock::Create(context, "", llvmfunc);
-            builder.CreateBr(retBB);
-            builder.SetInsertPoint(retBB);
+            builder.CreateRet(headScope->retVal()->get(builder));
         }
         builder.SetInsertPoint(upperBB);
         delete headScope;
@@ -223,7 +240,20 @@ public:
         return nullptr;
     }
 
-    Object *visit(AstRet *node) override {}
+    Object *visit(AstRet *node) override {
+        auto retalloc = headScope->retVal();
+        if (retalloc && node->expr) {
+            auto val = node->expr->accept(*this);
+            retalloc->set(builder, val);
+        } else if (retalloc && !node->expr) {
+            throw "no return value";
+        } else if (!retalloc && node->expr) {
+            throw "no need return value";
+        }
+
+        builder.CreateBr(headScope->retBlock());
+        return retalloc;
+    }
 
     Object *visit(AstIf *node) override {
         llvm::Function *func = builder.GetInsertBlock()->getParent();
@@ -233,7 +263,7 @@ public:
             node->hasElse() ? llvm::BasicBlock::Create(context) : finalBB;
 
         auto condval = node->condition->accept(*this);
-        builder.CreateCondBr(condval->read(builder), thenBB, elseBB);
+        builder.CreateCondBr(condval->get(builder), thenBB, elseBB);
         Object *thenret = nullptr, *elsret = nullptr;
 
         builder.SetInsertPoint(thenBB);
@@ -253,15 +283,28 @@ public:
     }
 
     Object *visit(AstFieldCall *node) override {
-        auto value = node->value->accept(*this);
+        Functional *func = nullptr;
         std::vector<Object *> args;
+        if (node->value->is<AstSelector>()) {
+            auto parent =
+                dynamic_cast<AstSelector *>(node->value)->parent->accept(*this);
+            auto field = dynamic_cast<AstSelector *>(node->value)->field;
+            auto member =
+                parent->getType()->fieldSelect(builder, parent, field->text);
+            func = dynamic_cast<Functional *>(member);
+            // push self
+            args.push_back(parent);
+        } else {
+            func = dynamic_cast<Functional *>(node->value->accept(*this));
+        }
+
         if (node->args)
             for (auto it : *node->args) {
                 auto arg = it->accept(*this);
                 args.push_back(arg);
             }
 
-        return value->getType()->callOperation(builder, value, args);
+        return func->getType()->callOperation(headScope, func, args);
     }
 
     Object *visit(AstSelector *node) override {
@@ -273,10 +316,11 @@ public:
 
 void
 compile(AstNode *node, std::string &filename, std::ostream &os) {
+
     std::string module_name = filename.substr(0, filename.find_last_of('.'));
     llvm::LLVMContext context;
     llvm::Module module(module_name, context);
-    module.setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
+    // module.setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
 
     Compiler compiler(context, module);
     compiler.visit(node);

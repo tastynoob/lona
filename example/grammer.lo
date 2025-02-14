@@ -57,24 +57,3 @@ for loop(0) { } // for (Iter i = Loop(10); bool(i); i.next()) {}
 for range(0, 10) {}
 for stride(0, 10, 2) {}
 for a = range(array.begin, array.end) {} // for (Iter i = until(array.begin, array.end); bool(i); i.next()) {}
-
-// normal method
-test fn(a i32) = i32 {
-    ret 0
-}
-
-// iterator method
-loop fn<T>(times T) = T {
-    times -= 1
-    ret times != 0
-}
-
-range fn<T>(cur T, end T) = T {
-    cur += 1
-    ret cur != end
-}
-
-
-main def() {
-    
-}

@@ -1,40 +1,51 @@
 #include "type/value.hh"
-#include "type/typeclass.hh"
+#include "type/type.hh"
 #include "value.hh"
 
 namespace lona {
 
 llvm::Value *
-Object::read(llvm::IRBuilder<> &builder) {
-    if (isReadNoLoad()) {
+Object::get(llvm::IRBuilder<> &builder) {
+    if (isRegVal()) {
         return val;
     }
     assert(val->getType()->isPointerTy());
-    return builder.CreateLoad(type->getllvmType(), val);
+    return builder.CreateLoad(type->llvmType, val);
 }
 
 void
-Object::write(llvm::IRBuilder<> &builder, Object *src) {
-    sizeof(std::shared_ptr<Object>);
+Object::set(llvm::IRBuilder<> &builder, Object *src) {
+    if (isReadOnly()) {
+        throw "readonly";
+    }
+
     if (this->getType() != src->getType()) {
         throw "type mismatch";
     }
+
     assert(val->getType()->isPointerTy());
-    type->assignOperation(builder, this, src);
+    builder.CreateStore(src->get(builder), val);
 }
 
+// llvm::Value *
+// StructVar::get(llvm::IRBuilder<> &builder) {
+//     return Object::get(builder);
+// }
+
 void
-StructVar::write(llvm::IRBuilder<> &builder, Object *src) {
-    if (!dynamic_cast<StructVar *>(src)) {
-        throw "struct use memcpy";
+StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
+    if (this->getType() != src->getType()) {
+        throw "type mismatch";
     }
-    auto struct_src = dynamic_cast<StructVar *>(src);
-    llvm::DataLayout dataLayout(builder.GetInsertBlock()->getModule());
-    auto struct_size = dataLayout.getTypeSizeInBits(type->getllvmType()) / 8;
-    // struct use memcpy
-    llvm::ConstantInt::get(builder.getInt32Ty(), struct_size);
-    builder.CreateMemCpy(val, llvm::MaybeAlign(8), struct_src->val,
-                         llvm::MaybeAlign(8), struct_size);
+
+    if (src->isRegVal()) {
+        builder.CreateStore(src->get(builder), val);
+    } else {
+        auto struct_src = dynamic_cast<StructVar *>(src);
+        llvm::ConstantInt::get(builder.getInt32Ty(), type->typeSize);
+        builder.CreateMemCpy(val, llvm::MaybeAlign(8), struct_src->val,
+                             llvm::MaybeAlign(8), type->typeSize);
+    }
 }
 
 }  // namespace lona

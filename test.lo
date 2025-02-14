@@ -1,0 +1,22 @@
+a := Complex(1, 2)
+b := Complex(3, 4)
+c := add(a, b)
+
+struct Complex {
+    real i32
+    imag i32
+}
+
+def Complex(a i32, b i32) Complex = {
+    t Complex
+    t.real = a
+    t.imag = b
+    ret t
+}
+
+def add(a Complex, b Complex) Complex = {
+    t Complex
+    t.real = a.real + b.real
+    t.imag = a.imag + b.imag
+    ret t
+}

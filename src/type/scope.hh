@@ -1,6 +1,6 @@
 #pragma once
 
-#include "type/typeclass.hh"
+#include "type/type.hh"
 #include "type/value.hh"
 
 namespace lona {
@@ -9,24 +9,20 @@ class FuncEnv;
 
 class Scope {
 protected:
-    llvm::IRBuilder<> &builder;
-    llvm::Module &module;
     llvm::StringMap<TypeClass *> typeMap;
     llvm::StringMap<Object *> variables;
-
     Scope *parent = nullptr;
 
 public:
+    llvm::IRBuilder<> &builder;
+    llvm::Module &module;
+
     Scope(llvm::IRBuilder<> &builder, llvm::Module &module)
         : builder(builder), module(module) {}
     Scope(Scope *parent)
         : builder(parent->builder), module(parent->module), parent(parent) {}
 
     ~Scope();
-
-    llvm::IRBuilder<> &getBuilder() { return builder; }
-
-    llvm::Module &getModule() { return module; }
 
     virtual std::string getName() = 0;
 
@@ -54,14 +50,42 @@ public:
 };
 
 class FuncScope : public Scope {
+    friend class LocalScope;
+    bool const func_root = false;
     llvm::Instruction *alloc_point = nullptr;
+    Object *ret_val = nullptr;
+    llvm::BasicBlock *ret_block = nullptr;
+
+    int num_sub_scope = 0;
+    void accNumScope() {
+        if (func_root)
+            num_sub_scope++;
+        else
+            ((FuncScope *)parent)->accNumScope();
+    }
+    int getNumScope() {
+        return func_root ? num_sub_scope : ((FuncScope *)parent)->getNumScope();
+    }
 
 public:
-    FuncScope(llvm::IRBuilder<> &builder, llvm::Module &module)
-        : Scope(builder, module) {}
     FuncScope(FuncScope *parent)
-        : Scope(parent), alloc_point(parent->alloc_point) {}
-    FuncScope(Scope *parent) : Scope(parent) {}
+        : Scope(parent),
+          alloc_point(parent->alloc_point),
+          ret_val(parent->ret_val),
+          ret_block(parent->ret_block) {}
+    FuncScope(GlobalScope *parent) : Scope(parent), func_root(true) {}
+
+    void initRetVal(Object *ret_val) {
+        assert(!this->ret_val);
+        this->ret_val = ret_val;
+    }
+    Object *retVal() { return ret_val; }
+
+    void initRetBlock(llvm::BasicBlock *ret_block) {
+        assert(!this->ret_block);
+        this->ret_block = ret_block;
+    }
+    llvm::BasicBlock *retBlock() { return ret_block; }
 
     std::string getName() override {
         return builder.GetInsertBlock()->getParent()->getName().str();
@@ -71,6 +95,13 @@ public:
 };
 
 // if, for block
-typedef FuncScope LocalScope;
+class LocalScope : public FuncScope {
+public:
+    LocalScope(FuncScope *parent) : FuncScope(parent) { parent->accNumScope(); }
+    std::string getName() override {
+        return builder.GetInsertBlock()->getParent()->getName().str() + "." +
+               std::to_string(getNumScope());
+    }
+};
 
 }

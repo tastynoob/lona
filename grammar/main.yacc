@@ -50,6 +50,7 @@
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 %right '='
+%left LOGIC_EQUAL
 %left '&' '|'
 %left '+' '-' // + -
 %left '*' '/' // * /
@@ -159,6 +160,7 @@ expr_binOp
     | expr '+' expr { $$ = new AstBinOper($1, '+', $3); }
     | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
     | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
+    | expr LOGIC_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_EQUAL, $3); }
     ;
 
 expr_unary

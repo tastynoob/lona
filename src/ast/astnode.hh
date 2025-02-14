@@ -172,7 +172,6 @@ public:
     TypeHelper *const retType;
     std::string getName() { return name; }
     bool hasArgs() const { return args != nullptr; }
-    Functional *createFunc(Scope &scope);
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,
@@ -183,11 +182,8 @@ public:
 };
 
 class AstRet : public AstNode {
-    AstNode *expr;
-
 public:
-    bool hasExpr() const { return expr != nullptr; }
-
+    AstNode *const expr = nullptr;
     AstRet(AstNode *expr);
     void toJson(Json &root) override;
 
