@@ -55,7 +55,7 @@ TypeHelper::toString() {
                 full_type += "[";
                 full_type +=
                     std::string(it.second->is<AstConst>()
-                                    ? it.second->as<AstConst>().getBuf()
+                                    ? it.second->as<AstConst>()->getBuf()
                                     : "x") +
                     "<";
                 full_type += "]";
@@ -65,7 +65,7 @@ TypeHelper::toString() {
     return full_type;
 }
 
-AstProgram::AstProgram(AstNode *body) : body(&body->as<AstStatList>()) {
+AstProgram::AstProgram(AstNode *body) : body(body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
 }
 
@@ -122,7 +122,8 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
 AstRet::AstRet(AstNode *expr) : expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
-    : condition(condition), then(then), els(els) {}
+    : condition(condition), then(then), els(els) {
+}
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : value(value), args(args) {}

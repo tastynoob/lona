@@ -1,4 +1,5 @@
 #include "ast/astnode.hh"
+#include "astnode.hh"
 
 namespace lona {
 

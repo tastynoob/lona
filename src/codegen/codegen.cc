@@ -1,6 +1,7 @@
 #include "base.hh"
 #include "type/buildin.hh"
-#include "util/container.hh"
+#include "util/cfg.hh"
+#include <fstream>
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -117,7 +118,8 @@ public:
         if (auto var = headScope->getObj(node->name)) {
             return var;
         } else {
-            std::cout << node->loc << "Has no such variable: " << node->name << std::endl;
+            std::cout << node->loc << "Has no such variable: " << node->name
+                      << std::endl;
             assert(false);
         }
         return nullptr;
@@ -179,6 +181,7 @@ public:
         for (auto it = node->getBody().begin(); it != node->getBody().end();
              it++) {
             final = (*it)->accept(*this);
+            if (headScope->isReturned()) break;
         }
         return final;
     }
@@ -205,8 +208,29 @@ public:
         headScope = new FuncScope(globalScope);
         auto *entry = llvm::BasicBlock::Create(context, "entry", llvmfunc);
         builder.SetInsertPoint(entry);
-        auto retBB = llvm::BasicBlock::Create(context);
-        headScope->initRetBlock(retBB);
+
+        // check control flow graph
+        CFGChecker cfg;
+        node->body->toCFG(cfg);
+        std::ofstream os(headScope->getName() + ".dot");
+        cfg.gen(os);
+        os.close();
+
+        if (cfg.hasNoReturnedNode() && node->retType) {
+            std::cout << "Error: " << node->loc
+                      << "No return statement in function " << node->name
+                      << std::endl;
+            exit(-1);
+        }
+
+        llvm::BasicBlock *retBB = nullptr;
+        if (cfg.multiReturnPath()) {
+            // create retBB when:
+            // multi return path
+            retBB = llvm::BasicBlock::Create(context);
+            headScope->initRetBlock(retBB);
+        }
+
         // make return alloca
         if (node->retType) {
             auto retType = headScope->getType(node->retType);
@@ -226,8 +250,11 @@ public:
         node->body->accept(*this);
         // set retbb to func's end
         // builder.CreateBr(retBB);
-        retBB->insertInto(llvmfunc);
-        builder.SetInsertPoint(retBB);
+        if (retBB) {
+            retBB->insertInto(llvmfunc);
+            builder.SetInsertPoint(retBB);
+        }
+
         if (!node->retType) {
             builder.CreateRetVoid();
         } else {
@@ -251,7 +278,10 @@ public:
             throw "no need return value";
         }
 
-        builder.CreateBr(headScope->retBlock());
+        headScope->setReturned();
+        if (headScope->retBlock()) {
+            builder.CreateBr(headScope->retBlock());
+        }
         return retalloc;
     }
 
@@ -266,16 +296,24 @@ public:
         builder.CreateCondBr(condval->get(builder), thenBB, elseBB);
         Object *thenret = nullptr, *elsret = nullptr;
 
-        builder.SetInsertPoint(thenBB);
-        thenret = node->then->accept(*this);
-        builder.CreateBr(finalBB);
+        auto lastScope = headScope;
+        {
+            builder.SetInsertPoint(thenBB);
+            headScope = new LocalScope(lastScope);
+            thenret = node->then->accept(*this);
+            if (!headScope->isReturned()) builder.CreateBr(finalBB);
+            delete headScope;
+        }
 
         if (node->hasElse()) {
             func->insert(func->end(), elseBB);
             builder.SetInsertPoint(elseBB);
+            headScope = new LocalScope(lastScope);
             elsret = node->els->accept(*this);
-            builder.CreateBr(finalBB);
+            if (!headScope->isReturned()) builder.CreateBr(finalBB);
+            delete headScope;
         }
+        headScope = lastScope;
 
         func->insert(func->end(), finalBB);
         builder.SetInsertPoint(finalBB);

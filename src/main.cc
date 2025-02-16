@@ -30,6 +30,7 @@ main(int argc, char *argv[]) {
         tree->toJson(json);
         std::ofstream out("ast.json");
         out << json.dump(4) << std::endl;
+        out.close();
 
         std::ofstream out2("ir.ll");
         lona::compile(tree, filename, out2);

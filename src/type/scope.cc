@@ -86,8 +86,8 @@ FuncScope::allocate(TypeClass *type, bool is_temp) {
             alloc_point = builder.CreateAlloca(type->llvmType);
         } else {
             volatile int i = 0;
-            auto t = new llvm::AllocaInst(type->llvmType, 0, "",
-                                          &entryBB.front());
+            auto t =
+                new llvm::AllocaInst(type->llvmType, 0, "", &entryBB.front());
             alloc_point = t;
         }
     } else {

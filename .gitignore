@@ -8,3 +8,4 @@ build/
 /*.txt
 /*.out
 /*.log
+/*.dot

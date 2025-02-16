@@ -13,7 +13,10 @@
 using Json = nlohmann::ordered_json;
 
 namespace lona {
+class CFGChecker;
 class AstNode;
+class AstIf;
+class AstRet;
 class AstVisitor;
 class Object;
 class Scope;
@@ -34,13 +37,23 @@ struct TypeHelper {
 };
 
 class AstNode {
+protected:
+    AstNode *cfg_next = nullptr;
+
 public:
     location const loc;
     AstNode() {}
     AstNode(location loc) : loc(loc) {}
 
+    virtual void setNextNode(AstNode *node) {
+        cfg_next = node->getValidCFGNode();
+    }
+    virtual AstNode *getValidCFGNode() { return this; }
     virtual Object *accept(AstVisitor &visitor) = 0;
     virtual void toJson(Json &root) {};
+    virtual void toCFG(CFGChecker &checker);
+
+    bool isControlNode() { return is<AstIf>() || is<AstRet>(); }
 
     template<typename T>
     bool is() const {
@@ -48,8 +61,8 @@ public:
     }
 
     template<typename T>
-    T &as() {
-        return dynamic_cast<T &>(*this);
+    T *as() {
+        return dynamic_cast<T *>(this);
     }
 };
 
@@ -150,16 +163,24 @@ public:
 };
 
 class AstStatList : public AstNode {
-    std::list<AstNode *> body;
-
 public:
+    std::list<AstNode *> body;
     bool isEmpty() const { return body.empty(); }
     void push(AstNode *node);
     std::list<AstNode *> &getBody() { return body; }
+    void setNextNode(AstNode *node) override {
+        if (!body.empty()) {
+            body.back()->setNextNode(node->getValidCFGNode());
+        }
+    }
+    AstNode *getValidCFGNode() override {
+        return body.empty() ? nullptr : body.front();
+    }
 
     AstStatList() {}
     AstStatList(AstNode *node);
     void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
 
     Object *accept(AstVisitor &visitor) override;
 };
@@ -184,8 +205,13 @@ public:
 class AstRet : public AstNode {
 public:
     AstNode *const expr = nullptr;
+    void setNextNode(AstNode *node) override {
+        // do nothing
+    }
+
     AstRet(AstNode *expr);
     void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
 
     Object *accept(AstVisitor &visitor) override;
 };
@@ -196,9 +222,18 @@ public:
     AstNode *const then;
     AstNode *const els = nullptr;
     bool hasElse() const { return els != nullptr; }
+    void setNextNode(AstNode *node) override {
+        then->setNextNode(node->getValidCFGNode());
+        if (els)
+            els->setNextNode(node->getValidCFGNode());
+        else
+            cfg_next = node->getValidCFGNode();
+    }
+
     AstIf(AstNode *condition, AstNode *then, AstNode *els = nullptr);
 
     void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;
 };
 

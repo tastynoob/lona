@@ -81,41 +81,75 @@ pragram
     ;
 
 stat_list
-    : NEWLINE { $$ = new AstStatList(); }
-    | stat { $$ = new AstStatList($1); }
-    | stat_list NEWLINE { $$ = $1;}
-    | stat_list stat { $$ = $1; ($1)->as<AstStatList>().push($2);}
+    : NEWLINE {
+        $$ = new AstStatList();
+    }
+    | stat {
+        $$ = new AstStatList($1);
+    }
+    | stat_list NEWLINE {
+        $$ = $1;
+    }
+    | stat_list stat {
+        $$ = $1;
+        ($1)->setNextNode($2);
+        ($1)->as<AstStatList>()->push($2);
+    }
     ;
 
 stat
-    : stat_expr { $$ = $1; }
-    | struct_decl { $$ = $1; }
-    | func_decl { $$ = $1; }
-    | stat_ret { $$ = $1; }
-    | stat_compound { $$ = $1; }
-    | stat_if { $$ = $1; }
+    : stat_expr {
+        $$ = $1;
+    }
+    | struct_decl {
+        $$ = $1;
+    }
+    | func_decl {
+        $$ = $1;
+    }
+    | stat_ret {
+        $$ = $1;
+    }
+    | stat_compound {
+        $$ = $1;
+    }
+    | stat_if {
+        $$ = $1;
+    }
     ;
 
 stat_compound
-    : '{' stat_list '}' { $$ = $2; }
-    | '{' '}' { $$ = new AstStatList(); }
+    : '{' stat_list '}' {
+        $$ = $2;
+    }
+    | '{' '}' {
+        $$ = new AstStatList();
+    }
     ;
 
 stat_if
-    : IF expr_paren stat %prec LOWER_THAN_ELSE { $$ = new AstIf($2, $3); }
-    | IF expr_paren stat ELSE stat { $$ = new AstIf($2, $3, $5); }
+    : IF expr stat_compound %prec LOWER_THAN_ELSE {
+        $$ = new AstIf($2, $3);
+    }
+    | IF expr stat_compound ELSE stat_compound {
+        $$ = new AstIf($2, $3, $5);
+    }
     ;
 
 stat_ret
-    : RET expr NEWLINE { $$ = new AstRet($2); }
-    | RET NEWLINE { $$ = new AstRet(nullptr); }
+    : RET expr NEWLINE {
+        $$ = new AstRet($2);
+    }
+    | RET NEWLINE {
+        $$ = new AstRet(nullptr);
+    }
     ;
 
 func_decl
     : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
-    | DEF FIELD '(' ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, nullptr, $6); }
+    | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
     | DEF FIELD '(' var_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
-    | DEF FIELD '(' var_decl_seq ')' type_name '=' stat_compound { $$ = new AstFuncDecl(*$2, $8, $4, $6); }
+    | DEF FIELD '(' var_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
     ;
 
 struct_decl

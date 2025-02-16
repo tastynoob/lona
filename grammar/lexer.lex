@@ -72,8 +72,14 @@ using token = lona::Parser::token::token_kind_type;
     return token::LOGIC_OR;
 }
 
-(:|=|\(|\)|\[|\]|\{|\}|@|#|,|\.) {
-    // : = ( ) [ ] { } @ # , .
+(\{|\}) {
+    // { }
+    skip_semi = true;
+    return yytext[0];
+}
+
+(:|=|\(|\)|\[|\]|@|#|,|\.) {
+    // : = ( ) [ ] @ # , .
     return yytext[0];
 }
 
@@ -86,6 +92,10 @@ using token = lona::Parser::token::token_kind_type;
         }
     }
     loc->lines(count);
+    if (skip_semi) {
+        skip_semi = false;
+        break;
+    }
     return token::NEWLINE;
 }
 

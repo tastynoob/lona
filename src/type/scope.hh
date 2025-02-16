@@ -51,10 +51,12 @@ public:
 
 class FuncScope : public Scope {
     friend class LocalScope;
+
     bool const func_root = false;
     llvm::Instruction *alloc_point = nullptr;
     Object *ret_val = nullptr;
     llvm::BasicBlock *ret_block = nullptr;
+    bool returned = false;
 
     int num_sub_scope = 0;
     void accNumScope() {
@@ -86,6 +88,9 @@ public:
         this->ret_block = ret_block;
     }
     llvm::BasicBlock *retBlock() { return ret_block; }
+
+    void setReturned() { returned = true; }
+    bool isReturned() { return returned; }
 
     std::string getName() override {
         return builder.GetInsertBlock()->getParent()->getName().str();
