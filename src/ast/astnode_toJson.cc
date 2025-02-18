@@ -126,6 +126,11 @@ AstIf::toJson(Json &root) {
 }
 
 void
+AstFor::toJson(Json &root) {
+
+}
+
+void
 AstFieldCall::toJson(Json &root) {
     root["type"] = "FieldCall";
     root["value"] = Json::object();

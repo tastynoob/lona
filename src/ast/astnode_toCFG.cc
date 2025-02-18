@@ -47,8 +47,26 @@ AstIf::toCFG(CFGChecker &checker) {
     } else {
         checker.addEndNode(this);
     }
+}
 
-    return;
+void
+AstFor::toCFG(CFGChecker &checker) {
+    auto forname = checker.nextName("for_");
+    checker.visit(this, forname);
+
+    auto next = body->getValidCFGNode();
+    if (next) {
+        if (!checker.isVisited(next)) next->toCFG(checker);
+        checker.link(this, next);
+    }
+
+    if (cfg_next) {
+        auto next = cfg_next->getValidCFGNode();
+        if (!checker.isVisited(next)) cfg_next->toCFG(checker);
+        checker.link(this, next);
+    } else {
+        checker.addEndNode(this);
+    }
 }
 
 void

@@ -25,6 +25,7 @@ public:
     DEF_VISIT(AstFuncDecl)
     DEF_VISIT(AstRet)
     DEF_VISIT(AstIf)
+    DEF_VISIT(AstFor)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstSelector)
 };
@@ -48,6 +49,7 @@ public:
     DEF_VISIT(AstFuncDecl)
     DEF_VISIT(AstRet)
     DEF_VISIT(AstIf)
+    DEF_VISIT(AstFor)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstSelector)
 };

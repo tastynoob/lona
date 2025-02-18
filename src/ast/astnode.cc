@@ -23,6 +23,7 @@ DEF_ACCEPT(AstVarDecl)
 DEF_ACCEPT(AstFuncDecl)
 DEF_ACCEPT(AstRet)
 DEF_ACCEPT(AstIf)
+DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstSelector)
 
@@ -123,6 +124,11 @@ AstRet::AstRet(AstNode *expr) : expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : condition(condition), then(then), els(els) {
+}
+
+AstFor::AstFor(AstNode *expr, AstNode *body)
+    : expr(expr), body(body) {
+    body->setNextNode(this);
 }
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)

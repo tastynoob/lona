@@ -237,6 +237,17 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstFor : public AstNode {
+public:
+    AstNode *const expr;
+    AstNode *const body;
+
+    AstFor(AstNode *expr, AstNode *body);
+    void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstFieldCall : public AstNode {
 public:
     AstNode *const value;

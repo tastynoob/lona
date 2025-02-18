@@ -1,29 +1,12 @@
-a := Complex(1, 2)
-b := Complex(3, 4)
-c := add(a, b)
 
-struct Complex {
-    real i32
-    imag i32
-}
 
-def Complex(a i32, b i32) Complex {
-    t Complex
-    t.real = a
-    t.imag = b
-    ret t
-}
-
-def add(a Complex, b Complex) Complex {
-    t Complex
-    if a.real == 1 {
-        if (a.real == 2) {
-            ret t
-        }
-    } else {
-        a.real = 1
+def sum(a i32) i32 {
+    sum := 0
+    for a != 0 {
+        sum = sum + a
+        a = a - 1
     }
-    t.real = a.real + b.real
-    t.imag = a.imag + b.imag
-    ret t
+    ret sum
 }
+
+

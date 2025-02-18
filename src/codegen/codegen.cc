@@ -251,10 +251,11 @@ public:
         // set retbb to func's end
         // builder.CreateBr(retBB);
         if (retBB) {
-            retBB->insertInto(llvmfunc);
+            if (!headScope->isReturned()) builder.CreateBr(retBB);
+            llvmfunc->insert(llvmfunc->end(), retBB);
             builder.SetInsertPoint(retBB);
         }
-
+        
         if (!node->retType) {
             builder.CreateRetVoid();
         } else {
@@ -317,6 +318,33 @@ public:
 
         func->insert(func->end(), finalBB);
         builder.SetInsertPoint(finalBB);
+        return nullptr;
+    }
+
+    Object *visit(AstFor *node) override {
+        auto lastScope = headScope;
+
+        llvm::Function *func = builder.GetInsertBlock()->getParent();
+        auto condBB = llvm::BasicBlock::Create(context, "", func);
+        auto loopBB = llvm::BasicBlock::Create(context, "", func);
+        auto endBB = llvm::BasicBlock::Create(context);
+        // create condBB
+        builder.CreateBr(condBB);
+        builder.SetInsertPoint(condBB);
+        auto condval = node->expr->accept(*this);
+        builder.CreateCondBr(condval->get(builder), loopBB, endBB);
+
+        // create loop body
+        headScope = new LocalScope(lastScope);
+        builder.SetInsertPoint(loopBB);
+        node->body->accept(*this);
+        if (!headScope->isReturned()) builder.CreateBr(condBB);
+        delete headScope;
+        headScope = lastScope;
+
+        // end
+        func->insert(func->end(), endBB);
+        builder.SetInsertPoint(endBB);
         return nullptr;
     }
 

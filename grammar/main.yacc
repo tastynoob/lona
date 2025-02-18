@@ -40,7 +40,7 @@
 %parse-param { Driver &driver }
 
 %token <token> CONST FIELD
-%token LOGIC_EQUAL LOGIC_AND LOGIC_OR
+%token LOGIC_EQUAL LOGIC_NOT_EQUAL LOGIC_AND LOGIC_OR
 %token TRUE FALSE
 %token IF ELSE FOR
 %token DEF RET STRUCT
@@ -60,7 +60,7 @@
 
 %type <node> pragram
 %type <node> struct_decl func_decl
-%type <node> stat_list stat stat_compound stat_if stat_ret stat_expr
+%type <node> stat_list stat stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary 
 %type <node> expr_paren single_value field_selector type_selector
@@ -116,6 +116,9 @@ stat
     | stat_if {
         $$ = $1;
     }
+    | stat_for {
+        $$ = $1;
+    }
     ;
 
 stat_compound
@@ -133,6 +136,12 @@ stat_if
     }
     | IF expr stat_compound ELSE stat_compound {
         $$ = new AstIf($2, $3, $5);
+    }
+    ;
+
+stat_for
+    : FOR expr stat_compound {
+        $$ = new AstFor($2, $3);
     }
     ;
 
@@ -195,6 +204,7 @@ expr_binOp
     | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
     | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
     | expr LOGIC_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_EQUAL, $3); }
+    | expr LOGIC_NOT_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_NOT_EQUAL, $3); }
     ;
 
 expr_unary

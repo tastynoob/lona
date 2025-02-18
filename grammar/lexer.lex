@@ -64,6 +64,10 @@ using token = lona::Parser::token::token_kind_type;
     return token::LOGIC_EQUAL;
 }
 
+(!=) {
+    return token::LOGIC_NOT_EQUAL;
+}
+
 (&&) {
     return token::LOGIC_AND;
 }
