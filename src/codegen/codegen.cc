@@ -187,20 +187,36 @@ public:
     }
 
     // ignore this
-    Object *visit(AstStructDecl *node) override { return nullptr; }
+    Object *visit(AstStructDecl *node) override {
+        assert(node->body->is<AstStatList>());
+        auto structTy =
+            dynamic_cast<StructType *>(headScope->getType(node->name));
+        assert(structTy);
+
+        headScope->structTy = structTy;
+        for (auto it : node->body->as<AstStatList>()->body) {
+            auto t = it->as<AstFuncDecl>();
+            if (t) {
+                it->accept(*this);
+            }
+        }
+        headScope->structTy = nullptr;
+
+        return nullptr;
+    }
 
     Object *visit(AstFuncDecl *node) override {
         // create function head
-        Functional *func =
-            dynamic_cast<Functional *>(headScope->getObj(node->name));
-        auto llvmfunc = (llvm::Function *)nullptr;
-        if (func) {
-            llvmfunc = (llvm::Function *)func->get(builder);
+        Functional *func = nullptr;
+        if (headScope->structTy) {
+            func = headScope->structTy->getFunc(node->name);
         } else {
-            func = createFunc(*headScope, node);
-            llvmfunc = (llvm::Function *)func->get(builder);
-            headScope->addObj(node->name, func);
+            func = dynamic_cast<Functional *>(headScope->getObj(node->name));
         }
+
+        auto llvmfunc = (llvm::Function *)nullptr;
+        assert(func);
+        llvmfunc = (llvm::Function *)func->get(builder);
 
         // enter function scope
         auto upperScope = headScope;
@@ -232,13 +248,23 @@ public:
         }
 
         // make return alloca
+        int start_arg_idx = 0;
         if (node->retType) {
             auto retType = headScope->getType(node->retType);
             headScope->initRetVal(headScope->allocate(retType));
+            if (retType->isPassByPointer())
+            start_arg_idx++;
+        }
+        // make self params
+        if (upperScope->structTy) {
+            // it shoud be pointer
+            headScope->addObj("self", upperScope->structTy->newObj(
+                                          llvmfunc->getArg(start_arg_idx)));
+            start_arg_idx++;
         }
         // make args alloca
-        for (int i = 0; i < llvmfunc->arg_size(); i++) {
-            auto decl = dynamic_cast<AstVarDecl *>(node->args->at(i));
+        for (int i = start_arg_idx; i < llvmfunc->arg_size(); i++) {
+            auto decl = dynamic_cast<AstVarDecl *>(node->args->at(i - start_arg_idx));
             auto lotype = headScope->getType(decl->typeHelper);
             auto llvmtype = lotype->llvmType;
             auto val = headScope->allocate(lotype);
@@ -255,7 +281,7 @@ public:
             llvmfunc->insert(llvmfunc->end(), retBB);
             builder.SetInsertPoint(retBB);
         }
-        
+
         if (!node->retType) {
             builder.CreateRetVoid();
         } else {
@@ -355,11 +381,9 @@ public:
             auto parent =
                 dynamic_cast<AstSelector *>(node->value)->parent->accept(*this);
             auto field = dynamic_cast<AstSelector *>(node->value)->field;
-            auto member =
-                parent->getType()->fieldSelect(builder, parent, field->text);
-            func = dynamic_cast<Functional *>(member);
+            func = dynamic_cast<StructType*>(parent->getType())->getFunc(field->text);
             // push self
-            args.push_back(parent);
+            args.push_back(new PointerVar(parent));
         } else {
             func = dynamic_cast<Functional *>(node->value->accept(*this));
         }

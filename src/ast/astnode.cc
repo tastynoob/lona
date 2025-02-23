@@ -123,11 +123,9 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
 AstRet::AstRet(AstNode *expr) : expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
-    : condition(condition), then(then), els(els) {
-}
+    : condition(condition), then(then), els(els) {}
 
-AstFor::AstFor(AstNode *expr, AstNode *body)
-    : expr(expr), body(body) {
+AstFor::AstFor(AstNode *expr, AstNode *body) : expr(expr), body(body) {
     body->setNextNode(this);
 }
 

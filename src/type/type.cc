@@ -51,14 +51,17 @@ FuncType::callOperation(Scope *scope, Object *value,
     auto func = dynamic_cast<Functional *>(value);
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
+
+    auto start_arg_idx = 0;
     if (retType && retType->isPassByPointer()) {
         retval = scope->allocate(retType);
         llvmargs.push_back(retval->getllvmValue());
+        start_arg_idx++;
     }
 
     // check args type
-    if (argTypes.size() == args.size())
-        for (int i = 0; i < args.size(); i++) {
+    if (argTypes.size() + start_arg_idx == args.size())
+        for (int i = start_arg_idx; i < args.size(); i++) {
             if (args[i]->getType() != argTypes[i]) {
                 throw "Call argument type mismatch";
             }

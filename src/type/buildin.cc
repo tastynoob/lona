@@ -23,13 +23,20 @@ I32Type::binaryOperation(llvm::IRBuilder<>& builder, Object* left,
         case '/':
             val = builder.CreateSDiv(left->get(builder), right->get(builder));
             break;
-        case Parser::token_type::LOGIC_EQUAL: // ==
+        case '<':
+            val = builder.CreateICmpSLT(left->get(builder), right->get(builder));
+            return new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
+        case '>':
+            val = builder.CreateICmpSGT(left->get(builder), right->get(builder));
+            return new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
+        case Parser::token_type::LOGIC_EQUAL:  // ==
             val = builder.CreateICmpEQ(left->get(builder), right->get(builder));
             return new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
-        case Parser::token_type::LOGIC_NOT_EQUAL: // !+
+        case Parser::token_type::LOGIC_NOT_EQUAL:  // !=
             val = builder.CreateICmpNE(left->get(builder), right->get(builder));
             return new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
         default:
+            assert(false);
             break;
     }
     return new BaseVar(val, left->getType(),

@@ -60,7 +60,7 @@ class StructType;
 class Functional;
 
 Functional *
-createFunc(Scope &scope, AstFuncDecl *root);
+createFunc(Scope &scope, AstFuncDecl *root, StructType *parent = nullptr);
 
 void
 scanningType(Scope *global, AstNode *root);

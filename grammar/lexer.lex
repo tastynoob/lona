@@ -60,6 +60,14 @@ using token = lona::Parser::token::token_kind_type;
     return yytext[0];
 }
 
+(\+=) {
+    return token::ASSIGN_ADD;
+}
+
+(-=) {
+    return token::ASSIGN_SUB;
+}
+
 (==) {
     return token::LOGIC_EQUAL;
 }
@@ -73,6 +81,7 @@ using token = lona::Parser::token::token_kind_type;
 }
 
 (\|\|) {
+    // ||
     return token::LOGIC_OR;
 }
 

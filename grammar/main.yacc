@@ -45,13 +45,15 @@
 %token IF ELSE FOR
 %token DEF RET STRUCT
 %token NEWLINE
+%token ASSIGN_ADD ASSIGN_SUB
 
 %nonassoc type_suffix
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
-%right '='
-%left LOGIC_EQUAL
+%right '=' ASSIGN_ADD ASSIGN_SUB
+%left LOGIC_EQUAL LOGIC_NOT_EQUAL 
 %left '&' '|'
+%left '<' '>'
 %left '+' '-' // + -
 %left '*' '/' // * /
 %left '.'
@@ -190,6 +192,8 @@ expr
 
 expr_assign
     : expr_assign_left '=' expr { $$ = new AstAssign($1, $3); }
+    | expr_assign_left ASSIGN_ADD expr { $$ = new AstAssign($1, new AstBinOper($1, '+', $3)); }
+    | expr_assign_left ASSIGN_SUB expr { $$ = new AstAssign($1, new AstBinOper($1, '-', $3)); }
     ;
 
 expr_assign_left
@@ -202,6 +206,8 @@ expr_binOp
     | expr '/' expr { $$ = new AstBinOper($1, '/', $3); }
     | expr '+' expr { $$ = new AstBinOper($1, '+', $3); }
     | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
+    | expr '<' expr { $$ = new AstBinOper($1, '<', $3); }
+    | expr '>' expr { $$ = new AstBinOper($1, '>', $3); }
     | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
     | expr LOGIC_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_EQUAL, $3); }
     | expr LOGIC_NOT_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_NOT_EQUAL, $3); }

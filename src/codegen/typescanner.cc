@@ -28,7 +28,7 @@ public:
 
     Object* visit(AstStructDecl* node) override {
         auto structTy = createStruct(global, node);
-        global->addType(node->name, structTy);
+        // global->addType(node->name, structTy);
         return nullptr;
     }
 
@@ -42,7 +42,7 @@ public:
 };
 
 Functional*
-createFunc(Scope& scope, AstFuncDecl* root) {
+createFunc(Scope& scope, AstFuncDecl* root, StructType* parent) {
     // create function type
     auto& builder = scope.builder;
     std::vector<llvm::Type*> args;
@@ -59,6 +59,11 @@ createFunc(Scope& scope, AstFuncDecl* root) {
         }
     }
 
+    if (parent) {
+        args.push_back(parent->llvmType->getPointerTo());
+        loargs.push_back(parent);
+    }
+
     if (root->args)
         for (auto it : *root->args) {
             auto decl = dynamic_cast<AstVarDecl*>(it);
@@ -73,7 +78,14 @@ createFunc(Scope& scope, AstFuncDecl* root) {
     llvm::FunctionType* funcType =
         llvm::FunctionType::get(retType, args, false);
 
-    std::string func_name = scope.getName() + '.' + root->name;
+    std::string func_name;
+
+    if (parent) {
+        func_name = parent->full_name + '.' + root->name;
+    } else {
+        func_name = scope.getName() + '.' + root->name;
+    }
+
     // create function
     llvm::Function* func = llvm::Function::Create(
         funcType, llvm::Function::ExternalLinkage, func_name, scope.module);

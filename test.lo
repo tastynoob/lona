@@ -1,12 +1,34 @@
 
+a := Complex(1,2)
+b := Complex(2,3)
+c := a.add(b)
 
-def sum(a i32) i32 {
-    sum := 0
-    for a != 0 {
-        sum = sum + a
-        a = a - 1
+d := fibo(c.real)
+
+struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        t Complex
+        t.real = self.real + a.real
+        t.imag = self.imag + a.imag
+        ret t
     }
-    ret sum
+}
+
+def Complex(a i32, b i32) Complex {
+    t Complex
+    t.real = a
+    t.imag = b
+    ret t
 }
 
 
+def fibo(a i32) i32 {
+    if a < 2 {
+        ret 1
+    }
+
+    ret fibo(a-1) + fibo(a-2)
+}

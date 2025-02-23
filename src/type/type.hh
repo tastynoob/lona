@@ -18,12 +18,10 @@ class TypeClass {
 public:
     llvm::Type *const llvmType;
     std::string const full_name;
-    int const typeSize;
+    int typeSize;
 
     TypeClass(llvm::Type *llvmType, std::string full_name, int typeSize)
-        : llvmType(llvmType), full_name(full_name), typeSize(typeSize) {
-        assert(typeSize > 0);
-    }
+        : llvmType(llvmType), full_name(full_name), typeSize(typeSize) {}
 
     template<typename T>
     bool is() {
@@ -76,12 +74,39 @@ public:
 
 class StructType : public TypeClass {
     llvm::StringMap<std::pair<TypeClass *, int>> members;
-
+    llvm::StringMap<Functional*> funcs;
 public:
     StructType(llvm::Type *llvmType,
                llvm::StringMap<std::pair<TypeClass *, int>> &&members,
                std::string full_name, int typeSize)
         : TypeClass(llvmType, full_name, typeSize), members(members) {}
+
+    StructType(llvm::Type *llvmType, std::string full_name)
+        : TypeClass(llvmType, full_name, 0) {}
+
+    TypeClass *getMember(const std::string &name) {
+        auto it = members.find(name);
+        if (it == members.end()) {
+            return nullptr;
+        }
+        return it->second.first;
+    }
+
+    Functional *getFunc(const std::string &name) {
+        auto it = funcs.find(name);
+        if (it == funcs.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+
+    void setMembers(llvm::StringMap<std::pair<TypeClass *, int>> &&members) {
+        this->members = members;
+    }
+
+    void setFuncs(llvm::StringMap<Functional*> &&funcs) {
+        this->funcs = funcs;
+    }
 
     Object *newObj(llvm::Value *val,
                    uint32_t specifiers = Object::EMPTY) override;

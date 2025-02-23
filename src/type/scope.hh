@@ -26,7 +26,7 @@ public:
 
     virtual std::string getName() = 0;
 
-    virtual Object *allocate(TypeClass *, bool t = false) = 0;
+    virtual Object *allocate(TypeClass *, bool t = false) { throw ""; };
 
     void addObj(llvm::StringRef name, Object *var);
 
@@ -70,6 +70,9 @@ class FuncScope : public Scope {
     }
 
 public:
+    // used for struct body
+    StructType *structTy = nullptr;
+
     FuncScope(FuncScope *parent)
         : Scope(parent),
           alloc_point(parent->alloc_point),

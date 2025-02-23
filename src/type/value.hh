@@ -25,6 +25,7 @@ public:
     };
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : val(val), type(type), specifiers(specifiers) {}
+    uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }
     bool isVariable() { return specifiers & VARIABLE; }
@@ -45,6 +46,17 @@ public:
         : Object(val, type, specifiers | VARIABLE) {}
 };
 
+class PointerVar : public Object {
+public:
+    PointerVar(Object* obj) : Object(obj->getllvmValue(), obj->getType(), obj->getSpecifiers()) {}
+    void set(llvm::IRBuilder<> &builder, Object *src) override {
+        assert(false);
+    }
+    llvm::Value * get(llvm::IRBuilder<> &builder) override {
+        return val;
+    }
+};
+
 class StructVar : public Object {
 public:
     StructVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
@@ -56,7 +68,7 @@ class Functional : public Object {
     AstFuncDecl *funcDecl;
 
 public:
-    Functional(llvm::Function *val, TypeClass *type) : Object(val, type) {}
+    Functional(llvm::Value *val, TypeClass *type) : Object(val, type) {}
 
     llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
 
