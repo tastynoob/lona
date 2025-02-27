@@ -207,11 +207,11 @@ public:
 
     Object *visit(AstFuncDecl *node) override {
         // create function head
-        Functional *func = nullptr;
+        Method *func = nullptr;
         if (headScope->structTy) {
             func = headScope->structTy->getFunc(node->name);
         } else {
-            func = dynamic_cast<Functional *>(headScope->getObj(node->name));
+            func = dynamic_cast<Method *>(headScope->getObj(node->name));
         }
 
         auto llvmfunc = (llvm::Function *)nullptr;
@@ -375,7 +375,7 @@ public:
     }
 
     Object *visit(AstFieldCall *node) override {
-        Functional *func = nullptr;
+        Method *func = nullptr;
         std::vector<Object *> args;
         if (node->value->is<AstSelector>()) {
             auto parent =
@@ -385,7 +385,7 @@ public:
             // push self
             args.push_back(new PointerVar(parent));
         } else {
-            func = dynamic_cast<Functional *>(node->value->accept(*this));
+            func = dynamic_cast<Method *>(node->value->accept(*this));
         }
 
         if (node->args)

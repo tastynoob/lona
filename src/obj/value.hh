@@ -20,11 +20,14 @@ public:
     enum Specifier : uint32_t {
         EMPTY = 0,
         VARIABLE = 1 << 0,
-        REG_VAL = 1 << 1,
+        REG_VAL = 1 << 1,// only for base type and small struct
         READONLY = 1 << 2,
     };
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : val(val), type(type), specifiers(specifiers) {}
+
+    template<class T>
+    T *as() { return dynamic_cast<T *>(this); }
     uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }
@@ -40,6 +43,7 @@ public:
     virtual void set(llvm::IRBuilder<> &builder, Object *src);
 };
 
+// i32, i64 ...
 class BaseVar : public Object {
 public:
     BaseVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
@@ -61,14 +65,19 @@ class StructVar : public Object {
 public:
     StructVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(val, type, specifiers) {}
+
+    Object *getField(llvm::IRBuilder<> &builder, std::string name);
+    
     void set(llvm::IRBuilder<> &builder, Object *src) override;
 };
 
-class Functional : public Object {
+class Method : public Object {
     AstFuncDecl *funcDecl;
 
 public:
-    Functional(llvm::Value *val, TypeClass *type) : Object(val, type) {}
+    Method(llvm::Value *val, TypeClass *type) : Object(val, type) {}
+
+    Object *call(llvm::IRBuilder<> &builder, std::vector<Object *> &args);
 
     llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
 

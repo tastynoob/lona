@@ -1,7 +1,7 @@
 #pragma once
 
 #include "type/type.hh"
-#include "type/value.hh"
+#include "obj/value.hh"
 
 namespace lona {
 

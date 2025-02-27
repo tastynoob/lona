@@ -46,9 +46,9 @@ StructType::fieldSelect(llvm::IRBuilder<> &builder, Object *value,
 Object *
 FuncType::callOperation(Scope *scope, Object *value,
                         std::vector<Object *> args) {
-    assert(dynamic_cast<Functional *>(value));
+    assert(dynamic_cast<Method *>(value));
     auto &builder = scope->builder;
-    auto func = dynamic_cast<Functional *>(value);
+    auto func = dynamic_cast<Method *>(value);
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
 

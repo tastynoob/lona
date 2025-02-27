@@ -1,4 +1,3 @@
-#include "type/value.hh"
 #include "type/type.hh"
 #include "value.hh"
 

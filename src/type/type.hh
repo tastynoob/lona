@@ -2,7 +2,7 @@
 
 #include "ast/astnode.hh"
 #include "codegen/base.hh"
-#include "type/value.hh"
+#include "obj/value.hh"
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
@@ -74,7 +74,7 @@ public:
 
 class StructType : public TypeClass {
     llvm::StringMap<std::pair<TypeClass *, int>> members;
-    llvm::StringMap<Functional*> funcs;
+    llvm::StringMap<Method*> funcs;
 public:
     StructType(llvm::Type *llvmType,
                llvm::StringMap<std::pair<TypeClass *, int>> &&members,
@@ -92,7 +92,7 @@ public:
         return it->second.first;
     }
 
-    Functional *getFunc(const std::string &name) {
+    Method *getFunc(const std::string &name) {
         auto it = funcs.find(name);
         if (it == funcs.end()) {
             return nullptr;
@@ -104,7 +104,7 @@ public:
         this->members = members;
     }
 
-    void setFuncs(llvm::StringMap<Functional*> &&funcs) {
+    void setFuncs(llvm::StringMap<Method*> &&funcs) {
         this->funcs = funcs;
     }
 

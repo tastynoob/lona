@@ -20,7 +20,7 @@ class AstRet;
 class AstVisitor;
 class Object;
 class Scope;
-class Functional;
+class Method;
 using token_type = int;
 
 const int pointerType_pointer = 1;

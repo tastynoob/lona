@@ -1,7 +1,7 @@
 #include "buildin.hh"
 
 #include "parser.hh"
-#include "type/value.hh"
+#include "obj/value.hh"
 
 namespace lona {
 
