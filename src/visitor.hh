@@ -7,6 +7,6 @@ namespace lona {
 void
 interpreter(AstNode *node);
 void
-compile(AstNode *node, std::string &filename, std::ostream &os);
+compile(std::string &filepath, std::ostream &os);
 
 }  // namespace lona

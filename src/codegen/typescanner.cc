@@ -41,7 +41,7 @@ public:
     }
 };
 
-Method*
+Function*
 createFunc(Scope& scope, AstFuncDecl* root, StructType* parent) {
     // create function type
     auto& builder = scope.builder;
@@ -90,8 +90,8 @@ createFunc(Scope& scope, AstFuncDecl* root, StructType* parent) {
     llvm::Function* func = llvm::Function::Create(
         funcType, llvm::Function::ExternalLinkage, func_name, scope.module);
 
-    return new Method(func, new FuncType(funcType, std::move(loargs),
-                                             loretType, func_name, 8));
+    return new Function(func, new FuncType(funcType, std::move(loargs),
+                                           loretType, func_name, 8));
 }
 
 void

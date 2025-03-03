@@ -1,5 +1,6 @@
-#include "type/type.hh"
 #include "value.hh"
+#include "type/scope.hh"
+#include "type/type.hh"
 
 namespace lona {
 
@@ -14,7 +15,7 @@ Object::get(llvm::IRBuilder<> &builder) {
 
 void
 Object::set(llvm::IRBuilder<> &builder, Object *src) {
-    if (isReadOnly()) {
+    if (isReadOnly() || isRegVal()) {
         throw "readonly";
     }
 
@@ -25,11 +26,6 @@ Object::set(llvm::IRBuilder<> &builder, Object *src) {
     assert(val->getType()->isPointerTy());
     builder.CreateStore(src->get(builder), val);
 }
-
-// llvm::Value *
-// StructVar::get(llvm::IRBuilder<> &builder) {
-//     return Object::get(builder);
-// }
 
 void
 StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
@@ -45,6 +41,45 @@ StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
         builder.CreateMemCpy(val, llvm::MaybeAlign(8), struct_src->val,
                              llvm::MaybeAlign(8), type->typeSize);
     }
+}
+
+Object *
+Function::call(Scope *scope, std::vector<Object *> &args) {
+    auto &builder = scope->builder;
+    auto llvm_func = (llvm::Function *)val;
+    auto retType = type->as<FuncType>()->retType;
+    auto argTypes = type->as<FuncType>()->argTypes;
+    std::vector<llvm::Value *> llvmargs;
+    Object *retval = nullptr;
+
+    if (retType && retType->isPassByPointer()) {
+        assert(false);
+    }
+
+    // check args type
+    if (argTypes.size() == args.size())
+        for (int i = 0; i < args.size(); i++) {
+            if (args[i]->getType() != argTypes[i]) {
+                throw "Call argument type mismatch";
+            }
+            llvmargs.push_back(args[i]->get(builder));
+        }
+    else {
+        throw "Call argument number mismatch";
+    }
+
+    auto ret = builder.CreateCall(llvm_func, llvmargs);
+
+    if (retType && retType->isPassByPointer()) {
+        return retval;
+    } else if (retType) {
+        return retType->newObj(ret, Object::REG_VAL);
+    } else {
+        // no return
+        return nullptr;
+    }
+
+    return nullptr;
 }
 
 }  // namespace lona

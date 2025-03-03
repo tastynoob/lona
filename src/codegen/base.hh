@@ -57,9 +57,9 @@ public:
 class Scope;
 class AstNode;
 class StructType;
-class Method;
+class Function;
 
-Method *
+Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent = nullptr);
 
 void

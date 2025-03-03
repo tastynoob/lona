@@ -120,7 +120,7 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstNode *> *args, TypeHelper *retType)
     : name(name.text), body(body), args(args), retType(retType) {}
 
-AstRet::AstRet(AstNode *expr) : expr(expr) {}
+AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : condition(condition), then(then), els(els) {}

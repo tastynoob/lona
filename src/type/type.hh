@@ -24,8 +24,8 @@ public:
         : llvmType(llvmType), full_name(full_name), typeSize(typeSize) {}
 
     template<typename T>
-    bool is() {
-        return dynamic_cast<const T *>(this) != nullptr;
+    T *as() {
+        return dynamic_cast<T *>(this);
     }
 
     // func parameters pass pointerization
@@ -74,7 +74,8 @@ public:
 
 class StructType : public TypeClass {
     llvm::StringMap<std::pair<TypeClass *, int>> members;
-    llvm::StringMap<Method*> funcs;
+    llvm::StringMap<Function *> funcs;
+
 public:
     StructType(llvm::Type *llvmType,
                llvm::StringMap<std::pair<TypeClass *, int>> &&members,
@@ -92,7 +93,7 @@ public:
         return it->second.first;
     }
 
-    Method *getFunc(const std::string &name) {
+    Function *getFunc(const std::string &name) {
         auto it = funcs.find(name);
         if (it == funcs.end()) {
             return nullptr;
@@ -104,9 +105,7 @@ public:
         this->members = members;
     }
 
-    void setFuncs(llvm::StringMap<Method*> &&funcs) {
-        this->funcs = funcs;
-    }
+    void setFuncs(llvm::StringMap<Function *> &&funcs) { this->funcs = funcs; }
 
     Object *newObj(llvm::Value *val,
                    uint32_t specifiers = Object::EMPTY) override;
@@ -117,10 +116,10 @@ public:
 
 // local type
 class FuncType : public TypeClass {
-    std::vector<TypeClass *> argTypes;
-    TypeClass *retType;
-
 public:
+    std::vector<TypeClass *> const argTypes;
+    TypeClass *const retType;
+
     FuncType(llvm::Type *llvmType, std::vector<TypeClass *> &&args,
              TypeClass *retType, std::string full_name, int typeSize)
         : TypeClass(llvmType, full_name, typeSize),

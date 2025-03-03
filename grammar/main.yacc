@@ -39,11 +39,11 @@
 %define api.parser.class { Parser }
 %parse-param { Driver &driver }
 
-%token <token> CONST FIELD
+%token <token> CONST FIELD RET
 %token LOGIC_EQUAL LOGIC_NOT_EQUAL LOGIC_AND LOGIC_OR
 %token TRUE FALSE
 %token IF ELSE FOR
-%token DEF RET STRUCT
+%token DEF STRUCT
 %token NEWLINE
 %token ASSIGN_ADD ASSIGN_SUB
 
@@ -149,10 +149,10 @@ stat_for
 
 stat_ret
     : RET expr NEWLINE {
-        $$ = new AstRet($2);
+        $$ = new AstRet($1->loc, $2);
     }
     | RET NEWLINE {
-        $$ = new AstRet(nullptr);
+        $$ = new AstRet($1->loc, nullptr);
     }
     ;
 

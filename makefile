@@ -8,10 +8,10 @@ LEX_FILE = grammar/lexer.lex
 YACC_FILE = $(shell find $(ROOT)/grammar -name "*.yacc")
 SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") build/scanner.cc build/parser.cc
 
-LIBS = $(shell llvm-config --libs core native)
+LIBS = $(shell llvm-config-18 --libs core native)
 
-LD_FLAGS = $(shell llvm-config --ldflags)
-CXXFLAGS += $(shell llvm-config --cppflags)
+LD_FLAGS = $(shell llvm-config-18 --ldflags)
+CXXFLAGS += $(shell llvm-config-18 --cppflags)
 
 OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
 target = $(OUT_DIR)/lona
@@ -48,5 +48,5 @@ clean:
 	rm -rf $(OUT_DIR)
 
 format:
-	clang-format -i $(shell find $(ROOT)/src -name "*.cc") $(shell find $(ROOT)/src -name "*.hh")
+	clang-format-18 -i $(shell find $(ROOT)/src -name "*.cc") $(shell find $(ROOT)/src -name "*.hh")
 

@@ -20,14 +20,14 @@ using token = lona::Parser::token::token_kind_type;
 
 %%
 
-(true) { return token::TRUE; }
-(false) { return token::FALSE; }
-(def) { return token::DEF; }
-(ret) { return token::RET; }
-(if) { return token::IF; }
-(else) { return token::ELSE; }
-(for) { return token::FOR; }
-(struct) { return token::STRUCT; }
+(true) { loc->columns(yyleng); return token::TRUE; }
+(false) { loc->columns(yyleng); return token::FALSE; }
+(def) { loc->columns(yyleng); return token::DEF; }
+(ret) { lval->token = new AstToken(*loc); loc->columns(yyleng); return token::RET; }
+(if) { loc->columns(yyleng); return token::IF; }
+(else) { loc->columns(yyleng); return token::ELSE; }
+(for) { loc->columns(yyleng); return token::FOR; }
+(struct) { loc->columns(yyleng); return token::STRUCT; }
 (case) {}
 (pass) {}
 (cast) {}
@@ -35,11 +35,13 @@ using token = lona::Parser::token::token_kind_type;
 
 [0-9]+ {
     lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);
+    loc->columns(yyleng);
     return token::CONST;
 }
 
 [0-9]+\.[0-9]+ {
     lval->token = new AstToken(TokenType::ConstFP32, yytext, *loc);
+    loc->columns(yyleng);
     return token::CONST;
 }
 
@@ -47,64 +49,80 @@ using token = lona::Parser::token::token_kind_type;
     char* strpos = yytext + 1;
     yytext[yyleng - 1] = '\0';
     lval->token = new AstToken(TokenType::ConstStr, strEscape(std::string(strpos)).c_str(), *loc);
+    loc->columns(yyleng);
     return token::CONST;
 }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
     lval->token = new AstToken(TokenType::Field, yytext, *loc);
+    loc->columns(yyleng);
     return token::FIELD;
 }
 
 (\+|-|\*|\/|!|~|<|>|\||&|^) {
     // + - * / ! ~ < > | & ^
+    loc->columns(yyleng);
     return yytext[0];
 }
 
 (\+=) {
+    loc->columns(yyleng);
     return token::ASSIGN_ADD;
 }
 
 (-=) {
+    loc->columns(yyleng);
     return token::ASSIGN_SUB;
 }
 
 (==) {
+    loc->columns(yyleng);
     return token::LOGIC_EQUAL;
 }
 
 (!=) {
+    loc->columns(yyleng);
     return token::LOGIC_NOT_EQUAL;
 }
 
 (&&) {
+    loc->columns(yyleng);
     return token::LOGIC_AND;
 }
 
 (\|\|) {
     // ||
+    loc->columns(yyleng);
     return token::LOGIC_OR;
 }
 
 (\{|\}) {
     // { }
     skip_semi = true;
+    loc->columns(yyleng);
     return yytext[0];
 }
 
 (:|=|\(|\)|\[|\]|@|#|,|\.) {
     // : = ( ) [ ] @ # , .
+    loc->columns(yyleng);
     return yytext[0];
 }
 
 ([ ]*\n[ \n]*) {
-    /* count \n */
-    int count = 0;
+    int line_num = 0;
+    int space_num = 0;
     for (int i = 0; i < yyleng; i++) {
         if (yytext[i] == '\n') {
-            count++;
+            line_num++;
+            space_num = 0;
+        }
+        if (yytext[i] == ' ') {
+            space_num++;
         }
     }
-    loc->lines(count);
+    loc->lines(line_num);
+    loc->columns(space_num);
     if (skip_semi) {
         skip_semi = false;
         break;
@@ -112,8 +130,12 @@ using token = lona::Parser::token::token_kind_type;
     return token::NEWLINE;
 }
 
-\/\/[^\n]* { }
-[ \t]+ { /* ignore */ }
+\/\/[^\n]* {
+    loc->lines(1);
+}
+[ \t]+ {
+    loc->columns(yyleng);
+}
 
 .|\n {
     std::cerr << "Unrecognized token: \'" << yytext << "\'" << std::endl;

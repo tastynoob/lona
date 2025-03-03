@@ -20,7 +20,7 @@ class AstRet;
 class AstVisitor;
 class Object;
 class Scope;
-class Method;
+class Function;
 using token_type = int;
 
 const int pointerType_pointer = 1;
@@ -43,7 +43,7 @@ protected:
 public:
     location const loc;
     AstNode() {}
-    AstNode(location loc) : loc(loc) {}
+    AstNode(const location &loc) : loc(loc) {}
 
     virtual void setNextNode(AstNode *node) {
         cfg_next = node->getValidCFGNode();
@@ -209,7 +209,7 @@ public:
         // do nothing
     }
 
-    AstRet(AstNode *expr);
+    AstRet(const location &loc, AstNode *expr);
     void toJson(Json &root) override;
     void toCFG(CFGChecker &checker) override;
 

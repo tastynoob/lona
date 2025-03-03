@@ -8,6 +8,8 @@ namespace lona {
 
 class AstFuncDecl;
 class TypeClass;
+class FuncType;
+class Scope;
 class BaseVar;
 
 class Object {
@@ -20,14 +22,16 @@ public:
     enum Specifier : uint32_t {
         EMPTY = 0,
         VARIABLE = 1 << 0,
-        REG_VAL = 1 << 1,// only for base type and small struct
+        REG_VAL = 1 << 1,  // only for base type and small struct
         READONLY = 1 << 2,
     };
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : val(val), type(type), specifiers(specifiers) {}
 
     template<class T>
-    T *as() { return dynamic_cast<T *>(this); }
+    T *as() {
+        return dynamic_cast<T *>(this);
+    }
     uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }
@@ -35,7 +39,7 @@ public:
     bool isRegVal() { return specifiers & REG_VAL; }
     bool isReadOnly() { return specifiers & READONLY; }
 
-    virtual llvm::Value *ptr() {
+    llvm::Value *ptr() {
         assert(val->getType()->isPointerTy());
         return val;
     }
@@ -47,18 +51,17 @@ public:
 class BaseVar : public Object {
 public:
     BaseVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
-        : Object(val, type, specifiers | VARIABLE) {}
+        : Object(val, type, specifiers) {}
 };
 
 class PointerVar : public Object {
 public:
-    PointerVar(Object* obj) : Object(obj->getllvmValue(), obj->getType(), obj->getSpecifiers()) {}
+    PointerVar(Object *obj)
+        : Object(obj->getllvmValue(), obj->getType(), obj->getSpecifiers()) {}
     void set(llvm::IRBuilder<> &builder, Object *src) override {
         assert(false);
     }
-    llvm::Value * get(llvm::IRBuilder<> &builder) override {
-        return val;
-    }
+    llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
 };
 
 class StructVar : public Object {
@@ -67,17 +70,18 @@ public:
         : Object(val, type, specifiers) {}
 
     Object *getField(llvm::IRBuilder<> &builder, std::string name);
-    
+
     void set(llvm::IRBuilder<> &builder, Object *src) override;
 };
 
-class Method : public Object {
+class Function : public Object {
     AstFuncDecl *funcDecl;
 
 public:
-    Method(llvm::Value *val, TypeClass *type) : Object(val, type) {}
+    Function(llvm::Function *val, FuncType *type)
+        : Object((llvm::Function *)val, (TypeClass *)type) {}
 
-    Object *call(llvm::IRBuilder<> &builder, std::vector<Object *> &args);
+    Object *call(Scope *scope, std::vector<Object *> &args);
 
     llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
 

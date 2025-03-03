@@ -8,7 +8,7 @@ class StructVisitor : public AstVisitorAny {
     Scope* scope;
     std::vector<llvm::Type*> llvmmembers;
     llvm::StringMap<std::pair<TypeClass*, int>> members;
-    llvm::StringMap<Method*> funcs;
+    llvm::StringMap<Function*> funcs;
     AstStructDecl* node;
 
     StructType* lostructTy = nullptr;

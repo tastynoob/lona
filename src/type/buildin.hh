@@ -4,27 +4,45 @@
 
 namespace lona {
 
-class I32Type : public BaseType {
+class IntType : public BaseType {
+
 public:
-    I32Type(llvm::Type* type)
-        : BaseType(type, I32, "i32", type->getIntegerBitWidth() / 8) {}
+    IntType(llvm::Type* type, Type id, std::string name)
+        : BaseType(type, id, name, type->getIntegerBitWidth() / 8) {}
+
+    bool isSigned() {
+        return type == I8 || type == I16 || type == I32 || type == I64;
+    }
+
     Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
                             token_type op, Object* right) override;
     Object* unaryOperation(llvm::IRBuilder<>& builder, token_type op,
                            Object* value) override;
-    Object* assignOperation(llvm::IRBuilder<>& builder, Object* left,
-                            Object* right) override;
+};
+
+class FLoatType : public BaseType {
+public:
+    FLoatType(llvm::Type* type, Type id, std::string name)
+        : BaseType(type, id, name, type->getPrimitiveSizeInBits() / 8) {}
 };
 
 class BoolType : public BaseType {
 public:
     BoolType(llvm::Type* type) : BaseType(type, BOOL, "bool", 1) {}
+
+    Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
+        token_type op, Object* right) override;
+    Object* unaryOperation(llvm::IRBuilder<>& builder, token_type op,
+        Object* value) override;
 };
 
 void
 initBuildinType(Scope* scope);
 
-extern I32Type* i32Ty;
+extern IntType* i8Ty;
+extern IntType* i16Ty;
+extern IntType* i32Ty;
+extern IntType* i64Ty;
 extern BoolType* boolTy;
 
 }

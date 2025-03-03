@@ -1,8 +1,10 @@
 #include "base.hh"
+#include "err/err.hh"
+#include "scan/driver.hh"
 #include "type/buildin.hh"
 #include "util/cfg.hh"
-#include <fstream>
 
+#include <fstream>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -32,15 +34,15 @@ class Compiler : public AstVisitor {
     llvm::LLVMContext &context;
     llvm::Module &module;
     llvm::IRBuilder<> builder;
+    Err &err;
 
     GlobalScope *globalScope = nullptr;
     FuncScope *headScope = nullptr;
-
     Object *struObj = nullptr;
 
 public:
-    Compiler(llvm::LLVMContext &context, llvm::Module &module)
-        : context(context), module(module), builder(context) {
+    Compiler(llvm::LLVMContext &context, llvm::Module &module, Err &err)
+        : context(context), module(module), builder(context), err(err) {
         // init buildin type
         globalScope = new GlobalScope(builder, module);
         initBuildinType(globalScope);
@@ -56,6 +58,13 @@ public:
 
     void printResult(std::ostream &os) {
         llvm::raw_os_ostream raw_os(os);
+
+        llvm::ModulePassManager mpm;
+        llvm::ModuleAnalysisManager mam;
+        llvm::PassBuilder pb;
+        pb.registerModuleAnalyses(mam);
+
+        mpm.run(module, mam);
 
         module.print(raw_os, nullptr);
     }
@@ -94,19 +103,19 @@ public:
                 module, str->getType(), true, llvm::GlobalValue::PrivateLinkage,
                 str);
             auto var =
-                new BaseVar(strval, lotype, Object::REG_VAL | Object::READONLY);
+                new BaseVar(strval, lotype, Object::REG_VAL);
             return var;
         } else if (node->getType() == AstConst::Type::FP32) {
             auto lotype = headScope->getType("f32");
             auto fpval =
                 llvm::ConstantFP::get(lotype->llvmType, *node->getBuf<float>());
             return new BaseVar(fpval, lotype,
-                               Object::REG_VAL | Object::READONLY);
+                               Object::REG_VAL);
         } else if (node->getType() == AstConst::Type::INT32) {
             auto intval =
                 llvm::ConstantInt::get(i32Ty->llvmType, *node->getBuf<int>());
             return new BaseVar(intval, i32Ty,
-                               Object::REG_VAL | Object::READONLY);
+                               Object::REG_VAL);
         } else {
             assert(false);
         }
@@ -207,11 +216,11 @@ public:
 
     Object *visit(AstFuncDecl *node) override {
         // create function head
-        Method *func = nullptr;
+        Function *func = nullptr;
         if (headScope->structTy) {
             func = headScope->structTy->getFunc(node->name);
         } else {
-            func = dynamic_cast<Method *>(headScope->getObj(node->name));
+            func = dynamic_cast<Function *>(headScope->getObj(node->name));
         }
 
         auto llvmfunc = (llvm::Function *)nullptr;
@@ -252,8 +261,7 @@ public:
         if (node->retType) {
             auto retType = headScope->getType(node->retType);
             headScope->initRetVal(headScope->allocate(retType));
-            if (retType->isPassByPointer())
-            start_arg_idx++;
+            if (retType->isPassByPointer()) start_arg_idx++;
         }
         // make self params
         if (upperScope->structTy) {
@@ -264,7 +272,8 @@ public:
         }
         // make args alloca
         for (int i = start_arg_idx; i < llvmfunc->arg_size(); i++) {
-            auto decl = dynamic_cast<AstVarDecl *>(node->args->at(i - start_arg_idx));
+            auto decl =
+                dynamic_cast<AstVarDecl *>(node->args->at(i - start_arg_idx));
             auto lotype = headScope->getType(decl->typeHelper);
             auto llvmtype = lotype->llvmType;
             auto val = headScope->allocate(lotype);
@@ -300,9 +309,9 @@ public:
             auto val = node->expr->accept(*this);
             retalloc->set(builder, val);
         } else if (retalloc && !node->expr) {
-            throw "no return value";
+            err.err(node->loc.begin, "Missing return value");
         } else if (!retalloc && node->expr) {
-            throw "no need return value";
+            err.err(node->loc.begin, "No return value but given");
         }
 
         headScope->setReturned();
@@ -375,17 +384,18 @@ public:
     }
 
     Object *visit(AstFieldCall *node) override {
-        Method *func = nullptr;
+        Function *func = nullptr;
         std::vector<Object *> args;
         if (node->value->is<AstSelector>()) {
             auto parent =
                 dynamic_cast<AstSelector *>(node->value)->parent->accept(*this);
             auto field = dynamic_cast<AstSelector *>(node->value)->field;
-            func = dynamic_cast<StructType*>(parent->getType())->getFunc(field->text);
+            func = dynamic_cast<StructType *>(parent->getType())
+                       ->getFunc(field->text);
             // push self
             args.push_back(new PointerVar(parent));
         } else {
-            func = dynamic_cast<Method *>(node->value->accept(*this));
+            func = dynamic_cast<Function *>(node->value->accept(*this));
         }
 
         if (node->args)
@@ -405,16 +415,34 @@ public:
 };
 
 void
-compile(AstNode *node, std::string &filename, std::ostream &os) {
+compile(std::string &filepath, std::ostream &os) {
+    std::ifstream in(filepath);
+    if (in.fail()) {
+        std::cout << "Error: " << filepath << " no such file" << std::endl;
+        exit(-1);
+    }
 
-    std::string module_name = filename.substr(0, filename.find_last_of('.'));
-    llvm::LLVMContext context;
-    llvm::Module module(module_name, context);
-    // module.setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
+    Err err = Err(in);
+    Driver driver;
+    driver.input(&in);
+    auto tree = driver.parse();
+    if (tree) {
+        std::string filename;
+        if (filepath.rfind('/') != std::string::npos) {
+            filename = filepath.substr(filepath.rfind('/') + 1);
+        } else {
+            filename = filepath;
+        }
+        std::string module_name =
+            filename.substr(0, filename.find_last_of('.'));
+        llvm::LLVMContext context;
+        llvm::Module module(module_name, context);
+        // module.setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
 
-    Compiler compiler(context, module);
-    compiler.visit(node);
-    compiler.printResult(os);
+        Compiler compiler(context, module, err);
+        compiler.visit(tree);
+        compiler.printResult(os);
+    }
 }
 
 }  // namespace lona
