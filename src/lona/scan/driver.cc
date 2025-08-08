@@ -1,4 +1,4 @@
-#include "scan/driver.hh"
+#include "../scan/driver.hh"
 
 namespace lona {
 

@@ -1,7 +1,13 @@
 #include "cmdline.hpp"
-#include "scan/driver.hh"
-#include "visitor.hh"
+#include "lona/scan/driver.hh"
 #include <fstream>
+
+namespace lona {
+extern void
+compile(std::string &filepath, std::ostream &os);
+}
+
+
 
 int
 main(int argc, char *argv[]) {

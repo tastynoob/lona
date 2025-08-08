@@ -1,4 +1,3 @@
-#include "ast/astnode.hh"
 #include "astnode.hh"
 
 namespace lona {
@@ -67,9 +66,9 @@ void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
     root["field"] = this->field;
-    if (typeHelper) {
-        root["typestr"] = typeHelper->toString();
-    }
+    // if (typeHelper) {
+    //     root["typestr"] = typeHelper->toString();
+    // }
     if (right) {
         root["right"] = Json::object();
         this->right->toJson(root["right"]);
@@ -91,7 +90,7 @@ void
 AstFuncDecl::toJson(Json &root) {
     root["type"] = "FuncDecl";
     root["name"] = this->name;
-    if (this->retType) root["ret"] = this->retType->toString();
+    // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {
         root["args"] = Json::array();
         for (auto &it : *this->args) {

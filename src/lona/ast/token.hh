@@ -60,8 +60,7 @@ public:
     std::string const text;
     location const loc;
     AstToken() {}
-    AstToken(location loc)
-        : loc(loc) {}
+    AstToken(location loc) : loc(loc) {}
     AstToken(TokenType type, const char *text, location loc)
         : type(type), text(text), loc(loc) {}
     void toString(std::ostream &os) const {

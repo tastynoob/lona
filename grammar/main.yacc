@@ -7,7 +7,7 @@
         class Driver;
         class AstToken;
         class AstNode;
-        class TypeHelper;
+        class TypeNode;
     }
 
     #include <cstdint>
@@ -15,9 +15,9 @@
 
 %code
 {
-    #include "scan/driver.hh"
-    #include "ast/token.hh"
-    #include "ast/astnode.hh"
+    #include "lona/scan/driver.hh"
+    #include "lona/ast/token.hh"
+    #include "lona/ast/astnode.hh"
 
     #undef yylex
     #define yylex driver.token
@@ -26,12 +26,15 @@
 }
 
 %union {
+    int64_t counter;
+
     AstToken* token;
     AstNode* node;
-    TypeHelper* type_helper;
     std::vector<AstNode*>* seq;
-    std::vector<TypeHelper*>* type_seq;
-    std::vector<std::pair<int, AstNode*>>* pointer_suffix;
+
+    TypeNode* typeNode;
+    std::vector<TypeNode*>* type_seq;
+    std::vector<AstNode*>* pointer_suffix;
 }
 
 %locations
@@ -41,6 +44,7 @@
 
 %token <token> CONST FIELD RET
 %token LOGIC_EQUAL LOGIC_NOT_EQUAL LOGIC_AND LOGIC_OR
+%token VAR
 %token TRUE FALSE
 %token IF ELSE FOR
 %token DEF STRUCT
@@ -60,15 +64,16 @@
 %left '(' ')' '[' ']'
 %right unary
 
-%type <node> pragram
+%type <node> pragram pragram_statlist pragram_stat
 %type <node> struct_decl func_decl
-%type <node> stat_list stat stat_compound stat_if stat_for stat_ret stat_expr
+%type <node> struct_statlist struct_stat stat_list stat
+%type <node> stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary 
 %type <node> expr_paren single_value field_selector type_selector
-%type <node> var_decl
+%type <node> var_decl var_def
 
-%type <type_helper> single_type func_ptr_head type_name
+%type <typeNode> single_type func_ptr_head type_name
 %type <pointer_suffix> ptr_suffix
 
 %type <seq> expr_seq var_decl_seq
@@ -79,7 +84,22 @@
 %%
 
 pragram
-    : stat_list { driver.tree = $$ = new AstProgram($1); }
+    : pragram_statlist { driver.tree = $$ = new AstProgram($1); }
+    ;
+
+pragram_statlist
+    : pragram_stat {
+        $$ = new AstStatList($1);
+    }
+    | pragram_statlist pragram_stat {
+        $$ = $1;
+        ($$)->as<AstStatList>()->push($2);
+    }
+    ;
+
+pragram_stat
+    : func_decl { $$ = $1; }
+    | struct_decl { $$ = $1; }
     ;
 
 stat_list
@@ -95,7 +115,7 @@ stat_list
     | stat_list stat {
         $$ = $1;
         ($1)->setNextNode($2);
-        ($1)->as<AstStatList>()->push($2);
+        ($$)->as<AstStatList>()->push($2);
     }
     ;
 
@@ -163,19 +183,45 @@ func_decl
     | DEF FIELD '(' var_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
     ;
 
-struct_decl
-    : STRUCT FIELD stat_compound { $$ = new AstStructDecl(*$2, $3); }
-    ;
-
 var_decl
     : FIELD type_name { $$ = new AstVarDecl(*$1, $2); }
-    | FIELD type_name '=' expr { $$ = new AstVarDecl(*$1, $2, $4); }
-    | FIELD ':' '=' expr { $$ = new AstVarDecl(*$1, nullptr, $4); }
     ;
 
+/* struct decl */
+struct_decl
+    : STRUCT FIELD struct_statlist '}' { $$ = new AstStructDecl(*$2, $2); }
+    ;
+
+struct_statlist
+    : '{' struct_stat {
+        $$ = new AstStatList($2);
+    }
+    | struct_statlist struct_stat {
+        $$ = $1;
+        ($$)->as<AstStatList>()->push($2);
+    }
+    ;
+
+struct_stat
+    : var_decl NEWLINE {
+        $$ = $1;
+    }
+    | func_decl {
+        $$ = $1;
+    }
+    ;
+
+/* var define */
+var_def
+    : VAR var_decl { $$ = new AstVarDef($2); }
+    | VAR var_decl '=' expr { $$ = new AstVarDef($2, $4); }
+    | VAR FIELD '=' expr { $$ = new AstVarDef(AstToken(*$2), $4); }
+    ;
+
+/* expression */
 stat_expr
     : final_expr NEWLINE { $$ = $1; }
-    | var_decl NEWLINE { $$ = $1; }
+    | var_def NEWLINE { $$ = $1; }
     ;
 
 final_expr

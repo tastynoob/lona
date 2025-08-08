@@ -1,9 +1,84 @@
-#include "ast/astnode.hh"
 #include "astnode.hh"
-#include "codegen/base.hh"
-#include "type/scope.hh"
+#include "../visitor.hh"
+#include "../type/scope.hh"
+#include <cassert>
+#include <cstddef>
 
 namespace lona {
+
+
+TypeClass* 
+NormTypeNode::accept(TypeManager* typeMgr) {
+    if (type_hold) {
+        return type_hold;
+    }
+
+    type_hold = typeMgr->getType(this->name);
+    return type_hold;
+}
+
+TypeClass* 
+PointerTypeNode::accept(TypeManager* typeMgr) {
+    if (!type_hold) {
+        return type_hold;
+    }
+
+    auto head_type = getHead()->accept(typeMgr);
+    for (int i=0;i<level;i++) {
+        head_type = typeMgr->createPointerType(head_type);
+    }
+
+    return head_type;
+}
+
+TypeClass* 
+ArrayTypeNode::accept(TypeManager* typeMgr) {
+    return nullptr;
+}
+
+TypeClass* 
+FuncTypeNode::accept(TypeManager* typeMgr) {
+    return nullptr;
+}
+
+TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix)
+{
+    TypeNode* node = nullptr;
+    AstNode* prev_val = (AstNode*)-1llu;
+    for (auto it : *suffix) {
+        if (prev_val == 0 && it == 0) {
+            // multi pointer
+            static_cast<PointerTypeNode*>(node)->incLevel();
+            continue;
+        } else {
+            assert(false);
+        }
+
+        TypeNode* new_node = nullptr;
+        if (it == 0) {
+            // pointer
+            new_node = new PointerTypeNode(1);
+        } else if (it == (AstNode*)1) {
+            // auto array size
+            assert(false);
+        } else {
+            // fixed array size
+            assert(false);
+        }
+
+        if (node == nullptr) {
+            new_node->setHead(head);
+        }
+        if (node != nullptr) {
+            new_node->setHead(node);
+        }
+
+        node = new_node;
+        prev_val = it;
+    }
+    return node;
+}
+
 
 #define DEF_ACCEPT(classname)                        \
     Object *classname::accept(AstVisitor &visitor) { \
@@ -11,8 +86,8 @@ namespace lona {
     }
 
 DEF_ACCEPT(AstNode)
-DEF_ACCEPT(AstStatList)
 DEF_ACCEPT(AstProgram)
+DEF_ACCEPT(AstStatList)
 DEF_ACCEPT(AstConst)
 DEF_ACCEPT(AstField)
 DEF_ACCEPT(AstAssign)
@@ -26,45 +101,6 @@ DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstSelector)
-
-std::string
-TypeHelper::toString() {
-
-    std::string full_type = typeName.front();
-    for (size_t i = 1; i < typeName.size(); i++) {
-        if (typeName[i].front() == '!') {
-            // function pointer
-            full_type += "!(";
-            if (func_args)
-                for (auto &it : *func_args) {
-                    full_type += it->toString();
-                    full_type += ",";
-                }
-            full_type += ")";
-        } else {
-            full_type += ".";
-            full_type += typeName[i];
-        }
-    }
-    if (levels)
-        for (auto it : *levels) {
-            if (it.first == pointerType_pointer) {
-                full_type += "*";
-            } else if (it.first == pointerType_autoArray) {
-                full_type += "[]";
-            } else if (it.first == pointerType_fixedArray) {
-                full_type += "[";
-                full_type +=
-                    std::string(it.second->is<AstConst>()
-                                    ? it.second->as<AstConst>()->getBuf()
-                                    : "x") +
-                    "<";
-                full_type += "]";
-            }
-        }
-
-    return full_type;
-}
 
 AstProgram::AstProgram(AstNode *body) : body(body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
@@ -103,10 +139,10 @@ AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
 
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr) : op(op), expr(expr) {}
 
-AstVarDecl::AstVarDecl(AstToken &field, TypeHelper *typeHelper, AstNode *right)
+AstVarDecl::AstVarDecl(AstToken &field, TypeNode *typeNode, AstNode *right)
     : AstNode(field.loc),
       field(field.text),
-      typeHelper(typeHelper),
+      typeNode(typeNode),
       right(right) {}
 
 void
@@ -117,7 +153,7 @@ AstStatList::push(AstNode *node) {
 AstStatList::AstStatList(AstNode *node) { this->body.push_back(node); }
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
-                         std::vector<AstNode *> *args, TypeHelper *retType)
+                         std::vector<AstNode *> *args, TypeNode *retType)
     : name(name.text), body(body), args(args), retType(retType) {}
 
 AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}

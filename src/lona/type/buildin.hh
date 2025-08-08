@@ -1,6 +1,6 @@
 #pragma once
 
-#include "type/scope.hh"
+#include "../type/scope.hh"
 
 namespace lona {
 
@@ -14,10 +14,10 @@ public:
         return type == I8 || type == I16 || type == I32 || type == I64;
     }
 
-    Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
-                            token_type op, Object* right) override;
-    Object* unaryOperation(llvm::IRBuilder<>& builder, token_type op,
-                           Object* value) override;
+    void binaryOperation(llvm::IRBuilder<>& builder, Object* left,
+                            token_type op, ObjectPtr right, ObjectPtr& res) override;
+    void unaryOperation(llvm::IRBuilder<>& builder, token_type op,
+                           ObjectPtr value, ObjectPtr& res) override;
 };
 
 class FLoatType : public BaseType {
@@ -30,10 +30,10 @@ class BoolType : public BaseType {
 public:
     BoolType(llvm::Type* type) : BaseType(type, BOOL, "bool", 1) {}
 
-    Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
-        token_type op, Object* right) override;
-    Object* unaryOperation(llvm::IRBuilder<>& builder, token_type op,
-        Object* value) override;
+    // Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
+    //     token_type op, Object* right) override;
+    // Object* unaryOperation(llvm::IRBuilder<>& builder, token_type op,
+    //     Object* value) override;
 };
 
 void

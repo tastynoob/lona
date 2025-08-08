@@ -1,4 +1,4 @@
-#include "ast/token.hh"
+#include "../ast/token.hh"
 
 #include <sstream>
 

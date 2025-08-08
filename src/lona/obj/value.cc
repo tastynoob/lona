@@ -1,6 +1,6 @@
 #include "value.hh"
-#include "type/scope.hh"
-#include "type/type.hh"
+#include "../type/scope.hh"
+#include "../type/type.hh"
 
 namespace lona {
 
@@ -47,12 +47,12 @@ Object *
 Function::call(Scope *scope, std::vector<Object *> &args) {
     auto &builder = scope->builder;
     auto llvm_func = (llvm::Function *)val;
-    auto retType = type->as<FuncType>()->retType;
-    auto argTypes = type->as<FuncType>()->argTypes;
+    auto retType = type->as<FuncType>()->getRetType();
+    auto argTypes = type->as<FuncType>()->getArgTypes();
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
 
-    if (retType && retType->isPassByPointer()) {
+    if (retType && retType->shouldReturnByPointer()) {
         assert(false);
     }
 
@@ -70,10 +70,12 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
 
     auto ret = builder.CreateCall(llvm_func, llvmargs);
 
-    if (retType && retType->isPassByPointer()) {
+    if (retType && retType->shouldReturnByPointer()) {
         return retval;
     } else if (retType) {
-        return retType->newObj(ret, Object::REG_VAL);
+        auto obj = retType->newObj(Object::REG_VAL);
+        obj->bindllvmValue(ret);
+        return obj;
     } else {
         // no return
         return nullptr;

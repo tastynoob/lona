@@ -1,6 +1,6 @@
 
-#include "ast/astnode.hh"
-#include "util/cfg.hh"
+#include "../ast/astnode.hh"
+#include "../util/cfg.hh"
 
 namespace lona {
 

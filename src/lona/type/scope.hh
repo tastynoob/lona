@@ -1,7 +1,8 @@
 #pragma once
 
-#include "obj/value.hh"
-#include "type/type.hh"
+#include "../obj/value.hh"
+#include "../type/type.hh"
+#include <stack>
 
 namespace lona {
 
@@ -9,7 +10,7 @@ class FuncEnv;
 
 class Scope {
 protected:
-    llvm::StringMap<TypeClass *> typeMap;
+    std::stack<ObjectPtr> opStack;
     llvm::StringMap<Object *> variables;
     Scope *parent = nullptr;
 
@@ -32,11 +33,18 @@ public:
 
     Object *getObj(llvm::StringRef name);
 
-    void addType(llvm::StringRef name, TypeClass *type);
+    void pushOp(ObjectPtr obj) {
+        opStack.push(obj);
+    }
 
-    TypeClass *getType(llvm::StringRef name);
-
-    TypeClass *getType(TypeHelper *const type);
+    ObjectPtr popOp() {
+        if (opStack.empty()) {
+            throw "opStack is empty";
+        }
+        auto obj = opStack.top();
+        opStack.pop();
+        return obj;
+    }
 };
 
 class GlobalScope : public Scope {
@@ -52,21 +60,14 @@ public:
 class FuncScope : public Scope {
     friend class LocalScope;
 
-    bool const func_root = false;
     llvm::Instruction *alloc_point = nullptr;
     Object *ret_val = nullptr;
     llvm::BasicBlock *ret_block = nullptr;
     bool returned = false;
 
     int num_sub_scope = 0;
-    void accNumScope() {
-        if (func_root)
-            num_sub_scope++;
-        else
-            ((FuncScope *)parent)->accNumScope();
-    }
-    int getNumScope() {
-        return func_root ? num_sub_scope : ((FuncScope *)parent)->getNumScope();
+    int getNextScopeId() {
+        return ++num_sub_scope;
     }
 
 public:
@@ -78,7 +79,7 @@ public:
           alloc_point(parent->alloc_point),
           ret_val(parent->ret_val),
           ret_block(parent->ret_block) {}
-    FuncScope(GlobalScope *parent) : Scope(parent), func_root(true) {}
+    FuncScope(GlobalScope *parent) : Scope(parent) {}
 
     void initRetVal(Object *ret_val) {
         assert(!this->ret_val);
@@ -102,13 +103,24 @@ public:
     Object *allocate(TypeClass *type, bool is_temp = false) override;
 };
 
-// if, for block
-class LocalScope : public FuncScope {
+
+class LocalScope : public Scope {
+    FuncScope* const funcScope; // top
+    std::string name;
 public:
-    LocalScope(FuncScope *parent) : FuncScope(parent) { parent->accNumScope(); }
+    LocalScope(FuncScope *func) : Scope(func), funcScope(func) {
+        name = func->getName() + "." + std::to_string(func->getNextScopeId());
+    }
+
+    LocalScope(LocalScope *parent)
+        : Scope(parent), funcScope(parent->funcScope) {
+        name = funcScope->getName() + "." + std::to_string(funcScope->getNextScopeId());
+    }
+
+    Object *allocate(TypeClass *type, bool t = false) override { funcScope->allocate(type, t); }
+
     std::string getName() override {
-        return builder.GetInsertBlock()->getParent()->getName().str() + "." +
-               std::to_string(getNumScope());
+        return name;
     }
 };
 

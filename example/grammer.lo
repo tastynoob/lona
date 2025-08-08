@@ -5,48 +5,44 @@ bool
 str
 
 // variable
-a i32 = unsafe // uninitialize variable
-a i32 = 1 // property type infer
-a i32 = i32 1 // value copy
-a i32 = 1 // error assign const int to int, Implicit variable cast initialization is not allowed
+var a i32 = unsafe // uninitialize variable
+var a i32 = 1 // property type infer
+var a i32 = i32 1 // value copy
+var a i32 = 1 // error assign const int to int, Implicit variable cast initialization is not allowed
 
 // auto variable
-a := 1 // const i32
-a := int 1 // i32
-a := getData()
+var a = 1 // const i32
+var a = int 1 // i32
+var a = getData()
 
 // array
-a u32[] = {}
-a u32[,] = {{}}
+var a u32[] = {}
+var a u32[,] = {{}}
 
 // array index and splice
-b := a(1)
-b := a(1,2)
+var b = a(1)
+var b = a(1,2)
 
 // tuple tentative
-a tup<u32, str> = (1, 2)
+var a tup<u32, str> = (1, 2)
 
 // pointer
-a u32* // variable pointer
-a u32[]* // array pointer
-a u32*[] // pointer array
+var a u32* // variable pointer
+var a u32[]* // array pointer
+var a u32*[] // pointer array
 
 // function pointer
-a ()* // with no params and no return function pointer 
-a (u32)* // with params and no return function pointer
-a (u32)*[] // with params and no return function pointer array
-a (u32)*[]* // with params and no return function pointer array's pointer
-a ()* u32 // with return and no params function pointer
-a ()* ()* // with return and params function pointer's array, return type is ()*
-a ()*[] u32 // with return and no params function pointer's array, return type is u32
-a (u32, u32)*[] u32 // with return and params function pointer's array, return type is u32
-a (u32)*[] (u32)*[] u32 // with return and params function pointer's array, return type is (u32)*[] u32
-a (u32)* u32
-a ([u32, u32]*[])*[] ([u32, u32]*[])* u32
-
-// reference only to stack variable
-// reference must set initialize value
-a = ref b
+var a () // with no params and no return function pointer 
+var a (u32) // with params and no return function pointer
+var a (u32)[] // with params and no return function pointer array
+var a (u32)[]* // with params and no return function pointer array's pointer
+var a () u32 // with return and no params function pointer
+var a () ()* // with return and params function pointer's array, return type is ()*
+var a ()[] u32 // with return and no params function pointer's array, return type is u32
+var a (u32, u32)[] u32 // with return and params function pointer's array, return type is u32
+var a (u32)[] (u32)*[] u32 // with return and params function pointer's array, return type is (u32)*[] u32
+var a (u32) u32
+var a ([u32, u32]*[])[] ([u32, u32]*[])* u32
 
 t = if (a == 0) 1 else 2
 t = if a == 0 { 1 } else { 2 }
@@ -57,3 +53,30 @@ for loop(0) { } // for (Iter i = Loop(10); bool(i); i.next()) {}
 for range(0, 10) {}
 for stride(0, 10, 2) {}
 for a = range(array.begin, array.end) {} // for (Iter i = until(array.begin, array.end); bool(i); i.next()) {}
+
+// struct
+struct Name {
+    a i32
+    b i32
+
+    def member_method1() i32 = {
+
+    }
+}
+
+// trait
+trait Name {
+    def member_method1() = 0
+}
+
+// class transfer
+struct Demo {
+    var a i32
+}
+
+class CDemo : Demo
+
+
+def Name.member_method2() i32 = {
+
+}

@@ -1,7 +1,7 @@
 #include <iostream>
 
-#include "ast/astnode.hh"
 #include "cfg.hh"
+#include "../ast/astnode.hh"
 
 namespace lona {
 

@@ -6,9 +6,11 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <type_traits>
+#include <vector>
 
-#include "ast/token.hh"
+#include "../ast/token.hh"
 #include "location.hh"
+#include "lona/obj/value.hh"
 
 using Json = nlohmann::ordered_json;
 
@@ -21,20 +23,67 @@ class AstVisitor;
 class Object;
 class Scope;
 class Function;
+
+class TypeClass;
+class TypeManager;
+
 using token_type = int;
 
 const int pointerType_pointer = 1;
 const int pointerType_autoArray = 2;
 const int pointerType_fixedArray = 3;
-struct TypeHelper {
-    std::vector<std::string> typeName;
-    std::vector<TypeHelper *> *func_args = nullptr;
-    TypeHelper *func_retType = nullptr;
-    std::vector<std::pair<int, AstNode *>> *levels = nullptr;
-    TypeHelper(std::string typeName) { this->typeName.push_back(typeName); }
-    std::string toString();
-    bool isPointerOrArray() { return levels->size() > 0; }
+
+class TypeNode {
+    TypeNode* head_node;
+protected:
+    TypeClass* type_hold = nullptr;
+public:
+    void setHead(TypeNode* head) { head_node = head; }
+    TypeNode* getHead() { return head_node;}
+
+    virtual TypeClass* accept(TypeManager* typeMgr) = 0;
 };
+
+// var a type
+class NormTypeNode : public TypeNode {
+    std::string name;
+public:
+    NormTypeNode(std::string name): name(name) {}
+
+    TypeClass* accept(TypeManager* typeMgr) override;
+};
+
+class PointerTypeNode : public TypeNode {
+    int level = 0;
+public:
+    PointerTypeNode(int level): level(level) {}
+
+    void incLevel() { level++; }
+
+    TypeClass* accept(TypeManager* typeMgr) override;
+};
+
+class ArrayTypeNode : public TypeNode {
+    std::vector<AstNode*> dim;
+public:
+    ArrayTypeNode(std::vector<AstNode*>& dim): dim(std::move(dim)) {}
+
+    TypeClass* accept(TypeManager* typeMgr) override;
+};
+
+// var a ()
+class FuncTypeNode : TypeNode {
+    std::vector<TypeNode*> args;
+    TypeNode* ret = nullptr;
+public:
+    FuncTypeNode() {}
+    FuncTypeNode(std::vector<TypeNode*> args): args(args) {}
+    void setRet(TypeNode* ret) { this->ret = ret; }
+
+    TypeClass* accept(TypeManager* typeMgr) override;
+};
+
+extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
 
 class AstNode {
 protected:
@@ -67,6 +116,7 @@ public:
 };
 
 class AstStatList;
+
 class AstProgram : public AstNode {
 public:
     AstStatList *const body;
@@ -152,14 +202,34 @@ public:
 class AstVarDecl : public AstNode {
 public:
     std::string const field;
-    TypeHelper *const typeHelper;
+    TypeNode *const typeNode;
     AstNode *const right;
 
-    AstVarDecl(AstToken &field, TypeHelper *typeHelper,
+    AstVarDecl(AstToken &field, TypeNode *typeNode,
                AstNode *right = nullptr);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;
+};
+
+class AstVarDef : public AstNode {
+    std::string const field;
+    TypeNode *const typeNode;
+    AstNode *const initVal;
+public:
+    AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr)
+        : field(vardecl->field), typeNode(vardecl->typeNode), initVal(initVal) {}
+
+    AstVarDef(AstToken &field,
+               AstNode *initVal = nullptr)
+        : field(field.text), typeNode(nullptr), initVal(initVal) {}
+
+
+    auto& getName() const { return field; }
+    TypeNode *getTypeNode() const { return typeNode; }
+    AstNode *getInitVal() const { return initVal; }
+
+    bool withInitVal() const { return initVal != nullptr; }
 };
 
 class AstStatList : public AstNode {
@@ -190,13 +260,12 @@ public:
     std::string const name;
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
-    TypeHelper *const retType;
-    std::string getName() { return name; }
+    TypeNode *const retType;
     bool hasArgs() const { return args != nullptr; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,
-                TypeHelper *retType = nullptr);
+                TypeNode *retType = nullptr);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;

@@ -1,6 +1,6 @@
 %{
-#include "ast/token.hh"
-#include "scan/scanner.hh"
+#include "lona/ast/token.hh"
+#include "lona/scan/scanner.hh"
 
 #undef YY_DECL
 #define YY_DECL int lona::Scanner::yylex(Parser::semantic_type* const lval, Parser::location_type* loc)
@@ -22,16 +22,18 @@ using token = lona::Parser::token::token_kind_type;
 
 (true) { loc->columns(yyleng); return token::TRUE; }
 (false) { loc->columns(yyleng); return token::FALSE; }
+(var) { loc->columns(yyleng); return token::VAR; }
 (def) { loc->columns(yyleng); return token::DEF; }
 (ret) { lval->token = new AstToken(*loc); loc->columns(yyleng); return token::RET; }
 (if) { loc->columns(yyleng); return token::IF; }
 (else) { loc->columns(yyleng); return token::ELSE; }
 (for) { loc->columns(yyleng); return token::FOR; }
 (struct) { loc->columns(yyleng); return token::STRUCT; }
-(case) {}
-(pass) {}
-(cast) {}
 (class) {}
+(trait) {}
+(case) {}
+(cast) {}
+
 
 [0-9]+ {
     lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);

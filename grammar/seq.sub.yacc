@@ -10,6 +10,6 @@ var_decl_seq
     ;
 
 type_name_seq
-    : type_name { $$ = new std::vector<TypeHelper*>; $$->emplace_back($1); }
+    : type_name { $$ = new std::vector<TypeNode*>; $$->emplace_back($1); }
     | type_name_seq ',' type_name { $$ = $1; $$->emplace_back($3); }
     ;

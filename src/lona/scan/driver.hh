@@ -1,5 +1,5 @@
 #include "parser.hh"
-#include "scan/scanner.hh"
+#include "scanner.hh"
 
 namespace lona {
 
