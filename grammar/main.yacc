@@ -189,7 +189,7 @@ var_decl
 
 /* struct decl */
 struct_decl
-    : STRUCT FIELD struct_statlist '}' { $$ = new AstStructDecl(*$2, $2); }
+    : STRUCT FIELD struct_statlist '}' { $$ = new AstStructDecl(*$2, $3); }
     ;
 
 struct_statlist
@@ -213,9 +213,9 @@ struct_stat
 
 /* var define */
 var_def
-    : VAR var_decl { $$ = new AstVarDef($2); }
-    | VAR var_decl '=' expr { $$ = new AstVarDef($2, $4); }
-    | VAR FIELD '=' expr { $$ = new AstVarDef(AstToken(*$2), $4); }
+    : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
+    | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
+    | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
     ;
 
 /* expression */

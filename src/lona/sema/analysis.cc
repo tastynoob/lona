@@ -1,6 +1,3 @@
-#pragma once
-
-
 #include "../visitor.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/obj/value.hh"
@@ -47,6 +44,15 @@ class FuncAnalysis : public AstVisitor {
         }
 
         scope->pushOp(val);
+        return nullptr;
+    }
+
+    ObjectPtr visit(AstField* node) override {
+        auto obj = scope->getObj(node->name);
+        if (!obj) {
+            std::cout << "Undefined identifier: " << node->name << std::endl;
+        }
+        scope->pushOp(obj);
         return nullptr;
     }
 

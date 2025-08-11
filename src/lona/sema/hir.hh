@@ -21,6 +21,7 @@ class HIRFuncCall;
 
 
 class HIRVisitor{
+#undef DEF_VISIT
 #define DEF_VISIT(classname) \
     virtual void visit(classname *node) {}
 
@@ -38,6 +39,8 @@ public:
 
 class HIRNode {
     HIRNode* cfg_next = nullptr;  // next node in CFG    
+
+public:
 
     void setCFGNextNode(HIRNode* node) {
         cfg_next = node;
@@ -57,7 +60,7 @@ public:
     ObjectPtr res = nullptr;  // expression value
 };
 
-class HIRStmt : public HIRNode {}
+class HIRStmt : public HIRNode {};
 
 #define DEF_ACCEPT() \
     void accept(HIRVisitor &visitor) override { \
@@ -98,12 +101,11 @@ public:
 };
 
 class HIRAssign : public HIRStmt {
+    ObjectPtr left;  // left value
     ObjectPtr right;
 public:
     HIRAssign(ObjectPtr left, ObjectPtr right)
-        : right(right) {
-            this->res = left;
-        }
+        : left(left), right(right) {}
 
     DEF_ACCEPT()
 };

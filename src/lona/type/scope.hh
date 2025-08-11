@@ -2,6 +2,7 @@
 
 #include "../obj/value.hh"
 #include "../type/type.hh"
+#include <llvm-18/llvm/IR/Value.h>
 #include <stack>
 
 namespace lona {
@@ -27,7 +28,7 @@ public:
 
     virtual std::string getName() = 0;
 
-    virtual Object *allocate(TypeClass *, bool t = false) { throw ""; };
+    virtual llvm::Value *allocate(TypeClass *, bool t = false) { throw ""; };
 
     void addObj(llvm::StringRef name, Object *var);
 
@@ -54,7 +55,7 @@ public:
 
     std::string getName() override { return module.getName().str(); }
 
-    Object *allocate(TypeClass *type, bool is_extern = false) override;
+    llvm::Value *allocate(TypeClass *type, bool is_extern = false) override;
 };
 
 class FuncScope : public Scope {
@@ -100,7 +101,7 @@ public:
         return builder.GetInsertBlock()->getParent()->getName().str();
     }
 
-    Object *allocate(TypeClass *type, bool is_temp = false) override;
+    llvm::Value *allocate(TypeClass *type, bool is_temp = false) override;
 };
 
 
@@ -117,7 +118,7 @@ public:
         name = funcScope->getName() + "." + std::to_string(funcScope->getNextScopeId());
     }
 
-    Object *allocate(TypeClass *type, bool t = false) override { funcScope->allocate(type, t); }
+    llvm::Value *allocate(TypeClass *type, bool t = false) override { return funcScope->allocate(type, t); }
 
     std::string getName() override {
         return name;

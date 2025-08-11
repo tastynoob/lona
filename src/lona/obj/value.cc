@@ -1,8 +1,19 @@
 #include "value.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
+#include <cassert>
 
 namespace lona {
+
+
+void
+Object::createllvmValue(Scope *scope)
+{
+    assert(!val && !isRegVal());
+    if (isVariable()) {
+        val = scope->allocate(type);
+    }
+}
 
 llvm::Value *
 Object::get(llvm::IRBuilder<> &builder) {
@@ -74,7 +85,7 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
         return retval;
     } else if (retType) {
         auto obj = retType->newObj(Object::REG_VAL);
-        obj->bindllvmValue(ret);
+        //obj->bindllvmValue(ret);
         return obj;
     } else {
         // no return

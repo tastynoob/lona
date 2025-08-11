@@ -38,6 +38,12 @@ class TypeNode {
 protected:
     TypeClass* type_hold = nullptr;
 public:
+
+    template<class T>
+    T* as() {
+        return dynamic_cast<T*>(this);
+    }
+
     void setHead(TypeNode* head) { head_node = head; }
     TypeNode* getHead() { return head_node;}
 
@@ -72,7 +78,7 @@ public:
 };
 
 // var a ()
-class FuncTypeNode : TypeNode {
+class FuncTypeNode : public TypeNode {
     std::vector<TypeNode*> args;
     TypeNode* ret = nullptr;
 public:
@@ -230,6 +236,8 @@ public:
     AstNode *getInitVal() const { return initVal; }
 
     bool withInitVal() const { return initVal != nullptr; }
+
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstStatList : public AstNode {

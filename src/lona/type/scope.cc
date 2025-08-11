@@ -27,12 +27,12 @@ Scope::getObj(llvm::StringRef name) {
     return variables[name];
 }
 
-Object *
+llvm::Value *
 GlobalScope::allocate(TypeClass *type, bool is_extern) {
     return nullptr;
 }
 
-Object *
+llvm::Value *
 FuncScope::allocate(TypeClass *type, bool is_temp) {
     auto &entryBB = builder.GetInsertBlock()->getParent()->getEntryBlock();
     assert(type->llvmType);
@@ -48,16 +48,13 @@ FuncScope::allocate(TypeClass *type, bool is_temp) {
         if (entryBB.empty()) {
             alloc_point = builder.CreateAlloca(type->llvmType);
         } else {
-            volatile int i = 0;
             auto t =
                 new llvm::AllocaInst(type->llvmType, 0, "", &entryBB.front());
             alloc_point = t;
         }
     }
 
-    auto obj = type->newObj();
-    obj->bindllvmValue(alloc_point);
-    return obj;
+    return alloc_point;
 }
 
 }

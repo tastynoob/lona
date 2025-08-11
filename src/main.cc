@@ -18,7 +18,7 @@ main(int argc, char *argv[]) {
     std::string filepath = argv[1];
 
     std::ofstream out2("ir.ll");
-    lona::compile(filepath, out2);
+    // lona::compile(filepath, out2);
 
     return 0;
 }

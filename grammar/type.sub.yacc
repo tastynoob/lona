@@ -4,7 +4,7 @@ single_type
     ;
 
 ptr_suffix
-    : '*' { $$ = new std::vector<AstNode*>; $$->emplace_back(0); }
+    : '*' { $$ = new std::vector<AstNode*>; $$->emplace_back((AstNode*)0); }
     | '[' ']' { $$ = new std::vector<AstNode*>; $$->emplace_back((AstNode*)1); }
     | '[' expr_seq ']' {
         $$ = new std::vector<AstNode*>;
@@ -32,14 +32,14 @@ ptr_suffix
 
 func_ptr_head
     : '*' '(' ')' { $$ = new FuncTypeNode(); }
-    | '*' '(' type_name_seq ')' { $$ = new FuncTypeNode($3); }
+    | '*' '(' type_name_seq ')' { $$ = new FuncTypeNode(*$3); }
     | '*' '(' ')' ptr_suffix { $$ = createPointerOrArrayTypeNode(new FuncTypeNode(), $4); }
-    | '*' '(' type_name_seq ')' ptr_suffix { $$ = createPointerOrArrayTypeNode(new FuncTypeNode($3), $5); }
+    | '*' '(' type_name_seq ')' ptr_suffix { $$ = createPointerOrArrayTypeNode(new FuncTypeNode(*$3), $5); }
     ;
 
 type_name
     : single_type { $$ = $1; }
     | single_type ptr_suffix { $$ = $$ = createPointerOrArrayTypeNode($1, $2); }
     | func_ptr_head { $$ = $1; }
-    | func_ptr_head type_name { $$ = $1; $$->setRet($2); }
+    | func_ptr_head type_name { $$ = $1; $$->as<FuncTypeNode>()->setRet($2); }
     ;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <any>
+#include <cassert>
 #include <iostream>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
@@ -44,7 +45,10 @@ public:
         return val != nullptr;
     }
 
+    void createllvmValue(Scope *scope);
+
     void bindllvmValue(llvm::Value *val) {
+        assert(isRegVal());
         this->val = val;
     }
 
@@ -54,6 +58,8 @@ public:
     bool isVariable() { return specifiers & VARIABLE; }
     bool isRegVal() { return specifiers & REG_VAL; }
     bool isReadOnly() { return specifiers & READONLY; }
+
+    
 
     virtual llvm::Value *get(llvm::IRBuilder<> &builder);
     virtual void set(llvm::IRBuilder<> &builder, Object *src);
