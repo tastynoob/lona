@@ -71,7 +71,8 @@ DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstSelector)
 
-AstProgram::AstProgram(AstNode *body) : body(body->as<AstStatList>()) {
+AstProgram::AstProgram(AstNode *body)
+    : AstNode(body ? body->loc : location()), body(body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
 }
 
@@ -100,12 +101,15 @@ AstField::AstField(AstToken &token) : AstNode(token.loc), name(token.text) {
 }
 
 AstAssign::AstAssign(AstNode *left, AstNode *right)
-    : left(left), right(right) {}
+    : AstNode(left ? left->loc : (right ? right->loc : location())),
+      left(left), right(right) {}
 
 AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
-    : left(left), op(op), right(right) {}
+    : AstNode(left ? left->loc : (right ? right->loc : location())),
+      left(left), op(op), right(right) {}
 
-AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr) : op(op), expr(expr) {}
+AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
+    : AstNode(expr ? expr->loc : location()), op(op), expr(expr) {}
 
 AstVarDecl::AstVarDecl(AstToken &field, TypeNode *typeNode, AstNode *right)
     : AstNode(field.loc),
@@ -118,22 +122,27 @@ AstStatList::push(AstNode *node) {
     this->body.push_back(node);
 }
 
-AstStatList::AstStatList(AstNode *node) { this->body.push_back(node); }
+AstStatList::AstStatList(AstNode *node)
+    : AstNode(node ? node->loc : location()) {
+    this->body.push_back(node);
+}
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstNode *> *args, TypeNode *retType)
-    : name(name.text), body(body), args(args), retType(retType) {}
+    : AstNode(name.loc), name(name.text), body(body), args(args), retType(retType) {}
 
 AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
-    : condition(condition), then(then), els(els) {}
+    : AstNode(condition ? condition->loc : location()),
+      condition(condition), then(then), els(els) {}
 
-AstFor::AstFor(AstNode *expr, AstNode *body) : expr(expr), body(body) {
+AstFor::AstFor(AstNode *expr, AstNode *body)
+    : AstNode(expr ? expr->loc : location()), expr(expr), body(body) {
     body->setNextNode(this);
 }
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
-    : value(value), args(args) {}
+    : AstNode(value ? value->loc : location()), value(value), args(args) {}
 
 }  // namespace lona

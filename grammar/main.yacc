@@ -71,7 +71,8 @@
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
-%type <node> expr_paren single_value typed_value_operand field_selector type_selector
+%type <node> expr_paren single_value typed_value_operand field_selector
+%type <typeNode> type_selector
 %type <node> var_decl var_def
 
 %type <typeNode> single_type ptr_type array_type base_type func_head type_name
@@ -224,8 +225,6 @@ var_def
     : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
     | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
     | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
-    | var_decl { $$ = new AstVarDef($1->as<AstVarDecl>()); }
-    | var_decl '=' expr { $$ = new AstVarDef($1->as<AstVarDecl>(), $3); }
     | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
     ;
 
@@ -271,16 +270,16 @@ expr_binOp
     ;
 
 expr_unary
-    : '!' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
-    | '~' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
-    | '+' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
-    | '-' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
-    | '&' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    : '!' single_value %prec unary { $$ = new AstUnaryOper('!', $2); }
+    | '~' single_value %prec unary { $$ = new AstUnaryOper('~', $2); }
+    | '+' single_value %prec unary { $$ = new AstUnaryOper('+', $2); }
+    | '-' single_value %prec unary { $$ = new AstUnaryOper('-', $2); }
+    | '&' single_value %prec unary { $$ = new AstUnaryOper('&', $2); }
     | expr_getpointee { $$ = $1; }
     ;
 
 expr_getpointee
-    : '*' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
+    : '*' single_value %prec unary { $$ = new AstUnaryOper('*', $2); }
     ;
 
 expr_paren
@@ -325,8 +324,20 @@ field_selector
     ;
 
 type_selector
-    : FIELD '.' FIELD {}
-    | type_selector '.' FIELD {}
+    : FIELD '.' FIELD {
+        string name = $1->text;
+        name += ".";
+        name += $3->text;
+        $$ = new BaseTypeNode(name);
+    }
+    | type_selector '.' FIELD {
+        auto *base = dynamic_cast<BaseTypeNode *>($1);
+        assert(base);
+        string name = base->name;
+        name += ".";
+        name += $3->text;
+        $$ = new BaseTypeNode(name);
+    }
     ;
 
 %include type.sub.yacc

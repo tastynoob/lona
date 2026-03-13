@@ -47,7 +47,7 @@ type_name
 single_type
     : FIELD { $$ = new BaseTypeNode($1->text); }
     | TYPE { $$ = new BaseTypeNode($1->text); }
-    | type_selector { $$ = new BaseTypeNode(""); }
+    | type_selector { $$ = $1; }
     ;
 
 ptr_type

@@ -19,12 +19,13 @@ namespace {
 struct CompileOptions {
     int optLevel = 0;
     bool verifyIR = false;
+    bool debugInfo = false;
 };
 
 lona::AstNode *
-parseInput(std::istream &input) {
+parseInput(std::istream &input, const std::string &inputPath) {
     lona::Driver driver;
-    driver.input(&input);
+    driver.input(&input, inputPath);
     return driver.parse();
 }
 
@@ -94,10 +95,19 @@ emitIR(lona::AstNode *tree, const std::string &inputPath, const CompileOptions &
     llvm::Module module(inputPath, context);
     lona::SourceFile source(&module, inputPath);
 
-    lona::scanningType(source.scope(), tree);
-    optimizeModule(module, options.optLevel);
+    try {
+        lona::scanningType(source.scope(), tree);
+        lona::compileModule(source.scope(), tree, options.debugInfo);
+        optimizeModule(module, options.optLevel);
 
-    if (options.verifyIR && !verifyCompiledModule(module, out)) {
+        if (options.verifyIR && !verifyCompiledModule(module, out)) {
+            return 1;
+        }
+    } catch (const std::exception &ex) {
+        out << "Error: " << ex.what() << std::endl;
+        return 1;
+    } catch (const char *ex) {
+        out << "Error: " << ex << std::endl;
         return 1;
     }
 
@@ -116,6 +126,7 @@ main(int argc, char *argv[]) {
     cmdline::parser cli;
     cli.add("emit-ir", 'S', "print LLVM IR instead of AST JSON");
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
+    cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
     cli.parse_check(argc, argv);
@@ -133,7 +144,7 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
-    lona::AstNode *tree = parseInput(input);
+    lona::AstNode *tree = parseInput(input, inputPath);
     if (tree == nullptr) {
         std::cerr << "Error: parse failed" << std::endl;
         return 1;
@@ -151,11 +162,12 @@ main(int argc, char *argv[]) {
     }
 
     const bool compileMode = cli.exist("emit-ir") || cli.exist("verify-ir") ||
-                             cli.exist("opt");
+                             cli.exist("debug") || cli.exist("opt");
     if (compileMode) {
         CompileOptions options;
         options.optLevel = cli.get<int>("opt");
         options.verifyIR = cli.exist("verify-ir");
+        options.debugInfo = cli.exist("debug");
         return emitIR(tree, inputPath, options, *out);
     }
 

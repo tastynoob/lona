@@ -1,15 +1,15 @@
-a := Complex(1,2)
-b := Complex(2,3)
-c := a.add(b)
+var a = Complex(1,2)
+var b = Complex(2,3)
+var c = a.add(b)
 
-d := fibo(c.real)
+var d = fibo(c.real)
 
 struct Complex {
     real i32
     imag i32
 
     def add(a Complex) Complex {
-        t Complex
+        var t Complex
         t.real = self.real + a.real
         t.imag = self.imag + a.imag
         ret t
@@ -17,7 +17,7 @@ struct Complex {
 }
 
 def Complex(a i32, b i32) Complex {
-    t Complex
+    var t Complex
     t.real = a
     t.imag = b
     ret t

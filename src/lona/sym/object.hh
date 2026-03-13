@@ -54,6 +54,10 @@ public:
         this->val = val;
     }
 
+    void setllvmValue(llvm::Value *val) {
+        this->val = val;
+    }
+
     uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }
@@ -74,6 +78,8 @@ class BaseVar : public Object {
 public:
     BaseVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
+    BaseVar(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
+        : Object(val, type, specifiers) {}
 };
 
 // only Basevar can be modified by const
@@ -82,6 +88,8 @@ class ConstVar : public BaseVar {
 public:
     ConstVar(TypeClass *type, std::any value)
         : BaseVar(type, Object::REG_VAL | Object::READONLY), value(value) {}
+
+    llvm::Value *get(llvm::IRBuilder<> &builder) override;
 };
 
 class PointerVar : public Object {

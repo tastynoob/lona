@@ -65,6 +65,9 @@ Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent = nullptr);
 
 void
+compileModule(Scope *global, AstNode *root, bool emitDebugInfo = false);
+
+void
 scanningType(Scope *global, AstNode *root);
 
 StructType *

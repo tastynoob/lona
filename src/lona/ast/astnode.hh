@@ -181,7 +181,7 @@ public:
     AstNode *const body;
 
     AstStructDecl(AstToken &field, AstNode *body)
-        : name(field.text), body(body) {}
+        : AstNode(field.loc), name(field.text), body(body) {}
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
@@ -205,11 +205,12 @@ class AstVarDef : public AstNode {
     AstNode *const initVal;
 public:
     AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr)
-        : field(vardecl->field), typeNode(vardecl->typeNode), initVal(initVal) {}
+        : AstNode(vardecl->loc), field(vardecl->field), typeNode(vardecl->typeNode),
+          initVal(initVal) {}
 
     AstVarDef(AstToken &field,
                AstNode *initVal = nullptr)
-        : field(field.text), typeNode(nullptr), initVal(initVal) {}
+        : AstNode(field.loc), field(field.text), typeNode(nullptr), initVal(initVal) {}
 
 
     auto& getName() const { return field; }
@@ -343,7 +344,7 @@ public:
     AstNode *const parent;
     AstToken *const field;
     AstSelector(AstNode *parent, AstToken *field)
-        : parent(parent), field(field) {}
+        : AstNode(field->loc), parent(parent), field(field) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;

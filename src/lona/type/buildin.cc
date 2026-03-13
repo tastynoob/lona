@@ -97,25 +97,42 @@ IntType::unaryOperation(llvm::IRBuilder<>& builder, token_type op,
     // res = val;
 }
 
+IntType* u8Ty = nullptr;
 IntType* i8Ty = nullptr;
+IntType* u16Ty = nullptr;
 IntType* i16Ty = nullptr;
+IntType* u32Ty = nullptr;
 IntType* i32Ty = nullptr;
+IntType* u64Ty = nullptr;
 IntType* i64Ty = nullptr;
 FLoatType* f32Ty = nullptr;
 FLoatType* f64Ty = nullptr;
 BoolType* boolTy = nullptr;
+PointerType* strTy = nullptr;
 
 void
 initBuildinType(Scope* scope) {
 
+    if (!u8Ty) {
+        u8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::U8, "u8");
+    }
     if (!i8Ty) {
         i8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::I8, "i8");
+    }
+    if (!u16Ty) {
+        u16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::U16, "u16");
     }
     if (!i16Ty) {
         i16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::I16, "i16");
     }
+    if (!u32Ty) {
+        u32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::U32, "u32");
+    }
     if (!i32Ty) {
         i32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::I32, "i32");
+    }
+    if (!u64Ty) {
+        u64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::U64, "u64");
     }
     if (!i64Ty) {
         i64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::I64, "i64");
@@ -131,13 +148,23 @@ initBuildinType(Scope* scope) {
     }
 
     if (auto *typeTable = scope->types()) {
+        if (!strTy) {
+            strTy = typeTable->createPointerType(i8Ty);
+        }
+        typeTable->addType(string("u8"), u8Ty);
         typeTable->addType(string("i8"), i8Ty);
+        typeTable->addType(string("u16"), u16Ty);
         typeTable->addType(string("i16"), i16Ty);
+        typeTable->addType(string("u32"), u32Ty);
         typeTable->addType(string("i32"), i32Ty);
+        typeTable->addType(string("u64"), u64Ty);
         typeTable->addType(string("i64"), i64Ty);
+        typeTable->addType(string("int"), i32Ty);
+        typeTable->addType(string("uint"), u32Ty);
         typeTable->addType(string("f32"), f32Ty);
         typeTable->addType(string("f64"), f64Ty);
         typeTable->addType(string("bool"), boolTy);
+        typeTable->addType(string("str"), strTy);
     }
 }
 }

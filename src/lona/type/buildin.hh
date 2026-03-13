@@ -48,12 +48,17 @@ public:
 void
 initBuildinType(Scope* scope);
 
+extern IntType* u8Ty;
 extern IntType* i8Ty;
+extern IntType* u16Ty;
 extern IntType* i16Ty;
+extern IntType* u32Ty;
 extern IntType* i32Ty;
+extern IntType* u64Ty;
 extern IntType* i64Ty;
 extern FLoatType* f32Ty;
 extern FLoatType* f64Ty;
 extern BoolType* boolTy;
+extern PointerType* strTy;
 
 }

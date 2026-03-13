@@ -1,6 +1,7 @@
 #include "func.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
+#include "../type/buildin.hh"
 #include <cassert>
 
 namespace lona {
@@ -18,7 +19,13 @@ Object::createllvmValue(Scope *scope)
 llvm::Value *
 Object::get(llvm::IRBuilder<> &builder) {
     if (isRegVal()) {
-        return val;
+        if (val) {
+            return val;
+        }
+        if (auto *constant = dynamic_cast<ConstVar *>(this)) {
+            return constant->ConstVar::get(builder);
+        }
+        throw "register value is not materialized";
     }
     assert(val->getType()->isPointerTy());
     return builder.CreateLoad(type->getLLVMType(), val);
@@ -36,6 +43,42 @@ Object::set(llvm::IRBuilder<> &builder, Object *src) {
 
     assert(val->getType()->isPointerTy());
     builder.CreateStore(src->get(builder), val);
+}
+
+llvm::Value *
+ConstVar::get(llvm::IRBuilder<> &builder) {
+    if (val) {
+        return val;
+    }
+
+    if (type == i32Ty) {
+        val = llvm::ConstantInt::get(type->getLLVMType(),
+                                     std::any_cast<int32_t>(value), true);
+        return val;
+    }
+
+    throw "unsupported const type";
+}
+
+Object *
+StructVar::getField(llvm::IRBuilder<> &builder, std::string name) {
+    if (isRegVal()) {
+        throw "struct field access on register value is not supported";
+    }
+
+    auto *structType = type->as<StructType>();
+    assert(structType);
+    auto *member = structType->getMember(
+        llvm::StringRef(name.c_str(), name.size()));
+    if (!member) {
+        throw "unknown struct field";
+    }
+
+    auto *fieldType = member->first;
+    auto *field = fieldType->newObj(Object::VARIABLE);
+    field->setllvmValue(builder.CreateStructGEP(type->getLLVMType(), val,
+                                                member->second));
+    return field;
 }
 
 void

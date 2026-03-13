@@ -80,6 +80,10 @@ public:
     IRBinOper(token_type op, IRNode* left, IRNode* right)
         : op(op), left(left), right(right) {}
 
+    token_type getOp() const { return op; }
+    IRNode *getLeft() const { return left; }
+    IRNode *getRight() const { return right; }
+
     DEF_ACCEPT()
 };
 
@@ -89,6 +93,9 @@ class IRUnaryOper : public IRExpr {
 public:
     IRUnaryOper(token_type op, IRNode* expr)
         : op(op), expr(expr) {}
+
+    token_type getOp() const { return op; }
+    IRNode *getExpr() const { return expr; }
 
     DEF_ACCEPT()
 };

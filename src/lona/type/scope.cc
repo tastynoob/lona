@@ -39,11 +39,14 @@ FuncScope::allocate(TypeClass *type, bool is_temp) {
     assert(type->llvmType);
     if (alloc_point) {
         if (alloc_point == &entryBB.back()) {
-            alloc_point = builder.CreateAlloca(type->llvmType);
+            alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", &entryBB);
         } else {
-            auto t = new llvm::AllocaInst(type->llvmType, 0, "",
-                                          (alloc_point)->getNextNode());
-            alloc_point = t;
+            auto *next = alloc_point->getNextNode();
+            if (next) {
+                alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", next);
+            } else {
+                alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", &entryBB);
+            }
         }
     } else {
         if (entryBB.empty()) {

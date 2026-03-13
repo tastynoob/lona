@@ -107,11 +107,31 @@ public:
         funcs[name] = func;
     }
 
+    ValueTy *getMember(llvm::StringRef name) {
+        auto it = members.find(name);
+        if (it == members.end()) {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    Function *getFunc(llvm::StringRef name) {
+        auto it = funcs.find(name);
+        if (it == funcs.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+
     llvm::Type *genLLVMType(Env& env) override {
         if (!llvmType) {
             llvmType = llvm::StructType::create(env.getContext(), full_name.tochara());
         }
         return llvmType;
+    }
+
+    ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
+        return new StructVar(this, specifiers);
     }
 };
 
@@ -183,6 +203,48 @@ public:
     }
 };
 
+class ArrayType : public TypeClass {
+    TypeClass *elementType;
+    std::vector<AstNode *> dimensions;
+
+public:
+    static string buildName(TypeClass *elementType,
+                            const std::vector<AstNode *> &dimensions) {
+        string name = elementType->full_name + "[";
+        for (size_t i = 0; i < dimensions.size(); ++i) {
+            if (i != 0) {
+                name += ",";
+            }
+            if (dimensions[i] != nullptr) {
+                name += "?";
+            }
+        }
+        name += "]";
+        return name;
+    }
+
+    ArrayType(TypeClass *elementType, std::vector<AstNode *> dimensions = {})
+        : TypeClass(buildName(elementType, dimensions)),
+          elementType(elementType),
+          dimensions(std::move(dimensions)) {
+    }
+
+    TypeClass *getElementType() { return elementType; }
+    const std::vector<AstNode *> &getDimensions() const { return dimensions; }
+
+    llvm::Type *genLLVMType(Env& env) override {
+        if (!llvmType) {
+            auto *llvmElementType = elementType->llvmType
+                ? elementType->llvmType
+                : elementType->genLLVMType(env);
+            llvmType = llvm::PointerType::getUnqual(llvmElementType);
+            typeSize = sizeof(void *);
+        }
+        return llvmType;
+    }
+};
+
+
 
 class TypeTable {
     struct TypeMap {
@@ -242,6 +304,20 @@ public:
         return pointerType;
     }
 
+    ArrayType *createArrayType(TypeClass *elementType,
+                               std::vector<AstNode *> dimensions = {}) {
+        string arrayName = ArrayType::buildName(elementType, dimensions);
+        if (auto *type = getType(arrayName)) {
+            return type->as<ArrayType>();
+        }
+
+        auto *arrayType = new ArrayType(elementType, std::move(dimensions));
+        arrayType->llvmType = llvm::PointerType::getUnqual(elementType->getLLVMType());
+        arrayType->typeSize = sizeof(void *);
+        addType(arrayName, arrayType);
+        return arrayType;
+    }
+
     TypeClass *getType(TypeNode *node) {
         if (!node) {
             return nullptr;
@@ -260,7 +336,11 @@ public:
         }
 
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-            return getType(array->base);
+            auto *elementType = getType(array->base);
+            if (!elementType) {
+                return nullptr;
+            }
+            return createArrayType(elementType, array->dim);
         }
 
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
