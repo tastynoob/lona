@@ -6,6 +6,8 @@
 #include <string>
 
 #include "location.hh"
+#include "../util/string.hh"
+
 
 namespace lona {
 
@@ -57,7 +59,7 @@ tokenTypeToStr(TokenType type) {
 class AstToken {
 public:
     TokenType const type = TokenType::Invalid;
-    std::string const text;
+    string const text;
     location const loc;
     AstToken() {}
     AstToken(location loc) : loc(loc) {}
@@ -67,7 +69,9 @@ public:
         os << "AstToken(" << tokenTypeToStr(type) << ", " << text << ")";
     }
 
-    const int toInt() { return std::stoi(text); }
+    const int toInt() {
+        // return std::
+    }
 };
 
 std::ostream &
@@ -76,10 +80,10 @@ operator<<(std::ostream &os, const AstToken &token);
 int
 strToSymbol(const char *str);
 
-std::string
+string
 symbolToStr(int symbol);
 
-std::string
-strEscape(const std::string &str);
+string
+strEscape(const string &str);
 
 }  // namespace lona

@@ -16,11 +16,11 @@ namespace lona {
 // HIR generation
 class FuncAnalysis : public AstVisitor {
 
-    TypeManager *typeMgr;
+    TypeTable *typeMgr;
     Scope *scope;
     HIRFunc* hirfunc = new HIRFunc();
 
-    std::vector<HIRNode*>* curBB;
+    HIRBlock* curBB;
 
     using AstVisitor::visit;
 
@@ -60,23 +60,49 @@ class FuncAnalysis : public AstVisitor {
         this->visit(node->right);
         this->visit(node->left);
 
-        auto robj = scope->popOp();
-        auto lobj = scope->popOp();
+        // auto robj = scope->popOp();
+        // auto lobj = scope->popOp();
 
-        // check type
-        if (robj->getType() != lobj->getType()) {
-            throw std::runtime_error("Type mismatch in binary operation");
-        }
+        // // check type
+        // if (robj->getType() != lobj->getType()) {
+        //     throw std::runtime_error("Type mismatch in binary operation");
+        // }
 
-        // check if the operation is valid
-        // TODO
+        // // check if the operation is valid
+        // // TODO
 
-        // check if the operation is overloaded
-        // TODO
+        // // check if the operation is overloaded
+        // // TODO
 
-        auto hir = new HIRBinOper(node->op,lobj,robj);
+        // auto hir = new HIRBinOper(node->op,lobj,robj);
+        // curBB->push(hir);
 
-        curBB->push_back(hir);
+        return nullptr;
+    }
+
+    ObjectPtr visit(AstIf* node) override {
+        // node->condition->accept(*this);
+        // auto cond_obj = scope->popOp();
+
+        // auto hir_if = new HIRIf(cond_obj);
+        // curBB->push(hir_if);
+
+        // // then BB
+        // curBB = hir_if->getThenBlock();
+        // hirfunc->pushBlock(curBB);
+        // node->then->accept(*this);
+
+        // // else BB
+        // if (hir_if->hasElseBlock()) {
+        //     curBB = hir_if->getElseBlock();
+        //     hirfunc->pushBlock(curBB);
+        //     node->els->accept(*this);
+        // }
+
+        // // final BB
+        // curBB = new HIRBlock();
+        // hirfunc->pushBlock(curBB);
+        // hir_if->setCfgNext(curBB);
         return nullptr;
     }
 
@@ -98,10 +124,8 @@ class FuncAnalysis : public AstVisitor {
         return nullptr;
     }
 
-
-
 public:
-    FuncAnalysis(TypeManager* typeMgr, GlobalScope* global, AstFuncDecl* node)
+    FuncAnalysis(TypeTable* typeMgr, GlobalScope* global, AstFuncDecl* node)
         : typeMgr(typeMgr), scope(new FuncScope(global)) {
 
         // deSROA
@@ -122,11 +146,10 @@ public:
             hirfunc->pushArg(obj);
             scope->addObj(arg_name, obj);
         }
-        
-        curBB = &hirfunc->getBodyNodes();
-        this->visit(node->body);
 
-
+        // curBB = new HIRBlock();
+        // hirfunc->pushBlock(curBB);
+        // this->visit(node->body);
     }
 
 };

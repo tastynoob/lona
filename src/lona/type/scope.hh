@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../obj/value.hh"
+#include "../sym/object.hh"
 #include "../type/type.hh"
 #include <llvm-18/llvm/IR/Value.h>
 #include <stack>

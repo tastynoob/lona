@@ -21,7 +21,7 @@ Object::get(llvm::IRBuilder<> &builder) {
         return val;
     }
     assert(val->getType()->isPointerTy());
-    return builder.CreateLoad(type->llvmType, val);
+    return builder.CreateLoad(type->getLLVMType(), val);
 }
 
 void

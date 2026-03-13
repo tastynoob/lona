@@ -2,7 +2,8 @@
 
 #include "../ast/astnode.hh"
 #include "../visitor.hh"
-#include "../obj/value.hh"
+#include "../sym/object.hh"
+#include "lona/type/llvmenv.hh"
 #include <cassert>
 #include <cstddef>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
@@ -19,20 +20,21 @@
 namespace lona {
 
 class TypeClass;
-class Object;
 class PointerType;
 class StructType;
 
 static const int RVO_THRESHOLD = 16;
 
 class TypeClass {
+protected:
+    llvm::Type * llvmType = nullptr;
+
 public:
-    llvm::Type *const llvmType;
-    std::string const full_name;
+    string const full_name;
     int typeSize;  // the size of the type in bytes
 
-    TypeClass(llvm::Type *llvmType, std::string full_name, int typeSize)
-        : llvmType(llvmType), full_name(full_name), typeSize(typeSize) {}
+    TypeClass(string full_name)
+        : full_name(full_name) {}
 
     template<typename T>
     T *as() {
@@ -48,30 +50,23 @@ public:
         return false;
     }
 
-    virtual ObjectPtr newObj(uint32_t specifiers = Object::EMPTY);
+    llvm::Type* getLLVMType() {
+        if (!llvmType) panic("LLVM type not generated yet");
+        return llvmType;
+    }
 
-    virtual void binaryOperation(llvm::IRBuilder<> &builder, ObjectPtr left,
-                                 token_type op, ObjectPtr right, ObjectPtr& res) {}
+    virtual llvm::Type* genLLVMType(Env& env) = 0;
 
-    virtual void unaryOperation(llvm::IRBuilder<> &builder, token_type op,
-                                ObjectPtr value, ObjectPtr& res) {}
-
-    virtual void assignOperation(llvm::IRBuilder<> &builder, ObjectPtr left,
-                                 ObjectPtr right, ObjectPtr& res) {}
-
-    virtual void callOperation(Scope *scope, ObjectPtr value,
-                               std::vector<ObjectPtr> args, ObjectPtr& res) {}
-
-    virtual void fieldSelect(llvm::IRBuilder<> &builder, ObjectPtr value,
-                             const std::string &field, ObjectPtr& res) {}
+    virtual ObjectPtr newObj(Env& env, uint32_t specifiers = Object::EMPTY);
 };
 
 class BaseType : public TypeClass {
 public:
     enum Type { U8, I8, U16, I16, U32, I32, U64, I64, F32, F64, BOOL } type;
-    BaseType(llvm::Type *llvmType, Type type, std::string full_name,
-             int typeSize)
-        : TypeClass(llvmType, full_name, typeSize), type(type) {}
+    BaseType(Type type, string full_name)
+        : TypeClass(full_name), type(type) {}
+
+    llvm::Type* genLLVMType(Env& env) override;
 };
 
 class StructType : public TypeClass {
@@ -85,58 +80,18 @@ private:
 
     bool opaque = false;
 public:
-    StructType(llvm::Type *llvmType,
-               llvm::StringMap<ValueTy> &&members,
-               std::string full_name, int typeSize)
-        : TypeClass(llvmType, full_name, typeSize), members(members), opaque(false) {}
+    StructType(llvm::StringMap<ValueTy> &&members,
+               string full_name)
+        : TypeClass(full_name), members(members), opaque(false) {}
 
     // create opaque struct
-    StructType(llvm::Type *llvmType, std::string full_name)
-        : TypeClass(llvmType, full_name, 0), opaque(true) {}
+    StructType(string full_name)
+        : TypeClass(full_name), opaque(true) {}
 
-    TypeClass *getMember(const std::string &name) {
-        auto it = members.find(name);
-        if (it == members.end()) {
-            return nullptr;
-        }
-        return it->second.first;
-    }
 
-    Function *getFunc(const std::string &name) {
-        auto it = funcs.find(name);
-        if (it == funcs.end()) {
-            return nullptr;
-        }
-        return it->second;
-    }
-
-    void complete(llvm::StringMap<ValueTy>& members, int typeSize) {
-        if (!opaque) { return; }
-
-        this->typeSize = typeSize;
-
-        this->members = std::move(members);
-
-        if (auto* st = llvm::dyn_cast<llvm::StructType>(llvmType)) {
-            assert(st->isOpaque());
-            std::vector<llvm::Type*> body;
-            for (auto& it : this->members) {
-                body.push_back(it.second.first->llvmType);
-            }
-            st->setBody(body);
-        }
-    }
-
-    void addFunc(std::string name, Function *func) {
-        this->funcs.insert({name, func});
-    }
 
     bool isOpaque() const { return opaque; }
 
-    ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override;
-
-    void fieldSelect(llvm::IRBuilder<> &builder, ObjectPtr value,
-                     const std::string &field, ObjectPtr& ret) override;
 };
 
 class FuncType : public TypeClass {
@@ -148,21 +103,14 @@ public:
     auto& getArgTypes() const { return argTypes; }
     TypeClass *getRetType() const { return retType; }
 
-    FuncType(llvm::Type *llvmType, std::vector<TypeClass *> &&args,
-             TypeClass *retType, std::string full_name, int typeSize)
-        : TypeClass(llvmType, full_name, typeSize),
+    FuncType(std::vector<TypeClass *> &&args,
+             TypeClass *retType, string full_name)
+        : TypeClass(full_name),
           argTypes(args),
           retType(retType),
           hasSROA(retType->shouldReturnByPointer()) {
         // if hasSroa, the first arg is the return value
     }
-
-    ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
-        assert(false);
-    }
-
-    void callOperation(Scope *scope, ObjectPtr value,
-                       std::vector<ObjectPtr> args, ObjectPtr& res) override;
 };
 
 class PointerType : public TypeClass {
@@ -170,22 +118,30 @@ class PointerType : public TypeClass {
 
 public:
     PointerType(TypeClass *pointeeType)
-        : TypeClass(pointeeType->llvmType->getPointerTo(),
-                    pointeeType->full_name + "*", 8),
+        : TypeClass(pointeeType->full_name),
           pointeeType(pointeeType) {
-        assert(!pointeeType->llvmType->isPointerTy());
     }
     TypeClass *getPointeeType() { return pointeeType; }
 };
 
 
-class TypeManager {
+class TypeTable {
+    struct TypeMap {
+        TypeClass* type; // main type
+        TypeMap* pointer; // main type's pointer type
+        TypeMap* array; // main type's array type
+        TypeMap(TypeClass* type)
+            : type(type), pointer(nullptr), array(nullptr) {}
+    };
+
     llvm::Module& module;
 
-    llvm::StringMap<TypeClass*> typeMap;
+    llvm::StringMap<TypeMap> typeMap;
+
+    
+
 public:
-    TypeManager(llvm::Module& module) : module(module) {
-    }
+    TypeTable(llvm::Module& module) : module(module) {}
 
     llvm::LLVMContext& getContext() { return module.getContext(); }
     llvm::Module& getModule() { return module; }
@@ -203,21 +159,7 @@ public:
         if (it == typeMap.end()) {
             return nullptr;
         }
-        return it->second;
-    }
-
-    TypeClass *getType(TypeNode* typeNode);
-
-    TypeClass *createPointerType(TypeClass *pointeeType) {
-        std::string full_name = pointeeType->full_name + "*";
-        auto it = typeMap.find(full_name);
-        if (it != typeMap.end()) {
-            return it->second;
-        }
-
-        auto ptrType = new PointerType(pointeeType);
-        addType(full_name, ptrType);
-        return ptrType;
+        return it->second.type;
     }
 };
 

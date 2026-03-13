@@ -3,6 +3,8 @@
 #include <any>
 #include <cassert>
 #include <iostream>
+#include <llvm-18/llvm/IR/DerivedTypes.h>
+#include <llvm-18/llvm/IR/Type.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 #include <sys/types.h>
@@ -65,6 +67,8 @@ public:
     virtual void set(llvm::IRBuilder<> &builder, Object *src);
 };
 
+using ObjectPtr = Object *;
+
 // i32, i64 ...
 class BaseVar : public Object {
 public:
@@ -81,9 +85,11 @@ public:
 };
 
 class PointerVar : public Object {
+    ObjectPtr pointee;
 public:
-    PointerVar(Object *obj)
-        : Object(obj->getType(), obj->getSpecifiers()) {}
+    PointerVar(ObjectPtr obj)
+        : Object(obj->getType(), obj->getSpecifiers()), pointee(obj) {
+    }
     void set(llvm::IRBuilder<> &builder, Object *src) override {
         assert(false);
     }
@@ -100,23 +106,6 @@ public:
     void set(llvm::IRBuilder<> &builder, Object *src) override;
 };
 
-class Function : public Object {
-    AstFuncDecl *funcDecl;
 
-public:
-    Function(llvm::Function *val, FuncType *type)
-        : Object((llvm::Function *)val, (TypeClass *)type) {}
-
-    Object *call(Scope *scope, std::vector<Object *> &args);
-
-    llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
-
-    void set(llvm::IRBuilder<> &builder, Object *src) override {
-        throw "readonly literal value";
-    }
-};
-
-
-using ObjectPtr = Object *;
 
 }  // namespace lona

@@ -23,11 +23,17 @@ using token = lona::Parser::token::token_kind_type;
 (true) { loc->columns(yyleng); return token::TRUE; }
 (false) { loc->columns(yyleng); return token::FALSE; }
 (var) { loc->columns(yyleng); return token::VAR; }
+
 (def) { loc->columns(yyleng); return token::DEF; }
+(act) { loc->columns(yyleng); return token::ACT; }
 (ret) { lval->token = new AstToken(*loc); loc->columns(yyleng); return token::RET; }
+
 (if) { loc->columns(yyleng); return token::IF; }
 (else) { loc->columns(yyleng); return token::ELSE; }
 (for) { loc->columns(yyleng); return token::FOR; }
+(break) { loc->columns(yyleng); return token::BREAK; }
+(continue) { loc->columns(yyleng); return token::CONTINUE; }
+
 (struct) { loc->columns(yyleng); return token::STRUCT; }
 (class) {}
 (trait) {}

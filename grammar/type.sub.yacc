@@ -1,4 +1,4 @@
-single_type
+/* single_type
     : FIELD { $$ = new NormTypeNode($1->text); }
     | type_selector { }
     ;
@@ -42,4 +42,40 @@ type_name
     | single_type ptr_suffix { $$ = $$ = createPointerOrArrayTypeNode($1, $2); }
     | func_ptr_head { $$ = $1; }
     | func_ptr_head type_name { $$ = $1; $$->as<FuncTypeNode>()->setRet($2); }
+    ; */
+
+
+single_type
+    : FIELD { $$ = new BaseTypeNode($1->text); }
+    | type_selector { }
+    ;
+
+ptr_type
+    : base_type '*' {}
+    ;
+
+array_type
+    : base_type '[' ']' {}
+    | base_type '[' expr_seq ']' {}
+    | base_type '[' ',' expr_seq ']' {}
+    ;
+
+base_type
+    : single_type {}
+    | ptr_type {}
+    | array_type {}
+    ;
+
+func_head
+    : '(' ')' {}
+    | '(' type_name_seq ')' {}
+    | func_head '*' {}
+    | func_head '[' ']' {}
+    | func_head '[' expr_seq ']' {}
+    | func_head '[' ',' expr_seq ']' {}
+    ;
+
+type_name
+    : base_type {}
+    | func_head type_name {}
     ;

@@ -10,8 +10,8 @@ operator<<(std::ostream &os, const AstToken &token) {
     return os;
 }
 
-std::string
-strEscape(const std::string &str) {
+string
+strEscape(const string &str) {
     // "\\n" -> "\n"
     std::stringstream ss;
     for (size_t i = 0; i < str.size(); i++) {
@@ -63,7 +63,7 @@ strToSymbol(const char *str) {
     throw std::runtime_error("Invalid symbol");
 }
 
-std::string
+string
 symbolToStr(int symbol) {
     switch (symbol) {
         case '+':

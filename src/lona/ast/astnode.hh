@@ -8,9 +8,11 @@
 #include <type_traits>
 #include <vector>
 
+#include "../err/err.hh"
 #include "../ast/token.hh"
 #include "location.hh"
-#include "lona/obj/value.hh"
+#include "../sym/object.hh"
+#include "../util/string.hh"
 
 using Json = nlohmann::ordered_json;
 
@@ -25,7 +27,7 @@ class Scope;
 class Function;
 
 class TypeClass;
-class TypeManager;
+class TypeTable;
 
 using token_type = int;
 
@@ -33,60 +35,26 @@ const int pointerType_pointer = 1;
 const int pointerType_autoArray = 2;
 const int pointerType_fixedArray = 3;
 
-class TypeNode {
-    TypeNode* head_node;
-protected:
-    TypeClass* type_hold = nullptr;
-public:
+struct TypeNode {};
 
-    template<class T>
-    T* as() {
-        return dynamic_cast<T*>(this);
-    }
-
-    void setHead(TypeNode* head) { head_node = head; }
-    TypeNode* getHead() { return head_node;}
-
-    virtual TypeClass* accept(TypeManager* typeMgr) = 0;
+struct BaseTypeNode : public TypeNode {
+    string const name;
+    BaseTypeNode(string name) : name(name) {}
 };
 
-// var a type
-class NormTypeNode : public TypeNode {
-    std::string name;
-public:
-    NormTypeNode(std::string name): name(name) {}
-
-    TypeClass* accept(TypeManager* typeMgr) override;
+struct PointerTypeNode : public TypeNode {
+    TypeNode *base;
+    uint32_t dim;
 };
 
-class PointerTypeNode : public TypeNode {
-    int level = 0;
-public:
-    PointerTypeNode(int level): level(level) {}
-
-    void incLevel() { level++; }
-
-    TypeClass* accept(TypeManager* typeMgr) override;
-};
-
-class ArrayTypeNode : public TypeNode {
+struct ArrayTypeNode : public TypeNode {
+    TypeNode *base;
     std::vector<AstNode*> dim;
-public:
-    ArrayTypeNode(std::vector<AstNode*>& dim): dim(std::move(dim)) {}
-
-    TypeClass* accept(TypeManager* typeMgr) override;
 };
 
-// var a ()
-class FuncTypeNode : public TypeNode {
+struct FuncTypeNode : public TypeNode {
     std::vector<TypeNode*> args;
     TypeNode* ret = nullptr;
-public:
-    FuncTypeNode() {}
-    FuncTypeNode(std::vector<TypeNode*> args): args(args) {}
-    void setRet(TypeNode* ret) { this->ret = ret; }
-
-    TypeClass* accept(TypeManager* typeMgr) override;
 };
 
 extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
@@ -105,6 +73,7 @@ public:
     }
     virtual AstNode *getValidCFGNode() { return this; }
     virtual Object *accept(AstVisitor &visitor) = 0;
+    virtual bool hasTerminator() { return false; }
     virtual void toJson(Json &root) {};
     virtual void toCFG(CFGChecker &checker);
 
@@ -155,9 +124,9 @@ public:
 
 class AstField : public AstNode {
 public:
-    std::string const name;
+    string const name;
     AstField(AstToken &token);
-    // AstField(std::string &token);
+    // AstField(string &token);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;
@@ -197,7 +166,7 @@ public:
 
 class AstStructDecl : public AstNode {
 public:
-    std::string const name;
+    string const name;
     AstNode *const body;
 
     AstStructDecl(AstToken &field, AstNode *body)
@@ -207,7 +176,7 @@ public:
 
 class AstVarDecl : public AstNode {
 public:
-    std::string const field;
+    string const field;
     TypeNode *const typeNode;
     AstNode *const right;
 
@@ -219,7 +188,7 @@ public:
 };
 
 class AstVarDef : public AstNode {
-    std::string const field;
+    string const field;
     TypeNode *const typeNode;
     AstNode *const initVal;
 public:
@@ -255,6 +224,15 @@ public:
         return body.empty() ? nullptr : body.front();
     }
 
+    bool hasTerminator() override {
+        for (auto it = body.rbegin(); it != body.rend(); ++it) {
+            if ((*it)->hasTerminator()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     AstStatList() {}
     AstStatList(AstNode *node);
     void toJson(Json &root) override;
@@ -265,7 +243,7 @@ public:
 
 class AstFuncDecl : public AstNode {
 public:
-    std::string const name;
+    string const name;
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
     TypeNode *const retType;
@@ -290,6 +268,10 @@ public:
     void toJson(Json &root) override;
     void toCFG(CFGChecker &checker) override;
 
+    bool hasTerminator() override {
+        return true;
+    }
+
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -308,6 +290,13 @@ public:
     }
 
     AstIf(AstNode *condition, AstNode *then, AstNode *els = nullptr);
+
+    bool hasTerminator() override {
+        if (els == nullptr) {
+            return false;
+        }
+        return then->hasTerminator() && els->hasTerminator();
+    }
 
     void toJson(Json &root) override;
     void toCFG(CFGChecker &checker) override;

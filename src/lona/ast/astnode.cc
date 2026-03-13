@@ -8,7 +8,7 @@ namespace lona {
 
 
 TypeClass* 
-NormTypeNode::accept(TypeManager* typeMgr) {
+NormTypeNode::accept(TypeTable* typeMgr) {
     if (type_hold) {
         return type_hold;
     }
@@ -18,7 +18,7 @@ NormTypeNode::accept(TypeManager* typeMgr) {
 }
 
 TypeClass* 
-PointerTypeNode::accept(TypeManager* typeMgr) {
+PointerTypeNode::accept(TypeTable* typeMgr) {
     if (!type_hold) {
         return type_hold;
     }
@@ -32,12 +32,12 @@ PointerTypeNode::accept(TypeManager* typeMgr) {
 }
 
 TypeClass* 
-ArrayTypeNode::accept(TypeManager* typeMgr) {
+ArrayTypeNode::accept(TypeTable* typeMgr) {
     return nullptr;
 }
 
 TypeClass* 
-FuncTypeNode::accept(TypeManager* typeMgr) {
+FuncTypeNode::accept(TypeTable* typeMgr) {
     return nullptr;
 }
 

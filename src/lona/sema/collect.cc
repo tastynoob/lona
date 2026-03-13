@@ -14,7 +14,7 @@
 namespace lona {
 
 class StructVisitor : public AstVisitorAny {
-    TypeManager* typeMgr;
+    TypeTable* typeMgr;
 
     std::vector<llvm::Type*> llvmmembers;
     llvm::StringMap<StructType::ValueTy> members;
@@ -42,7 +42,7 @@ class StructVisitor : public AstVisitorAny {
     }
 
 public:
-    StructVisitor(TypeManager* typeMgr, AstStructDecl* node)
+    StructVisitor(TypeTable* typeMgr, AstStructDecl* node)
         : typeMgr(typeMgr) {
 
         auto type = typeMgr->getType(node->name);
@@ -67,7 +67,7 @@ public:
 
 
 class TypeCollector : public AstVisitorAny {
-    TypeManager* typeMgr;
+    TypeTable* typeMgr;
     Scope* scope;
 
     std::list<AstStructDecl*> structDecls;
@@ -174,7 +174,7 @@ class TypeCollector : public AstVisitorAny {
     }
 
 public:
-    TypeCollector(TypeManager* typeMgr, Scope* scope, AstProgram* program) : typeMgr(typeMgr), scope(scope) {
+    TypeCollector(TypeTable* typeMgr, Scope* scope, AstProgram* program) : typeMgr(typeMgr), scope(scope) {
         this->visit(program);
         // collect all struct and function decls
         for (auto it : structDecls) {

@@ -8,11 +8,9 @@ str
 var a i32 = unsafe // uninitialize variable
 var a i32 = 1 // property type infer
 var a i32 = i32 1 // value copy
-var a i32 = 1 // error assign const int to int, Implicit variable cast initialization is not allowed
 
 // auto variable
-var a = 1 // const i32
-var a = int 1 // i32
+var a = 1 // i32
 var a = getData()
 
 // array
@@ -38,18 +36,13 @@ var a (u32)[] // with params and no return function pointer array
 var a (u32)[]* // with params and no return function pointer array's pointer
 var a () u32 // with return and no params function pointer
 var a () ()* // with return and params function pointer's array, return type is ()*
-var a ()[] u32 // with return and no params function pointer's array, return type is u32
-var a (u32, u32)[] u32 // with return and params function pointer's array, return type is u32
-var a (u32)[] (u32)*[] u32 // with return and params function pointer's array, return type is (u32)*[] u32
-var a (u32) u32
-var a ([u32, u32]*[])[] ([u32, u32]*[])* u32
 
 t = if (a == 0) 1 else 2
 t = if a == 0 { 1 } else { 2 }
 
 for bool type { }
 for iter type { }
-for loop(0) { } // for (Iter i = Loop(10); bool(i); i.next()) {}
+for loop(10) { } // for (Iter i = Loop(10); i.done(); auto val = i.next()) {}
 for range(0, 10) {}
 for stride(0, 10, 2) {}
 for a = range(array.begin, array.end) {} // for (Iter i = until(array.begin, array.end); bool(i); i.next()) {}
@@ -59,24 +52,7 @@ struct Name {
     a i32
     b i32
 
-    def member_method1() i32 = {
+    def member_method1() = i32 {
 
     }
-}
-
-// trait
-trait Name {
-    def member_method1() = 0
-}
-
-// class transfer
-struct Demo {
-    var a i32
-}
-
-class CDemo : Demo
-
-
-def Name.member_method2() i32 = {
-
 }
