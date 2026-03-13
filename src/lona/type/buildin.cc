@@ -1,6 +1,5 @@
 #include "buildin.hh"
 
-#include "../obj/value.hh"
 #include "parser.hh"
 
 namespace lona {
@@ -109,18 +108,36 @@ BoolType* boolTy = nullptr;
 void
 initBuildinType(Scope* scope) {
 
-    i8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::I8, "i8");
-    i16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::I16, "i16");
-    i32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::I32, "i32");
-    i64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::I64, "i64");
-    f32Ty = new FLoatType(scope->builder.getFloatTy(), BaseType::F32, "f32");
-    f64Ty = new FLoatType(scope->builder.getDoubleTy(), BaseType::F64, "f64");
-    boolTy = new BoolType(scope->builder.getInt1Ty());
+    if (!i8Ty) {
+        i8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::I8, "i8");
+    }
+    if (!i16Ty) {
+        i16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::I16, "i16");
+    }
+    if (!i32Ty) {
+        i32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::I32, "i32");
+    }
+    if (!i64Ty) {
+        i64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::I64, "i64");
+    }
+    if (!f32Ty) {
+        f32Ty = new FLoatType(scope->builder.getFloatTy(), BaseType::F32, "f32");
+    }
+    if (!f64Ty) {
+        f64Ty = new FLoatType(scope->builder.getDoubleTy(), BaseType::F64, "f64");
+    }
+    if (!boolTy) {
+        boolTy = new BoolType(scope->builder.getInt1Ty());
+    }
 
-    // scope->addType("i8", i8Ty);
-    // scope->addType("i16", i16Ty);
-    // scope->addType("i32", i32Ty);
-    // scope->addType("i64", i64Ty);
-    // scope->addType("bool", boolTy);
+    if (auto *typeTable = scope->types()) {
+        typeTable->addType(string("i8"), i8Ty);
+        typeTable->addType(string("i16"), i16Ty);
+        typeTable->addType(string("i32"), i32Ty);
+        typeTable->addType(string("i64"), i64Ty);
+        typeTable->addType(string("f32"), f32Ty);
+        typeTable->addType(string("f64"), f64Ty);
+        typeTable->addType(string("bool"), boolTy);
+    }
 }
 }

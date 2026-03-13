@@ -35,7 +35,7 @@ string::string_data* string::string_data::create(uint32_t size)
 
 string::string_data* string::string_data::createReverse(uint32_t cap)
 {
-    string_data* sd = (string_data*)new char[sizeof(string_data) + cap];
+    string_data* sd = (string_data*)new char[sizeof(string_data) + cap + 1];
     sd->size = 0;
     sd->ref_cnt = 1;
     sd->data[cap] = '\0';

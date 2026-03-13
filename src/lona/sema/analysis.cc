@@ -1,7 +1,7 @@
 #include "../visitor.hh"
 #include "lona/ast/astnode.hh"
-#include "lona/obj/value.hh"
 #include "lona/sema/hir.hh"
+#include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
 #include <cassert>
@@ -26,7 +26,7 @@ class FuncAnalysis : public AstVisitor {
 
     ObjectPtr visit(AstStatList* node) override {
         for (auto it : node->getBody()) {
-            this->visit(node);
+            this->visit(it);
         }
         return nullptr;
     }

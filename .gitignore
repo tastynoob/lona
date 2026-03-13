@@ -1,4 +1,7 @@
 .vscode
+.claude/
+.idea
+.humanize*
 build/
 .cache/
 *.code-workspace
@@ -10,4 +13,17 @@ build/
 /*.out
 /*.log
 /*.dot
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.profile
+/.ripgreprc
+/.zprofile
+/.zshrc
+/HEAD
+/config
+/hooks
+/objects
+/refs
 agentplan

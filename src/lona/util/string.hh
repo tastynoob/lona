@@ -52,10 +52,9 @@ public:
     string() : ref(nullptr) {}
 
     string(const char* s)
+        : ref(nullptr)
     {
-        dec_ref();
         if (!s) {
-            ref = nullptr;
             return;
         }
         ref = string_data::create(s);

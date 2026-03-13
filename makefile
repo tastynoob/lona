@@ -6,7 +6,16 @@ OUT_DIR := $(ROOT)/build
 INCLUDE_PATHS = -I $(ROOT)/src -I $(ROOT)/build
 LEX_FILE = grammar/lexer.lex
 YACC_FILE = $(shell find $(ROOT)/grammar -name "*.yacc")
+PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
+	$(ROOT)/src/lona/scan/driver.cc \
+	$(ROOT)/src/lona/ast/astnode.cc \
+	$(ROOT)/src/lona/ast/astnode_toJson.cc \
+	$(ROOT)/src/lona/ast/astnode_toCFG.cc \
+	$(ROOT)/src/lona/ast/token.cc \
+	$(ROOT)/src/lona/util/cfg.cc \
+	$(ROOT)/src/lona/util/string.cc
 SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") build/scanner.cc build/parser.cc
+FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) build/scanner.cc build/parser.cc
 
 LIBS = $(shell llvm-config-18 --libs core native)
 
@@ -14,7 +23,9 @@ LD_FLAGS = $(shell llvm-config-18 --ldflags)
 CXXFLAGS += $(shell llvm-config-18 --cppflags)
 
 OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
+FRONTEND_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(FRONTEND_SOURCE_FILES))
 target = $(OUT_DIR)/lona
+frontend_target = $(OUT_DIR)/lona-frontend
 
 # require llvm-18
 ifeq ($(shell llvm-config-18 --version),)
@@ -29,7 +40,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default
+.PHONY: clean format default frontend
 
 default:
 	mkdir -p build
@@ -37,7 +48,12 @@ default:
 
 all: $(target)
 
+frontend: $(frontend_target)
+
 $(target): $(OBJECTS)
+	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
+
+$(frontend_target): $(FRONTEND_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
 $(OUT_DIR)/%.d: %.cc
@@ -49,6 +65,7 @@ $(OUT_DIR)/%.o: %.cc
 	$(CXX) $(CXXFLAGS) $(INCLUDE_PATHS) -c $< -o $@
 
 -include $(OBJECTS:.o=.d)
+-include $(FRONTEND_OBJECTS:.o=.d)
 
 build/scanner.cc: $(LEX_FILE)
 	mkdir -p build
@@ -68,4 +85,3 @@ clean:
 
 format:
 	clang-format-18 -i $(shell find $(ROOT)/src -name "*.cc") $(shell find $(ROOT)/src -name "*.hh")
-

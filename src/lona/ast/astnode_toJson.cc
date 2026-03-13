@@ -32,7 +32,7 @@ AstConst::toJson(Json &root) {
 void
 AstField::toJson(Json &root) {
     root["type"] = "field";
-    root["name"] = this->name;
+    root["name"] = this->name.tochara();
 }
 
 void
@@ -47,7 +47,7 @@ AstAssign::toJson(Json &root) {
 void
 AstBinOper::toJson(Json &root) {
     root["type"] = "BinaryOperator";
-    root["op"] = symbolToStr(this->op);
+    root["op"] = symbolToStr(this->op).tochara();
     root["left"] = Json::object();
     this->left->toJson(root["left"]);
     root["right"] = Json::object();
@@ -57,21 +57,39 @@ AstBinOper::toJson(Json &root) {
 void
 AstUnaryOper::toJson(Json &root) {
     root["type"] = "UnaryOperator";
-    root["op"] = symbolToStr(this->op);
+    root["op"] = symbolToStr(this->op).tochara();
     root["expr"] = Json::object();
     this->expr->toJson(root["expr"]);
 }
 
 void
+AstStructDecl::toJson(Json &root) {
+    root["type"] = "StructDecl";
+    root["name"] = this->name.tochara();
+    root["body"] = Json::object();
+    this->body->toJson(root["body"]);
+}
+
+void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
-    root["field"] = this->field;
+    root["field"] = this->field.tochara();
     // if (typeHelper) {
     //     root["typestr"] = typeHelper->toString();
     // }
     if (right) {
         root["right"] = Json::object();
         this->right->toJson(root["right"]);
+    }
+}
+
+void
+AstVarDef::toJson(Json &root) {
+    root["type"] = "VarDef";
+    root["field"] = this->field.tochara();
+    if (this->initVal != nullptr) {
+        root["init"] = Json::object();
+        this->initVal->toJson(root["init"]);
     }
 }
 
@@ -89,7 +107,7 @@ AstStatList::toJson(Json &root) {
 void
 AstFuncDecl::toJson(Json &root) {
     root["type"] = "FuncDecl";
-    root["name"] = this->name;
+    root["name"] = this->name.tochara();
     // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {
         root["args"] = Json::array();
@@ -142,6 +160,14 @@ AstFieldCall::toJson(Json &root) {
     } else {
         root["args"] = "none";
     }
+}
+
+void
+AstSelector::toJson(Json &root) {
+    root["type"] = "Selector";
+    root["parent"] = Json::object();
+    this->parent->toJson(root["parent"]);
+    root["field"] = this->field->text.tochara();
 }
 
 }  // namespace lona

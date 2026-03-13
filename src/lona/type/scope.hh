@@ -14,6 +14,7 @@ protected:
     std::stack<ObjectPtr> opStack;
     llvm::StringMap<Object *> variables;
     Scope *parent = nullptr;
+    TypeTable *typeTable = nullptr;
 
 public:
     llvm::IRBuilder<> &builder;
@@ -22,17 +23,25 @@ public:
     Scope(llvm::IRBuilder<> &builder, llvm::Module &module)
         : builder(builder), module(module) {}
     Scope(Scope *parent)
-        : builder(parent->builder), module(parent->module), parent(parent) {}
+        : builder(parent->builder), module(parent->module), parent(parent),
+          typeTable(parent->typeTable) {}
 
     ~Scope();
 
     virtual std::string getName() = 0;
-
     virtual llvm::Value *allocate(TypeClass *, bool t = false) { throw ""; };
 
+    void setTypeTable(TypeTable *table) { typeTable = table; }
+    TypeTable *types() const { return typeTable; }
     void addObj(llvm::StringRef name, Object *var);
+    void addObj(const ::string &name, Object *var) {
+        addObj(llvm::StringRef(name.tochara(), name.size()), var);
+    }
 
     Object *getObj(llvm::StringRef name);
+    Object *getObj(const ::string &name) {
+        return getObj(llvm::StringRef(name.tochara(), name.size()));
+    }
 
     void pushOp(ObjectPtr obj) {
         opStack.push(obj);

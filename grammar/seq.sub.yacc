@@ -13,3 +13,8 @@ type_name_seq
     : type_name { $$ = new std::vector<TypeNode*>; $$->emplace_back($1); }
     | type_name_seq ',' type_name { $$ = $1; $$->emplace_back($3); }
     ;
+
+bare_type_seq
+    : TYPE { $$ = new std::vector<TypeNode*>; $$->emplace_back(new BaseTypeNode($1->text)); }
+    | bare_type_seq TYPE { $$ = $1; $$->emplace_back(new BaseTypeNode($2->text)); }
+    ;

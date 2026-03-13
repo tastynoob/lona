@@ -1,4 +1,4 @@
-#include "value.hh"
+#include "func.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
 #include <cassert>
@@ -85,7 +85,7 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
         return retval;
     } else if (retType) {
         auto obj = retType->newObj(Object::REG_VAL);
-        //obj->bindllvmValue(ret);
+        obj->bindllvmValue(ret);
         return obj;
     } else {
         // no return

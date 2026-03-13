@@ -1,6 +1,4 @@
 #include "../visitor.hh"
-#include "lona/ast/astnode.hh"
-#include "lona/obj/value.hh"
 #include "lona/sema/hir.hh"
 #include "lona/type/buildin.hh"
 #include "parser.hh"

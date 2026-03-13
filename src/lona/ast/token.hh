@@ -70,7 +70,7 @@ public:
     }
 
     const int toInt() {
-        // return std::
+        return text.toI32();
     }
 };
 

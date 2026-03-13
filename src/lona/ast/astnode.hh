@@ -35,7 +35,9 @@ const int pointerType_pointer = 1;
 const int pointerType_autoArray = 2;
 const int pointerType_fixedArray = 3;
 
-struct TypeNode {};
+struct TypeNode {
+    virtual ~TypeNode() = default;
+};
 
 struct BaseTypeNode : public TypeNode {
     string const name;
@@ -45,18 +47,27 @@ struct BaseTypeNode : public TypeNode {
 struct PointerTypeNode : public TypeNode {
     TypeNode *base;
     uint32_t dim;
+
+    PointerTypeNode(TypeNode *base, uint32_t dim = 1) : base(base), dim(dim) {}
 };
 
 struct ArrayTypeNode : public TypeNode {
     TypeNode *base;
     std::vector<AstNode*> dim;
+
+    ArrayTypeNode(TypeNode *base, std::vector<AstNode*> dim = {})
+        : base(base), dim(std::move(dim)) {}
 };
 
 struct FuncTypeNode : public TypeNode {
     std::vector<TypeNode*> args;
     TypeNode* ret = nullptr;
+
+    FuncTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr)
+        : args(std::move(args)), ret(ret) {}
 };
 
+extern FuncTypeNode* findFuncTypeNode(TypeNode* node);
 extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
 
 class AstNode {
@@ -171,6 +182,7 @@ public:
 
     AstStructDecl(AstToken &field, AstNode *body)
         : name(field.text), body(body) {}
+    void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -206,6 +218,7 @@ public:
 
     bool withInitVal() const { return initVal != nullptr; }
 
+    void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -332,6 +345,7 @@ public:
     AstSelector(AstNode *parent, AstToken *field)
         : parent(parent), field(field) {}
 
+    void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
 

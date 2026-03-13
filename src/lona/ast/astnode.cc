@@ -1,91 +1,59 @@
 #include "astnode.hh"
 #include "../visitor.hh"
-#include "../type/scope.hh"
 #include <cassert>
-#include <cstddef>
+#include <cstring>
+#include <stdexcept>
 
 namespace lona {
 
-
-TypeClass* 
-NormTypeNode::accept(TypeTable* typeMgr) {
-    if (type_hold) {
-        return type_hold;
+FuncTypeNode*
+findFuncTypeNode(TypeNode *node) {
+    if (node == nullptr) {
+        return nullptr;
     }
-
-    type_hold = typeMgr->getType(this->name);
-    return type_hold;
-}
-
-TypeClass* 
-PointerTypeNode::accept(TypeTable* typeMgr) {
-    if (!type_hold) {
-        return type_hold;
+    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        return func;
     }
-
-    auto head_type = getHead()->accept(typeMgr);
-    for (int i=0;i<level;i++) {
-        head_type = typeMgr->createPointerType(head_type);
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        return findFuncTypeNode(pointer->base);
     }
-
-    return head_type;
-}
-
-TypeClass* 
-ArrayTypeNode::accept(TypeTable* typeMgr) {
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        return findFuncTypeNode(array->base);
+    }
     return nullptr;
 }
 
-TypeClass* 
-FuncTypeNode::accept(TypeTable* typeMgr) {
-    return nullptr;
-}
+TypeNode*
+createPointerOrArrayTypeNode(TypeNode *head, std::vector<AstNode *> *suffix) {
+    if (suffix == nullptr || suffix->empty()) {
+        return head;
+    }
 
-TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix)
-{
-    TypeNode* node = nullptr;
-    AstNode* prev_val = (AstNode*)-1llu;
-    for (auto it : *suffix) {
-        if (prev_val == 0 && it == 0) {
-            // multi pointer
-            static_cast<PointerTypeNode*>(node)->incLevel();
+    TypeNode *node = head;
+    for (auto *it : *suffix) {
+        if (it == nullptr) {
+            node = new PointerTypeNode(node);
             continue;
-        } else {
-            assert(false);
         }
-
-        TypeNode* new_node = nullptr;
-        if (it == 0) {
-            // pointer
-            new_node = new PointerTypeNode(1);
-        } else if (it == (AstNode*)1) {
-            // auto array size
-            assert(false);
-        } else {
-            // fixed array size
-            assert(false);
+        if (it == reinterpret_cast<AstNode *>(1)) {
+            node = new ArrayTypeNode(node);
+            continue;
         }
-
-        if (node == nullptr) {
-            new_node->setHead(head);
-        }
-        if (node != nullptr) {
-            new_node->setHead(node);
-        }
-
-        node = new_node;
-        prev_val = it;
+        node = new ArrayTypeNode(node, std::vector<AstNode *>{it});
     }
     return node;
 }
 
+Object *
+AstNode::accept(AstVisitor &) {
+    throw std::runtime_error("Cannot visit abstract AstNode directly");
+}
 
-#define DEF_ACCEPT(classname)                        \
+#define DEF_ACCEPT(classname)                \
     Object *classname::accept(AstVisitor &visitor) { \
-        return visitor.visit(this);                  \
+        return visitor.visit(this);          \
     }
 
-DEF_ACCEPT(AstNode)
 DEF_ACCEPT(AstProgram)
 DEF_ACCEPT(AstStatList)
 DEF_ACCEPT(AstConst)
@@ -108,20 +76,19 @@ AstProgram::AstProgram(AstNode *body) : body(body->as<AstStatList>()) {
 }
 
 AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
-    const int a = 1;
     switch (token.type) {
         case TokenType::ConstInt32:
             this->vtype = Type::INT32;
-            this->buf = (char *)new int32_t(std::stoul(token.text));
+            this->buf = (char *)new int32_t(token.text.toI32());
             break;
         case TokenType::ConstFP32:
             this->vtype = Type::FP32;
-            this->buf = (char *)new float(std::stod(token.text));
+            this->buf = (char *)new float(token.text.toF32());
             break;
         case TokenType::ConstStr:
             this->vtype = Type::STRING;
             this->buf = new char[token.text.size() + 1];
-            strcpy(this->buf, token.text.c_str());
+            std::strcpy(this->buf, token.text.tochara());
             break;
         default:
             throw std::runtime_error("Invalid token type for AstConst");
@@ -169,4 +136,4 @@ AstFor::AstFor(AstNode *expr, AstNode *body) : expr(expr), body(body) {
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : value(value), args(args) {}
 
-}
+}  // namespace lona

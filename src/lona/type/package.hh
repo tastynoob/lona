@@ -41,6 +41,7 @@ public:
 
         global = new GlobalScope(*builder, *module);
         typeMgr = new TypeTable(*module);
+        global->setTypeTable(typeMgr);
     }
 
     llvm::Module& getModule() const { return *module; }

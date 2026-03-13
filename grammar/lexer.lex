@@ -25,16 +25,18 @@ using token = lona::Parser::token::token_kind_type;
 (var) { loc->columns(yyleng); return token::VAR; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
-(act) { loc->columns(yyleng); return token::ACT; }
 (ret) { lval->token = new AstToken(*loc); loc->columns(yyleng); return token::RET; }
 
 (if) { loc->columns(yyleng); return token::IF; }
 (else) { loc->columns(yyleng); return token::ELSE; }
 (for) { loc->columns(yyleng); return token::FOR; }
-(break) { loc->columns(yyleng); return token::BREAK; }
-(continue) { loc->columns(yyleng); return token::CONTINUE; }
 
 (struct) { loc->columns(yyleng); return token::STRUCT; }
+(type|u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64|bool|str) {
+    lval->token = new AstToken(TokenType::Field, yytext, *loc);
+    loc->columns(yyleng);
+    return token::TYPE;
+}
 (class) {}
 (trait) {}
 (case) {}
@@ -56,7 +58,8 @@ using token = lona::Parser::token::token_kind_type;
 (\"[^\"]*\") {
     char* strpos = yytext + 1;
     yytext[yyleng - 1] = '\0';
-    lval->token = new AstToken(TokenType::ConstStr, strEscape(std::string(strpos)).c_str(), *loc);
+    string escaped = strEscape(string(strpos));
+    lval->token = new AstToken(TokenType::ConstStr, escaped.tochara(), *loc);
     loc->columns(yyleng);
     return token::CONST;
 }

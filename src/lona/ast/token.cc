@@ -1,4 +1,5 @@
 #include "../ast/token.hh"
+#include "parser.hh"
 
 #include <sstream>
 
@@ -51,7 +52,8 @@ strEscape(const string &str) {
             ss << str[i];
         }
     }
-    return ss.str();
+    auto escaped = ss.str();
+    return string(escaped.c_str());
 }
 
 int
@@ -74,6 +76,26 @@ symbolToStr(int symbol) {
             return "*";
         case '/':
             return "/";
+        case '<':
+            return "<";
+        case '>':
+            return ">";
+        case '&':
+            return "&";
+        case '|':
+            return "|";
+        case '!':
+            return "!";
+        case '~':
+            return "~";
+        case Parser::token::LOGIC_EQUAL:
+            return "==";
+        case Parser::token::LOGIC_NOT_EQUAL:
+            return "!=";
+        case Parser::token::LOGIC_AND:
+            return "&&";
+        case Parser::token::LOGIC_OR:
+            return "||";
         default:
             return "Unknown";
     }

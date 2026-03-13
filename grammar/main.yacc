@@ -11,6 +11,7 @@
     }
 
     #include <cstdint>
+    #include <vector>
 }
 
 %code
@@ -42,7 +43,7 @@
 %define api.parser.class { Parser }
 %parse-param { Driver &driver }
 
-%token <token> CONST FIELD RET
+%token <token> CONST FIELD RET TYPE
 %token LOGIC_EQUAL LOGIC_NOT_EQUAL LOGIC_AND LOGIC_OR
 %token VAR
 %token TRUE FALSE
@@ -69,15 +70,14 @@
 %type <node> struct_statlist struct_stat stat_list stat
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
-%type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary 
-%type <node> expr_paren single_value field_selector type_selector
+%type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
+%type <node> expr_paren single_value typed_value_operand field_selector type_selector
 %type <node> var_decl var_def
 
-%type <typeNode> single_type func_ptr_head type_name
-%type <pointer_suffix> ptr_suffix
+%type <typeNode> single_type ptr_type array_type base_type func_head type_name
 
 %type <seq> expr_seq var_decl_seq
-%type <type_seq> type_name_seq
+%type <type_seq> type_name_seq bare_type_seq
 
 %start pragram
 
@@ -88,8 +88,14 @@ pragram
     ;
 
 pragram_statlist
-    : pragram_stat {
+    : NEWLINE {
+        $$ = new AstStatList();
+    }
+    | pragram_stat {
         $$ = new AstStatList($1);
+    }
+    | pragram_statlist NEWLINE {
+        $$ = $1;
     }
     | pragram_statlist pragram_stat {
         $$ = $1;
@@ -98,8 +104,8 @@ pragram_statlist
     ;
 
 pragram_stat
-    : func_decl { $$ = $1; }
-    | struct_decl { $$ = $1; }
+    : stat { $$ = $1; }
+    | bare_type_seq NEWLINE { $$ = new AstStatList(); }
     ;
 
 stat_list
@@ -179,8 +185,10 @@ stat_ret
 func_decl
     : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
     | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
+    | DEF FIELD '(' ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, nullptr, $6); }
     | DEF FIELD '(' var_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
     | DEF FIELD '(' var_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
+    | DEF FIELD '(' var_decl_seq ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $8, $4, $7); }
     ;
 
 var_decl
@@ -216,6 +224,9 @@ var_def
     : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
     | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
     | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
+    | var_decl { $$ = new AstVarDef($1->as<AstVarDecl>()); }
+    | var_decl '=' expr { $$ = new AstVarDef($1->as<AstVarDecl>(), $3); }
+    | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
     ;
 
 /* expression */
@@ -265,7 +276,7 @@ expr_unary
     | '+' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
     | '-' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
     | '&' single_value %prec unary { $$ = new AstUnaryOper(0, $2); }
-    | expr_getpointee {}
+    | expr_getpointee { $$ = $1; }
     ;
 
 expr_getpointee
@@ -276,13 +287,26 @@ expr_paren
     : '(' expr ')' { $$ = $2; }
     ;
 
+typed_value_operand
+    : FIELD { $$ = new AstField(*$1); }
+    | CONST { $$ = new AstConst(*$1); }
+    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "1", @$)); }
+    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "0", @$)); }
+    | expr_paren { $$ = $1; }
+    ;
+
 single_value
     : variable { $$ = $1; }
     | CONST { $$ = new AstConst(*$1); }
-    | TRUE {}
-    | FALSE {}
+    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "1", @$)); }
+    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "0", @$)); }
+    | TYPE typed_value_operand {
+        auto args = new std::vector<AstNode*>;
+        args->emplace_back($2);
+        $$ = new AstFieldCall(new AstField(*$1), args);
+    }
     | field_call { $$ = $1; }
-    | expr_paren {}
+    | expr_paren { $$ = $1; }
     | '(' expr ',' expr_seq ')' {} // tuple
     ;
 
