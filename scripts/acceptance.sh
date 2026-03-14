@@ -25,6 +25,10 @@ func_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-local-bad-XXXXXX.lo")"
 func_local_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-local-bad-XXXXXX.txt")"
 func_top_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-top-bad-XXXXXX.lo")"
 func_top_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-top-bad-XXXXXX.txt")"
+func_inferred_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-local-bad-XXXXXX.lo")"
+func_inferred_local_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-local-bad-XXXXXX.txt")"
+func_inferred_top_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-top-bad-XXXXXX.lo")"
+func_inferred_top_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-top-bad-XXXXXX.txt")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
@@ -32,6 +36,8 @@ cleanup() {
         "$json_feature_in" "$json_feature_out" "$bool_in" "$bool_out" \
         "$pointer_in" "$pointer_out" "$func_param_bad_in" "$func_param_bad_out" \
         "$func_local_bad_in" "$func_local_bad_out" "$func_top_bad_in" "$func_top_bad_out" \
+        "$func_inferred_local_bad_in" "$func_inferred_local_bad_out" \
+        "$func_inferred_top_bad_in" "$func_inferred_top_bad_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
 trap cleanup EXIT
@@ -148,6 +154,35 @@ if "$BIN" --emit-ir "$func_top_bad_in" >"$func_top_bad_out" 2>&1; then
     exit 1
 fi
 grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_top_bad_out"
+
+func_inferred_local_bad_source='def foo() i32 {
+    ret 1
+}
+
+def bad_inferred_local() i32 {
+    var cb = foo
+    ret 0
+}
+'
+printf '%s' "$func_inferred_local_bad_source" >"$func_inferred_local_bad_in"
+if "$BIN" --emit-ir "$func_inferred_local_bad_in" >"$func_inferred_local_bad_out" 2>&1; then
+    echo 'expected inferred bare function local variable program to fail' >&2
+    exit 1
+fi
+grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_inferred_local_bad_out"
+
+func_inferred_top_bad_source='def foo() i32 {
+    ret 1
+}
+
+var cb = foo
+'
+printf '%s' "$func_inferred_top_bad_source" >"$func_inferred_top_bad_in"
+if "$BIN" --emit-ir "$func_inferred_top_bad_in" >"$func_inferred_top_bad_out" 2>&1; then
+    echo 'expected inferred bare function top-level variable program to fail' >&2
+    exit 1
+fi
+grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_inferred_top_bad_out"
 
 grammar_subset_source='struct Name {
     a i32

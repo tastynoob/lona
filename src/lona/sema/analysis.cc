@@ -71,17 +71,73 @@ describeTypeNode(TypeNode *node) {
     return "<unknown type>";
 }
 
+std::string
+describeResolvedType(TypeClass *type) {
+    if (type == nullptr) {
+        return "<unknown type>";
+    }
+    if (auto *pointer = type->as<PointerType>()) {
+        return describeResolvedType(pointer->getPointeeType()) + "*";
+    }
+    if (auto *array = type->as<ArrayType>()) {
+        auto name = describeResolvedType(array->getElementType());
+        name += "[";
+        const auto &dimensions = array->getDimensions();
+        for (size_t i = 0; i < dimensions.size(); ++i) {
+            if (i != 0) {
+                name += ",";
+            }
+            if (dimensions[i] != nullptr) {
+                name += "?";
+            }
+        }
+        name += "]";
+        return name;
+    }
+    if (auto *func = type->as<FuncType>()) {
+        std::string name = "(";
+        const auto &argTypes = func->getArgTypes();
+        for (size_t i = 0; i < argTypes.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += describeResolvedType(argTypes[i]);
+        }
+        name += ")";
+        if (func->getRetType() != nullptr) {
+            name += " ";
+            name += describeResolvedType(func->getRetType());
+        }
+        return name;
+    }
+    return toStdString(type->full_name);
+}
+
+std::string
+describeStorageType(TypeClass *type, AstVarDef *node) {
+    if (node != nullptr && node->getTypeNode() != nullptr) {
+        return describeTypeNode(node->getTypeNode());
+    }
+    return describeResolvedType(type);
+}
+
 void
 rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
-    if (!node || !node->getTypeNode()) {
+    if (!node) {
         return;
     }
-    if (!type || (!type->as<FuncType>() && findFuncTypeNode(node->getTypeNode()) == nullptr)) {
+    bool hasBareFunctionStorage = type && type->as<FuncType>();
+    if (!hasBareFunctionStorage) {
+        auto *typeNode = node->getTypeNode();
+        hasBareFunctionStorage =
+            typeNode != nullptr && findFuncTypeNode(typeNode) != nullptr;
+    }
+    if (!hasBareFunctionStorage) {
         return;
     }
     error("unsupported bare function variable type for `" +
           toStdString(node->getName()) + "`: " +
-          describeTypeNode(node->getTypeNode()));
+          describeStorageType(type, node));
 }
 
 TypeTable *
@@ -351,6 +407,7 @@ class FunctionAnalyzer {
             }
         } else if (init) {
             type = init->getType();
+            rejectBareFunctionStorage(type, node);
         } else {
             error("cannot infer variable type without initializer");
         }
