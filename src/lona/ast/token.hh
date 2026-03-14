@@ -24,6 +24,7 @@ enum class TokenType {
     Field,
     Invalid,
     NumType,
+    ConstBool,
 };
 
 inline const char *
@@ -32,6 +33,7 @@ tokenTypeToStr(TokenType type) {
         case TokenType::ConstInt32:
         case TokenType::ConstFP32:
         case TokenType::ConstStr:
+        case TokenType::ConstBool:
             return "Const";
         case TokenType::Operlv0:
             return "Operlv0";

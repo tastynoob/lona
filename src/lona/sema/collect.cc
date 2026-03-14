@@ -3,7 +3,7 @@
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/sym/func.hh"
-#include "lona/type/type.hh"
+#include "lona/sema/hir.hh"
 #include "parser.hh"
 #include <cassert>
 #include <cstddef>
@@ -290,6 +290,14 @@ describeTypeNode(TypeNode *node) {
     return "<unknown type>";
 }
 
+void
+rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &context) {
+    if (!type || !type->as<FuncType>()) {
+        return;
+    }
+    throw std::runtime_error(context + ": " + describeTypeNode(node));
+}
+
 TypeTable *
 requireTypeTable(Scope *scope) {
     assert(scope);
@@ -342,6 +350,9 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 "unknown return type for function `" + toStdString(func_name) +
                 "`: " + describeTypeNode(node->retType));
         }
+        rejectBareFunctionType(
+            loretType, node->retType,
+            "unsupported bare function return type for `" + toStdString(func_name) + "`");
         retType = loretType->getLLVMType();
         funcType_name += "_";
         funcType_name.append(loretType->full_name.tochara(),
@@ -378,6 +389,11 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                     toStdString(func_name) + "`: " +
                     describeTypeNode(varDecl->typeNode));
             }
+            rejectBareFunctionType(
+                type, varDecl->typeNode,
+                "unsupported bare function parameter type for `" +
+                    toStdString(varDecl->field) + "` in `" +
+                    toStdString(func_name) + "`");
             loargs.push_back(type);
             args.push_back(type->getLLVMType());
             funcType_name += ".";
@@ -441,6 +457,10 @@ class StructVisitor : public AstVisitorAny {
                                      toStdString(name) + "`: " +
                                      describeTypeNode(node->typeNode));
         }
+        rejectBareFunctionType(
+            type, node->typeNode,
+            "unsupported bare function struct field type for `" +
+                toStdString(name) + "`");
 
         llvmmembers.push_back(type->getLLVMType());
         members.insert({llvm::StringRef(name.tochara(), name.size()),
@@ -562,17 +582,13 @@ createStruct(Scope *scope, AstStructDecl *node) {
 
 namespace {
 
-class FunctionCompiler : public AstVisitor {
+class FunctionCompiler {
     TypeTable *typeMgr;
     GlobalScope *global;
     FuncScope *scope;
     llvm::LLVMContext &context;
-    StructType *methodParent;
     DebugInfoContext *debug;
     llvm::DISubprogram *debugSubprogram = nullptr;
-    bool skipDeclStatements = false;
-
-    using AstVisitor::visit;
 
     [[noreturn]] void error(const std::string &message) {
         throw std::runtime_error(message);
@@ -587,23 +603,272 @@ class FunctionCompiler : public AstVisitor {
         return obj;
     }
 
-    void setLocation(AstNode *node) {
-        if (!node) {
-            return;
+    Object *materializeBinding(Object *obj, Object *initVal = nullptr) {
+        if (!obj) {
+            error("missing binding object");
         }
-        applyDebugLocation(scope->builder, debug, debugSubprogram, node->loc);
+        obj->createllvmValue(scope);
+        if (initVal != nullptr) {
+            obj->set(scope->builder, initVal);
+        }
+        return obj;
+    }
+
+    void setLocation(const location &loc) {
+        applyDebugLocation(scope->builder, debug, debugSubprogram, loc);
+    }
+
+    void setLocation(HIRNode *node) {
+        if (node) {
+            setLocation(node->getLocation());
+        }
     }
 
     void clearLocation() {
         clearDebugLocation(scope->builder);
     }
 
-    Object *compileToValue(AstNode *node) {
-        auto *obj = this->visit(node);
-        if (!obj) {
-            error("expression did not produce a value");
+    Object *compileExpr(HIRExpr *expr) {
+        if (!expr) {
+            return nullptr;
         }
-        return obj;
+        if (auto *value = dynamic_cast<HIRValue *>(expr)) {
+            return value->getValue();
+        }
+        if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
+            setLocation(assign);
+            auto *dst = compileExpr(assign->getLeft());
+            auto *src = compileExpr(assign->getRight());
+            if (!dst || !src) {
+                error("assignment requires values");
+            }
+            dst->set(scope->builder, src);
+            return dst;
+        }
+        if (auto *bin = dynamic_cast<HIRBinOper *>(expr)) {
+            setLocation(bin);
+            auto *left = compileExpr(bin->getLeft());
+            auto *right = compileExpr(bin->getRight());
+            return emitBinaryIntOp(bin->getOp(), left, right);
+        }
+        if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
+            setLocation(unary);
+            auto *value = compileExpr(unary->getExpr());
+            switch (unary->getOp()) {
+            case '+': {
+                if (value->getType() != i32Ty) {
+                    error("unary + expects i32");
+                }
+                return value;
+            }
+            case '-': {
+                auto *llvmValue = value->get(scope->builder);
+                if (value->getType() != i32Ty) {
+                    error("unary - expects i32");
+                }
+                auto *result = i32Ty->newObj(Object::REG_VAL | Object::READONLY);
+                result->bindllvmValue(scope->builder.CreateNeg(llvmValue));
+                return result;
+            }
+            case '!': {
+                auto *result = boolTy->newObj(Object::REG_VAL | Object::READONLY);
+                result->bindllvmValue(scope->builder.CreateNot(emitBoolCast(value)));
+                return result;
+            }
+            case '&': {
+                if (!value->isVariable() || value->isRegVal() || !value->getllvmValue()) {
+                    error("address-of expects an addressable value");
+                }
+                auto *pointerType = unary->getType() ? unary->getType()->as<PointerType>()
+                                                     : nullptr;
+                if (!pointerType) {
+                    error("address-of expects a pointer result type");
+                }
+                auto *result = pointerType->newObj(Object::REG_VAL | Object::READONLY);
+                result->bindllvmValue(value->getllvmValue());
+                return result;
+            }
+            case '*': {
+                auto *pointerType = value->getType() ? value->getType()->as<PointerType>()
+                                                     : nullptr;
+                if (!pointerType) {
+                    error("dereference expects a pointer value");
+                }
+                auto *result = pointerType->getPointeeType()->newObj(Object::VARIABLE);
+                result->setllvmValue(value->get(scope->builder));
+                return result;
+            }
+            default:
+                error("unsupported unary operator");
+            }
+        }
+        if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
+            setLocation(selector);
+            auto *parent = compileExpr(selector->getParent());
+            auto fieldName = selector->getFieldName();
+            if (auto *structParent = parent->as<StructVar>()) {
+                if (selector->getType() == nullptr) {
+                    return parent;
+                }
+                return structParent->getField(scope->builder, fieldName);
+            }
+            error("selector parent must be a struct value");
+        }
+        if (auto *call = dynamic_cast<HIRCall *>(expr)) {
+            setLocation(call);
+            std::vector<Object *> args;
+            Function *callee = nullptr;
+
+            if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee())) {
+                auto *parent = compileExpr(selector->getParent());
+                auto *structType = parent->getType()->as<StructType>();
+                if (!structType) {
+                    error("selector call parent must be a struct value");
+                }
+                callee = structType->getFunc(llvm::StringRef(selector->getFieldName()));
+                if (!callee) {
+                    error("unknown struct method");
+                }
+                args.push_back(parent);
+            } else if (auto *calleeValue = dynamic_cast<HIRValue *>(call->getCallee())) {
+                callee = calleeValue->getValue()->as<Function>();
+                if (!callee) {
+                    error("only direct function calls are supported");
+                }
+            } else {
+                error("only direct function calls are supported");
+            }
+
+            args.reserve(args.size() + call->getArgs().size());
+            for (auto *arg : call->getArgs()) {
+                auto *value = compileExpr(arg);
+                if (!value) {
+                    error("call argument did not produce a value");
+                }
+                args.push_back(value);
+            }
+            return callee->call(scope, args);
+        }
+        error("unsupported HIR expression");
+    }
+
+    Object *compileNode(HIRNode *node) {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *block = dynamic_cast<HIRBlock *>(node)) {
+            return compileBlock(block);
+        }
+        if (auto *varDef = dynamic_cast<HIRVarDef *>(node)) {
+            setLocation(varDef);
+            Object *initVal = nullptr;
+            if (varDef->getInit()) {
+                initVal = compileExpr(varDef->getInit());
+            }
+            auto *obj = materializeBinding(varDef->getObject(), initVal);
+            scope->addObj(varDef->getName(), obj);
+            emitDebugDeclare(debug, scope, debugSubprogram, obj, varDef->getName(),
+                             obj->getType(), varDef->getLocation());
+            return obj;
+        }
+        if (auto *ret = dynamic_cast<HIRRet *>(node)) {
+            setLocation(ret);
+            auto *retSlot = scope->retVal();
+            if (ret->getExpr()) {
+                auto *value = compileExpr(ret->getExpr());
+                if (!retSlot) {
+                    error("unexpected return value in void function");
+                }
+                retSlot->set(scope->builder, value);
+            } else if (retSlot) {
+                error("missing return value");
+            }
+
+            if (scope->retBlock()) {
+                scope->builder.CreateBr(scope->retBlock());
+            } else if (retSlot) {
+                scope->builder.CreateRet(retSlot->get(scope->builder));
+            } else {
+                scope->builder.CreateRetVoid();
+            }
+            scope->setReturned();
+            return retSlot;
+        }
+        if (auto *ifNode = dynamic_cast<HIRIf *>(node)) {
+            setLocation(ifNode);
+            auto *condObj = compileExpr(ifNode->getCondition());
+            auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
+
+            auto *thenBB = llvm::BasicBlock::Create(context, "if.then", llvmFunc);
+            auto *mergeBB = llvm::BasicBlock::Create(context, "if.end");
+            auto *elseBB = ifNode->hasElseBlock()
+                ? llvm::BasicBlock::Create(context, "if.else")
+                : mergeBB;
+
+            scope->builder.CreateCondBr(emitBoolCast(condObj), thenBB, elseBB);
+
+            scope->builder.SetInsertPoint(thenBB);
+            compileBlock(ifNode->getThenBlock());
+            if (!scope->builder.GetInsertBlock()->getTerminator()) {
+                scope->builder.CreateBr(mergeBB);
+            }
+
+            if (ifNode->hasElseBlock()) {
+                llvmFunc->insert(llvmFunc->end(), elseBB);
+                scope->builder.SetInsertPoint(elseBB);
+                compileBlock(ifNode->getElseBlock());
+                if (!scope->builder.GetInsertBlock()->getTerminator()) {
+                    scope->builder.CreateBr(mergeBB);
+                }
+            }
+
+            llvmFunc->insert(llvmFunc->end(), mergeBB);
+            scope->builder.SetInsertPoint(mergeBB);
+            return nullptr;
+        }
+        if (auto *forNode = dynamic_cast<HIRFor *>(node)) {
+            setLocation(forNode);
+            auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
+            auto *condBB = llvm::BasicBlock::Create(context, "for.cond", llvmFunc);
+            auto *bodyBB = llvm::BasicBlock::Create(context, "for.body");
+            auto *endBB = llvm::BasicBlock::Create(context, "for.end");
+
+            scope->builder.CreateBr(condBB);
+
+            scope->builder.SetInsertPoint(condBB);
+            auto *condObj = compileExpr(forNode->getCondition());
+            scope->builder.CreateCondBr(emitBoolCast(condObj), bodyBB, endBB);
+
+            llvmFunc->insert(llvmFunc->end(), bodyBB);
+            scope->builder.SetInsertPoint(bodyBB);
+            compileBlock(forNode->getBody());
+            if (!scope->builder.GetInsertBlock()->getTerminator()) {
+                scope->builder.CreateBr(condBB);
+            }
+
+            llvmFunc->insert(llvmFunc->end(), endBB);
+            scope->builder.SetInsertPoint(endBB);
+            return nullptr;
+        }
+        if (auto *expr = dynamic_cast<HIRExpr *>(node)) {
+            return compileExpr(expr);
+        }
+        error("unsupported HIR node");
+    }
+
+    Object *compileBlock(HIRBlock *block) {
+        Object *last = nullptr;
+        if (!block) {
+            return last;
+        }
+        for (auto *stmt : block->getBody()) {
+            auto *insertBlock = scope->builder.GetInsertBlock();
+            if (!insertBlock || insertBlock->getTerminator()) {
+                break;
+            }
+            last = compileNode(stmt);
+        }
+        return last;
     }
 
     llvm::Value *emitBoolCast(Object *obj) {
@@ -686,241 +951,22 @@ class FunctionCompiler : public AstVisitor {
         }
     }
 
-    Object *visit(AstProgram *node) override {
-        return this->visit(node->body);
-    }
-
-    Object *visit(AstStatList *node) override {
-        Object *last = nullptr;
-        for (auto *stmt : node->getBody()) {
-            if (skipDeclStatements &&
-                (stmt->is<AstStructDecl>() || stmt->is<AstFuncDecl>())) {
-                continue;
-            }
-            if (scope->builder.GetInsertBlock()->getTerminator()) {
-                break;
-            }
-            last = this->visit(stmt);
-        }
-        return last;
-    }
-
-    Object *visit(AstConst *node) override {
-        switch (node->getType()) {
-        case AstConst::Type::INT32:
-            return new ConstVar(i32Ty, *node->getBuf<int32_t>());
-        default:
-            error("only i32 constants are supported");
-        }
-    }
-
-    Object *visit(AstField *node) override {
-        auto *obj = scope->getObj(node->name);
-        if (!obj) {
-            error("undefined identifier");
-        }
-        return obj;
-    }
-
-    Object *visit(AstAssign *node) override {
-        setLocation(node);
-        auto *dst = compileToValue(node->left);
-        auto *src = compileToValue(node->right);
-        dst->set(scope->builder, src);
-        return dst;
-    }
-
-    Object *visit(AstBinOper *node) override {
-        setLocation(node);
-        auto *left = compileToValue(node->left);
-        auto *right = compileToValue(node->right);
-        return emitBinaryIntOp(node->op, left, right);
-    }
-
-    Object *visit(AstUnaryOper *node) override {
-        setLocation(node);
-        auto *value = compileToValue(node->expr);
-        auto *llvmValue = value->get(scope->builder);
-        switch (node->op) {
-        case '+':
-            if (value->getType() != i32Ty) {
-                error("unary + expects i32");
-            }
-            return value;
-        case '-': {
-            if (value->getType() != i32Ty) {
-                error("unary - expects i32");
-            }
-            auto *result = i32Ty->newObj(Object::REG_VAL | Object::READONLY);
-            result->bindllvmValue(scope->builder.CreateNeg(llvmValue));
-            return result;
-        }
-        case '!': {
-            auto *result = boolTy->newObj(Object::REG_VAL | Object::READONLY);
-            result->bindllvmValue(scope->builder.CreateNot(emitBoolCast(value)));
-            return result;
-        }
-        default:
-            error("unsupported unary operator");
-        }
-    }
-
-    Object *visit(AstVarDef *node) override {
-        setLocation(node);
-        Object *initVal = nullptr;
-        if (node->withInitVal()) {
-            initVal = compileToValue(node->getInitVal());
-        }
-
-        TypeClass *type = nullptr;
-        if (auto *typeNode = node->getTypeNode()) {
-            type = typeMgr->getType(typeNode);
-            if (!type) {
-                error("unknown variable type: " + describeTypeNode(typeNode));
-            }
-            if (initVal && initVal->getType() != type) {
-                error("initializer type mismatch");
-            }
-        } else if (initVal) {
-            type = initVal->getType();
-        } else {
-            error("cannot infer variable type without initializer");
-        }
-
-        auto *obj = materializeLocal(type, initVal);
-        scope->addObj(node->getName(), obj);
-        emitDebugDeclare(debug, scope, debugSubprogram, obj,
-                         toStdString(node->getName()), type, node->loc);
-        return obj;
-    }
-
-    Object *visit(AstRet *node) override {
-        setLocation(node);
-        auto *retSlot = scope->retVal();
-        if (node->expr) {
-            auto *value = compileToValue(node->expr);
-            if (!retSlot) {
-                error("unexpected return value in void function");
-            }
-            retSlot->set(scope->builder, value);
-        } else if (retSlot) {
-            error("missing return value");
-        }
-
-        if (scope->retBlock()) {
-            scope->builder.CreateBr(scope->retBlock());
-        } else if (retSlot) {
-            scope->builder.CreateRet(retSlot->get(scope->builder));
-        } else {
-            scope->builder.CreateRetVoid();
-        }
-        scope->setReturned();
-        return retSlot;
-    }
-
-    Object *visit(AstIf *node) override {
-        setLocation(node);
-        auto *condObj = compileToValue(node->condition);
-        auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
-
-        auto *thenBB = llvm::BasicBlock::Create(context, "if.then", llvmFunc);
-        auto *mergeBB = llvm::BasicBlock::Create(context, "if.end");
-        auto *elseBB = node->hasElse()
-            ? llvm::BasicBlock::Create(context, "if.else")
-            : mergeBB;
-
-        scope->builder.CreateCondBr(emitBoolCast(condObj), thenBB, elseBB);
-
-        scope->builder.SetInsertPoint(thenBB);
-        this->visit(node->then);
-        if (!scope->builder.GetInsertBlock()->getTerminator()) {
-            scope->builder.CreateBr(mergeBB);
-        }
-
-        if (node->hasElse()) {
-            llvmFunc->insert(llvmFunc->end(), elseBB);
-            scope->builder.SetInsertPoint(elseBB);
-            this->visit(node->els);
-            if (!scope->builder.GetInsertBlock()->getTerminator()) {
-                scope->builder.CreateBr(mergeBB);
-            }
-        }
-
-        llvmFunc->insert(llvmFunc->end(), mergeBB);
-        scope->builder.SetInsertPoint(mergeBB);
-        return nullptr;
-    }
-
-    Object *visit(AstSelector *node) override {
-        setLocation(node);
-        auto *parent = compileToValue(node->parent);
-        auto fieldName = toStdString(node->field->text);
-
-        if (auto *structParent = parent->as<StructVar>()) {
-            return structParent->getField(scope->builder, fieldName);
-        }
-
-        error("selector parent must be a struct value");
-    }
-
-    Object *visit(AstFieldCall *node) override {
-        setLocation(node);
-        std::vector<Object *> args;
-        Function *callee = nullptr;
-
-        if (node->value->is<AstSelector>()) {
-            auto *selector = node->value->as<AstSelector>();
-            auto *parent = compileToValue(selector->parent);
-            auto *structType = parent->getType()->as<StructType>();
-            if (!structType) {
-                error("selector call parent must be a struct value");
-            }
-            callee = structType->getFunc(
-                llvm::StringRef(selector->field->text.tochara(),
-                                selector->field->text.size()));
-            if (!callee) {
-                error("unknown struct method");
-            }
-            args.push_back(parent);
-        } else {
-            callee = compileToValue(node->value)->as<Function>();
-            if (!callee) {
-                error("only direct function calls are supported");
-            }
-        }
-
-        if (node->args) {
-            args.reserve(args.size() + node->args->size());
-            for (auto *arg : *node->args) {
-                args.push_back(compileToValue(arg));
-            }
-        }
-        return callee->call(scope, args);
-    }
-
 public:
-    FunctionCompiler(TypeTable *typeMgr, GlobalScope *global, AstFuncDecl *node,
-                     StructType *methodParent = nullptr,
+    FunctionCompiler(TypeTable *typeMgr, GlobalScope *global, HIRFunc *hirFunc,
                      DebugInfoContext *debug = nullptr)
         : typeMgr(typeMgr),
           global(global),
           scope(nullptr),
           context(global->module.getContext()),
-          methodParent(methodParent),
           debug(debug) {
-        Function *lofunc = nullptr;
-        if (methodParent) {
-            lofunc = methodParent->getFunc(
-                llvm::StringRef(node->name.tochara(), node->name.size()));
-        } else {
-            auto *globalFunc = global->getObj(node->name);
-            lofunc = globalFunc ? globalFunc->as<Function>() : nullptr;
-        }
-        if (!lofunc) {
-            error("function declaration missing");
+        if (!hirFunc) {
+            error("missing HIR function");
         }
 
-        auto *llvmFunc = llvm::cast<llvm::Function>(lofunc->getllvmValue());
+        auto *llvmFunc = hirFunc->getLLVMFunction();
+        if (!llvmFunc) {
+            error("HIR function missing LLVM function");
+        }
         if (!llvmFunc->empty()) {
             return;
         }
@@ -928,9 +974,8 @@ public:
         auto *entry = llvm::BasicBlock::Create(context, "entry", llvmFunc);
         global->builder.SetInsertPoint(entry);
         scope = new FuncScope(global);
-        scope->structTy = methodParent;
 
-        auto *funcType = lofunc->getType()->as<FuncType>();
+        auto *funcType = hirFunc->getFuncType();
         if (!funcType) {
             error("invalid function type");
         }
@@ -938,139 +983,76 @@ public:
             error("by-pointer returns are not supported yet");
         }
 
+        if (hirFunc->hasSelfBinding()) {
+            scope->structTy = hirFunc->getSelfBinding().object->getType()->as<StructType>();
+        }
+
         if (debug) {
             debugSubprogram = createDebugSubprogram(
-                *debug, llvmFunc, funcType, llvmFunc->getName().str(), node->loc);
+                *debug, llvmFunc, funcType, llvmFunc->getName().str(),
+                hirFunc->getLocation());
             scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
-                context, sourceLine(node->loc), sourceColumn(node->loc),
-                debugSubprogram));
+                context, sourceLine(hirFunc->getLocation()),
+                sourceColumn(hirFunc->getLocation()), debugSubprogram));
         }
 
-        if (auto *retType = funcType->getRetType()) {
-            if (!node->body || !node->body->hasTerminator()) {
-                error("missing return value");
-            }
-            auto *retSlot = materializeLocal(retType, nullptr);
-            scope->initRetVal(retSlot);
-            auto *retBB = llvm::BasicBlock::Create(context, "return", llvmFunc);
-            scope->initRetBlock(retBB);
+        auto *retType = funcType->getRetType();
+        if (!hirFunc->isTopLevelEntry() && retType && !hirFunc->hasGuaranteedReturn()) {
+            error("missing return value");
         }
-
-        size_t llvmArgIndex = 0;
-        unsigned debugArgIndex = 1;
-        if (methodParent) {
-            auto *selfObj = methodParent->newObj(Object::VARIABLE);
-            selfObj->createllvmValue(scope);
-            auto argIt = llvmFunc->arg_begin();
-            std::advance(argIt, llvmArgIndex);
-            scope->builder.CreateStore(&*argIt, selfObj->getllvmValue());
-            scope->addObj(llvm::StringRef("self"), selfObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, selfObj, "self",
-                             methodParent, node->loc, debugArgIndex);
-            ++llvmArgIndex;
-            ++debugArgIndex;
-        }
-
-        if (node->args) {
-            auto expectedArgs = node->args->size() + (methodParent ? 1 : 0);
-            if (llvmFunc->arg_size() != expectedArgs) {
-                error("function argument number mismatch");
-            }
-            for (auto *argNode : *node->args) {
-                auto *decl = argNode->as<AstVarDecl>();
-                if (!decl) {
-                    error("invalid function argument declaration");
-                }
-                auto *type = typeMgr->getType(decl->typeNode);
-                if (!type) {
-                    error("unknown function argument type for `" +
-                          toStdString(decl->field) + "`: " +
-                          describeTypeNode(decl->typeNode));
-                }
-                auto *argObj = materializeLocal(type, nullptr);
-                auto argIt = llvmFunc->arg_begin();
-                std::advance(argIt, llvmArgIndex);
-                scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
-                scope->addObj(decl->field, argObj);
-                emitDebugDeclare(debug, scope, debugSubprogram, argObj,
-                                 toStdString(decl->field), type, decl->loc,
-                                 debugArgIndex);
-                ++llvmArgIndex;
-                ++debugArgIndex;
-            }
-        } else if (llvmFunc->arg_size() != llvmArgIndex) {
-            error("function argument number mismatch");
-        }
-
-        this->visit(node->body);
-
-        if (scope->retBlock()) {
-            if (!scope->builder.GetInsertBlock()->getTerminator()) {
-                scope->builder.CreateBr(scope->retBlock());
-            }
-            scope->builder.SetInsertPoint(scope->retBlock());
-            if (debugSubprogram) {
-                scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
-                    context, sourceLine(node->loc), sourceColumn(node->loc),
-                    debugSubprogram));
-            }
-        }
-
-        ensureTerminatorForCurrentBlock();
-        clearLocation();
-    }
-
-    FunctionCompiler(TypeTable *typeMgr, GlobalScope *global,
-                     llvm::Function *llvmFunc, TypeClass *retType, AstNode *body,
-                     bool skipDeclStatements, const location &loc,
-                     DebugInfoContext *debug = nullptr)
-        : typeMgr(typeMgr),
-          global(global),
-          scope(nullptr),
-          context(global->module.getContext()),
-          methodParent(nullptr),
-          debug(debug),
-          skipDeclStatements(skipDeclStatements) {
-        if (!llvmFunc->empty()) {
-            return;
-        }
-
-        auto *entry = llvm::BasicBlock::Create(context, "entry", llvmFunc);
-        global->builder.SetInsertPoint(entry);
-        scope = new FuncScope(global);
-
-        if (debug) {
-            auto *mainType = typeMgr->getType(llvm::StringRef("f_i32"))->as<FuncType>();
-            debugSubprogram = createDebugSubprogram(
-                *debug, llvmFunc, mainType, llvmFunc->getName().str(), loc);
-            scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
-                context, sourceLine(loc), sourceColumn(loc), debugSubprogram));
-        }
-
         if (retType) {
             auto *retSlot = materializeLocal(retType, nullptr);
             scope->initRetVal(retSlot);
-            if (retType == i32Ty) {
+            if (hirFunc->isTopLevelEntry() && retType == i32Ty) {
                 retSlot->set(scope->builder, new ConstVar(i32Ty, int32_t(0)));
             }
             auto *retBB = llvm::BasicBlock::Create(context, "return", llvmFunc);
             scope->initRetBlock(retBB);
         }
 
-        if (llvmFunc->arg_size() != 0) {
-            error("top-level entry function cannot accept arguments");
+        size_t llvmArgIndex = 0;
+        unsigned debugArgIndex = 1;
+        if (hirFunc->hasSelfBinding()) {
+            auto &binding = hirFunc->getSelfBinding();
+            auto *selfObj = materializeBinding(binding.object);
+            auto argIt = llvmFunc->arg_begin();
+            std::advance(argIt, llvmArgIndex);
+            scope->builder.CreateStore(&*argIt, selfObj->getllvmValue());
+            scope->addObj(llvm::StringRef(binding.name), selfObj);
+            emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
+                             selfObj->getType(), binding.loc, debugArgIndex);
+            ++llvmArgIndex;
+            ++debugArgIndex;
         }
 
-        this->visit(body);
+        auto expectedArgs = hirFunc->getParams().size() + (hirFunc->hasSelfBinding() ? 1 : 0);
+        if (llvmFunc->arg_size() != expectedArgs) {
+            error("function argument number mismatch");
+        }
+        for (const auto &binding : hirFunc->getParams()) {
+            auto *argObj = materializeBinding(binding.object);
+            auto argIt = llvmFunc->arg_begin();
+            std::advance(argIt, llvmArgIndex);
+            scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
+            scope->addObj(llvm::StringRef(binding.name), argObj);
+            emitDebugDeclare(debug, scope, debugSubprogram, argObj, binding.name,
+                             argObj->getType(), binding.loc, debugArgIndex);
+            ++llvmArgIndex;
+            ++debugArgIndex;
+        }
+
+        compileBlock(hirFunc->getBody());
 
         if (scope->retBlock()) {
-            if (!scope->builder.GetInsertBlock()->getTerminator()) {
+            auto *insertBlock = scope->builder.GetInsertBlock();
+            if (insertBlock && !insertBlock->getTerminator()) {
                 scope->builder.CreateBr(scope->retBlock());
             }
             scope->builder.SetInsertPoint(scope->retBlock());
             if (debugSubprogram) {
                 scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
-                    context, sourceLine(loc), sourceColumn(loc), debugSubprogram));
+                    context, sourceLine(hirFunc->getLocation()),
+                    sourceColumn(hirFunc->getLocation()), debugSubprogram));
             }
         }
 
@@ -1079,87 +1061,20 @@ public:
     }
 };
 
-
-class ModuleCompiler : public AstVisitorAny {
+class ModuleCompiler {
     GlobalScope *global;
     TypeTable *typeMgr;
     DebugInfoContext *debug;
 
-    using AstVisitorAny::visit;
-
-    Object *visit(AstProgram *node) override {
-        return this->visit(node->body);
-    }
-
-    Object *visit(AstStatList *node) override {
-        bool hasTopLevelExec = false;
-        for (auto *stmt : node->getBody()) {
-            if (stmt->is<AstStructDecl>()) {
-                this->visit(stmt);
-                continue;
-            }
-            if (stmt->is<AstFuncDecl>()) {
-                this->visit(stmt);
-                continue;
-            }
-            hasTopLevelExec = true;
-        }
-
-        if (hasTopLevelExec) {
-            auto *mainType = typeMgr->getType(llvm::StringRef("f_i32"));
-            if (!mainType) {
-                auto *llvmMainType =
-                    llvm::FunctionType::get(i32Ty->getLLVMType(), false);
-                mainType = new FuncType(llvmMainType, {}, i32Ty, "f_i32", 0);
-                typeMgr->addType(llvm::StringRef("f_i32"), mainType);
-            }
-
-            auto moduleName = global->module.getName();
-            std::string entryName = moduleName.str() + ".main";
-            auto *llvmMain = global->module.getFunction(entryName);
-            if (!llvmMain) {
-                llvmMain = llvm::Function::Create(
-                    llvm::cast<llvm::FunctionType>(mainType->getLLVMType()),
-                    llvm::Function::ExternalLinkage,
-                    llvm::Twine(entryName), global->module);
-            }
-            FunctionCompiler(typeMgr, global, llvmMain, i32Ty, node, true,
-                             node->loc, debug);
-        }
-        return nullptr;
-    }
-
-    Object *visit(AstStructDecl *node) override {
-        auto *structTy = typeMgr->getType(node->name)->as<StructType>();
-        if (!structTy) {
-            throw std::runtime_error("struct declaration missing");
-        }
-        if (!node->body || !node->body->is<AstStatList>()) {
-            return nullptr;
-        }
-        for (auto *stmt : node->body->as<AstStatList>()->getBody()) {
-            auto *func = stmt->as<AstFuncDecl>();
-            if (!func) {
-                continue;
-            }
-            FunctionCompiler(typeMgr, global, func, structTy, debug);
-        }
-        return nullptr;
-    }
-
-    Object *visit(AstFuncDecl *node) override {
-        FunctionCompiler(typeMgr, global, node, nullptr, debug);
-        return nullptr;
-    }
-
 public:
-    ModuleCompiler(GlobalScope *global, AstNode *root,
+    ModuleCompiler(GlobalScope *global, HIRModule *module,
                    DebugInfoContext *debug = nullptr)
         : global(global), typeMgr(requireTypeTable(global)), debug(debug) {
-        this->visit(root);
+        for (auto *func : module->getFunctions()) {
+            FunctionCompiler(typeMgr, global, func, debug);
+        }
     }
 };
-
 
 }  // namespace
 
@@ -1175,7 +1090,8 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
             globalScope->module, globalScope->module.getName().str());
     }
 
-    ModuleCompiler(globalScope, root, debug.get());
+    auto *hirModule = analyzeModule(globalScope, root);
+    ModuleCompiler(globalScope, hirModule, debug.get());
 
     if (debug) {
         debug->finalize();

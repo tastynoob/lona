@@ -91,6 +91,10 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
             this->buf = new char[token.text.size() + 1];
             std::strcpy(this->buf, token.text.tochara());
             break;
+        case TokenType::ConstBool:
+            this->vtype = Type::BOOL;
+            this->buf = (char *)new bool(std::strcmp(token.text.tochara(), "true") == 0);
+            break;
         default:
             throw std::runtime_error("Invalid token type for AstConst");
     }

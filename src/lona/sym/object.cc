@@ -56,6 +56,10 @@ ConstVar::get(llvm::IRBuilder<> &builder) {
                                      std::any_cast<int32_t>(value), true);
         return val;
     }
+    if (type == boolTy) {
+        val = llvm::ConstantInt::get(type->getLLVMType(), std::any_cast<bool>(value));
+        return val;
+    }
 
     throw "unsupported const type";
 }

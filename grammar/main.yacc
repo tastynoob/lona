@@ -289,16 +289,16 @@ expr_paren
 typed_value_operand
     : FIELD { $$ = new AstField(*$1); }
     | CONST { $$ = new AstConst(*$1); }
-    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "1", @$)); }
-    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "0", @$)); }
+    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
+    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
     | expr_paren { $$ = $1; }
     ;
 
 single_value
     : variable { $$ = $1; }
     | CONST { $$ = new AstConst(*$1); }
-    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "1", @$)); }
-    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstInt32, "0", @$)); }
+    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
+    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
     | TYPE typed_value_operand {
         auto args = new std::vector<AstNode*>;
         args->emplace_back($2);
