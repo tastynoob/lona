@@ -152,20 +152,27 @@ getMethodSelectorType(HIRSelector *selector) {
     return func->getType() ? func->getType()->as<FuncType>() : nullptr;
 }
 
+size_t
+getMethodCallArgOffset(HIRSelector *selector, FuncType *type) {
+    if (!selector || !type) {
+        return 0;
+    }
+
+    auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
+    const auto &argTypes = type->getArgTypes();
+    if (!argTypes.empty() && parentType != nullptr && argTypes.front() == parentType) {
+        return 1;
+    }
+    return 0;
+}
+
 std::string
 describeMethodSelectorType(HIRSelector *selector, FuncType *type) {
     if (!selector || !type) {
         return "<unknown type>";
     }
 
-    size_t argOffset = 0;
-    auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
-    const auto &argTypes = type->getArgTypes();
-    if (!argTypes.empty() && parentType != nullptr && argTypes.front() == parentType) {
-        argOffset = 1;
-    }
-
-    return describeResolvedFuncType(type, argOffset);
+    return describeResolvedFuncType(type, getMethodCallArgOffset(selector, type));
 }
 
 void
@@ -496,9 +503,20 @@ class FunctionAnalyzer {
     }
 
     HIRNode *analyzeRet(AstRet *node) {
+        auto *retType = hirFunc->getFuncType()->getRetType();
         HIRExpr *expr = nullptr;
         if (node->expr) {
             expr = requireNonCallExpr(node->expr);
+            if (!retType) {
+                error("unexpected return value in void function");
+            }
+            if (expr->getType() != retType) {
+                error("return type mismatch: expected " +
+                      describeResolvedType(retType) + ", got " +
+                      describeResolvedType(expr->getType()));
+            }
+        } else if (retType) {
+            error("missing return value");
         }
         return new HIRRet(expr, node->loc);
     }
@@ -545,6 +563,7 @@ class FunctionAnalyzer {
         }
 
         FuncType *funcType = nullptr;
+        size_t argOffset = 0;
         if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
             auto *func = calleeValue->getValue()->as<Function>();
             if (!func) {
@@ -561,8 +580,25 @@ class FunctionAnalyzer {
                 error("unknown struct method");
             }
             funcType = func->getType()->as<FuncType>();
+            argOffset = getMethodCallArgOffset(selector, funcType);
         } else {
             error("only direct function calls are supported");
+        }
+
+        const auto &paramTypes = funcType->getArgTypes();
+        if (args.size() + argOffset != paramTypes.size()) {
+            error("call argument count mismatch: expected " +
+                  std::to_string(paramTypes.size() - argOffset) + ", got " +
+                  std::to_string(args.size()));
+        }
+        for (size_t i = 0; i < args.size(); ++i) {
+            auto *expectedType = paramTypes[i + argOffset];
+            auto *actualType = args[i]->getType();
+            if (actualType != expectedType) {
+                error("call argument type mismatch at index " + std::to_string(i) +
+                      ": expected " + describeResolvedType(expectedType) +
+                      ", got " + describeResolvedType(actualType));
+            }
         }
 
         auto *retType = funcType ? funcType->getRetType() : nullptr;

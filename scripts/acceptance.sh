@@ -41,6 +41,12 @@ func_method_expr_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-expr-bad-XXXXX
 func_method_expr_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-expr-bad-XXXXXX.txt")"
 func_method_top_expr_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-top-expr-bad-XXXXXX.lo")"
 func_method_top_expr_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-top-expr-bad-XXXXXX.txt")"
+call_arg_type_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-type-bad-XXXXXX.lo")"
+call_arg_type_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-type-bad-XXXXXX.txt")"
+call_arg_count_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.lo")"
+call_arg_count_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.txt")"
+return_type_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.lo")"
+return_type_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.txt")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
@@ -56,6 +62,9 @@ cleanup() {
         "$func_method_arg_bad_in" "$func_method_arg_bad_out" \
         "$func_method_expr_bad_in" "$func_method_expr_bad_out" \
         "$func_method_top_expr_bad_in" "$func_method_top_expr_bad_out" \
+        "$call_arg_type_bad_in" "$call_arg_type_bad_out" \
+        "$call_arg_count_bad_in" "$call_arg_count_bad_out" \
+        "$return_type_bad_in" "$return_type_bad_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
 trap cleanup EXIT
@@ -389,6 +398,47 @@ if "$BIN" --emit-ir "$func_method_top_expr_bad_in" >"$func_method_top_expr_bad_o
     exit 1
 fi
 grep -q 'method selector can only be used as a direct call callee' "$func_method_top_expr_bad_out"
+
+call_arg_type_bad_source='def foo(v i32) i32 {
+    ret v
+}
+
+def bad_call_type() i32 {
+    ret foo(true)
+}
+'
+printf '%s' "$call_arg_type_bad_source" >"$call_arg_type_bad_in"
+if "$BIN" --emit-ir "$call_arg_type_bad_in" >"$call_arg_type_bad_out" 2>&1; then
+    echo 'expected call argument type mismatch program to fail' >&2
+    exit 1
+fi
+grep -q 'call argument type mismatch at index 0: expected i32, got bool' "$call_arg_type_bad_out"
+
+call_arg_count_bad_source='def foo(v i32) i32 {
+    ret v
+}
+
+def bad_call_count() i32 {
+    ret foo()
+}
+'
+printf '%s' "$call_arg_count_bad_source" >"$call_arg_count_bad_in"
+if "$BIN" --emit-ir "$call_arg_count_bad_in" >"$call_arg_count_bad_out" 2>&1; then
+    echo 'expected call argument count mismatch program to fail' >&2
+    exit 1
+fi
+grep -q 'call argument count mismatch: expected 1, got 0' "$call_arg_count_bad_out"
+
+return_type_bad_source='def bad() i32 {
+    ret true
+}
+'
+printf '%s' "$return_type_bad_source" >"$return_type_bad_in"
+if "$BIN" --emit-ir "$return_type_bad_in" >"$return_type_bad_out" 2>&1; then
+    echo 'expected return type mismatch program to fail' >&2
+    exit 1
+fi
+grep -q 'return type mismatch: expected i32, got bool' "$return_type_bad_out"
 
 grammar_subset_source='struct Name {
     a i32
