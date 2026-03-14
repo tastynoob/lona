@@ -129,8 +129,12 @@ AstFuncDecl::toJson(Json &root) {
 void
 AstRet::toJson(Json &root) {
     root["type"] = "Return";
-    root["value"] = Json::object();
-    this->expr->toJson(root["value"]);
+    if (this->expr != nullptr) {
+        root["value"] = Json::object();
+        this->expr->toJson(root["value"]);
+    } else {
+        root["value"] = nullptr;
+    }
 }
 
 void
@@ -147,7 +151,13 @@ AstIf::toJson(Json &root) {
 }
 
 void
-AstFor::toJson(Json &root) {}
+AstFor::toJson(Json &root) {
+    root["type"] = "For";
+    root["cond"] = Json::object();
+    this->expr->toJson(root["cond"]);
+    root["body"] = Json::object();
+    this->body->toJson(root["body"]);
+}
 
 void
 AstFieldCall::toJson(Json &root) {

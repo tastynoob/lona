@@ -24,6 +24,66 @@ error(const std::string &message) {
     throw std::runtime_error(message);
 }
 
+std::string
+describeTypeNode(TypeNode *node) {
+    if (node == nullptr) {
+        return "<unknown type>";
+    }
+    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+        return toStdString(base->name);
+    }
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        auto name = describeTypeNode(pointer->base);
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            name += "*";
+        }
+        return name;
+    }
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        auto name = describeTypeNode(array->base);
+        name += "[";
+        for (size_t i = 0; i < array->dim.size(); ++i) {
+            if (i != 0) {
+                name += ",";
+            }
+            if (array->dim[i] != nullptr) {
+                name += "?";
+            }
+        }
+        name += "]";
+        return name;
+    }
+    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        std::string name = "(";
+        for (size_t i = 0; i < func->args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += describeTypeNode(func->args[i]);
+        }
+        name += ")";
+        if (func->ret) {
+            name += " ";
+            name += describeTypeNode(func->ret);
+        }
+        return name;
+    }
+    return "<unknown type>";
+}
+
+void
+rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
+    if (!node || !node->getTypeNode()) {
+        return;
+    }
+    if (!type || (!type->as<FuncType>() && findFuncTypeNode(node->getTypeNode()) == nullptr)) {
+        return;
+    }
+    error("unsupported bare function variable type for `" +
+          toStdString(node->getName()) + "`: " +
+          describeTypeNode(node->getTypeNode()));
+}
+
 TypeTable *
 requireTypeTable(Scope *scope) {
     assert(scope);
@@ -285,6 +345,7 @@ class FunctionAnalyzer {
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
             type = requireType(typeNode, "unknown variable type");
+            rejectBareFunctionStorage(type, node);
             if (init && init->getType() != type) {
                 error("initializer type mismatch");
             }
