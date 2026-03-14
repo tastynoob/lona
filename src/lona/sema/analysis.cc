@@ -182,6 +182,16 @@ rejectMethodSelectorStorage(HIRExpr *expr, AstVarDef *node) {
 }
 
 void
+rejectNonCallMethodSelector(HIRExpr *expr) {
+    auto *selector = dynamic_cast<HIRSelector *>(expr);
+    if (!selector || !getMethodSelectorType(selector)) {
+        return;
+    }
+
+    error(kMethodSelectorDirectCallError);
+}
+
+void
 rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
     if (!node) {
         return;
@@ -264,6 +274,12 @@ class FunctionAnalyzer {
         return expr;
     }
 
+    HIRExpr *requireNonCallExpr(AstNode *node) {
+        auto *expr = requireExpr(node);
+        rejectNonCallMethodSelector(expr);
+        return expr;
+    }
+
     bool isAddressable(HIRExpr *expr) {
         if (!expr) {
             return false;
@@ -330,7 +346,8 @@ class FunctionAnalyzer {
         if (node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {
             return nullptr;
         }
-        return requireExpr(node);
+        auto *expr = requireNonCallExpr(node);
+        return expr;
     }
 
     HIRExpr *analyzeExpr(AstNode *node) {
@@ -382,8 +399,8 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeAssign(AstAssign *node) {
-        auto *left = requireExpr(node->left);
-        auto *right = requireExpr(node->right);
+        auto *left = requireNonCallExpr(node->left);
+        auto *right = requireNonCallExpr(node->right);
         auto *leftType = left->getType();
         auto *rightType = right->getType();
         if (!leftType || !rightType || leftType != rightType) {
@@ -393,8 +410,8 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeBinOper(AstBinOper *node) {
-        auto *left = requireExpr(node->left);
-        auto *right = requireExpr(node->right);
+        auto *left = requireNonCallExpr(node->left);
+        auto *right = requireNonCallExpr(node->right);
         if (left->getType() != right->getType()) {
             error("type mismatch in binary operation");
         }
@@ -423,7 +440,7 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node) {
-        auto *value = requireExpr(node->expr);
+        auto *value = requireNonCallExpr(node->expr);
         switch (node->op) {
         case '+':
         case '-':
@@ -481,20 +498,20 @@ class FunctionAnalyzer {
     HIRNode *analyzeRet(AstRet *node) {
         HIRExpr *expr = nullptr;
         if (node->expr) {
-            expr = requireExpr(node->expr);
+            expr = requireNonCallExpr(node->expr);
         }
         return new HIRRet(expr, node->loc);
     }
 
     HIRNode *analyzeIf(AstIf *node) {
-        auto *cond = requireExpr(node->condition);
+        auto *cond = requireNonCallExpr(node->condition);
         auto *thenBlock = analyzeBlock(node->then);
         auto *elseBlock = node->hasElse() ? analyzeBlock(node->els) : nullptr;
         return new HIRIf(cond, thenBlock, elseBlock, node->loc);
     }
 
     HIRNode *analyzeFor(AstFor *node) {
-        auto *cond = requireExpr(node->expr);
+        auto *cond = requireNonCallExpr(node->expr);
         auto *body = analyzeBlock(node->body);
         return new HIRFor(cond, body, node->loc);
     }
@@ -523,7 +540,7 @@ class FunctionAnalyzer {
         if (node->args) {
             args.reserve(node->args->size());
             for (auto *arg : *node->args) {
-                args.push_back(requireExpr(arg));
+                args.push_back(requireNonCallExpr(arg));
             }
         }
 

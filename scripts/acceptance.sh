@@ -33,6 +33,14 @@ func_inferred_method_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-me
 func_inferred_method_local_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-local-bad-XXXXXX.txt")"
 func_inferred_method_top_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-top-bad-XXXXXX.lo")"
 func_inferred_method_top_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-top-bad-XXXXXX.txt")"
+func_method_return_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-return-bad-XXXXXX.lo")"
+func_method_return_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-return-bad-XXXXXX.txt")"
+func_method_arg_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-arg-bad-XXXXXX.lo")"
+func_method_arg_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-arg-bad-XXXXXX.txt")"
+func_method_expr_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-expr-bad-XXXXXX.lo")"
+func_method_expr_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-expr-bad-XXXXXX.txt")"
+func_method_top_expr_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-method-top-expr-bad-XXXXXX.lo")"
+func_method_top_expr_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-method-top-expr-bad-XXXXXX.txt")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
@@ -44,6 +52,10 @@ cleanup() {
         "$func_inferred_top_bad_in" "$func_inferred_top_bad_out" \
         "$func_inferred_method_local_bad_in" "$func_inferred_method_local_bad_out" \
         "$func_inferred_method_top_bad_in" "$func_inferred_method_top_bad_out" \
+        "$func_method_return_bad_in" "$func_method_return_bad_out" \
+        "$func_method_arg_bad_in" "$func_method_arg_bad_out" \
+        "$func_method_expr_bad_in" "$func_method_expr_bad_out" \
+        "$func_method_top_expr_bad_in" "$func_method_top_expr_bad_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
 trap cleanup EXIT
@@ -250,6 +262,133 @@ if "$BIN" --emit-ir "$func_inferred_method_top_bad_in" >"$func_inferred_method_t
     exit 1
 fi
 grep -q 'unsupported bare function variable type for `cb`: (Complex) Complex' "$func_inferred_method_top_bad_out"
+
+func_method_return_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+def bad_method_return() Complex {
+    var c = Complex(1, 2)
+    ret c.add
+}
+'
+printf '%s' "$func_method_return_bad_source" >"$func_method_return_bad_in"
+if "$BIN" --emit-ir "$func_method_return_bad_in" >"$func_method_return_bad_out" 2>&1; then
+    echo 'expected bare method return program to fail' >&2
+    exit 1
+fi
+grep -q 'method selector can only be used as a direct call callee' "$func_method_return_bad_out"
+
+func_method_arg_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+def take(v Complex) Complex {
+    ret v
+}
+
+def bad_method_arg() Complex {
+    var c = Complex(1, 2)
+    ret take(c.add)
+}
+'
+printf '%s' "$func_method_arg_bad_source" >"$func_method_arg_bad_in"
+if "$BIN" --emit-ir "$func_method_arg_bad_in" >"$func_method_arg_bad_out" 2>&1; then
+    echo 'expected bare method argument program to fail' >&2
+    exit 1
+fi
+grep -q 'method selector can only be used as a direct call callee' "$func_method_arg_bad_out"
+
+func_method_expr_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+def bad_method_expr() i32 {
+    var c = Complex(1, 2)
+    c.add
+    ret 0
+}
+'
+printf '%s' "$func_method_expr_bad_source" >"$func_method_expr_bad_in"
+if "$BIN" --emit-ir "$func_method_expr_bad_in" >"$func_method_expr_bad_out" 2>&1; then
+    echo 'expected bare method expression-statement program to fail' >&2
+    exit 1
+fi
+grep -q 'method selector can only be used as a direct call callee' "$func_method_expr_bad_out"
+
+func_method_top_expr_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+var sample = Complex(1, 2)
+sample.add
+'
+printf '%s' "$func_method_top_expr_bad_source" >"$func_method_top_expr_bad_in"
+if "$BIN" --emit-ir "$func_method_top_expr_bad_in" >"$func_method_top_expr_bad_out" 2>&1; then
+    echo 'expected bare top-level method expression program to fail' >&2
+    exit 1
+fi
+grep -q 'method selector can only be used as a direct call callee' "$func_method_top_expr_bad_out"
 
 grammar_subset_source='struct Name {
     a i32

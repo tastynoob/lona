@@ -7,6 +7,9 @@
 
 namespace lona {
 
+inline constexpr char kMethodSelectorDirectCallError[] =
+    "method selector can only be used as a direct call callee";
+
 class GlobalScope;
 
 struct HIRBinding {

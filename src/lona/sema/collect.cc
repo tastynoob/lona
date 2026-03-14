@@ -708,7 +708,7 @@ class FunctionCompiler {
             auto fieldName = selector->getFieldName();
             if (auto *structParent = parent->as<StructVar>()) {
                 if (selector->getType() == nullptr) {
-                    return parent;
+                    error(kMethodSelectorDirectCallError);
                 }
                 return structParent->getField(scope->builder, fieldName);
             }
