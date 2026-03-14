@@ -341,6 +341,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
 
     TypeClass *loretType = nullptr;
     llvm::Type *retType = llvm::Type::getVoidTy(typeMgr->getContext());
+    bool returnByPointer = false;
 
     std::string funcType_name = "f";
     if (node->retType) {
@@ -353,14 +354,16 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         rejectBareFunctionType(
             loretType, node->retType,
             "unsupported bare function return type for `" + toStdString(func_name) + "`");
-        retType = loretType->getLLVMType();
+        returnByPointer = loretType->shouldReturnByPointer();
+        retType = returnByPointer
+            ? llvm::Type::getVoidTy(typeMgr->getContext())
+            : loretType->getLLVMType();
         funcType_name += "_";
         funcType_name.append(loretType->full_name.tochara(),
                              loretType->full_name.size());
 
-        if (loretType->shouldReturnByPointer()) {
+        if (returnByPointer) {
             auto *sroa_retType = typeMgr->createPointerType(loretType);
-            loargs.push_back(sroa_retType);
             args.push_back(sroa_retType->getLLVMType());
         }
     }
@@ -543,15 +546,19 @@ public:
         this->visit(root);
 
         for (auto *it : structDecls) {
+            declareStructType(typeMgr, it);
+        }
+
+        for (auto *it : structDecls) {
+            StructVisitor(typeMgr, it);
+        }
+
+        for (auto *it : structDecls) {
             this->visit(it);
         }
 
         for (auto *it : funcDecls) {
             this->visit(it);
-        }
-
-        for (auto *it : structDecls) {
-            StructVisitor(typeMgr, it);
         }
     }
 };
@@ -589,6 +596,7 @@ class FunctionCompiler {
     llvm::LLVMContext &context;
     DebugInfoContext *debug;
     llvm::DISubprogram *debugSubprogram = nullptr;
+    bool returnByPointer = false;
 
     [[noreturn]] void error(const std::string &message) {
         throw std::runtime_error(message);
@@ -945,7 +953,11 @@ class FunctionCompiler {
             return;
         }
         if (scope->retVal()) {
-            scope->builder.CreateRet(scope->retVal()->get(scope->builder));
+            if (returnByPointer) {
+                scope->builder.CreateRetVoid();
+            } else {
+                scope->builder.CreateRet(scope->retVal()->get(scope->builder));
+            }
         } else {
             scope->builder.CreateRetVoid();
         }
@@ -979,9 +991,7 @@ public:
         if (!funcType) {
             error("invalid function type");
         }
-        if (funcType->SROA()) {
-            error("by-pointer returns are not supported yet");
-        }
+        returnByPointer = funcType->SROA();
 
         if (hirFunc->hasSelfBinding()) {
             scope->structTy = hirFunc->getSelfBinding().object->getType()->as<StructType>();
@@ -1000,8 +1010,21 @@ public:
         if (!hirFunc->isTopLevelEntry() && retType && !hirFunc->hasGuaranteedReturn()) {
             error("missing return value");
         }
+
+        size_t llvmArgIndex = 0;
         if (retType) {
-            auto *retSlot = materializeLocal(retType, nullptr);
+            Object *retSlot = nullptr;
+            if (returnByPointer) {
+                if (llvmFunc->arg_size() < 1) {
+                    error("function is missing hidden return slot argument");
+                }
+                auto argIt = llvmFunc->arg_begin();
+                retSlot = retType->newObj(Object::VARIABLE);
+                retSlot->setllvmValue(&*argIt);
+                ++llvmArgIndex;
+            } else {
+                retSlot = materializeLocal(retType, nullptr);
+            }
             scope->initRetVal(retSlot);
             if (hirFunc->isTopLevelEntry() && retType == i32Ty) {
                 retSlot->set(scope->builder, new ConstVar(i32Ty, int32_t(0)));
@@ -1010,7 +1033,6 @@ public:
             scope->initRetBlock(retBB);
         }
 
-        size_t llvmArgIndex = 0;
         unsigned debugArgIndex = 1;
         if (hirFunc->hasSelfBinding()) {
             auto &binding = hirFunc->getSelfBinding();
@@ -1025,7 +1047,8 @@ public:
             ++debugArgIndex;
         }
 
-        auto expectedArgs = hirFunc->getParams().size() + (hirFunc->hasSelfBinding() ? 1 : 0);
+        auto expectedArgs = hirFunc->getParams().size() +
+            (hirFunc->hasSelfBinding() ? 1 : 0) + (returnByPointer ? 1 : 0);
         if (llvmFunc->arg_size() != expectedArgs) {
             error("function argument number mismatch");
         }

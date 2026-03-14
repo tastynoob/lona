@@ -111,7 +111,9 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
     Object *retval = nullptr;
 
     if (retType && retType->shouldReturnByPointer()) {
-        assert(false);
+        retval = retType->newObj(Object::VARIABLE);
+        retval->createllvmValue(scope);
+        llvmargs.push_back(retval->getllvmValue());
     }
 
     // check args type

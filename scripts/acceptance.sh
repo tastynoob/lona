@@ -47,6 +47,8 @@ call_arg_count_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.lo
 call_arg_count_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.txt")"
 return_type_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.lo")"
 return_type_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.txt")"
+large_struct_return_in="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.lo")"
+large_struct_return_out="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.ll")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
@@ -65,6 +67,7 @@ cleanup() {
         "$call_arg_type_bad_in" "$call_arg_type_bad_out" \
         "$call_arg_count_bad_in" "$call_arg_count_bad_out" \
         "$return_type_bad_in" "$return_type_bad_out" \
+        "$large_struct_return_in" "$large_struct_return_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
 trap cleanup EXIT
@@ -439,6 +442,50 @@ if "$BIN" --emit-ir "$return_type_bad_in" >"$return_type_bad_out" 2>&1; then
     exit 1
 fi
 grep -q 'return type mismatch: expected i32, got bool' "$return_type_bad_out"
+
+large_struct_return_source='struct Big {
+    a i32
+    b i32
+    c i32
+    d i32
+    e i32
+
+    def add(v i32) Big {
+        var out Big
+        out.a = self.a + v
+        out.b = self.b + v
+        out.c = self.c + v
+        out.d = self.d + v
+        out.e = self.e + v
+        ret out
+    }
+}
+
+def Big(v i32) Big {
+    var out Big
+    out.a = v
+    out.b = v + 1
+    out.c = v + 2
+    out.d = v + 3
+    out.e = v + 4
+    ret out
+}
+
+def make_big(v i32) Big {
+    var base = Big(v)
+    ret base.add(1)
+}
+
+var sample = make_big(3)
+'
+printf '%s' "$large_struct_return_source" >"$large_struct_return_in"
+"$BIN" --emit-ir --verify-ir "$large_struct_return_in" >"$large_struct_return_out"
+grep -q '^%Big = type { i32, i32, i32, i32, i32 }' "$large_struct_return_out"
+grep -q '^define void @Big.add(ptr ' "$large_struct_return_out"
+grep -q '^define void @Big(ptr ' "$large_struct_return_out"
+grep -q '^define void @make_big(ptr ' "$large_struct_return_out"
+grep -q 'call void @Big(ptr ' "$large_struct_return_out"
+grep -q 'call void @Big.add(ptr ' "$large_struct_return_out"
 
 grammar_subset_source='struct Name {
     a i32
