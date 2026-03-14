@@ -26,4 +26,4 @@ build/
 /hooks
 /objects
 /refs
-agentplan
+.plan

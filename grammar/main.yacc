@@ -186,10 +186,8 @@ stat_ret
 func_decl
     : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
     | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
-    | DEF FIELD '(' ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, nullptr, $6); }
     | DEF FIELD '(' var_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
     | DEF FIELD '(' var_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
-    | DEF FIELD '(' var_decl_seq ')' '=' type_name stat_compound { $$ = new AstFuncDecl(*$2, $8, $4, $7); }
     ;
 
 var_decl
