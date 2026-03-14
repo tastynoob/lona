@@ -29,6 +29,10 @@ func_inferred_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-local-bad
 func_inferred_local_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-local-bad-XXXXXX.txt")"
 func_inferred_top_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-top-bad-XXXXXX.lo")"
 func_inferred_top_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-top-bad-XXXXXX.txt")"
+func_inferred_method_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-local-bad-XXXXXX.lo")"
+func_inferred_method_local_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-local-bad-XXXXXX.txt")"
+func_inferred_method_top_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-top-bad-XXXXXX.lo")"
+func_inferred_method_top_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-inferred-method-top-bad-XXXXXX.txt")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
@@ -38,6 +42,8 @@ cleanup() {
         "$func_local_bad_in" "$func_local_bad_out" "$func_top_bad_in" "$func_top_bad_out" \
         "$func_inferred_local_bad_in" "$func_inferred_local_bad_out" \
         "$func_inferred_top_bad_in" "$func_inferred_top_bad_out" \
+        "$func_inferred_method_local_bad_in" "$func_inferred_method_local_bad_out" \
+        "$func_inferred_method_top_bad_in" "$func_inferred_method_top_bad_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
 trap cleanup EXIT
@@ -183,6 +189,67 @@ if "$BIN" --emit-ir "$func_inferred_top_bad_in" >"$func_inferred_top_bad_out" 2>
     exit 1
 fi
 grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_inferred_top_bad_out"
+
+func_inferred_method_local_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+def bad_method_local() i32 {
+    var c = Complex(1, 2)
+    var cb = c.add
+    ret 0
+}
+'
+printf '%s' "$func_inferred_method_local_bad_source" >"$func_inferred_method_local_bad_in"
+if "$BIN" --emit-ir "$func_inferred_method_local_bad_in" >"$func_inferred_method_local_bad_out" 2>&1; then
+    echo 'expected inferred bare method local variable program to fail' >&2
+    exit 1
+fi
+grep -q 'unsupported bare function variable type for `cb`: (Complex) Complex' "$func_inferred_method_local_bad_out"
+
+func_inferred_method_top_bad_source='struct Complex {
+    real i32
+    imag i32
+
+    def add(a Complex) Complex {
+        var out Complex
+        out.real = self.real + a.real
+        out.imag = self.imag + a.imag
+        ret out
+    }
+}
+
+def Complex(a i32, b i32) Complex {
+    var out Complex
+    out.real = a
+    out.imag = b
+    ret out
+}
+
+var sample = Complex(1, 2)
+var cb = sample.add
+'
+printf '%s' "$func_inferred_method_top_bad_source" >"$func_inferred_method_top_bad_in"
+if "$BIN" --emit-ir "$func_inferred_method_top_bad_in" >"$func_inferred_method_top_bad_out" 2>&1; then
+    echo 'expected inferred bare method top-level variable program to fail' >&2
+    exit 1
+fi
+grep -q 'unsupported bare function variable type for `cb`: (Complex) Complex' "$func_inferred_method_top_bad_out"
 
 grammar_subset_source='struct Name {
     a i32

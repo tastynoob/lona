@@ -72,6 +72,31 @@ describeTypeNode(TypeNode *node) {
 }
 
 std::string
+describeResolvedType(TypeClass *type);
+
+std::string
+describeResolvedFuncType(FuncType *type, size_t argOffset = 0) {
+    if (type == nullptr) {
+        return "<unknown type>";
+    }
+
+    std::string name = "(";
+    const auto &argTypes = type->getArgTypes();
+    for (size_t i = argOffset; i < argTypes.size(); ++i) {
+        if (i != argOffset) {
+            name += ", ";
+        }
+        name += describeResolvedType(argTypes[i]);
+    }
+    name += ")";
+    if (type->getRetType() != nullptr) {
+        name += " ";
+        name += describeResolvedType(type->getRetType());
+    }
+    return name;
+}
+
+std::string
 describeResolvedType(TypeClass *type) {
     if (type == nullptr) {
         return "<unknown type>";
@@ -95,20 +120,7 @@ describeResolvedType(TypeClass *type) {
         return name;
     }
     if (auto *func = type->as<FuncType>()) {
-        std::string name = "(";
-        const auto &argTypes = func->getArgTypes();
-        for (size_t i = 0; i < argTypes.size(); ++i) {
-            if (i != 0) {
-                name += ", ";
-            }
-            name += describeResolvedType(argTypes[i]);
-        }
-        name += ")";
-        if (func->getRetType() != nullptr) {
-            name += " ";
-            name += describeResolvedType(func->getRetType());
-        }
-        return name;
+        return describeResolvedFuncType(func);
     }
     return toStdString(type->full_name);
 }
@@ -119,6 +131,54 @@ describeStorageType(TypeClass *type, AstVarDef *node) {
         return describeTypeNode(node->getTypeNode());
     }
     return describeResolvedType(type);
+}
+
+FuncType *
+getMethodSelectorType(HIRSelector *selector) {
+    if (!selector || selector->getType() != nullptr) {
+        return nullptr;
+    }
+
+    auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
+    auto *structType = parentType ? parentType->as<StructType>() : nullptr;
+    if (!structType) {
+        return nullptr;
+    }
+
+    auto *func = structType->getFunc(llvm::StringRef(selector->getFieldName()));
+    if (!func) {
+        return nullptr;
+    }
+    return func->getType() ? func->getType()->as<FuncType>() : nullptr;
+}
+
+std::string
+describeMethodSelectorType(HIRSelector *selector, FuncType *type) {
+    if (!selector || !type) {
+        return "<unknown type>";
+    }
+
+    size_t argOffset = 0;
+    auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
+    const auto &argTypes = type->getArgTypes();
+    if (!argTypes.empty() && parentType != nullptr && argTypes.front() == parentType) {
+        argOffset = 1;
+    }
+
+    return describeResolvedFuncType(type, argOffset);
+}
+
+void
+rejectMethodSelectorStorage(HIRExpr *expr, AstVarDef *node) {
+    auto *selector = dynamic_cast<HIRSelector *>(expr);
+    auto *funcType = getMethodSelectorType(selector);
+    if (!selector || !funcType || !node) {
+        return;
+    }
+
+    error("unsupported bare function variable type for `" +
+          toStdString(node->getName()) + "`: " +
+          describeMethodSelectorType(selector, funcType));
 }
 
 void
@@ -406,6 +466,7 @@ class FunctionAnalyzer {
                 error("initializer type mismatch");
             }
         } else if (init) {
+            rejectMethodSelectorStorage(init, node);
             type = init->getType();
             rejectBareFunctionStorage(type, node);
         } else {
