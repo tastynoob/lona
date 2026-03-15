@@ -1237,8 +1237,9 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
     initBuildinType(globalScope);
 
     auto resolvedModule = resolveModule(globalScope, root, nullptr);
-    auto *hirModule = analyzeModule(globalScope, *resolvedModule, nullptr);
-    emitHIRModule(global, hirModule, emitDebugInfo, globalScope->module.getName().str());
+    auto hirModule = analyzeModule(globalScope, *resolvedModule, nullptr);
+    emitHIRModule(global, hirModule.get(), emitDebugInfo,
+                  globalScope->module.getName().str());
 }
 
 void

@@ -5,6 +5,7 @@
 #include "lona/module/module_graph.hh"
 #include "lona/source/source_manager.hh"
 #include <iosfwd>
+#include <memory>
 #include <string>
 
 namespace lona {
@@ -37,18 +38,21 @@ struct SessionStats {
 };
 
 class Driver;
+class CompilePipeline;
 
 class CompilerSession {
     SourceManager sourceManager_;
     DiagnosticEngine diagnostics_;
     ModuleGraph moduleGraph_;
     SessionStats lastStats_;
+    std::unique_ptr<CompilePipeline> irPipeline_;
 
     void discoverUnitDependencies(CompilationUnit &unit);
     void validateImportedUnit(const CompilationUnit &unit) const;
 
 public:
     CompilerSession();
+    ~CompilerSession();
 
     SourceManager &sourceManager() { return sourceManager_; }
     const SourceManager &sourceManager() const { return sourceManager_; }

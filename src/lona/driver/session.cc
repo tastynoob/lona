@@ -1,6 +1,7 @@
 #include "session.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
+#include "lona/pass/compile_pipeline.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/scan/driver.hh"
 #include "lona/sema/hir.hh"
@@ -150,11 +151,8 @@ isValidModuleName(const std::string &name) {
 }
 
 void
-appendHIRFunctions(HIRModule &target, HIRModule *source) {
-    if (!source) {
-        return;
-    }
-    for (auto *func : source->getFunctions()) {
+appendHIRFunctions(HIRModule &target, const HIRModule &source) {
+    for (auto *func : source.getFunctions()) {
         target.addFunction(func);
     }
 }
@@ -173,23 +171,84 @@ isAllowedImportedTopLevelNode(AstNode *node) {
 
 }  // namespace
 
-struct IRBuildState {
-    llvm::LLVMContext context;
-    llvm::Module module;
-    llvm::IRBuilder<> builder;
-    GlobalScope global;
-    TypeTable types;
+CompilerSession::CompilerSession()
+    : diagnostics_(&sourceManager_),
+      irPipeline_(std::make_unique<CompilePipeline>()) {
+    irPipeline_->addStage("collect-declarations", [this](IRPipelineContext &context) {
+        auto start = Clock::now();
+        for (auto it = context.moduleGraph.loadOrder().rbegin();
+             it != context.moduleGraph.loadOrder().rend(); ++it) {
+            auto *loadedUnit = moduleGraph_.find(*it);
+            if (loadedUnit == nullptr) {
+                throw DiagnosticError(DiagnosticError::Category::Internal,
+                                      "module graph load order references a missing unit",
+                                      "This looks like a compiler module graph bug.");
+            }
+            validateImportedUnit(*loadedUnit);
+            collectUnitDeclarations(
+                &context.build.global, *loadedUnit,
+                context.rootUnit && context.rootUnit->path() != loadedUnit->path());
+        }
+        context.stats.declarationMs += elapsedMillis(start, Clock::now());
+        return 0;
+    });
 
-    explicit IRBuildState(const CompilationUnit &unit)
-        : module(unit.path(), context),
-          builder(context),
-          global(builder, module),
-          types(module) {
-        global.setTypeTable(&types);
-    }
-};
+    irPipeline_->addStage("lower-hir", [this](IRPipelineContext &context) {
+        auto start = Clock::now();
+        for (const auto &path : context.moduleGraph.loadOrder()) {
+            auto *loadedUnit = moduleGraph_.find(path);
+            if (loadedUnit == nullptr) {
+                throw DiagnosticError(DiagnosticError::Category::Internal,
+                                      "module graph load order references a missing unit",
+                                      "This looks like a compiler module graph bug.");
+            }
+            auto resolved =
+                resolveModule(&context.build.global, loadedUnit->syntaxTree(), loadedUnit);
+            auto hirModule =
+                analyzeModule(&context.build.global, *resolved, loadedUnit);
+            appendHIRFunctions(context.programHIR, *hirModule);
+            context.loweredModules.push_back(std::move(hirModule));
+        }
+        context.stats.lowerMs += elapsedMillis(start, Clock::now());
+        return 0;
+    });
 
-CompilerSession::CompilerSession() : diagnostics_(&sourceManager_) {}
+    irPipeline_->addStage("emit-llvm", [](IRPipelineContext &context) {
+        auto start = Clock::now();
+        emitHIRModule(&context.build.global, &context.programHIR,
+                      context.options.debugInfo, context.entryUnit.path());
+        context.stats.codegenMs += elapsedMillis(start, Clock::now());
+        return 0;
+    });
+
+    irPipeline_->addStage("optimize-llvm", [](IRPipelineContext &context) {
+        auto start = Clock::now();
+        optimizeModule(context.build.module, context.options.optLevel);
+        context.stats.optimizeMs += elapsedMillis(start, Clock::now());
+        return 0;
+    });
+
+    irPipeline_->addStage("verify-llvm", [](IRPipelineContext &context) {
+        if (!context.options.verifyIR) {
+            return 0;
+        }
+        auto start = Clock::now();
+        bool verifyOk = verifyCompiledModule(context.build.module, context.out);
+        context.stats.verifyMs += elapsedMillis(start, Clock::now());
+        return verifyOk ? 0 : 1;
+    });
+
+    irPipeline_->addStage("print-llvm", [](IRPipelineContext &context) {
+        std::string ir;
+        llvm::raw_string_ostream irOut(ir);
+        context.build.module.print(irOut, nullptr);
+        irOut.flush();
+        context.out << ir;
+        return 0;
+    });
+}
+
+CompilerSession::~CompilerSession() = default;
 
 const SourceBuffer &
 CompilerSession::loadSource(const std::string &path) {
@@ -306,62 +365,9 @@ CompilerSession::emitJson(const CompilationUnit &unit, std::ostream &out) const 
 int
 CompilerSession::emitIR(const CompilationUnit &unit,
                         const CompileOptions &options, std::ostream &out) {
-    IRBuildState build(unit);
-    HIRModule programHIR;
-    const auto *root = moduleGraph_.root();
-
-    auto declStart = Clock::now();
-    for (auto it = moduleGraph_.loadOrder().rbegin();
-         it != moduleGraph_.loadOrder().rend(); ++it) {
-        auto *loadedUnit = moduleGraph_.find(*it);
-        if (loadedUnit == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module graph load order references a missing unit",
-                                  "This looks like a compiler module graph bug.");
-        }
-        validateImportedUnit(*loadedUnit);
-        collectUnitDeclarations(&build.global, *loadedUnit,
-                                root && root->path() != loadedUnit->path());
-    }
-    lastStats_.declarationMs += elapsedMillis(declStart, Clock::now());
-
-    auto lowerStart = Clock::now();
-    for (const auto &path : moduleGraph_.loadOrder()) {
-        auto *loadedUnit = moduleGraph_.find(path);
-        if (loadedUnit == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module graph load order references a missing unit",
-                                  "This looks like a compiler module graph bug.");
-        }
-        auto resolved = resolveModule(&build.global, loadedUnit->syntaxTree(), loadedUnit);
-        appendHIRFunctions(programHIR,
-                           analyzeModule(&build.global, *resolved, loadedUnit));
-    }
-    lastStats_.lowerMs += elapsedMillis(lowerStart, Clock::now());
-
-    auto codegenStart = Clock::now();
-    emitHIRModule(&build.global, &programHIR, options.debugInfo, unit.path());
-    lastStats_.codegenMs += elapsedMillis(codegenStart, Clock::now());
-
-    auto optimizeStart = Clock::now();
-    optimizeModule(build.module, options.optLevel);
-    lastStats_.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
-
-    if (options.verifyIR) {
-        auto verifyStart = Clock::now();
-        bool verifyOk = verifyCompiledModule(build.module, out);
-        lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
-        if (!verifyOk) {
-            return 1;
-        }
-    }
-
-    std::string ir;
-    llvm::raw_string_ostream irOut(ir);
-    build.module.print(irOut, nullptr);
-    irOut.flush();
-    out << ir;
-    return 0;
+    IRPipelineContext context(unit, moduleGraph_, options, out, lastStats_);
+    context.rootUnit = moduleGraph_.root();
+    return irPipeline_->run(context);
 }
 
 void

@@ -43,7 +43,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend bench_smoke
+.PHONY: clean format default frontend acceptance test bench_smoke
 
 default:
 	mkdir -p build
@@ -52,6 +52,11 @@ default:
 all: $(target)
 
 frontend: $(frontend_target)
+
+acceptance: $(target)
+	bash $(ROOT)/scripts/acceptance.sh
+
+test: acceptance bench_smoke
 
 bench_smoke: $(target)
 	bash $(ROOT)/scripts/benchmark_smoke.sh

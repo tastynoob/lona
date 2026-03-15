@@ -971,25 +971,26 @@ class ModuleAnalyzer {
     GlobalScope *global;
     TypeTable *typeMgr;
     const CompilationUnit *unit;
-    HIRModule *module = new HIRModule();
+    std::unique_ptr<HIRModule> module = std::make_unique<HIRModule>();
 
 public:
     explicit ModuleAnalyzer(GlobalScope *global, const CompilationUnit *unit)
         : global(global), typeMgr(requireTypeTable(global)), unit(unit) {}
 
-    HIRModule *analyze(const ResolvedModule &resolvedModule) {
+    std::unique_ptr<HIRModule>
+    analyze(const ResolvedModule &resolvedModule) {
         for (const auto &resolvedFunction : resolvedModule.functions()) {
             module->addFunction(
-                FunctionAnalyzer(typeMgr, global, module, unit, *resolvedFunction)
+                FunctionAnalyzer(typeMgr, global, module.get(), unit, *resolvedFunction)
                     .getFunction());
         }
-        return module;
+        return std::move(module);
     }
 };
 
 }  // namespace
 
-HIRModule *
+std::unique_ptr<HIRModule>
 analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
               const CompilationUnit *unit) {
     return ModuleAnalyzer(global, unit).analyze(resolved);

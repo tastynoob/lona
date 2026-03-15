@@ -2,6 +2,7 @@
 
 #include "lona/ast/astnode.hh"
 #include "lona/support/arena.hh"
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -257,7 +258,8 @@ public:
     }
 };
 
-HIRModule *analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
-                         const CompilationUnit *unit = nullptr);
+std::unique_ptr<HIRModule>
+analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
+              const CompilationUnit *unit = nullptr);
 
 }  // namespace lona
