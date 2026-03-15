@@ -24,9 +24,9 @@ splitLines(const std::string &content) {
 }  // namespace
 
 SourceBuffer::SourceBuffer(std::string path, std::string content)
-    : path_(std::move(path)),
-      content_(std::move(content)),
-      lines_(splitLines(content_)) {}
+    : path_(std::move(path)) {
+    resetContent(std::move(content));
+}
 
 const std::string *
 SourceBuffer::line(std::size_t lineNumber) const {
@@ -34,6 +34,12 @@ SourceBuffer::line(std::size_t lineNumber) const {
         return nullptr;
     }
     return &lines_[lineNumber - 1];
+}
+
+void
+SourceBuffer::resetContent(std::string content) {
+    content_ = std::move(content);
+    lines_ = splitLines(content_);
 }
 
 const SourceBuffer &
@@ -67,8 +73,7 @@ SourceManager::addSource(std::string path, std::string content) {
     auto inserted = sources_.emplace(
         path, std::make_unique<SourceBuffer>(path, std::move(content)));
     if (!inserted.second) {
-        inserted.first->second =
-            std::make_unique<SourceBuffer>(path, std::move(content));
+        inserted.first->second->resetContent(std::move(content));
     }
     return *inserted.first->second;
 }

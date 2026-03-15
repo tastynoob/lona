@@ -9,6 +9,7 @@
 namespace lona {
 
 class GlobalScope;
+class CompilationUnit;
 
 class ResolvedLocalBinding {
 public:
@@ -157,6 +158,7 @@ public:
     }
 };
 
-std::unique_ptr<ResolvedModule> resolveModule(GlobalScope *global, AstNode *root);
+std::unique_ptr<ResolvedModule> resolveModule(GlobalScope *global, AstNode *root,
+                                              const CompilationUnit *unit = nullptr);
 
 }  // namespace lona

@@ -39,6 +39,7 @@
 - `else`
 - `for`
 - `struct`
+- `import`
 
 内建类型关键字（词法记号 `BuiltinType`）：
 
@@ -95,15 +96,19 @@ program-item      ::= NL
                     | program-stat
 
 program-stat      ::= stat
+                    | import-stat
                     | builtin-type-line
 
 builtin-type-line ::= BuiltinType { BuiltinType } NL
+import-stat       ::= "import" ImportPath NL
 ```
 
 说明：
 
 - `builtin-type-line` 是一个特殊兼容规则：顶层单独写一行一个或多个内建类型名也能通过解析，但不会形成实际语义结构。
 - 当前文法不接受完全空文件；至少需要一个顶层项或一个换行。
+- `import` 只能放在顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
+- 导入文件当前只允许声明，不允许顶层可执行语句。
 
 ### 3.2 语句
 
@@ -257,7 +262,7 @@ expr-seq          ::= expr
 - `BuiltinType typed-value-op` 只接受内建类型关键字开头，例如 `i32 1`、`bool true`。
 - `func-pointer-ref` 用显式的 `name&<...>` 形式取得顶层函数指针；这里 `&<` 在当前词法实现里是一个连续起始符。
 - 函数调用的被调用者是 `single-value`，因此允许链式形式，如 `obj.method(x)`、`getter()(x)`、`a.b.c()`.
-- 成员访问写作 `value.field`。
+- 成员访问写作 `value.field`；其中 `file.func(...)` 也用于调用 imported module 暴露出来的顶层函数。
 - 赋值左值既可以是变量，也可以是解引用表达式 `*value`。
 - 一元运算的直接操作数是 `single-value`，因此像 `!!x`、`**p` 这样的连续一元写法并不直接出现在当前文法中，通常需要借助括号改写。
 

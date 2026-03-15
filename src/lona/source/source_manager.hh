@@ -21,6 +21,7 @@ public:
     const std::string &content() const { return content_; }
     const std::vector<std::string> &lines() const { return lines_; }
     const std::string *line(std::size_t lineNumber) const;
+    void resetContent(std::string content);
 };
 
 class SourceManager {

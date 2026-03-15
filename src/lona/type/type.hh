@@ -318,6 +318,37 @@ public:
         return arrayType;
     }
 
+    FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
+                                      TypeClass *retType) {
+        std::vector<llvm::Type *> llvmArgTypes;
+        llvmArgTypes.reserve(argTypes.size());
+        string funcTypeName = "f";
+        if (retType) {
+            funcTypeName += "_";
+            funcTypeName += retType->full_name;
+        }
+        for (auto *argType : argTypes) {
+            if (!argType) {
+                return nullptr;
+            }
+            llvmArgTypes.push_back(argType->llvmType);
+            funcTypeName += ".";
+            funcTypeName += argType->full_name;
+        }
+        if (auto *existing = getType(funcTypeName)) {
+            return existing->as<FuncType>();
+        }
+        auto *llvmRetType =
+            retType ? retType->llvmType : llvm::Type::getVoidTy(module.getContext());
+        auto *llvmFuncType = llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
+        auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
+                                      funcTypeName);
+        funcType->llvmType = llvmFuncType;
+        funcType->typeSize = 0;
+        addType(funcTypeName, funcType);
+        return funcType;
+    }
+
     TypeClass *getType(TypeNode *node) {
         if (!node) {
             return nullptr;
@@ -345,31 +376,15 @@ public:
 
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
-            std::vector<llvm::Type *> llvmArgTypes;
-            string funcTypeName = "f";
             auto *retType = getType(func->ret);
-            if (retType) {
-                funcTypeName += "_";
-                funcTypeName += retType->full_name;
-            }
             for (auto *arg : func->args) {
                 auto *argType = getType(arg);
                 if (!argType) {
                     return nullptr;
                 }
                 argTypes.push_back(argType);
-                llvmArgTypes.push_back(argType->llvmType);
-                funcTypeName += ".";
-                funcTypeName += argType->full_name;
             }
-            if (auto *existing = getType(funcTypeName)) {
-                return existing;
-            }
-            auto *llvmRetType = retType ? retType->llvmType : llvm::Type::getVoidTy(module.getContext());
-            auto *llvmFuncType = llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
-            auto *funcType = new FuncType(llvmFuncType, std::move(argTypes), retType, funcTypeName, 0);
-            addType(funcTypeName, funcType);
-            return funcType;
+            return getOrCreateFunctionType(argTypes, retType);
         }
 
         return nullptr;

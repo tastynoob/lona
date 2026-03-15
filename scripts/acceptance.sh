@@ -65,6 +65,14 @@ method_self_in="$(mktemp "$TMPDIR_LOCAL/lona-method-self-XXXXXX.lo")"
 method_self_out="$(mktemp "$TMPDIR_LOCAL/lona-method-self-XXXXXX.ll")"
 top_level_mix_in="$(mktemp "$TMPDIR_LOCAL/lona-top-level-mix-XXXXXX.lo")"
 top_level_mix_out="$(mktemp "$TMPDIR_LOCAL/lona-top-level-mix-XXXXXX.ll")"
+import_dir="$(mktemp -d "$TMPDIR_LOCAL/lona-import-XXXXXX")"
+import_dep_in="$import_dir/math.lo"
+import_main_in="$import_dir/main.lo"
+import_main_out="$(mktemp "$TMPDIR_LOCAL/lona-import-main-XXXXXX.ll")"
+import_type_out="$(mktemp "$TMPDIR_LOCAL/lona-import-type-XXXXXX.ll")"
+import_exec_dep_in="$import_dir/bad_dep.lo"
+import_exec_main_in="$import_dir/bad_main.lo"
+import_exec_out="$(mktemp "$TMPDIR_LOCAL/lona-import-exec-XXXXXX.txt")"
 large_struct_return_in="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.lo")"
 large_struct_return_out="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.ll")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
@@ -94,8 +102,11 @@ cleanup() {
         "$duplicate_param_in" "$duplicate_param_out" \
         "$method_self_in" "$method_self_out" \
         "$top_level_mix_in" "$top_level_mix_out" \
+        "$import_main_out" "$import_type_out" \
+        "$import_exec_dep_in" "$import_exec_main_in" "$import_exec_out" \
         "$large_struct_return_in" "$large_struct_return_out" \
         "$grammar_subset_in" "$grammar_subset_out"
+    rm -rf "$import_dir"
 }
 trap cleanup EXIT
 
@@ -597,6 +608,41 @@ printf '%s' "$top_level_mix_source" >"$top_level_mix_in"
 "$BIN" --emit-ir --verify-ir "$top_level_mix_in" >"$top_level_mix_out"
 grep -q '\.main"()' "$top_level_mix_out"
 grep -q '@inc' "$top_level_mix_out"
+
+import_dep_source='def inc(v i32) i32 {
+    ret v + 1
+}
+
+def helper(v i32) i32 {
+    ret inc(v)
+}
+
+struct Point {
+    x i32
+}
+'
+printf '%s' "$import_dep_source" >"$import_dep_in"
+printf 'import math\n\ndef main() i32 {\n    ret math.helper(4)\n}\n' >"$import_main_in"
+"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_main_out"
+grep -q '^define i32 @math.inc' "$import_main_out"
+grep -q '^define i32 @math.helper' "$import_main_out"
+grep -q 'call i32 @math.helper(i32 4)' "$import_main_out"
+
+printf 'import math\n\ndef main() i32 {\n    var p math.Point\n    p.x = math.inc(4)\n    ret p.x\n}\n' >"$import_main_in"
+"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_type_out"
+grep -q '^%math.Point = type { i32 }' "$import_type_out"
+grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
+
+import_exec_dep_source='var x i32 = 1
+'
+printf '%s' "$import_exec_dep_source" >"$import_exec_dep_in"
+printf 'import bad_dep\n\ndef main() i32 {\n    ret 0\n}\n' >"$import_exec_main_in"
+if "$BIN" --emit-ir "$import_exec_main_in" >"$import_exec_out" 2>&1; then
+    echo 'expected imported top-level executable statement program to fail' >&2
+    exit 1
+fi
+grep -Fq "imported file \`$import_exec_dep_in\` cannot contain top-level executable statements" "$import_exec_out"
+grep -Fq 'help: Move this statement into a function, or keep top-level execution only in the root file.' "$import_exec_out"
 
 large_struct_return_source='struct Big {
     a i32

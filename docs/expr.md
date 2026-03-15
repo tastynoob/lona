@@ -60,7 +60,10 @@ point.x
 user.profile.name
 obj.method(1)
 factory()(2)
+math.inc(1)
 ```
+
+其中 `math.inc(1)` 这种形式表示调用 imported module `math` 暴露出来的顶层函数。
 
 ## 7. 一元运算
 

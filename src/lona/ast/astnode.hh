@@ -198,6 +198,18 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstImport : public AstNode {
+public:
+    std::string const path;
+
+    AstImport(const location &loc, AstToken &pathToken)
+        : AstNode(loc),
+          path(pathToken.text.tochara(), pathToken.text.size()) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstVarDecl : public AstNode {
 public:
     string const field;

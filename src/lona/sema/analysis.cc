@@ -1,6 +1,7 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/err/err.hh"
+#include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
@@ -308,6 +309,7 @@ getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
 class FunctionAnalyzer {
     TypeTable *typeMgr;
     GlobalScope *global;
+    const CompilationUnit *unit;
     const ResolvedFunction &resolved;
     HIRFunc *hirFunc;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
@@ -362,7 +364,7 @@ class FunctionAnalyzer {
     }
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
-        auto *type = typeMgr->getType(node);
+        auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
         }
@@ -746,6 +748,11 @@ class FunctionAnalyzer {
         } else if (init) {
             rejectMethodSelectorStorage(init, node);
             type = init->getType();
+            if (!type) {
+                error(node->loc,
+                      "module namespaces can't be stored as runtime values",
+                      "Access a concrete member like `file.func(...)` instead.");
+            }
             rejectBareFunctionStorage(type, node);
         } else {
             error(node->loc,
@@ -800,6 +807,25 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeSelector(AstSelector *node) {
         auto *parent = requireExpr(node->parent);
+        if (auto *parentValue = dynamic_cast<HIRValue *>(parent)) {
+            if (auto *moduleObject = parentValue->getValue()->as<ModuleObject>()) {
+                auto fieldName = toStdString(node->field->text);
+                const auto *functionName = moduleObject->unit()
+                    ? moduleObject->unit()->findLocalFunction(fieldName)
+                    : nullptr;
+                if (!functionName) {
+                    auto moduleName = moduleObject->unit()
+                        ? moduleObject->unit()->moduleName()
+                        : std::string("<module>");
+                    error(node->loc,
+                          "unknown module member `" + moduleName + "." + fieldName + "`",
+                          "Only imported top-level functions are available through `file.xxx`.");
+                }
+                auto *func = requireGlobalFunction(*functionName, node->loc,
+                                                  "module function");
+                return new HIRValue(func, node->loc);
+            }
+        }
         auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
         if (!structType) {
             error(node->loc, "member access expects a struct value on the left side");
@@ -871,9 +897,11 @@ class FunctionAnalyzer {
 
 public:
     FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global,
+                     const CompilationUnit *unit,
                      const ResolvedFunction &resolved)
         : typeMgr(typeMgr),
           global(global),
+          unit(unit),
           resolved(resolved),
           hirFunc(nullptr) {
         if (resolved.isTopLevelEntry()) {
@@ -931,16 +959,17 @@ public:
 class ModuleAnalyzer {
     GlobalScope *global;
     TypeTable *typeMgr;
+    const CompilationUnit *unit;
     HIRModule *module = new HIRModule();
 
 public:
-    explicit ModuleAnalyzer(GlobalScope *global)
-        : global(global), typeMgr(requireTypeTable(global)) {}
+    explicit ModuleAnalyzer(GlobalScope *global, const CompilationUnit *unit)
+        : global(global), typeMgr(requireTypeTable(global)), unit(unit) {}
 
     HIRModule *analyze(const ResolvedModule &resolvedModule) {
         for (const auto &resolvedFunction : resolvedModule.functions()) {
             module->addFunction(
-                FunctionAnalyzer(typeMgr, global, *resolvedFunction).getFunction());
+                FunctionAnalyzer(typeMgr, global, unit, *resolvedFunction).getFunction());
         }
         return module;
     }
@@ -949,8 +978,9 @@ public:
 }  // namespace
 
 HIRModule *
-analyzeModule(GlobalScope *global, const ResolvedModule &resolved) {
-    return ModuleAnalyzer(global).analyze(resolved);
+analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
+              const CompilationUnit *unit) {
+    return ModuleAnalyzer(global, unit).analyze(resolved);
 }
 
 }  // namespace lona

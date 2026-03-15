@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast/astnode.hh"
+#include "module/compilation_unit.hh"
 #include "type/type.hh"
 
 namespace lona {
@@ -21,6 +22,7 @@ public:
     DEF_VISIT(AstBinOper)
     DEF_VISIT(AstUnaryOper)
     DEF_VISIT(AstStructDecl)
+    DEF_VISIT(AstImport)
     DEF_VISIT(AstVarDecl)
     DEF_VISIT(AstVarDef)
     DEF_VISIT(AstStatList)
@@ -47,6 +49,7 @@ public:
     DEF_VISIT(AstBinOper)
     DEF_VISIT(AstUnaryOper)
     DEF_VISIT(AstStructDecl)
+    DEF_VISIT(AstImport)
     DEF_VISIT(AstVarDecl)
     DEF_VISIT(AstVarDef)
     DEF_VISIT(AstStatList)
@@ -62,6 +65,7 @@ class Scope;
 class AstNode;
 class StructType;
 class Function;
+class HIRModule;
 
 Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent = nullptr);
@@ -71,6 +75,13 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo = false);
 
 void
 scanningType(Scope *global, AstNode *root);
+
+void
+collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace);
+
+void
+emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo = false,
+              const std::string &primarySourcePath = std::string());
 
 StructType *
 createStruct(Scope *scope, AstStructDecl *node);

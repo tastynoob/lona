@@ -16,6 +16,7 @@ class TypeClass;
 class FuncType;
 class Scope;
 class BaseVar;
+class CompilationUnit;
 
 class Object {
 protected:
@@ -111,6 +112,19 @@ public:
 
     Object *getField(llvm::IRBuilder<> &builder, std::string name);
 
+    void set(llvm::IRBuilder<> &builder, Object *src) override;
+};
+
+class ModuleObject : public Object {
+    const CompilationUnit *unit_ = nullptr;
+
+public:
+    explicit ModuleObject(const CompilationUnit *unit)
+        : Object(nullptr, Object::READONLY), unit_(unit) {}
+
+    const CompilationUnit *unit() const { return unit_; }
+
+    llvm::Value *get(llvm::IRBuilder<> &builder) override;
     void set(llvm::IRBuilder<> &builder, Object *src) override;
 };
 

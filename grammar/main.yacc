@@ -47,10 +47,12 @@
 %parse-param { Driver &driver }
 
 %token <token> CONST "literal" FIELD "identifier" RET "ret" TYPE "builtin type"
+%token <token> IMPORT_PATH "import path"
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
 %token VAR "var"
 %token TRUE "true" FALSE "false"
 %token IF "if" ELSE "else" FOR "for"
+%token IMPORT "import"
 %token DEF "def" STRUCT "struct"
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
@@ -70,7 +72,7 @@
 %right unary
 
 %type <node> pragram pragram_statlist pragram_stat
-%type <node> struct_decl func_decl
+%type <node> struct_decl func_decl import_stat
 %type <node> struct_statlist struct_stat stat_list stat
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
@@ -110,7 +112,14 @@ pragram_statlist
 
 pragram_stat
     : stat { $$ = $1; }
+    | import_stat { $$ = $1; }
     | bare_type_seq NEWLINE { $$ = new AstStatList(); }
+    ;
+
+import_stat
+    : IMPORT IMPORT_PATH NEWLINE {
+        $$ = new AstImport(@$, *$2);
+    }
     ;
 
 stat_list

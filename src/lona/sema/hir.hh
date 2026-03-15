@@ -12,6 +12,7 @@ inline constexpr char kMethodSelectorDirectCallError[] =
 
 class GlobalScope;
 class ResolvedModule;
+class CompilationUnit;
 
 struct HIRBinding {
     std::string name;
@@ -249,6 +250,7 @@ public:
     }
 };
 
-HIRModule *analyzeModule(GlobalScope *global, const ResolvedModule &resolved);
+HIRModule *analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
+                         const CompilationUnit *unit = nullptr);
 
 }  // namespace lona

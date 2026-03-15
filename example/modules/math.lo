@@ -1,0 +1,13 @@
+struct Point {
+    x i32
+}
+
+def inc(v i32) i32 {
+    ret v + 1
+}
+
+def fill(v i32) Point {
+    var out Point
+    out.x = inc(v)
+    ret out
+}

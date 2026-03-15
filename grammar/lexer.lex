@@ -27,6 +27,7 @@ static std::string describeLexeme(const char *text, int length) {
 %option noyywrap
 %option nodefault
 %option c++
+%x IMPORT_PATH_STATE
 
 
 %%
@@ -36,6 +37,7 @@ static std::string describeLexeme(const char *text, int length) {
 (var) { loc->columns(yyleng); return token::VAR; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
+(import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }
 (ret) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::RET; }
 
 (if) { loc->columns(yyleng); return token::IF; }
@@ -53,6 +55,43 @@ static std::string describeLexeme(const char *text, int length) {
 (case) {}
 (cast) {}
 
+
+<IMPORT_PATH_STATE>[ \t]+ {
+    loc->columns(yyleng);
+}
+
+<IMPORT_PATH_STATE>[A-Za-z0-9_./-]+ {
+    loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::Field, yytext, *loc);
+    BEGIN(INITIAL);
+    return token::IMPORT_PATH;
+}
+
+<IMPORT_PATH_STATE>([ ]*\n[ \n]*) {
+    int line_num = 0;
+    int space_num = 0;
+    for (int i = 0; i < yyleng; i++) {
+        if (yytext[i] == '\n') {
+            line_num++;
+            space_num = 0;
+        }
+        if (yytext[i] == ' ') {
+            space_num++;
+        }
+    }
+    loc->lines(line_num);
+    loc->columns(space_num);
+    BEGIN(INITIAL);
+    return token::NEWLINE;
+}
+
+<IMPORT_PATH_STATE>.|\n {
+    loc->columns(yyleng);
+    throw lona::DiagnosticError(
+        lona::DiagnosticError::Category::Lexical, *loc,
+        "I couldn't recognize this import path token.",
+        "Write imports like `import path/to/file` without quotes or file suffix.");
+}
 
 [0-9]+ {
     loc->columns(yyleng);

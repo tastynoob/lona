@@ -138,6 +138,12 @@ AstStructDecl::toJson(Json &root) {
 }
 
 void
+AstImport::toJson(Json &root) {
+    root["type"] = "Import";
+    root["path"] = path;
+}
+
+void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
     root["field"] = this->field.tochara();

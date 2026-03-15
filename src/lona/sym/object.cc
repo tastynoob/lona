@@ -1,4 +1,5 @@
 #include "func.hh"
+#include "lona/module/compilation_unit.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
 #include "../type/buildin.hh"
@@ -99,6 +100,16 @@ StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
         builder.CreateMemCpy(val, llvm::MaybeAlign(8), struct_src->val,
                              llvm::MaybeAlign(8), type->typeSize);
     }
+}
+
+llvm::Value *
+ModuleObject::get(llvm::IRBuilder<> &builder) {
+    throw "module namespace is not a runtime value";
+}
+
+void
+ModuleObject::set(llvm::IRBuilder<> &builder, Object *src) {
+    throw "module namespace is read-only";
 }
 
 Object *

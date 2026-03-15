@@ -2,6 +2,7 @@
 
 #include "lona/ast/astnode.hh"
 #include "lona/diag/diagnostic_engine.hh"
+#include "lona/module/module_graph.hh"
 #include "lona/source/source_manager.hh"
 #include <iosfwd>
 #include <string>
@@ -27,10 +28,12 @@ struct SessionOptions {
 class Driver;
 
 class CompilerSession {
-    struct CompilationUnit;
-
     SourceManager sourceManager_;
     DiagnosticEngine diagnostics_;
+    ModuleGraph moduleGraph_;
+
+    void discoverUnitDependencies(CompilationUnit &unit);
+    void validateImportedUnit(const CompilationUnit &unit) const;
 
 public:
     CompilerSession();
@@ -39,12 +42,17 @@ public:
     const SourceManager &sourceManager() const { return sourceManager_; }
     DiagnosticEngine &diagnostics() { return diagnostics_; }
     const DiagnosticEngine &diagnostics() const { return diagnostics_; }
+    ModuleGraph &moduleGraph() { return moduleGraph_; }
+    const ModuleGraph &moduleGraph() const { return moduleGraph_; }
 
     const SourceBuffer &loadSource(const std::string &path);
-    AstNode *parseSource(const SourceBuffer &source);
-    int emitJson(AstNode *tree, std::ostream &out) const;
-    int emitIR(const SourceBuffer &source, AstNode *tree,
-               const CompileOptions &options, std::ostream &out) const;
+    CompilationUnit &loadUnit(const std::string &path);
+    CompilationUnit &loadRootUnit(const std::string &path);
+    AstNode *parseUnit(CompilationUnit &unit);
+    void parseLoadedUnits();
+    int emitJson(const CompilationUnit &unit, std::ostream &out) const;
+    int emitIR(const CompilationUnit &unit,
+               const CompileOptions &options, std::ostream &out);
     int runFile(const std::string &inputPath, const SessionOptions &options,
                 std::ostream &out, std::ostream &diag);
 };

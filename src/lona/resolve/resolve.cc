@@ -1,5 +1,6 @@
 #include "resolve.hh"
 #include "lona/err/err.hh"
+#include "lona/module/compilation_unit.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
@@ -30,6 +31,7 @@ error(const location &loc, const std::string &message,
 
 class FunctionResolver {
     GlobalScope *global_;
+    const CompilationUnit *unit_;
     ResolvedModule &module_;
     ResolvedFunction &resolved_;
     std::unordered_map<std::string, const ResolvedLocalBinding *> locals_;
@@ -106,6 +108,14 @@ class FunctionResolver {
                 return;
             }
 
+            if (unit_) {
+                if (const auto *functionName =
+                        unit_->findLocalFunction(toStdString(field->name))) {
+                    resolved_.bindField(field, ResolvedValueRef::global(*functionName));
+                    return;
+                }
+            }
+
             auto *globalObject = global_->getObj(field->name);
             if (!globalObject) {
                 error(field->loc,
@@ -117,6 +127,13 @@ class FunctionResolver {
             return;
         }
         if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
+            if (unit_) {
+                if (const auto *functionName =
+                        unit_->findLocalFunction(toStdString(funcRef->name))) {
+                    resolved_.bindFunctionRef(funcRef, *functionName);
+                    return;
+                }
+            }
             auto *obj = global_->getObj(funcRef->name);
             auto *func = obj ? obj->as<Function>() : nullptr;
             if (!func) {
@@ -164,9 +181,10 @@ class FunctionResolver {
     }
 
 public:
-    FunctionResolver(GlobalScope *global, ResolvedModule &module,
+    FunctionResolver(GlobalScope *global, const CompilationUnit *unit,
+                     ResolvedModule &module,
                      ResolvedFunction &resolved)
-        : global_(global), module_(module), resolved_(resolved) {}
+        : global_(global), unit_(unit), module_(module), resolved_(resolved) {}
 
     void resolve() {
         if (resolved_.hasSelfBinding()) {
@@ -188,6 +206,7 @@ public:
 class ModuleResolver {
     GlobalScope *global_;
     TypeTable *typeMgr_;
+    const CompilationUnit *unit_;
     std::unique_ptr<ResolvedModule> module_ = std::make_unique<ResolvedModule>();
 
     ResolvedFunction *createResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
@@ -221,11 +240,18 @@ class ModuleResolver {
 
     void resolveFunction(AstFuncDecl *node, StructType *methodParent = nullptr) {
         Function *function = nullptr;
+        auto resolvedFunctionName = toStdString(node->name);
         if (methodParent) {
             function = methodParent->getFunc(
                 llvm::StringRef(node->name.tochara(), node->name.size()));
         } else {
-            auto *obj = global_->getObj(node->name);
+            if (unit_) {
+                if (const auto *functionName =
+                        unit_->findLocalFunction(toStdString(node->name))) {
+                    resolvedFunctionName = *functionName;
+                }
+            }
+            auto *obj = global_->getObj(llvm::StringRef(resolvedFunctionName));
             function = obj ? obj->as<Function>() : nullptr;
         }
         if (!function) {
@@ -234,15 +260,23 @@ class ModuleResolver {
         }
 
         auto *resolved = createResolvedFunction(
-            node, node->body, toStdString(node->name),
+            node, node->body,
+            methodParent ? toStdString(node->name) : resolvedFunctionName,
             methodParent ? toStdString(methodParent->full_name) : std::string(),
             node->loc, false,
             node->body && node->body->hasTerminator());
-        FunctionResolver(global_, *module_, *resolved).resolve();
+        FunctionResolver(global_, unit_, *module_, *resolved).resolve();
     }
 
     void resolveStruct(AstStructDecl *node) {
-        auto *structType = typeMgr_->getType(node->name)->as<StructType>();
+        auto resolvedStructName = toStdString(node->name);
+        if (unit_) {
+            if (const auto *typeName = unit_->findLocalType(resolvedStructName)) {
+                resolvedStructName = *typeName;
+            }
+        }
+        auto *type = typeMgr_->getType(llvm::StringRef(resolvedStructName));
+        auto *structType = type ? type->as<StructType>() : nullptr;
         if (!structType) {
             error(node->loc, "struct declaration is missing from the type table",
                   "Run type scanning before name resolution.");
@@ -266,6 +300,9 @@ class ModuleResolver {
                 resolveStruct(structDecl);
                 continue;
             }
+            if (dynamic_cast<AstImport *>(stmt)) {
+                continue;
+            }
             if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
                 resolveFunction(funcDecl);
                 continue;
@@ -277,13 +314,13 @@ class ModuleResolver {
             auto *resolved = createResolvedFunction(
                 nullptr, body, std::string(), std::string(), body->loc, true,
                 body->hasTerminator());
-            FunctionResolver(global_, *module_, *resolved).resolve();
+            FunctionResolver(global_, unit_, *module_, *resolved).resolve();
         }
     }
 
 public:
-    explicit ModuleResolver(GlobalScope *global)
-        : global_(global), typeMgr_(global->types()) {
+    explicit ModuleResolver(GlobalScope *global, const CompilationUnit *unit)
+        : global_(global), typeMgr_(global->types()), unit_(unit) {
         assert(typeMgr_);
     }
 
@@ -350,8 +387,8 @@ ResolvedFunction::functionRef(const AstFuncRef *node) const {
 }
 
 std::unique_ptr<ResolvedModule>
-resolveModule(GlobalScope *global, AstNode *root) {
-    return ModuleResolver(global).resolve(root);
+resolveModule(GlobalScope *global, AstNode *root, const CompilationUnit *unit) {
+    return ModuleResolver(global, unit).resolve(root);
 }
 
 }  // namespace lona

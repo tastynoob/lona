@@ -303,6 +303,24 @@ describeTypeNode(TypeNode *node) {
     return "<unknown type>";
 }
 
+std::string
+resolveTopLevelName(const CompilationUnit *unit, const string &name,
+                    bool exportNamespace) {
+    auto resolved = toStdString(name);
+    if (!unit || !exportNamespace) {
+        return resolved;
+    }
+    return unit->moduleName() + "." + resolved;
+}
+
+TypeClass *
+resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node) {
+    if (!typeMgr) {
+        return nullptr;
+    }
+    return unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
+}
+
 void
 rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &context,
                        const location &loc = location()) {
@@ -321,14 +339,36 @@ requireTypeTable(Scope *scope) {
     return typeMgr;
 }
 
+void
+declareModuleNamespace(Scope &scope, const CompilationUnit &unit) {
+    auto moduleName = llvm::StringRef(unit.moduleName());
+    auto *existing = scope.getObj(moduleName);
+    if (existing) {
+        auto *moduleObject = existing->as<ModuleObject>();
+        if (!moduleObject || moduleObject->unit() != &unit) {
+            error("module namespace `" + unit.moduleName() +
+                  "` conflicts with an existing global symbol");
+        }
+        return;
+    }
+    scope.addObj(moduleName, new ModuleObject(&unit));
+}
+
 StructType *
-declareStructType(TypeTable *typeMgr, AstStructDecl *node) {
-    auto *existing = typeMgr->getType(node->name);
+declareStructType(TypeTable *typeMgr, AstStructDecl *node,
+                  CompilationUnit *unit = nullptr,
+                  bool exportNamespace = false) {
+    auto resolvedName = resolveTopLevelName(unit, node->name, exportNamespace);
+    if (unit) {
+        unit->bindLocalType(toStdString(node->name), resolvedName);
+    }
+
+    auto *existing = typeMgr->getType(llvm::StringRef(resolvedName));
     if (existing != nullptr) {
         return existing->as<StructType>();
     }
 
-    auto struct_name = node->name;
+    string struct_name(resolvedName.c_str());
     auto *structTy = llvm::StructType::create(
         typeMgr->getContext(),
         llvm::StringRef(struct_name.tochara(), struct_name.size()));
@@ -340,15 +380,30 @@ declareStructType(TypeTable *typeMgr, AstStructDecl *node) {
 
 Function *
 declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
-                StructType *methodParent) {
+                StructType *methodParent, CompilationUnit *unit = nullptr,
+                bool exportNamespace = false) {
     auto &func_name = node->name;
+    auto resolvedFunctionName =
+        resolveTopLevelName(unit, func_name, exportNamespace);
     if (methodParent) {
         if (auto *existing = methodParent->getFunc(
                 llvm::StringRef(func_name.tochara(), func_name.size()))) {
             return existing;
         }
-    } else if (auto *existing = scope.getObj(func_name)) {
-        return existing->as<Function>();
+    } else {
+        if (unit) {
+            unit->bindLocalFunction(toStdString(func_name), resolvedFunctionName);
+        }
+        if (auto *existing = scope.getObj(llvm::StringRef(resolvedFunctionName))) {
+            auto *func = existing->as<Function>();
+            if (!func) {
+                error(node->loc,
+                      "top-level function `" + toStdString(func_name) +
+                          "` conflicts with module namespace `" +
+                          resolvedFunctionName + "`");
+            }
+            return func;
+        }
     }
 
     std::vector<TypeClass *> loargs;
@@ -360,7 +415,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
 
     std::string funcType_name = "f";
     if (node->retType) {
-        loretType = typeMgr->getType(node->retType);
+        loretType = resolveTypeNode(typeMgr, unit, node->retType);
         if (!loretType) {
             error(node->loc,
                 "unknown return type for function `" + toStdString(func_name) +
@@ -400,7 +455,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                     toStdString(func_name) + "`");
             }
             auto *varDecl = arg->as<AstVarDecl>();
-            auto *type = typeMgr->getType(varDecl->typeNode);
+            auto *type = resolveTypeNode(typeMgr, unit, varDecl->typeNode);
             if (!type) {
                 error(varDecl->loc,
                     "unknown type for function parameter `" +
@@ -422,7 +477,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
     }
 
-    TypeClass *lofuncType = typeMgr->getType(funcType_name);
+    TypeClass *lofuncType = typeMgr->getType(llvm::StringRef(funcType_name));
     if (!lofuncType) {
         auto *llfuncType = llvm::FunctionType::get(retType, args, false);
         lofuncType = new FuncType(
@@ -430,7 +485,9 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         typeMgr->addType(funcType_name, lofuncType);
     }
 
-    std::string llvmName = toStdString(func_name);
+    std::string llvmName = resolvedFunctionName.empty()
+        ? toStdString(func_name)
+        : resolvedFunctionName;
     if (methodParent) {
         llvmName = toStdString(methodParent->full_name) + "." + llvmName;
     }
@@ -446,7 +503,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         methodParent->addFunc(
             llvm::StringRef(func_name.tochara(), func_name.size()), lofunc);
     } else {
-        scope.addObj(func_name, lofunc);
+        scope.addObj(llvm::StringRef(llvmName), lofunc);
     }
     return lofunc;
 }
@@ -455,6 +512,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
 
 class StructVisitor : public AstVisitorAny {
     TypeTable *typeMgr;
+    CompilationUnit *unit;
+    bool exportNamespace;
 
     std::vector<llvm::Type *> llvmmembers;
     llvm::StringMap<StructType::ValueTy> members;
@@ -471,7 +530,7 @@ class StructVisitor : public AstVisitorAny {
 
     Object *visit(AstVarDecl *node) override {
         auto &name = node->field;
-        auto *type = typeMgr->getType(node->typeNode);
+        auto *type = resolveTypeNode(typeMgr, unit, node->typeNode);
         if (!type) {
             error(node->loc, "unknown struct field type for `" +
                                  toStdString(name) + "`: " +
@@ -491,8 +550,11 @@ class StructVisitor : public AstVisitorAny {
     }
 
 public:
-    StructVisitor(TypeTable *typeMgr, AstStructDecl *node) : typeMgr(typeMgr) {
-        auto *lostructTy = declareStructType(typeMgr, node);
+    StructVisitor(TypeTable *typeMgr, AstStructDecl *node,
+                  CompilationUnit *unit = nullptr,
+                  bool exportNamespace = false)
+        : typeMgr(typeMgr), unit(unit), exportNamespace(exportNamespace) {
+        auto *lostructTy = declareStructType(typeMgr, node, unit, exportNamespace);
         assert(lostructTy);
         assert(lostructTy->llvmType);
 
@@ -516,6 +578,8 @@ public:
 class TypeCollector : public AstVisitorAny {
     TypeTable *typeMgr;
     Scope *scope;
+    CompilationUnit *unit;
+    bool exportNamespace;
 
     std::list<AstStructDecl *> structDecls;
     std::list<AstFuncDecl *> funcDecls;
@@ -539,7 +603,7 @@ class TypeCollector : public AstVisitorAny {
     }
 
     Object *visit(AstStructDecl *node) override {
-        auto *structTy = declareStructType(typeMgr, node);
+        auto *structTy = declareStructType(typeMgr, node, unit, exportNamespace);
         if (!node->body || !node->body->is<AstStatList>()) {
             return nullptr;
         }
@@ -548,27 +612,32 @@ class TypeCollector : public AstVisitorAny {
             if (!func) {
                 continue;
             }
-            declareFunction(*scope, typeMgr, func, structTy);
+            declareFunction(*scope, typeMgr, func, structTy, unit, exportNamespace);
         }
         return nullptr;
     }
 
     Object *visit(AstFuncDecl *node) override {
-        declareFunction(*scope, typeMgr, node, nullptr);
+        declareFunction(*scope, typeMgr, node, nullptr, unit, exportNamespace);
         return nullptr;
     }
 
 public:
-    TypeCollector(TypeTable *typeMgr, Scope *scope, AstNode *root)
-        : typeMgr(typeMgr), scope(scope) {
+    TypeCollector(TypeTable *typeMgr, Scope *scope, AstNode *root,
+                  CompilationUnit *unit = nullptr,
+                  bool exportNamespace = false)
+        : typeMgr(typeMgr),
+          scope(scope),
+          unit(unit),
+          exportNamespace(exportNamespace) {
         this->visit(root);
 
         for (auto *it : structDecls) {
-            declareStructType(typeMgr, it);
+            declareStructType(typeMgr, it, unit, exportNamespace);
         }
 
         for (auto *it : structDecls) {
-            StructVisitor(typeMgr, it);
+            StructVisitor(typeMgr, it, unit, exportNamespace);
         }
 
         for (auto *it : structDecls) {
@@ -584,23 +653,35 @@ public:
 Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent) {
     initBuildinType(&scope);
-    auto *func = declareFunction(scope, requireTypeTable(&scope), root, parent);
+    auto *func =
+        declareFunction(scope, requireTypeTable(&scope), root, parent, nullptr, false);
     return func;
 }
 
 void
 scanningType(Scope *global, AstNode *root) {
     initBuildinType(global);
-    TypeCollector(requireTypeTable(global), global, root);
+    TypeCollector(requireTypeTable(global), global, root, nullptr, false);
+}
+
+void
+collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace) {
+    initBuildinType(global);
+    unit.clearInterface();
+    if (exportNamespace) {
+        declareModuleNamespace(*global, unit);
+    }
+    TypeCollector(requireTypeTable(global), global, unit.syntaxTree(), &unit,
+                  exportNamespace);
 }
 
 StructType *
 createStruct(Scope *scope, AstStructDecl *node) {
     initBuildinType(scope);
     auto *typeMgr = requireTypeTable(scope);
-    auto *type = declareStructType(typeMgr, node);
+    auto *type = declareStructType(typeMgr, node, nullptr, false);
     if (type->isOpaque()) {
-        StructVisitor(typeMgr, node);
+        StructVisitor(typeMgr, node, nullptr, false);
     }
     return type;
 }
@@ -1155,15 +1236,26 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
     assert(globalScope);
     initBuildinType(globalScope);
 
+    auto resolvedModule = resolveModule(globalScope, root, nullptr);
+    auto *hirModule = analyzeModule(globalScope, *resolvedModule, nullptr);
+    emitHIRModule(global, hirModule, emitDebugInfo, globalScope->module.getName().str());
+}
+
+void
+emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo,
+              const std::string &primarySourcePath) {
+    auto *globalScope = dynamic_cast<GlobalScope *>(global);
+    assert(globalScope);
+    initBuildinType(globalScope);
+
     std::unique_ptr<DebugInfoContext> debug;
     if (emitDebugInfo) {
         debug = std::make_unique<DebugInfoContext>(
-            globalScope->module, globalScope->module.getName().str());
+            globalScope->module,
+            primarySourcePath.empty() ? globalScope->module.getName().str()
+                                      : primarySourcePath);
     }
-
-    auto resolvedModule = resolveModule(globalScope, root);
-    auto *hirModule = analyzeModule(globalScope, *resolvedModule);
-    ModuleCompiler(globalScope, hirModule, debug.get());
+    ModuleCompiler(globalScope, module, debug.get());
 
     if (debug) {
         debug->finalize();

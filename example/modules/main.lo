@@ -1,0 +1,6 @@
+import math
+
+def main() i32 {
+    var point math.Point = math.fill(40)
+    ret point.x + 1
+}
