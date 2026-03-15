@@ -102,11 +102,12 @@ StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
 }
 
 Object *
-Function::call(Scope *scope, std::vector<Object *> &args) {
+emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
+                 std::vector<Object *> &args) {
     auto &builder = scope->builder;
-    auto llvm_func = (llvm::Function *)val;
-    auto retType = type->as<FuncType>()->getRetType();
-    auto argTypes = type->as<FuncType>()->getArgTypes();
+    auto *llvmFuncType = llvm::cast<llvm::FunctionType>(funcType->getLLVMType());
+    auto *retType = funcType->getRetType();
+    const auto &argTypes = funcType->getArgTypes();
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
 
@@ -128,7 +129,7 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
         throw "Call argument number mismatch";
     }
 
-    auto ret = builder.CreateCall(llvm_func, llvmargs);
+    auto *ret = builder.CreateCall(llvmFuncType, calleeValue, llvmargs);
 
     if (retType && retType->shouldReturnByPointer()) {
         return retval;
@@ -142,6 +143,12 @@ Function::call(Scope *scope, std::vector<Object *> &args) {
     }
 
     return nullptr;
+}
+
+Object *
+Function::call(Scope *scope, std::vector<Object *> &args) {
+    auto *funcType = type->as<FuncType>();
+    return emitFunctionCall(scope, val, funcType, args);
 }
 
 }  // namespace lona

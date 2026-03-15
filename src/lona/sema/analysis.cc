@@ -152,6 +152,19 @@ getMethodSelectorType(HIRSelector *selector) {
     return func->getType() ? func->getType()->as<FuncType>() : nullptr;
 }
 
+FuncType *
+getFunctionPointerTarget(TypeClass *type) {
+    auto *pointerType = type ? type->as<PointerType>() : nullptr;
+    return pointerType ? pointerType->getPointeeType()->as<FuncType>() : nullptr;
+}
+
+Function *
+getDirectFunctionCallee(HIRExpr *callee) {
+    auto *calleeValue = dynamic_cast<HIRValue *>(callee);
+    auto *value = calleeValue ? calleeValue->getValue() : nullptr;
+    return value ? value->as<Function>() : nullptr;
+}
+
 size_t
 getMethodCallArgOffset(HIRSelector *selector, FuncType *type) {
     if (!selector || !type) {
@@ -207,7 +220,7 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
     if (!hasBareFunctionStorage) {
         auto *typeNode = node->getTypeNode();
         hasBareFunctionStorage =
-            typeNode != nullptr && findFuncTypeNode(typeNode) != nullptr;
+            typeNode != nullptr && dynamic_cast<FuncTypeNode *>(typeNode) != nullptr;
     }
     if (!hasBareFunctionStorage) {
         return;
@@ -215,6 +228,25 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
     error("unsupported bare function variable type for `" +
           toStdString(node->getName()) + "`: " +
           describeStorageType(type, node));
+}
+
+void
+rejectUninitializedFunctionDerivedStorage(AstVarDef *node) {
+    if (!node || node->withInitVal()) {
+        return;
+    }
+
+    auto *typeNode = node->getTypeNode();
+    if (!typeNode || dynamic_cast<FuncTypeNode *>(typeNode) != nullptr) {
+        return;
+    }
+    if (findFuncTypeNode(typeNode) == nullptr) {
+        return;
+    }
+
+    error("function-related variable type for `" +
+          toStdString(node->getName()) + "` requires initializer: " +
+          describeTypeNode(typeNode));
 }
 
 TypeTable *
@@ -367,6 +399,9 @@ class FunctionAnalyzer {
         if (auto *field = node->as<AstField>()) {
             return analyzeField(field);
         }
+        if (auto *funcRef = node->as<AstFuncRef>()) {
+            return analyzeFuncRef(funcRef);
+        }
         if (auto *assign = node->as<AstAssign>()) {
             return analyzeAssign(assign);
         }
@@ -403,6 +438,48 @@ class FunctionAnalyzer {
             error("undefined identifier");
         }
         return new HIRValue(obj, node->loc);
+    }
+
+    HIRExpr *analyzeFuncRef(AstFuncRef *node) {
+        auto *obj = global->getObj(node->name);
+        auto *func = obj ? obj->as<Function>() : nullptr;
+        if (!func) {
+            error("undefined function reference `" + toStdString(node->name) + "`");
+        }
+
+        auto *funcType = func->getType() ? func->getType()->as<FuncType>() : nullptr;
+        if (!funcType) {
+            error("invalid function reference target `" + toStdString(node->name) + "`");
+        }
+
+        const auto &expectedArgTypes = funcType->getArgTypes();
+        const auto actualArgCount = node->argTypes ? node->argTypes->size() : 0;
+        if (expectedArgTypes.size() != actualArgCount) {
+            error("function reference parameter count mismatch for `" +
+                  toStdString(node->name) + "`: expected " +
+                  std::to_string(expectedArgTypes.size()) + ", got " +
+                  std::to_string(actualArgCount));
+        }
+
+        for (size_t i = 0; i < actualArgCount; ++i) {
+            auto *actualType = requireType(
+                node->argTypes->at(i),
+                "unknown function reference parameter type at index " +
+                    std::to_string(i) + " for `" + toStdString(node->name) +
+                    "`: " + describeTypeNode(node->argTypes->at(i)));
+            auto *expectedType = expectedArgTypes[i];
+            if (actualType != expectedType) {
+                error("function reference parameter type mismatch at index " +
+                      std::to_string(i) + " for `" + toStdString(node->name) +
+                      "`: expected " + describeResolvedType(expectedType) +
+                      ", got " + describeResolvedType(actualType));
+            }
+        }
+
+        auto *pointerType = typeMgr->createPointerType(funcType);
+        auto *value = pointerType->newObj(Object::REG_VAL | Object::READONLY);
+        value->bindllvmValue(func->getllvmValue());
+        return new HIRValue(value, node->loc);
     }
 
     HIRExpr *analyzeAssign(AstAssign *node) {
@@ -481,6 +558,7 @@ class FunctionAnalyzer {
         if (node->withInitVal()) {
             init = requireExpr(node->getInitVal());
         }
+        rejectUninitializedFunctionDerivedStorage(node);
 
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
@@ -564,13 +642,8 @@ class FunctionAnalyzer {
 
         FuncType *funcType = nullptr;
         size_t argOffset = 0;
-        if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
-            auto *func = calleeValue->getValue()->as<Function>();
-            if (!func) {
-                error("only direct function calls are supported");
-            }
-            funcType = func->getType()->as<FuncType>();
-        } else if (auto *selector = dynamic_cast<HIRSelector *>(callee)) {
+        if (auto *selector = dynamic_cast<HIRSelector *>(callee);
+            selector && selector->getType() == nullptr) {
             auto *structType = selector->getParent()->getType()->as<StructType>();
             if (!structType) {
                 error("selector call parent must be a struct value");
@@ -581,8 +654,12 @@ class FunctionAnalyzer {
             }
             funcType = func->getType()->as<FuncType>();
             argOffset = getMethodCallArgOffset(selector, funcType);
+        } else if (auto *func = getDirectFunctionCallee(callee)) {
+            funcType = func->getType()->as<FuncType>();
+        } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
+            funcType = pointerTarget;
         } else {
-            error("only direct function calls are supported");
+            error("callee must be a function, function pointer, or method selector");
         }
 
         const auto &paramTypes = funcType->getArgTypes();

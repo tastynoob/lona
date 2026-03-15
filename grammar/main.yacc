@@ -49,6 +49,7 @@
 %token TRUE FALSE
 %token IF ELSE FOR
 %token DEF STRUCT
+%token FUNC_PTR_OPEN
 %token NEWLINE
 %token ASSIGN_ADD ASSIGN_SUB
 
@@ -71,7 +72,7 @@
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
 %type <node> field_call
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
-%type <node> expr_paren single_value typed_value_operand field_selector
+%type <node> expr_paren single_value typed_value_operand field_selector func_pointer_expr
 %type <typeNode> type_selector
 %type <node> var_decl var_def
 
@@ -302,9 +303,15 @@ single_value
         args->emplace_back($2);
         $$ = new AstFieldCall(new AstField(*$1), args);
     }
+    | func_pointer_expr { $$ = $1; }
     | field_call { $$ = $1; }
     | expr_paren { $$ = $1; }
     | '(' expr ',' expr_seq ')' {} // tuple
+    ;
+
+func_pointer_expr
+    : FIELD FUNC_PTR_OPEN '>' { $$ = new AstFuncRef(*$1, new std::vector<TypeNode*>); }
+    | FIELD FUNC_PTR_OPEN type_name_seq '>' { $$ = new AstFuncRef(*$1, $3); }
     ;
 
 field_call

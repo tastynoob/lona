@@ -49,6 +49,8 @@ var p i32*
 var grid i32[4, 4]
 var handler (i32, i32) i32
 var allocator () Ptr
+var cb (i32)* i32 = foo&<i32>
 ```
 
 这些例子依赖的是 `var_decl ::= IDENT type-name`，其中 `type-name` 可以是指针、数组、函数类型等更复杂的类型写法。
+当前实现额外要求：如果变量类型里包着函数类型（例如函数指针、函数相关数组），定义时必须同时给初始化值。

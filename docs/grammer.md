@@ -222,6 +222,9 @@ expr-unary        ::= "!" single-value
 
 expr-getpointee   ::= "*" single-value
 
+func-pointer-ref  ::= IDENT "&<" ">"
+                    | IDENT "&<" type-name-seq ">"
+
 expr-paren        ::= "(" expr ")"
 
 typed-value-op    ::= IDENT
@@ -233,6 +236,7 @@ single-value      ::= variable
                     | CONST
                     | BOOL
                     | BuiltinType typed-value-op
+                    | func-pointer-ref
                     | field-call
                     | expr-paren
 
@@ -251,6 +255,7 @@ expr-seq          ::= expr
 说明：
 
 - `BuiltinType typed-value-op` 只接受内建类型关键字开头，例如 `i32 1`、`bool true`。
+- `func-pointer-ref` 用显式的 `name&<...>` 形式取得顶层函数指针；这里 `&<` 在当前词法实现里是一个连续起始符。
 - 函数调用的被调用者是 `single-value`，因此允许链式形式，如 `obj.method(x)`、`getter()(x)`、`a.b.c()`.
 - 成员访问写作 `value.field`。
 - 赋值左值既可以是变量，也可以是解引用表达式 `*value`。
@@ -297,6 +302,8 @@ type-name-seq     ::= type-name
 - 数组类型支持三种形式：`T[]`、`T[n]`、`T[,n]`。最后一种表示首维未指定，后续维度由表达式序列给出。
 - 函数类型必须写成 `func-head type-name`，也就是“参数列表头 + 返回类型”。当前语法中不存在只写 `()` 或 `(T1, T2)` 就构成完整类型的规则。
 - 由于 `func-head` 自身还可继续接 `*` 或数组后缀，因此这套规则也支持“函数类型的指针/数组”组合写法。
+- 函数指针“取值”不在类型层完成，而是通过表达式 `funcname&<type-name-seq>` 显式写出；类型层仍只负责写出 `(T1, T2)* Ret` 这种函数指针类型。
+- 在当前实现里，变量如果声明为“包裹了函数类型的指针/数组”等函数相关存储形式，定义时必须立即初始化。
 
 ## 4. 运算符优先级与结合性
 
@@ -360,6 +367,32 @@ tuple-expr ::= "(" expr "," expr-seq ")"
 ```
 
 但该产生式没有对应的语义构造动作，`$$` 也未被设置，因此它更像是“预留入口”而不是当前可用的正式语法。若要把它当作正式特性使用，还需要补齐后续语义与 AST 处理。
+
+### 5.4 函数指针可以间接调用
+
+当前可以通过 `foo&<i32>` 这样的形式显式取得函数指针，并像普通可调用值一样继续调用。
+
+例如下面这些形式都可以工作：
+
+```text
+var cb = foo&<i32>
+cb(1)
+
+make_cb()(1)
+box.callback(1)
+```
+
+其中 `box.callback(1)` 这里的 `callback` 是结构体字段里的函数指针，不是方法选择器；真正的方法选择器仍然要求直接以 `obj.method(...)` 的形式调用。
+
+### 5.5 函数相关存储需要定义时初始化
+
+当前实现继续禁止裸函数类型变量；此外，函数指针或函数相关数组这类“包裹了函数类型”的变量存储，也要求在 `var` 定义时立刻给出初始化值，避免未初始化的野函数指针。
+
+例如下面这种写法会报错：
+
+```text
+var cb (i32)* i32
+```
 
 ## 6. 最小有效语法片段
 

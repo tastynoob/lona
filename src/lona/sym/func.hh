@@ -1,6 +1,7 @@
 #pragma once
 
 #include "object.hh"
+#include <vector>
 
 
 namespace lona {
@@ -21,6 +22,8 @@ public:
     }
 };
 
+Object *emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
+                         std::vector<Object *> &args);
+
 
 }
-

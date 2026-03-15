@@ -1,0 +1,48 @@
+// Function-pointer sample: explicit acquisition via name&<...> and initialized storage.
+
+def inc(v i32) i32 {
+    ret v + 1
+}
+
+def sum(a i32, b i32) i32 {
+    ret a + b
+}
+
+def make_inc() (i32)* i32 {
+    ret inc&<i32>
+}
+
+def make_sum() (i32, i32)* i32 {
+    ret sum&<i32, i32>
+}
+
+struct CallbackBox {
+    unary (i32)* i32
+    binary (i32, i32)* i32
+}
+
+def CallbackBox(unary (i32)* i32, binary (i32, i32)* i32) CallbackBox {
+    var out CallbackBox
+    out.unary = unary
+    out.binary = binary
+    ret out
+}
+
+var inc_ptr (i32)* i32 = inc&<i32>
+var sum_ptr (i32, i32)* i32 = sum&<i32, i32>
+var next_inc = make_inc()
+var next_sum = make_sum()
+var callback_box = CallbackBox(inc_ptr, sum_ptr)
+
+def call_local() i32 {
+    var cb = inc&<i32>
+    ret cb(41)
+}
+
+def call_returned() i32 {
+    ret make_inc()(41)
+}
+
+def call_field(box CallbackBox) i32 {
+    ret box.binary(20, 22)
+}

@@ -70,6 +70,11 @@ using token = lona::Parser::token::token_kind_type;
     return token::FIELD;
 }
 
+(&<) {
+    loc->columns(yyleng);
+    return token::FUNC_PTR_OPEN;
+}
+
 (\+|-|\*|\/|!|~|<|>|\||&|^) {
     // + - * / ! ~ < > | & ^
     loc->columns(yyleng);

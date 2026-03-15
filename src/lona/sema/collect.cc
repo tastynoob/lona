@@ -589,6 +589,19 @@ createStruct(Scope *scope, AstStructDecl *node) {
 
 namespace {
 
+FuncType *
+getFunctionPointerTarget(TypeClass *type) {
+    auto *pointerType = type ? type->as<PointerType>() : nullptr;
+    return pointerType ? pointerType->getPointeeType()->as<FuncType>() : nullptr;
+}
+
+Function *
+getDirectFunctionCallee(HIRExpr *callee) {
+    auto *calleeValue = dynamic_cast<HIRValue *>(callee);
+    auto *value = calleeValue ? calleeValue->getValue() : nullptr;
+    return value ? value->as<Function>() : nullptr;
+}
+
 class FunctionCompiler {
     TypeTable *typeMgr;
     GlobalScope *global;
@@ -725,26 +738,36 @@ class FunctionCompiler {
         if (auto *call = dynamic_cast<HIRCall *>(expr)) {
             setLocation(call);
             std::vector<Object *> args;
-            Function *callee = nullptr;
+            llvm::Value *calleeValue = nullptr;
+            FuncType *funcType = nullptr;
 
-            if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee())) {
+            if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee());
+                selector && selector->getType() == nullptr) {
                 auto *parent = compileExpr(selector->getParent());
                 auto *structType = parent->getType()->as<StructType>();
                 if (!structType) {
                     error("selector call parent must be a struct value");
                 }
-                callee = structType->getFunc(llvm::StringRef(selector->getFieldName()));
+                auto *callee = structType->getFunc(llvm::StringRef(selector->getFieldName()));
                 if (!callee) {
                     error("unknown struct method");
                 }
+                funcType = callee->getType()->as<FuncType>();
+                calleeValue = callee->getllvmValue();
                 args.push_back(parent);
-            } else if (auto *calleeValue = dynamic_cast<HIRValue *>(call->getCallee())) {
-                callee = calleeValue->getValue()->as<Function>();
-                if (!callee) {
-                    error("only direct function calls are supported");
-                }
+            } else if (auto *callee = getDirectFunctionCallee(call->getCallee())) {
+                funcType = callee->getType()->as<FuncType>();
+                calleeValue = callee->getllvmValue();
             } else {
-                error("only direct function calls are supported");
+                auto *calleeObj = compileExpr(call->getCallee());
+                if (!calleeObj) {
+                    error("call target did not produce a value");
+                }
+                funcType = getFunctionPointerTarget(calleeObj->getType());
+                if (!funcType) {
+                    error("callee must be a function, function pointer, or method selector");
+                }
+                calleeValue = calleeObj->get(scope->builder);
             }
 
             args.reserve(args.size() + call->getArgs().size());
@@ -755,7 +778,7 @@ class FunctionCompiler {
                 }
                 args.push_back(value);
             }
-            return callee->call(scope, args);
+            return emitFunctionCall(scope, calleeValue, funcType, args);
         }
         error("unsupported HIR expression");
     }

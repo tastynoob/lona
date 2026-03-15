@@ -19,6 +19,14 @@ bool_in="$(mktemp "$TMPDIR_LOCAL/lona-bool-XXXXXX.lo")"
 bool_out="$(mktemp "$TMPDIR_LOCAL/lona-bool-XXXXXX.ll")"
 pointer_in="$(mktemp "$TMPDIR_LOCAL/lona-pointer-XXXXXX.lo")"
 pointer_out="$(mktemp "$TMPDIR_LOCAL/lona-pointer-XXXXXX.ll")"
+func_ptr_in="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-XXXXXX.lo")"
+func_ptr_out="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-XXXXXX.ll")"
+func_ptr_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-bad-XXXXXX.lo")"
+func_ptr_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-bad-XXXXXX.txt")"
+func_ptr_uninit_in="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-uninit-XXXXXX.lo")"
+func_ptr_uninit_out="$(mktemp "$TMPDIR_LOCAL/lona-func-ptr-uninit-XXXXXX.txt")"
+func_array_uninit_in="$(mktemp "$TMPDIR_LOCAL/lona-func-array-uninit-XXXXXX.lo")"
+func_array_uninit_out="$(mktemp "$TMPDIR_LOCAL/lona-func-array-uninit-XXXXXX.txt")"
 func_param_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-param-bad-XXXXXX.lo")"
 func_param_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-func-param-bad-XXXXXX.txt")"
 func_local_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-func-local-bad-XXXXXX.lo")"
@@ -54,7 +62,11 @@ grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
 cleanup() {
     rm -f "$json_out" "$ir_out" "$debug_out" "$missing_return_in" \
         "$json_feature_in" "$json_feature_out" "$bool_in" "$bool_out" \
-        "$pointer_in" "$pointer_out" "$func_param_bad_in" "$func_param_bad_out" \
+        "$pointer_in" "$pointer_out" "$func_ptr_in" "$func_ptr_out" \
+        "$func_ptr_bad_in" "$func_ptr_bad_out" \
+        "$func_ptr_uninit_in" "$func_ptr_uninit_out" \
+        "$func_array_uninit_in" "$func_array_uninit_out" \
+        "$func_param_bad_in" "$func_param_bad_out" \
         "$func_local_bad_in" "$func_local_bad_out" "$func_top_bad_in" "$func_top_bad_out" \
         "$func_inferred_local_bad_in" "$func_inferred_local_bad_out" \
         "$func_inferred_top_bad_in" "$func_inferred_top_bad_out" \
@@ -152,6 +164,61 @@ grep -q 'alloca ptr' "$pointer_out"
 grep -q 'store ptr ' "$pointer_out"
 grep -q 'load ptr, ptr ' "$pointer_out"
 grep -q 'store i32 %' "$pointer_out"
+
+func_ptr_source='def foo(v i32) i32 {
+    ret v
+}
+
+def hold() i32 {
+    var cb (i32)* i32 = foo&<i32>
+    ret 0
+}
+'
+printf '%s' "$func_ptr_source" >"$func_ptr_in"
+"$BIN" --emit-ir --verify-ir "$func_ptr_in" >"$func_ptr_out"
+grep -q '^define i32 @foo' "$func_ptr_out"
+grep -q '^define i32 @hold' "$func_ptr_out"
+grep -q 'store ptr @foo' "$func_ptr_out"
+
+func_ptr_bad_source='def foo(v i32) i32 {
+    ret v
+}
+
+def hold() i32 {
+    var cb = foo&<bool>
+    ret 0
+}
+'
+printf '%s' "$func_ptr_bad_source" >"$func_ptr_bad_in"
+if "$BIN" --emit-ir "$func_ptr_bad_in" >"$func_ptr_bad_out" 2>&1; then
+    echo 'expected mismatched function pointer reference program to fail' >&2
+    exit 1
+fi
+grep -q 'function reference parameter type mismatch at index 0 for `foo`: expected i32, got bool' "$func_ptr_bad_out"
+
+func_ptr_uninit_source='def bad_holder() i32 {
+    var cb (i32)* i32
+    ret 0
+}
+'
+printf '%s' "$func_ptr_uninit_source" >"$func_ptr_uninit_in"
+if "$BIN" --emit-ir "$func_ptr_uninit_in" >"$func_ptr_uninit_out" 2>&1; then
+    echo 'expected uninitialized function pointer variable program to fail' >&2
+    exit 1
+fi
+grep -q 'function-related variable type for `cb` requires initializer: (i32) i32*' "$func_ptr_uninit_out"
+
+func_array_uninit_source='def bad_table() i32 {
+    var table ()[] i32
+    ret 0
+}
+'
+printf '%s' "$func_array_uninit_source" >"$func_array_uninit_in"
+if "$BIN" --emit-ir "$func_array_uninit_in" >"$func_array_uninit_out" 2>&1; then
+    echo 'expected uninitialized function array variable program to fail' >&2
+    exit 1
+fi
+grep -Fq 'function-related variable type for `table` requires initializer: () i32[]' "$func_array_uninit_out"
 
 func_param_bad_source='def bad_callback(cb () i32) i32 {
     ret 0

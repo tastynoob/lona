@@ -2,6 +2,57 @@
 
 namespace lona {
 
+namespace {
+
+std::string
+typeNodeToString(TypeNode *node) {
+    if (node == nullptr) {
+        return "<unknown type>";
+    }
+    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+        return std::string(base->name.tochara(), base->name.size());
+    }
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        auto name = typeNodeToString(pointer->base);
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            name += "*";
+        }
+        return name;
+    }
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        auto name = typeNodeToString(array->base);
+        name += "[";
+        for (size_t i = 0; i < array->dim.size(); ++i) {
+            if (i != 0) {
+                name += ",";
+            }
+            if (array->dim[i] != nullptr) {
+                name += "?";
+            }
+        }
+        name += "]";
+        return name;
+    }
+    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        std::string name = "(";
+        for (size_t i = 0; i < func->args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += typeNodeToString(func->args[i]);
+        }
+        name += ")";
+        if (func->ret) {
+            name += " ";
+            name += typeNodeToString(func->ret);
+        }
+        return name;
+    }
+    return "<unknown type>";
+}
+
+}  // namespace
+
 void
 AstProgram::toJson(Json &root) {
     root["type"] = "Program";
@@ -37,6 +88,18 @@ void
 AstField::toJson(Json &root) {
     root["type"] = "field";
     root["name"] = this->name.tochara();
+}
+
+void
+AstFuncRef::toJson(Json &root) {
+    root["type"] = "FuncRef";
+    root["name"] = this->name.tochara();
+    root["args"] = Json::array();
+    if (argTypes) {
+        for (auto *argType : *argTypes) {
+            root["args"].push_back(typeNodeToString(argType));
+        }
+    }
 }
 
 void
