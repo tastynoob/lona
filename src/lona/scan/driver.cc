@@ -1,32 +1,22 @@
 #include "../scan/driver.hh"
-#include <unordered_set>
+#include "lona/source/source_manager.hh"
 
 namespace lona {
-namespace {
-
-const std::string *
-stableSourcePath(const std::string &path) {
-    static std::unordered_set<std::string> paths;
-    return &*paths.emplace(path).first;
-}
-
-}  // namespace
 
 Driver::Driver() { parser = new Parser(*this); }
 
 void
-Driver::input(std::istream *in, const std::string &path) {
+Driver::input(std::istream *in, const SourceBuffer &newSource) {
     if (scanner) delete scanner;
     scanner = new Scanner(in);
-    sourcePath = path;
-    stablePath = sourcePath.empty() ? nullptr : stableSourcePath(sourcePath);
+    source = &newSource;
 }
 
 int
 Driver::token(Parser::semantic_type *const lval, Parser::location_type *loc) {
-    if (loc && stablePath) {
-        loc->begin.filename = stablePath;
-        loc->end.filename = stablePath;
+    if (loc && source) {
+        loc->begin.filename = source->stablePath();
+        loc->end.filename = source->stablePath();
     }
     int id = scanner->yylex(lval, loc);
     return id;

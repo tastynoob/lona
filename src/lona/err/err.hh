@@ -13,6 +13,7 @@ public:
         Lexical,
         Syntax,
         Semantic,
+        Driver,
         Internal,
     };
 
@@ -34,18 +35,6 @@ public:
     const std::string &hint() const { return hint_; }
 };
 
-class Err {
-    std::string path;
-    std::vector<std::string> lines;
-
-public:
-    explicit Err(const std::string &sourcePath = std::string());
-
-    std::string render(const DiagnosticError &error) const;
-};
-
-std::string formatDiagnostic(const DiagnosticError &error,
-                             const std::string &fallbackPath = std::string());
 std::string friendlySyntaxMessage(const std::string &rawMessage);
 
 }  // namespace lona
