@@ -7,7 +7,9 @@
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
 #include "lona/visitor.hh"
+#include <chrono>
 #include <filesystem>
+#include <iomanip>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/PassManager.h>
@@ -22,6 +24,13 @@
 
 namespace lona {
 namespace {
+using Clock = std::chrono::steady_clock;
+
+double
+elapsedMillis(Clock::time_point start, Clock::time_point end) {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 
 llvm::OptimizationLevel
 getOptimizationLevel(int optLevel) {
@@ -253,7 +262,9 @@ CompilerSession::parseLoadedUnits() {
                                   "module graph load order references a missing unit",
                                   "This looks like a compiler module graph bug.");
         }
+        auto parseStart = Clock::now();
         auto *tree = parseUnit(*unit);
+        lastStats_.parseMs += elapsedMillis(parseStart, Clock::now());
         if (tree == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Syntax,
                                   "I couldn't parse this file.");
@@ -299,6 +310,7 @@ CompilerSession::emitIR(const CompilationUnit &unit,
     HIRModule programHIR;
     const auto *root = moduleGraph_.root();
 
+    auto declStart = Clock::now();
     for (auto it = moduleGraph_.loadOrder().rbegin();
          it != moduleGraph_.loadOrder().rend(); ++it) {
         auto *loadedUnit = moduleGraph_.find(*it);
@@ -311,7 +323,9 @@ CompilerSession::emitIR(const CompilationUnit &unit,
         collectUnitDeclarations(&build.global, *loadedUnit,
                                 root && root->path() != loadedUnit->path());
     }
+    lastStats_.declarationMs += elapsedMillis(declStart, Clock::now());
 
+    auto lowerStart = Clock::now();
     for (const auto &path : moduleGraph_.loadOrder()) {
         auto *loadedUnit = moduleGraph_.find(path);
         if (loadedUnit == nullptr) {
@@ -323,11 +337,23 @@ CompilerSession::emitIR(const CompilationUnit &unit,
         appendHIRFunctions(programHIR,
                            analyzeModule(&build.global, *resolved, loadedUnit));
     }
-    emitHIRModule(&build.global, &programHIR, options.debugInfo, unit.path());
-    optimizeModule(build.module, options.optLevel);
+    lastStats_.lowerMs += elapsedMillis(lowerStart, Clock::now());
 
-    if (options.verifyIR && !verifyCompiledModule(build.module, out)) {
-        return 1;
+    auto codegenStart = Clock::now();
+    emitHIRModule(&build.global, &programHIR, options.debugInfo, unit.path());
+    lastStats_.codegenMs += elapsedMillis(codegenStart, Clock::now());
+
+    auto optimizeStart = Clock::now();
+    optimizeModule(build.module, options.optLevel);
+    lastStats_.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
+
+    if (options.verifyIR) {
+        auto verifyStart = Clock::now();
+        bool verifyOk = verifyCompiledModule(build.module, out);
+        lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
+        if (!verifyOk) {
+            return 1;
+        }
     }
 
     std::string ir;
@@ -338,10 +364,36 @@ CompilerSession::emitIR(const CompilationUnit &unit,
     return 0;
 }
 
+void
+CompilerSession::printStats(std::ostream &out) const {
+    auto oldFlags = out.flags();
+    auto oldPrecision = out.precision();
+    out << std::fixed << std::setprecision(3);
+    out << "compile stats:\n";
+    out << "  loaded-units: " << lastStats_.loadedUnits << '\n';
+    out << "  parse-ms: " << lastStats_.parseMs << '\n';
+    out << "  declarations-ms: " << lastStats_.declarationMs << '\n';
+    out << "  lower-ms: " << lastStats_.lowerMs << '\n';
+    out << "  codegen-ms: " << lastStats_.codegenMs << '\n';
+    out << "  optimize-ms: " << lastStats_.optimizeMs << '\n';
+    out << "  verify-ms: " << lastStats_.verifyMs << '\n';
+    out << "  total-ms: " << lastStats_.totalMs << '\n';
+    out.flags(oldFlags);
+    out.precision(oldPrecision);
+}
+
 int
 CompilerSession::runFile(const std::string &inputPath,
                          const SessionOptions &options, std::ostream &out,
                          std::ostream &diag) {
+    lastStats_ = {};
+    auto totalStart = Clock::now();
+    auto finish = [&](int exitCode) {
+        lastStats_.loadedUnits = moduleGraph_.loadOrder().size();
+        lastStats_.totalMs = elapsedMillis(totalStart, Clock::now());
+        return exitCode;
+    };
+
     try {
         auto &unit = loadRootUnit(inputPath);
         parseLoadedUnits();
@@ -352,26 +404,26 @@ CompilerSession::runFile(const std::string &inputPath,
         }
 
         if (options.outputMode == OutputMode::LLVMIR) {
-            return emitIR(unit, options.compile, out);
+            return finish(emitIR(unit, options.compile, out));
         }
-        return emitJson(unit, out);
+        return finish(emitJson(unit, out));
     } catch (const DiagnosticError &error) {
         diagnostics_.emit(error, diag, inputPath);
-        return 1;
+        return finish(1);
     } catch (const std::exception &ex) {
         diagnostics_.emit(
             DiagnosticError(DiagnosticError::Category::Internal,
                             ex.what(),
                             "This looks like a compiler bug or infrastructure failure."),
             diag, inputPath);
-        return 1;
+        return finish(1);
     } catch (const char *ex) {
         diagnostics_.emit(
             DiagnosticError(DiagnosticError::Category::Internal,
                             ex,
                             "This looks like a compiler bug or infrastructure failure."),
             diag, inputPath);
-        return 1;
+        return finish(1);
     }
 }
 

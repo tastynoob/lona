@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
+#include "lona/support/arena.hh"
 #include <string>
 #include <utility>
 #include <vector>
@@ -239,9 +240,15 @@ public:
 };
 
 class HIRModule {
+    Arena arena_;
     std::vector<HIRFunc *> funcs;
 
 public:
+    template<typename T, typename... Args>
+    T *create(Args &&...args) {
+        return arena_.emplace<T>(std::forward<Args>(args)...);
+    }
+
     const std::vector<HIRFunc *> &getFunctions() const { return funcs; }
     void addFunction(HIRFunc *func) {
         if (func) {

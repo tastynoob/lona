@@ -23,14 +23,23 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         return nullptr;
     }
 
+    if (auto *cached = unit.findResolvedType(node)) {
+        return cached;
+    }
+
+    TypeClass *resolved = nullptr;
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
         auto rawName = std::string(base->name.tochara(), base->name.size());
         if (rawName.find('.') == std::string::npos) {
             if (const auto *resolved = unit.findLocalType(rawName)) {
-                return typeTable->getType(llvm::StringRef(*resolved));
+                auto *type = typeTable->getType(llvm::StringRef(*resolved));
+                unit.cacheResolvedType(node, type);
+                return type;
             }
         }
-        return typeTable->getType(base->name);
+        resolved = typeTable->getType(base->name);
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
     }
 
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
@@ -38,6 +47,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         for (uint32_t i = 0; type && i < pointer->dim; ++i) {
             type = typeTable->createPointerType(type);
         }
+        unit.cacheResolvedType(node, type);
         return type;
     }
 
@@ -46,7 +56,9 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         if (!elementType) {
             return nullptr;
         }
-        return typeTable->createArrayType(elementType, array->dim);
+        resolved = typeTable->createArrayType(elementType, array->dim);
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
     }
 
     if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
@@ -60,7 +72,9 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
             argTypes.push_back(argType);
         }
         auto *retType = resolveTypeNode(typeTable, unit, func->ret);
-        return typeTable->getOrCreateFunctionType(argTypes, retType);
+        resolved = typeTable->getOrCreateFunctionType(argTypes, retType);
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
     }
 
     return nullptr;
@@ -103,6 +117,7 @@ void
 CompilationUnit::clearInterface() {
     localTypeNames_.clear();
     localFunctionNames_.clear();
+    resolvedTypes_.clear();
 }
 
 bool
@@ -135,6 +150,22 @@ CompilationUnit::findLocalFunction(const std::string &localName) const {
         return nullptr;
     }
     return &found->second;
+}
+
+TypeClass *
+CompilationUnit::findResolvedType(TypeNode *node) const {
+    auto found = resolvedTypes_.find(node);
+    if (found == resolvedTypes_.end()) {
+        return nullptr;
+    }
+    return found->second;
+}
+
+void
+CompilationUnit::cacheResolvedType(TypeNode *node, TypeClass *type) const {
+    if (node) {
+        resolvedTypes_[node] = type;
+    }
 }
 
 TypeClass *

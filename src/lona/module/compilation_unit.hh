@@ -24,6 +24,7 @@ class CompilationUnit {
     CompilationUnitStage stage_ = CompilationUnitStage::Loaded;
     std::unordered_map<std::string, std::string> localTypeNames_;
     std::unordered_map<std::string, std::string> localFunctionNames_;
+    mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
 
 public:
     explicit CompilationUnit(const SourceBuffer &source);
@@ -47,6 +48,8 @@ public:
     bool bindLocalFunction(std::string localName, std::string resolvedName);
     const std::string *findLocalType(const std::string &localName) const;
     const std::string *findLocalFunction(const std::string &localName) const;
+    TypeClass *findResolvedType(TypeNode *node) const;
+    void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     TypeClass *resolveType(TypeTable *typeTable, TypeNode *node) const;
 };
 

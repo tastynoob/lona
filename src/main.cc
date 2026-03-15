@@ -26,6 +26,7 @@ main(int argc, char *argv[]) {
     cli.add("emit-ir", 'S', "print LLVM IR instead of AST JSON");
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
+    cli.add("stats", 0, "print per-phase compile statistics to stderr");
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
     cli.parse_check(argc, argv);
@@ -64,5 +65,9 @@ main(int argc, char *argv[]) {
     options.compile.verifyIR = cli.exist("verify-ir");
     options.compile.debugInfo = cli.exist("debug");
 
-    finishProcess(session.runFile(inputPath, options, *out, std::cerr), out);
+    int exitCode = session.runFile(inputPath, options, *out, std::cerr);
+    if (cli.exist("stats")) {
+        session.printStats(std::cerr);
+    }
+    finishProcess(exitCode, out);
 }

@@ -311,6 +311,7 @@ class FunctionAnalyzer {
     GlobalScope *global;
     const CompilationUnit *unit;
     const ResolvedFunction &resolved;
+    HIRModule *ownerModule;
     HIRFunc *hirFunc;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
     location currentLocation;
@@ -369,6 +370,12 @@ class FunctionAnalyzer {
             error(currentLocation, context);
         }
         return type;
+    }
+
+    template<typename T, typename... Args>
+    T *makeHIR(Args &&...args) {
+        assert(ownerModule);
+        return ownerModule->create<T>(std::forward<Args>(args)...);
     }
 
     void bindObject(const ResolvedLocalBinding *binding, ObjectPtr object) {
@@ -489,7 +496,7 @@ class FunctionAnalyzer {
 
     HIRBlock *analyzeBlock(AstNode *node) {
         ScopedLocation scopedLocation(*this, node ? node->loc : location());
-        auto *block = new HIRBlock(node ? node->loc : location());
+        auto *block = makeHIR<HIRBlock>(node ? node->loc : location());
         if (!node) {
             return block;
         }
@@ -573,10 +580,11 @@ class FunctionAnalyzer {
     HIRExpr *analyzeConst(AstConst *node) {
         switch (node->getType()) {
         case AstConst::Type::INT32:
-            return new HIRValue(new ConstVar(i32Ty, *node->getBuf<int32_t>()),
-                                node->loc);
+            return makeHIR<HIRValue>(new ConstVar(i32Ty, *node->getBuf<int32_t>()),
+                                     node->loc);
         case AstConst::Type::BOOL:
-            return new HIRValue(new ConstVar(boolTy, *node->getBuf<bool>()), node->loc);
+            return makeHIR<HIRValue>(new ConstVar(boolTy, *node->getBuf<bool>()),
+                                     node->loc);
         default:
             error("only i32 and bool constants are supported");
         }
@@ -594,11 +602,11 @@ class FunctionAnalyzer {
         if (binding->kind() == ResolvedValueRef::Kind::GlobalObject) {
             auto *obj = requireGlobalObject(binding->globalName(), node->loc,
                                             "global identifier");
-            return new HIRValue(obj, node->loc);
+            return makeHIR<HIRValue>(obj, node->loc);
         }
 
-        return new HIRValue(requireBoundObject(binding->localBinding(), node->loc),
-                            node->loc);
+        return makeHIR<HIRValue>(
+            requireBoundObject(binding->localBinding(), node->loc), node->loc);
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
@@ -647,7 +655,7 @@ class FunctionAnalyzer {
         auto *pointerType = typeMgr->createPointerType(funcType);
         auto *value = pointerType->newObj(Object::REG_VAL | Object::READONLY);
         value->bindllvmValue(func->getllvmValue());
-        return new HIRValue(value, node->loc);
+        return makeHIR<HIRValue>(value, node->loc);
     }
 
     HIRExpr *analyzeAssign(AstAssign *node) {
@@ -661,7 +669,7 @@ class FunctionAnalyzer {
                       describeResolvedType(leftType) + ", got " +
                       describeResolvedType(rightType));
         }
-        return new HIRAssign(left, right, node->loc);
+        return makeHIR<HIRAssign>(left, right, node->loc);
     }
 
     HIRExpr *analyzeBinOper(AstBinOper *node) {
@@ -694,7 +702,7 @@ class FunctionAnalyzer {
             error("unsupported binary operator");
         }
 
-        return new HIRBinOper(node->op, left, right, resultType, node->loc);
+        return makeHIR<HIRBinOper>(node->op, left, right, resultType, node->loc);
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node) {
@@ -705,25 +713,26 @@ class FunctionAnalyzer {
             if (value->getType() != i32Ty) {
                 error(node->op == '+' ? "unary + expects i32" : "unary - expects i32");
             }
-            return new HIRUnaryOper(node->op, value, i32Ty, node->loc);
+            return makeHIR<HIRUnaryOper>(node->op, value, i32Ty, node->loc);
         case '!':
-            return new HIRUnaryOper(node->op, value, boolTy, node->loc);
+            return makeHIR<HIRUnaryOper>(node->op, value, boolTy, node->loc);
         case '&':
             if (!isAddressable(value)) {
                 error("address-of expects an addressable value");
             }
-            return new HIRUnaryOper(
+            return makeHIR<HIRUnaryOper>(
                 node->op, value, typeMgr->createPointerType(value->getType()), node->loc);
         case '*': {
             auto *pointerType = value->getType() ? value->getType()->as<PointerType>() : nullptr;
             if (!pointerType) {
                 error("dereference expects a pointer value");
             }
-            return new HIRUnaryOper(node->op, value, pointerType->getPointeeType(),
-                                    node->loc);
+            return makeHIR<HIRUnaryOper>(node->op, value,
+                                         pointerType->getPointeeType(), node->loc);
         }
         default:
-            return new HIRUnaryOper(node->op, value, value->getType(), node->loc);
+            return makeHIR<HIRUnaryOper>(node->op, value, value->getType(),
+                                         node->loc);
         }
     }
 
@@ -770,7 +779,7 @@ class FunctionAnalyzer {
         }
         auto *obj = type->newObj(Object::VARIABLE);
         bindObject(binding, obj);
-        return new HIRVarDef(binding->name(), obj, init, node->loc);
+        return makeHIR<HIRVarDef>(binding->name(), obj, init, node->loc);
     }
 
     HIRNode *analyzeRet(AstRet *node) {
@@ -789,20 +798,20 @@ class FunctionAnalyzer {
         } else if (retType) {
             error("missing return value");
         }
-        return new HIRRet(expr, node->loc);
+        return makeHIR<HIRRet>(expr, node->loc);
     }
 
     HIRNode *analyzeIf(AstIf *node) {
         auto *cond = requireNonCallExpr(node->condition);
         auto *thenBlock = analyzeBlock(node->then);
         auto *elseBlock = node->hasElse() ? analyzeBlock(node->els) : nullptr;
-        return new HIRIf(cond, thenBlock, elseBlock, node->loc);
+        return makeHIR<HIRIf>(cond, thenBlock, elseBlock, node->loc);
     }
 
     HIRNode *analyzeFor(AstFor *node) {
         auto *cond = requireNonCallExpr(node->expr);
         auto *body = analyzeBlock(node->body);
-        return new HIRFor(cond, body, node->loc);
+        return makeHIR<HIRFor>(cond, body, node->loc);
     }
 
     HIRExpr *analyzeSelector(AstSelector *node) {
@@ -823,7 +832,7 @@ class FunctionAnalyzer {
                 }
                 auto *func = requireGlobalFunction(*functionName, node->loc,
                                                   "module function");
-                return new HIRValue(func, node->loc);
+                return makeHIR<HIRValue>(func, node->loc);
             }
         }
         auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
@@ -834,10 +843,10 @@ class FunctionAnalyzer {
         auto fieldName = toStdString(node->field->text);
         auto *member = structType->getMember(llvm::StringRef(fieldName));
         if (member) {
-            return new HIRSelector(parent, fieldName, member->first, node->loc);
+            return makeHIR<HIRSelector>(parent, fieldName, member->first, node->loc);
         }
         if (structType->getFunc(llvm::StringRef(fieldName))) {
-            return new HIRSelector(parent, fieldName, nullptr, node->loc);
+            return makeHIR<HIRSelector>(parent, fieldName, nullptr, node->loc);
         }
         error(node->loc, "unknown struct field `" + fieldName + "`",
               "Check the field name, or use a direct method call like `obj.method(...)`.");
@@ -892,22 +901,24 @@ class FunctionAnalyzer {
         }
 
         auto *retType = funcType ? funcType->getRetType() : nullptr;
-        return new HIRCall(callee, std::move(args), retType, node->loc);
+        return makeHIR<HIRCall>(callee, std::move(args), retType, node->loc);
     }
 
 public:
     FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global,
+                     HIRModule *ownerModule,
                      const CompilationUnit *unit,
                      const ResolvedFunction &resolved)
         : typeMgr(typeMgr),
           global(global),
           unit(unit),
           resolved(resolved),
+          ownerModule(ownerModule),
           hirFunc(nullptr) {
         if (resolved.isTopLevelEntry()) {
-            hirFunc = new HIRFunc(getOrCreateTopLevelEntry(global, typeMgr),
-                                  getOrCreateMainType(typeMgr), resolved.loc(),
-                                  true, resolved.guaranteedReturn());
+            hirFunc = makeHIR<HIRFunc>(getOrCreateTopLevelEntry(global, typeMgr),
+                                       getOrCreateMainType(typeMgr), resolved.loc(),
+                                       true, resolved.guaranteedReturn());
         } else {
             auto *lofunc = requireDeclaredFunction(resolved.loc());
             auto *funcType = lofunc->getType() ? lofunc->getType()->as<FuncType>() : nullptr;
@@ -916,9 +927,9 @@ public:
                               "resolved function type is invalid",
                               "This looks like a compiler pipeline bug.");
             }
-            hirFunc = new HIRFunc(llvm::cast<llvm::Function>(lofunc->getllvmValue()),
-                                  funcType, resolved.loc(), false,
-                                  resolved.guaranteedReturn());
+            hirFunc = makeHIR<HIRFunc>(
+                llvm::cast<llvm::Function>(lofunc->getllvmValue()), funcType,
+                resolved.loc(), false, resolved.guaranteedReturn());
         }
 
         if (resolved.hasSelfBinding()) {
@@ -969,7 +980,8 @@ public:
     HIRModule *analyze(const ResolvedModule &resolvedModule) {
         for (const auto &resolvedFunction : resolvedModule.functions()) {
             module->addFunction(
-                FunctionAnalyzer(typeMgr, global, unit, *resolvedFunction).getFunction());
+                FunctionAnalyzer(typeMgr, global, module, unit, *resolvedFunction)
+                    .getFunction());
         }
         return module;
     }
