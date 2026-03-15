@@ -11,6 +11,7 @@ inline constexpr char kMethodSelectorDirectCallError[] =
     "method selector can only be used as a direct call callee";
 
 class GlobalScope;
+class ResolvedModule;
 
 struct HIRBinding {
     std::string name;
@@ -248,6 +249,6 @@ public:
     }
 };
 
-HIRModule *analyzeModule(GlobalScope *global, AstNode *root);
+HIRModule *analyzeModule(GlobalScope *global, const ResolvedModule &resolved);
 
 }  // namespace lona

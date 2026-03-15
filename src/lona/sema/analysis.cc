@@ -1,6 +1,7 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/err/err.hh"
+#include "lona/resolve/resolve.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -9,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -306,10 +308,9 @@ getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
 class FunctionAnalyzer {
     TypeTable *typeMgr;
     GlobalScope *global;
-    FuncScope *scope;
-    StructType *methodParent = nullptr;
+    const ResolvedFunction &resolved;
     HIRFunc *hirFunc;
-    bool skipDeclStatements = false;
+    std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
     location currentLocation;
     bool hasCurrentLocation = false;
 
@@ -346,12 +347,110 @@ class FunctionAnalyzer {
         lona::error(loc, message, hint);
     }
 
+    [[noreturn]] void internalError(const std::string &message,
+                                    const std::string &hint = std::string()) {
+        if (hasCurrentLocation) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  currentLocation, message, hint);
+        }
+        throw DiagnosticError(DiagnosticError::Category::Internal, message, hint);
+    }
+
+    [[noreturn]] void internalError(const location &loc, const std::string &message,
+                                    const std::string &hint = std::string()) {
+        throw DiagnosticError(DiagnosticError::Category::Internal, loc, message, hint);
+    }
+
     TypeClass *requireType(TypeNode *node, const std::string &context) {
         auto *type = typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
         }
         return type;
+    }
+
+    void bindObject(const ResolvedLocalBinding *binding, ObjectPtr object) {
+        assert(binding);
+        assert(object);
+        bindingObjects[binding] = object;
+    }
+
+    ObjectPtr requireBoundObject(const ResolvedLocalBinding *binding,
+                                 const location &loc) {
+        if (!binding) {
+            internalError(loc, "missing resolved local binding",
+                          "Run name resolution before HIR lowering.");
+        }
+        auto found = bindingObjects.find(binding);
+        if (found == bindingObjects.end()) {
+            internalError(loc,
+                          "resolved local binding `" + binding->name() +
+                              "` was not materialized before use",
+                          "This looks like a compiler pipeline bug.");
+        }
+        return found->second;
+    }
+
+    ObjectPtr requireGlobalObject(const std::string &name, const location &loc,
+                                  const std::string &context) {
+        auto *obj = global->getObj(llvm::StringRef(name));
+        if (!obj) {
+            internalError(loc,
+                          "resolved " + context + " `" + name +
+                              "` is missing from the current global scope",
+                          "Rebuild declarations before reusing this resolved module.");
+        }
+        return obj;
+    }
+
+    Function *requireGlobalFunction(const std::string &name, const location &loc,
+                                    const std::string &context) {
+        auto *obj = requireGlobalObject(name, loc, context);
+        auto *func = obj->as<Function>();
+        if (!func) {
+            internalError(loc,
+                          "resolved " + context + " `" + name +
+                              "` no longer refers to a function",
+                          "Rebuild declarations before reusing this resolved module.");
+        }
+        return func;
+    }
+
+    StructType *requireStructTypeByName(const std::string &name,
+                                        const location &loc,
+                                        const std::string &context) {
+        auto *type = typeMgr->getType(llvm::StringRef(name));
+        auto *structType = type ? type->as<StructType>() : nullptr;
+        if (!structType) {
+            internalError(loc,
+                          "resolved " + context + " `" + name +
+                              "` is missing from the current type table",
+                          "Rebuild declarations before reusing this resolved module.");
+        }
+        return structType;
+    }
+
+    Function *requireDeclaredFunction(const location &loc) {
+        if (!resolved.hasDeclaredFunction()) {
+            internalError(loc,
+                          "resolved function is missing its stable symbol identity",
+                          "This looks like a compiler pipeline bug.");
+        }
+        if (resolved.isMethod()) {
+            auto *structType = requireStructTypeByName(
+                resolved.methodParentTypeName(), loc, "method parent type");
+            auto *func = structType->getFunc(llvm::StringRef(resolved.functionName()));
+            if (!func) {
+                internalError(loc,
+                              "resolved method `" + resolved.methodParentTypeName() +
+                                  "." + resolved.functionName() +
+                                  "` is missing from the current type table",
+                              "Rebuild declarations before reusing this resolved module.");
+            }
+            return func;
+        }
+        return requireGlobalFunction(resolved.functionName(), loc,
+                                     "function declaration");
     }
 
     HIRExpr *requireExpr(AstNode *node) {
@@ -395,10 +494,6 @@ class FunctionAnalyzer {
 
         if (auto *list = node->as<AstStatList>()) {
             for (auto *stmt : list->getBody()) {
-                if (skipDeclStatements &&
-                    (stmt->is<AstStructDecl>() || stmt->is<AstFuncDecl>())) {
-                    continue;
-                }
                 auto *hirNode = analyzeStmt(stmt);
                 if (hirNode) {
                     block->push(hirNode);
@@ -486,25 +581,41 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeField(AstField *node) {
-        auto *obj = scope->getObj(node->name);
-        if (!obj) {
-            error(node->loc,
-                  "undefined identifier `" + toStdString(node->name) + "`",
-                  "Declare it with `var` before using it, or check the spelling.");
+        auto *binding = resolved.field(node);
+        if (!binding) {
+            internalError(node->loc,
+                          "missing resolved identifier binding for `" +
+                              toStdString(node->name) + "`",
+                          "Run name resolution before HIR lowering.");
         }
-        return new HIRValue(obj, node->loc);
+
+        if (binding->kind() == ResolvedValueRef::Kind::GlobalObject) {
+            auto *obj = requireGlobalObject(binding->globalName(), node->loc,
+                                            "global identifier");
+            return new HIRValue(obj, node->loc);
+        }
+
+        return new HIRValue(requireBoundObject(binding->localBinding(), node->loc),
+                            node->loc);
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
-        auto *obj = global->getObj(node->name);
-        auto *func = obj ? obj->as<Function>() : nullptr;
-        if (!func) {
-            error("undefined function reference `" + toStdString(node->name) + "`");
+        auto *functionName = resolved.functionRef(node);
+        if (!functionName) {
+            internalError(node->loc,
+                          "missing resolved function reference for `" +
+                              toStdString(node->name) + "`",
+                          "Run name resolution before HIR lowering.");
         }
 
+        auto *func = requireGlobalFunction(*functionName, node->loc,
+                                           "function reference");
         auto *funcType = func->getType() ? func->getType()->as<FuncType>() : nullptr;
         if (!funcType) {
-            error("invalid function reference target `" + toStdString(node->name) + "`");
+            internalError(node->loc,
+                          "invalid resolved function reference target `" +
+                              toStdString(node->name) + "`",
+                          "This looks like a compiler pipeline bug.");
         }
 
         const auto &expectedArgTypes = funcType->getArgTypes();
@@ -643,15 +754,16 @@ class FunctionAnalyzer {
                   "Add an explicit type annotation or provide an initializer.");
         }
 
-        auto *obj = type->newObj(Object::VARIABLE);
-        if (scope->hasLocalObj(node->getName())) {
-            error(node->loc,
-                  "duplicate variable definition for `" +
-                      toStdString(node->getName()) + "`",
-                  "Rename one of the variables or reuse the existing binding.");
+        auto *binding = resolved.variable(node);
+        if (!binding) {
+            internalError(node->loc,
+                          "missing resolved variable binding for `" +
+                              toStdString(node->getName()) + "`",
+                          "Run name resolution before HIR lowering.");
         }
-        scope->addObj(node->getName(), obj);
-        return new HIRVarDef(toStdString(node->getName()), obj, init, node->loc);
+        auto *obj = type->newObj(Object::VARIABLE);
+        bindObject(binding, obj);
+        return new HIRVarDef(binding->name(), obj, init, node->loc);
     }
 
     HIRNode *analyzeRet(AstRet *node) {
@@ -758,75 +870,59 @@ class FunctionAnalyzer {
     }
 
 public:
-    FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global, AstFuncDecl *node,
-                     StructType *methodParent = nullptr)
+    FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global,
+                     const ResolvedFunction &resolved)
         : typeMgr(typeMgr),
           global(global),
-          scope(new FuncScope(global)),
-          methodParent(methodParent),
+          resolved(resolved),
           hirFunc(nullptr) {
-        Function *lofunc = nullptr;
-        if (methodParent) {
-            lofunc = methodParent->getFunc(
-                llvm::StringRef(node->name.tochara(), node->name.size()));
+        if (resolved.isTopLevelEntry()) {
+            hirFunc = new HIRFunc(getOrCreateTopLevelEntry(global, typeMgr),
+                                  getOrCreateMainType(typeMgr), resolved.loc(),
+                                  true, resolved.guaranteedReturn());
         } else {
-            auto *globalFunc = global->getObj(node->name);
-            lofunc = globalFunc ? globalFunc->as<Function>() : nullptr;
-        }
-        if (!lofunc) {
-            error(node->loc, "function declaration is missing from the symbol table");
+            auto *lofunc = requireDeclaredFunction(resolved.loc());
+            auto *funcType = lofunc->getType() ? lofunc->getType()->as<FuncType>() : nullptr;
+            if (!funcType) {
+                internalError(resolved.loc(),
+                              "resolved function type is invalid",
+                              "This looks like a compiler pipeline bug.");
+            }
+            hirFunc = new HIRFunc(llvm::cast<llvm::Function>(lofunc->getllvmValue()),
+                                  funcType, resolved.loc(), false,
+                                  resolved.guaranteedReturn());
         }
 
-        auto *funcType = lofunc->getType()->as<FuncType>();
-        if (!funcType) {
-            error(node->loc, "internal function type is invalid");
-        }
-
-        hirFunc = new HIRFunc(llvm::cast<llvm::Function>(lofunc->getllvmValue()),
-                              funcType, node->loc, false,
-                              node->body && node->body->hasTerminator());
-
-        if (methodParent) {
+        if (resolved.hasSelfBinding()) {
+            if (!resolved.isMethod()) {
+                internalError(resolved.loc(),
+                              "resolved self binding is missing its method parent",
+                              "This looks like a compiler pipeline bug.");
+            }
+            auto *methodParent = requireStructTypeByName(
+                resolved.methodParentTypeName(), resolved.loc(), "method parent type");
             auto *selfObj = methodParent->newObj(Object::VARIABLE);
-            if (scope->hasLocalObj(llvm::StringRef("self"))) {
-                error(node->loc, "duplicate implicit `self` binding");
-            }
-            scope->addObj(llvm::StringRef("self"), selfObj);
-            hirFunc->setSelfBinding({"self", selfObj, node->loc});
+            bindObject(resolved.selfBinding(), selfObj);
+            hirFunc->setSelfBinding(
+                {resolved.selfBinding()->name(), selfObj, resolved.selfBinding()->loc()});
         }
 
-        if (node->args) {
-            for (auto *argNode : *node->args) {
-                auto *decl = argNode->as<AstVarDecl>();
-                if (!decl) {
-                    error("invalid function argument declaration");
-                }
-                auto *type = requireType(
-                    decl->typeNode,
-                    "unknown function argument type for `" + toStdString(decl->field) + "`");
-                auto *argObj = type->newObj(Object::VARIABLE);
-                if (scope->hasLocalObj(decl->field)) {
-                    error(decl->loc,
-                          "duplicate function parameter `" +
-                              toStdString(decl->field) + "`",
-                          "Rename one of the parameters so each binding is unique.");
-                }
-                scope->addObj(decl->field, argObj);
-                hirFunc->addParam({toStdString(decl->field), argObj, decl->loc});
+        for (auto *paramBinding : resolved.params()) {
+            auto *decl = paramBinding ? paramBinding->parameterDecl() : nullptr;
+            if (!decl) {
+                internalError(resolved.loc(),
+                              "resolved parameter binding is missing its declaration",
+                              "This looks like a compiler pipeline bug.");
             }
+            auto *type = requireType(
+                decl->typeNode,
+                "unknown function argument type for `" + paramBinding->name() + "`");
+            auto *argObj = type->newObj(Object::VARIABLE);
+            bindObject(paramBinding, argObj);
+            hirFunc->addParam({paramBinding->name(), argObj, paramBinding->loc()});
         }
 
-        hirFunc->setBody(analyzeBlock(node->body));
-    }
-
-    FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global, llvm::Function *llvmFunc,
-                     AstNode *body, bool skipDeclStatements, const location &loc)
-        : typeMgr(typeMgr),
-          global(global),
-          scope(new FuncScope(global)),
-          hirFunc(new HIRFunc(llvmFunc, getOrCreateMainType(typeMgr), loc, true)),
-          skipDeclStatements(skipDeclStatements) {
-        hirFunc->setBody(analyzeBlock(body));
+        hirFunc->setBody(analyzeBlock(const_cast<AstNode *>(resolved.body())));
     }
 
     HIRFunc *getFunction() const { return hirFunc; }
@@ -837,66 +933,15 @@ class ModuleAnalyzer {
     TypeTable *typeMgr;
     HIRModule *module = new HIRModule();
 
-    void analyzeProgram(AstNode *root) {
-        if (auto *program = root->as<AstProgram>()) {
-            analyzeTopLevel(program->body);
-            return;
-        }
-        analyzeTopLevel(root);
-    }
-
-    void analyzeTopLevel(AstNode *root) {
-        auto *body = root->as<AstStatList>();
-        if (!body) {
-            error("program body must be a statement list");
-        }
-
-        bool hasTopLevelExec = false;
-        for (auto *stmt : body->getBody()) {
-            if (auto *structDecl = stmt->as<AstStructDecl>()) {
-                analyzeStruct(structDecl);
-                continue;
-            }
-            if (auto *funcDecl = stmt->as<AstFuncDecl>()) {
-                module->addFunction(
-                    FunctionAnalyzer(typeMgr, global, funcDecl).getFunction());
-                continue;
-            }
-            hasTopLevelExec = true;
-        }
-
-        if (hasTopLevelExec) {
-            auto *entry = getOrCreateTopLevelEntry(global, typeMgr);
-            module->addFunction(
-                FunctionAnalyzer(typeMgr, global, entry, body, true, body->loc)
-                    .getFunction());
-        }
-    }
-
-    void analyzeStruct(AstStructDecl *node) {
-        auto *structType = typeMgr->getType(node->name)->as<StructType>();
-        if (!structType) {
-            error("struct declaration missing");
-        }
-        if (!node->body || !node->body->is<AstStatList>()) {
-            return;
-        }
-        for (auto *stmt : node->body->as<AstStatList>()->getBody()) {
-            auto *func = stmt->as<AstFuncDecl>();
-            if (!func) {
-                continue;
-            }
-            module->addFunction(
-                FunctionAnalyzer(typeMgr, global, func, structType).getFunction());
-        }
-    }
-
 public:
     explicit ModuleAnalyzer(GlobalScope *global)
         : global(global), typeMgr(requireTypeTable(global)) {}
 
-    HIRModule *analyze(AstNode *root) {
-        analyzeProgram(root);
+    HIRModule *analyze(const ResolvedModule &resolvedModule) {
+        for (const auto &resolvedFunction : resolvedModule.functions()) {
+            module->addFunction(
+                FunctionAnalyzer(typeMgr, global, *resolvedFunction).getFunction());
+        }
         return module;
     }
 };
@@ -904,8 +949,8 @@ public:
 }  // namespace
 
 HIRModule *
-analyzeModule(GlobalScope *global, AstNode *root) {
-    return ModuleAnalyzer(global).analyze(root);
+analyzeModule(GlobalScope *global, const ResolvedModule &resolved) {
+    return ModuleAnalyzer(global).analyze(resolved);
 }
 
 }  // namespace lona

@@ -3,6 +3,7 @@
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/err/err.hh"
+#include "lona/resolve/resolve.hh"
 #include "lona/sym/func.hh"
 #include "lona/sema/hir.hh"
 #include "parser.hh"
@@ -1160,7 +1161,8 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
             globalScope->module, globalScope->module.getName().str());
     }
 
-    auto *hirModule = analyzeModule(globalScope, root);
+    auto resolvedModule = resolveModule(globalScope, root);
+    auto *hirModule = analyzeModule(globalScope, *resolvedModule);
     ModuleCompiler(globalScope, hirModule, debug.get());
 
     if (debug) {

@@ -59,6 +59,12 @@ syntax_diag_in="$(mktemp "$TMPDIR_LOCAL/lona-syntax-diag-XXXXXX.lo")"
 syntax_diag_out="$(mktemp "$TMPDIR_LOCAL/lona-syntax-diag-XXXXXX.txt")"
 semantic_diag_in="$(mktemp "$TMPDIR_LOCAL/lona-semantic-diag-XXXXXX.lo")"
 semantic_diag_out="$(mktemp "$TMPDIR_LOCAL/lona-semantic-diag-XXXXXX.txt")"
+duplicate_param_in="$(mktemp "$TMPDIR_LOCAL/lona-duplicate-param-XXXXXX.lo")"
+duplicate_param_out="$(mktemp "$TMPDIR_LOCAL/lona-duplicate-param-XXXXXX.txt")"
+method_self_in="$(mktemp "$TMPDIR_LOCAL/lona-method-self-XXXXXX.lo")"
+method_self_out="$(mktemp "$TMPDIR_LOCAL/lona-method-self-XXXXXX.ll")"
+top_level_mix_in="$(mktemp "$TMPDIR_LOCAL/lona-top-level-mix-XXXXXX.lo")"
+top_level_mix_out="$(mktemp "$TMPDIR_LOCAL/lona-top-level-mix-XXXXXX.ll")"
 large_struct_return_in="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.lo")"
 large_struct_return_out="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.ll")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
@@ -85,6 +91,9 @@ cleanup() {
         "$return_type_bad_in" "$return_type_bad_out" \
         "$syntax_diag_in" "$syntax_diag_out" \
         "$semantic_diag_in" "$semantic_diag_out" \
+        "$duplicate_param_in" "$duplicate_param_out" \
+        "$method_self_in" "$method_self_out" \
+        "$top_level_mix_in" "$top_level_mix_out" \
         "$large_struct_return_in" "$large_struct_return_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
@@ -544,6 +553,50 @@ grep -Fq 'semantic error: undefined identifier `foo`' "$semantic_diag_out"
 grep -Fq " --> $semantic_diag_in:2:9" "$semantic_diag_out"
 grep -Fq ' 2 |     ret foo' "$semantic_diag_out"
 grep -Fq 'help: Declare it with `var` before using it, or check the spelling.' "$semantic_diag_out"
+
+duplicate_param_source='def bad(a i32, a i32) i32 {
+    ret a
+}
+'
+printf '%s' "$duplicate_param_source" >"$duplicate_param_in"
+if "$BIN" --emit-ir "$duplicate_param_in" >"$duplicate_param_out" 2>&1; then
+    echo 'expected duplicate parameter program to fail' >&2
+    exit 1
+fi
+grep -Fq 'semantic error: duplicate function parameter `a`' "$duplicate_param_out"
+grep -Fq " --> $duplicate_param_in:1:16" "$duplicate_param_out"
+grep -Fq 'help: Rename one of the parameters so each binding is unique.' "$duplicate_param_out"
+
+method_self_source='struct Counter {
+    value i32
+
+    def bump(step i32) i32 {
+        ret self.value + step
+    }
+}
+
+def main() i32 {
+    var c Counter
+    c.value = 2
+    ret c.bump(3)
+}
+'
+printf '%s' "$method_self_source" >"$method_self_in"
+"$BIN" --emit-ir --verify-ir "$method_self_in" >"$method_self_out"
+grep -q '@Counter.bump' "$method_self_out"
+grep -q 'getelementptr inbounds %Counter' "$method_self_out"
+
+top_level_mix_source='def inc(a i32) i32 {
+    ret a + 1
+}
+
+var x i32 = 3
+var y i32 = inc(x)
+'
+printf '%s' "$top_level_mix_source" >"$top_level_mix_in"
+"$BIN" --emit-ir --verify-ir "$top_level_mix_in" >"$top_level_mix_out"
+grep -q '\.main"()' "$top_level_mix_out"
+grep -q '@inc' "$top_level_mix_out"
 
 large_struct_return_source='struct Big {
     a i32
