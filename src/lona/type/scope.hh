@@ -38,6 +38,11 @@ public:
         addObj(llvm::StringRef(name.tochara(), name.size()), var);
     }
 
+    bool hasLocalObj(llvm::StringRef name) const;
+    bool hasLocalObj(const ::string &name) const {
+        return hasLocalObj(llvm::StringRef(name.tochara(), name.size()));
+    }
+
     Object *getObj(llvm::StringRef name);
     Object *getObj(const ::string &name) {
         return getObj(llvm::StringRef(name.tochara(), name.size()));

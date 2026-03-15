@@ -55,6 +55,10 @@ call_arg_count_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.lo
 call_arg_count_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-call-arg-count-bad-XXXXXX.txt")"
 return_type_bad_in="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.lo")"
 return_type_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-return-type-bad-XXXXXX.txt")"
+syntax_diag_in="$(mktemp "$TMPDIR_LOCAL/lona-syntax-diag-XXXXXX.lo")"
+syntax_diag_out="$(mktemp "$TMPDIR_LOCAL/lona-syntax-diag-XXXXXX.txt")"
+semantic_diag_in="$(mktemp "$TMPDIR_LOCAL/lona-semantic-diag-XXXXXX.lo")"
+semantic_diag_out="$(mktemp "$TMPDIR_LOCAL/lona-semantic-diag-XXXXXX.txt")"
 large_struct_return_in="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.lo")"
 large_struct_return_out="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.ll")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
@@ -79,6 +83,8 @@ cleanup() {
         "$call_arg_type_bad_in" "$call_arg_type_bad_out" \
         "$call_arg_count_bad_in" "$call_arg_count_bad_out" \
         "$return_type_bad_in" "$return_type_bad_out" \
+        "$syntax_diag_in" "$syntax_diag_out" \
+        "$semantic_diag_in" "$semantic_diag_out" \
         "$large_struct_return_in" "$large_struct_return_out" \
         "$grammar_subset_in" "$grammar_subset_out"
 }
@@ -509,6 +515,35 @@ if "$BIN" --emit-ir "$return_type_bad_in" >"$return_type_bad_out" 2>&1; then
     exit 1
 fi
 grep -q 'return type mismatch: expected i32, got bool' "$return_type_bad_out"
+
+syntax_diag_source='def bad() i32 {
+    var x i32 =
+    ret 0
+}
+'
+printf '%s' "$syntax_diag_source" >"$syntax_diag_in"
+if "$BIN" --emit-ir "$syntax_diag_in" >"$syntax_diag_out" 2>&1; then
+    echo 'expected syntax diagnostic program to fail' >&2
+    exit 1
+fi
+grep -Fq "syntax error: I couldn't parse this statement: unexpected newline." "$syntax_diag_out"
+grep -Fq " --> $syntax_diag_in:2:16" "$syntax_diag_out"
+grep -Fq ' 2 |     var x i32 =' "$syntax_diag_out"
+grep -Fq 'help: Check for a missing separator, unmatched delimiter, or mistyped keyword near here.' "$syntax_diag_out"
+
+semantic_diag_source='def bad() i32 {
+    ret foo
+}
+'
+printf '%s' "$semantic_diag_source" >"$semantic_diag_in"
+if "$BIN" --emit-ir "$semantic_diag_in" >"$semantic_diag_out" 2>&1; then
+    echo 'expected semantic diagnostic program to fail' >&2
+    exit 1
+fi
+grep -Fq 'semantic error: undefined identifier `foo`' "$semantic_diag_out"
+grep -Fq " --> $semantic_diag_in:2:9" "$semantic_diag_out"
+grep -Fq ' 2 |     ret foo' "$semantic_diag_out"
+grep -Fq 'help: Declare it with `var` before using it, or check the spelling.' "$semantic_diag_out"
 
 large_struct_return_source='struct Big {
     a i32

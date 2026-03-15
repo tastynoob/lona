@@ -6,6 +6,9 @@ OUT_DIR := $(ROOT)/build
 INCLUDE_PATHS = -I $(ROOT)/src -I $(ROOT)/build
 LEX_FILE = grammar/lexer.lex
 YACC_FILE = $(shell find $(ROOT)/grammar -name "*.yacc")
+GENERATED_PARSER_SOURCES = $(OUT_DIR)/parser.cc $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
+GENERATED_LEXER_SOURCE = $(OUT_DIR)/scanner.cc
+GENERATED_PARSER_HEADERS = $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
 PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
 	$(ROOT)/src/lona/scan/driver.cc \
 	$(ROOT)/src/lona/ast/astnode.cc \
@@ -14,8 +17,8 @@ PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
 	$(ROOT)/src/lona/ast/token.cc \
 	$(ROOT)/src/lona/util/cfg.cc \
 	$(ROOT)/src/lona/util/string.cc
-SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") build/scanner.cc build/parser.cc
-FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) build/scanner.cc build/parser.cc
+SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
+FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
 
 LIBS = $(shell llvm-config-18 --libs core native)
 
@@ -56,29 +59,31 @@ $(target): $(OBJECTS)
 $(frontend_target): $(FRONTEND_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
-$(OUT_DIR)/%.d: %.cc
+$(OUT_DIR)/%.d: %.cc | $(GENERATED_PARSER_HEADERS)
 	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDE_PATHS) -MM $< -MT $(@:.d=.o) > $@
 
-$(OUT_DIR)/%.o: %.cc
+$(OUT_DIR)/%.o: %.cc | $(GENERATED_PARSER_HEADERS)
 	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDE_PATHS) -c $< -o $@
 
+ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 -include $(OBJECTS:.o=.d)
 -include $(FRONTEND_OBJECTS:.o=.d)
+endif
 
-build/scanner.cc: $(LEX_FILE)
-	mkdir -p build
+$(GENERATED_LEXER_SOURCE): $(LEX_FILE) $(OUT_DIR)/parser.hh
+	mkdir -p $(OUT_DIR)
 	echo "Generating scanner.cc"
-	flex -o build/scanner.cc $(LEX_FILE)
+	flex -o $(GENERATED_LEXER_SOURCE) $(LEX_FILE)
 
-build/parser.cc: $(YACC_FILE)
-	mkdir -p build
+$(GENERATED_PARSER_SOURCES) &: $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
+	mkdir -p $(OUT_DIR)
 	python3 scripts/multi_yacc.py
 	echo "Generating parser.cc"
-	bison -d -o build/parser.cc build/gen.yacc -Wcounterexamples -rall --report-file=report.txt
+	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -rall --report-file=report.txt
 
-gram_check: build/scanner.cc build/parser.cc
+gram_check: $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
 
 clean:
 	rm -rf $(OUT_DIR)

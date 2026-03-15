@@ -1,4 +1,5 @@
 %{
+#include "lona/err/err.hh"
 #include "lona/ast/token.hh"
 #include "lona/scan/scanner.hh"
 
@@ -9,7 +10,17 @@
 
 using token = lona::Parser::token::token_kind_type;
 
-#define YY_USER_ACTION loc->step(); loc->columns(yyleng);
+#define YY_USER_ACTION loc->step();
+
+static std::string describeLexeme(const char *text, int length) {
+    if (length == 1 && text[0] == '\n') {
+        return "\\n";
+    }
+    if (length == 1 && text[0] == '\t') {
+        return "\\t";
+    }
+    return std::string(text, text + length);
+}
 %}
 
 %option yyclass="lona::Scanner"
@@ -25,7 +36,7 @@ using token = lona::Parser::token::token_kind_type;
 (var) { loc->columns(yyleng); return token::VAR; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
-(ret) { lval->token = new AstToken(*loc); loc->columns(yyleng); return token::RET; }
+(ret) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::RET; }
 
 (if) { loc->columns(yyleng); return token::IF; }
 (else) { loc->columns(yyleng); return token::ELSE; }
@@ -33,8 +44,8 @@ using token = lona::Parser::token::token_kind_type;
 
 (struct) { loc->columns(yyleng); return token::STRUCT; }
 (type|u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64|bool|str) {
-    lval->token = new AstToken(TokenType::Field, yytext, *loc);
     loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::TYPE;
 }
 (class) {}
@@ -44,14 +55,14 @@ using token = lona::Parser::token::token_kind_type;
 
 
 [0-9]+ {
-    lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);
     loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);
     return token::CONST;
 }
 
 [0-9]+\.[0-9]+ {
-    lval->token = new AstToken(TokenType::ConstFP32, yytext, *loc);
     loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::ConstFP32, yytext, *loc);
     return token::CONST;
 }
 
@@ -59,14 +70,14 @@ using token = lona::Parser::token::token_kind_type;
     char* strpos = yytext + 1;
     yytext[yyleng - 1] = '\0';
     string escaped = strEscape(string(strpos));
-    lval->token = new AstToken(TokenType::ConstStr, escaped.tochara(), *loc);
     loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::ConstStr, escaped.tochara(), *loc);
     return token::CONST;
 }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
-    lval->token = new AstToken(TokenType::Field, yytext, *loc);
     loc->columns(yyleng);
+    lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::FIELD;
 }
 
@@ -147,14 +158,17 @@ using token = lona::Parser::token::token_kind_type;
 }
 
 \/\/[^\n]* {
-    loc->lines(1);
+    loc->columns(yyleng);
 }
 [ \t]+ {
     loc->columns(yyleng);
 }
 
 .|\n {
-    std::cerr << "Unrecognized token: \'" << yytext << "\'" << std::endl;
-    return EOF;
+    loc->columns(yyleng);
+    throw lona::DiagnosticError(
+        lona::DiagnosticError::Category::Lexical, *loc,
+        "I couldn't recognize the token `" + describeLexeme(yytext, yyleng) + "`.",
+        "Check for a typo or an unsupported character here.");
 }
 %%

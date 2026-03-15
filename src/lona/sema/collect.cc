@@ -2,6 +2,7 @@
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/err/err.hh"
 #include "lona/sym/func.hh"
 #include "lona/sema/hir.hh"
 #include "parser.hh"
@@ -30,6 +31,17 @@ namespace {
 std::string
 toStdString(const string &value) {
     return std::string(value.tochara(), value.size());
+}
+
+[[noreturn]] void
+error(const std::string &message) {
+    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
+}
+
+[[noreturn]] void
+error(const location &loc, const std::string &message,
+      const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
 }
 
 std::string
@@ -291,11 +303,13 @@ describeTypeNode(TypeNode *node) {
 }
 
 void
-rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &context) {
+rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &context,
+                       const location &loc = location()) {
     if (!type || !type->as<FuncType>()) {
         return;
     }
-    throw std::runtime_error(context + ": " + describeTypeNode(node));
+    error(loc, context + ": " + describeTypeNode(node),
+          "Use an explicit function pointer type instead of a bare function type.");
 }
 
 TypeTable *
@@ -347,13 +361,14 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     if (node->retType) {
         loretType = typeMgr->getType(node->retType);
         if (!loretType) {
-            throw std::runtime_error(
+            error(node->loc,
                 "unknown return type for function `" + toStdString(func_name) +
                 "`: " + describeTypeNode(node->retType));
         }
         rejectBareFunctionType(
             loretType, node->retType,
-            "unsupported bare function return type for `" + toStdString(func_name) + "`");
+            "unsupported bare function return type for `" + toStdString(func_name) + "`",
+            node->loc);
         returnByPointer = loretType->shouldReturnByPointer();
         retType = returnByPointer
             ? llvm::Type::getVoidTy(typeMgr->getContext())
@@ -379,14 +394,14 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     if (node->args) {
         for (auto *arg : *node->args) {
             if (!arg->is<AstVarDecl>()) {
-                throw std::runtime_error(
+                error(node->loc,
                     "invalid function parameter declaration in `" +
                     toStdString(func_name) + "`");
             }
             auto *varDecl = arg->as<AstVarDecl>();
             auto *type = typeMgr->getType(varDecl->typeNode);
             if (!type) {
-                throw std::runtime_error(
+                error(varDecl->loc,
                     "unknown type for function parameter `" +
                     toStdString(varDecl->field) + "` in `" +
                     toStdString(func_name) + "`: " +
@@ -396,7 +411,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 type, varDecl->typeNode,
                 "unsupported bare function parameter type for `" +
                     toStdString(varDecl->field) + "` in `" +
-                    toStdString(func_name) + "`");
+                    toStdString(func_name) + "`",
+                varDecl->loc);
             loargs.push_back(type);
             args.push_back(type->getLLVMType());
             funcType_name += ".";
@@ -456,14 +472,15 @@ class StructVisitor : public AstVisitorAny {
         auto &name = node->field;
         auto *type = typeMgr->getType(node->typeNode);
         if (!type) {
-            throw std::runtime_error("unknown struct field type for `" +
-                                     toStdString(name) + "`: " +
-                                     describeTypeNode(node->typeNode));
+            error(node->loc, "unknown struct field type for `" +
+                                 toStdString(name) + "`: " +
+                                 describeTypeNode(node->typeNode));
         }
         rejectBareFunctionType(
             type, node->typeNode,
             "unsupported bare function struct field type for `" +
-                toStdString(name) + "`");
+                toStdString(name) + "`",
+            node->loc);
 
         llvmmembers.push_back(type->getLLVMType());
         members.insert({llvm::StringRef(name.tochara(), name.size()),
@@ -610,9 +627,14 @@ class FunctionCompiler {
     DebugInfoContext *debug;
     llvm::DISubprogram *debugSubprogram = nullptr;
     bool returnByPointer = false;
+    location currentLocation;
+    bool hasCurrentLocation = false;
 
     [[noreturn]] void error(const std::string &message) {
-        throw std::runtime_error(message);
+        if (hasCurrentLocation) {
+            lona::error(currentLocation, message);
+        }
+        lona::error(message);
     }
 
     Object *materializeLocal(TypeClass *type, Object *initVal) {
@@ -636,6 +658,8 @@ class FunctionCompiler {
     }
 
     void setLocation(const location &loc) {
+        currentLocation = loc;
+        hasCurrentLocation = true;
         applyDebugLocation(scope->builder, debug, debugSubprogram, loc);
     }
 

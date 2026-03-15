@@ -16,6 +16,7 @@
 
 %code
 {
+    #include "lona/err/err.hh"
     #include "lona/scan/driver.hh"
     #include "lona/ast/token.hh"
     #include "lona/ast/astnode.hh"
@@ -41,17 +42,19 @@
 %locations
 %define api.namespace { lona }
 %define api.parser.class { Parser }
+%define parse.error detailed
+%define parse.lac full
 %parse-param { Driver &driver }
 
-%token <token> CONST FIELD RET TYPE
-%token LOGIC_EQUAL LOGIC_NOT_EQUAL LOGIC_AND LOGIC_OR
-%token VAR
-%token TRUE FALSE
-%token IF ELSE FOR
-%token DEF STRUCT
-%token FUNC_PTR_OPEN
-%token NEWLINE
-%token ASSIGN_ADD ASSIGN_SUB
+%token <token> CONST "literal" FIELD "identifier" RET "ret" TYPE "builtin type"
+%token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
+%token VAR "var"
+%token TRUE "true" FALSE "false"
+%token IF "if" ELSE "else" FOR "for"
+%token DEF "def" STRUCT "struct"
+%token FUNC_PTR_OPEN "&<"
+%token NEWLINE "newline"
+%token ASSIGN_ADD "+=" ASSIGN_SUB "-="
 
 %nonassoc type_suffix
 %nonassoc LOWER_THAN_ELSE
@@ -242,7 +245,12 @@ expr
     : expr_binOp { $$ = $1; }
     | expr_unary { $$ = $1; }
     | single_value { $$ = $1; }
-    | error { std::cout<<yylhs.location; exit(-1); }
+    | error {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "I couldn't parse this expression.",
+            "Check for a missing operand, separator, or unmatched delimiter near here.");
+    }
     ;
 
 expr_assign
@@ -353,5 +361,8 @@ type_selector
 %%
 
 void lona::Parser::error(const location_type &l, const std::string &err_message) {
-    std::cerr << "Error at " << l << ": " << err_message << std::endl;
+    throw lona::DiagnosticError(
+        lona::DiagnosticError::Category::Syntax, l,
+        lona::friendlySyntaxMessage(err_message),
+        "Check for a missing separator, unmatched delimiter, or mistyped keyword near here.");
 }

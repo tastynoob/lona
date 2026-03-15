@@ -17,6 +17,11 @@ Scope::addObj(llvm::StringRef name, Object *var) {
     variables[name] = var;
 }
 
+bool
+Scope::hasLocalObj(llvm::StringRef name) const {
+    return variables.find(name) != variables.end();
+}
+
 Object *
 Scope::getObj(llvm::StringRef name) {
     if (variables.find(name) == variables.end()) {

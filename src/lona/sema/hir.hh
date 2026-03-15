@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lona/ir/ir.hh"
+#include "lona/ast/astnode.hh"
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,17 +18,14 @@ struct HIRBinding {
     location loc;
 };
 
-class HIRNode : public IRNode {
+class HIRNode {
     location loc;
 
 public:
     explicit HIRNode(const location &loc = location()) : loc(loc) {}
+    virtual ~HIRNode() = default;
 
     const location &getLocation() const { return loc; }
-
-    void accept(IRVisitor &visitor) override {
-        visitor.visit(static_cast<IRNode *>(this));
-    }
 };
 
 class HIRExpr : public HIRNode {

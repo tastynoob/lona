@@ -1,9 +1,11 @@
 #include "cmdline.hpp"
 #include "lona/ast/astnode.hh"
+#include "lona/err/err.hh"
 #include "lona/scan/driver.hh"
 #include "lona/type/package.hh"
 #include "lona/visitor.hh"
 #include <fstream>
+#include <cstdlib>
 #include <iostream>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
@@ -88,6 +90,16 @@ verifyCompiledModule(llvm::Module &module, std::ostream &out) {
     return false;
 }
 
+[[noreturn]] void
+finishProcess(int exitCode, std::ostream *out = nullptr) {
+    if (out != nullptr) {
+        out->flush();
+    }
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(exitCode);
+}
+
 int
 emitIR(lona::AstNode *tree, const std::string &inputPath, const CompileOptions &options,
        std::ostream &out) {
@@ -95,19 +107,11 @@ emitIR(lona::AstNode *tree, const std::string &inputPath, const CompileOptions &
     llvm::Module module(inputPath, context);
     lona::SourceFile source(&module, inputPath);
 
-    try {
-        lona::scanningType(source.scope(), tree);
-        lona::compileModule(source.scope(), tree, options.debugInfo);
-        optimizeModule(module, options.optLevel);
+    lona::scanningType(source.scope(), tree);
+    lona::compileModule(source.scope(), tree, options.debugInfo);
+    optimizeModule(module, options.optLevel);
 
-        if (options.verifyIR && !verifyCompiledModule(module, out)) {
-            return 1;
-        }
-    } catch (const std::exception &ex) {
-        out << "Error: " << ex.what() << std::endl;
-        return 1;
-    } catch (const char *ex) {
-        out << "Error: " << ex << std::endl;
+    if (options.verifyIR && !verifyCompiledModule(module, out)) {
         return 1;
     }
 
@@ -144,32 +148,45 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
-    lona::AstNode *tree = parseInput(input, inputPath);
-    if (tree == nullptr) {
-        std::cerr << "Error: parse failed" << std::endl;
-        return 1;
-    }
-
-    std::ostream *out = &std::cout;
-    std::ofstream output;
-    if (args.size() == 2) {
-        output.open(args[1]);
-        if (!output) {
-            std::cerr << "Error: cannot open output file: " << args[1] << std::endl;
-            return 1;
+    try {
+        lona::AstNode *tree = parseInput(input, inputPath);
+        if (tree == nullptr) {
+            throw lona::DiagnosticError(
+                lona::DiagnosticError::Category::Syntax,
+                "I couldn't parse this file.");
         }
-        out = &output;
-    }
 
-    const bool compileMode = cli.exist("emit-ir") || cli.exist("verify-ir") ||
-                             cli.exist("debug") || cli.exist("opt");
-    if (compileMode) {
-        CompileOptions options;
-        options.optLevel = cli.get<int>("opt");
-        options.verifyIR = cli.exist("verify-ir");
-        options.debugInfo = cli.exist("debug");
-        return emitIR(tree, inputPath, options, *out);
-    }
+        std::ostream *out = &std::cout;
+        std::ofstream output;
+        if (args.size() == 2) {
+            output.open(args[1]);
+            if (!output) {
+                std::cerr << "Error: cannot open output file: " << args[1]
+                          << std::endl;
+                return 1;
+            }
+            out = &output;
+        }
 
-    return emitJson(tree, *out);
+        const bool compileMode = cli.exist("emit-ir") || cli.exist("verify-ir") ||
+                                 cli.exist("debug") || cli.exist("opt");
+        if (compileMode) {
+            CompileOptions options;
+            options.optLevel = cli.get<int>("opt");
+            options.verifyIR = cli.exist("verify-ir");
+            options.debugInfo = cli.exist("debug");
+            finishProcess(emitIR(tree, inputPath, options, *out), out);
+        }
+
+        finishProcess(emitJson(tree, *out), out);
+    } catch (const lona::DiagnosticError &error) {
+        std::cerr << lona::formatDiagnostic(error, inputPath) << std::flush;
+        finishProcess(1);
+    } catch (const std::exception &ex) {
+        std::cerr << "Error: " << ex.what() << std::endl << std::flush;
+        finishProcess(1);
+    } catch (const char *ex) {
+        std::cerr << "Error: " << ex << std::endl << std::flush;
+        finishProcess(1);
+    }
 }

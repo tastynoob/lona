@@ -1,5 +1,6 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/err/err.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -21,7 +22,13 @@ toStdString(const string &value) {
 
 [[noreturn]] void
 error(const std::string &message) {
-    throw std::runtime_error(message);
+    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
+}
+
+[[noreturn]] void
+error(const location &loc, const std::string &message,
+      const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
 }
 
 std::string
@@ -196,9 +203,11 @@ rejectMethodSelectorStorage(HIRExpr *expr, AstVarDef *node) {
         return;
     }
 
-    error("unsupported bare function variable type for `" +
-          toStdString(node->getName()) + "`: " +
-          describeMethodSelectorType(selector, funcType));
+    error(node->loc,
+          "unsupported bare function variable type for `" +
+              toStdString(node->getName()) + "`: " +
+              describeMethodSelectorType(selector, funcType),
+          "Store an explicit function pointer instead of a bare method selector.");
 }
 
 void
@@ -208,7 +217,8 @@ rejectNonCallMethodSelector(HIRExpr *expr) {
         return;
     }
 
-    error(kMethodSelectorDirectCallError);
+    error(selector->getLocation(), kMethodSelectorDirectCallError,
+          "Call the method directly as `obj.method(...)`.");
 }
 
 void
@@ -225,9 +235,11 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
     if (!hasBareFunctionStorage) {
         return;
     }
-    error("unsupported bare function variable type for `" +
-          toStdString(node->getName()) + "`: " +
-          describeStorageType(type, node));
+    error(node->loc,
+          "unsupported bare function variable type for `" +
+              toStdString(node->getName()) + "`: " +
+              describeStorageType(type, node),
+          "Use an explicit function pointer type like `(T1, T2)* Ret` instead.");
 }
 
 void
@@ -244,9 +256,11 @@ rejectUninitializedFunctionDerivedStorage(AstVarDef *node) {
         return;
     }
 
-    error("function-related variable type for `" +
-          toStdString(node->getName()) + "` requires initializer: " +
-          describeTypeNode(typeNode));
+    error(node->loc,
+          "function-related variable type for `" +
+              toStdString(node->getName()) + "` requires initializer: " +
+              describeTypeNode(typeNode),
+          "Initialize function pointers and function-related arrays at the point of definition.");
 }
 
 TypeTable *
@@ -296,11 +310,46 @@ class FunctionAnalyzer {
     StructType *methodParent = nullptr;
     HIRFunc *hirFunc;
     bool skipDeclStatements = false;
+    location currentLocation;
+    bool hasCurrentLocation = false;
+
+    class ScopedLocation {
+        FunctionAnalyzer &owner;
+        location savedLocation;
+        bool savedHasLocation = false;
+
+    public:
+        ScopedLocation(FunctionAnalyzer &owner, const location &loc)
+            : owner(owner),
+              savedLocation(owner.currentLocation),
+              savedHasLocation(owner.hasCurrentLocation) {
+            owner.currentLocation = loc;
+            owner.hasCurrentLocation = true;
+        }
+
+        ~ScopedLocation() {
+            owner.currentLocation = savedLocation;
+            owner.hasCurrentLocation = savedHasLocation;
+        }
+    };
+
+    [[noreturn]] void error(const std::string &message,
+                            const std::string &hint = std::string()) {
+        if (hasCurrentLocation) {
+            lona::error(currentLocation, message, hint);
+        }
+        lona::error(message);
+    }
+
+    [[noreturn]] void error(const location &loc, const std::string &message,
+                            const std::string &hint = std::string()) {
+        lona::error(loc, message, hint);
+    }
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
         auto *type = typeMgr->getType(node);
         if (!type) {
-            error(context);
+            error(currentLocation, context);
         }
         return type;
     }
@@ -308,7 +357,8 @@ class FunctionAnalyzer {
     HIRExpr *requireExpr(AstNode *node) {
         auto *expr = analyzeExpr(node);
         if (!expr) {
-            error("expression did not produce a value");
+            error(node ? node->loc : currentLocation,
+                  "expression did not produce a value");
         }
         return expr;
     }
@@ -337,6 +387,7 @@ class FunctionAnalyzer {
     }
 
     HIRBlock *analyzeBlock(AstNode *node) {
+        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         auto *block = new HIRBlock(node ? node->loc : location());
         if (!node) {
             return block;
@@ -364,6 +415,7 @@ class FunctionAnalyzer {
     }
 
     HIRNode *analyzeStmt(AstNode *node) {
+        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         if (!node) {
             return nullptr;
         }
@@ -390,6 +442,7 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeExpr(AstNode *node) {
+        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         if (!node) {
             return nullptr;
         }
@@ -435,7 +488,9 @@ class FunctionAnalyzer {
     HIRExpr *analyzeField(AstField *node) {
         auto *obj = scope->getObj(node->name);
         if (!obj) {
-            error("undefined identifier");
+            error(node->loc,
+                  "undefined identifier `" + toStdString(node->name) + "`",
+                  "Declare it with `var` before using it, or check the spelling.");
         }
         return new HIRValue(obj, node->loc);
     }
@@ -488,7 +543,10 @@ class FunctionAnalyzer {
         auto *leftType = left->getType();
         auto *rightType = right->getType();
         if (!leftType || !rightType || leftType != rightType) {
-            error("type mismatch");
+            error(node->loc,
+                  "assignment type mismatch: expected " +
+                      describeResolvedType(leftType) + ", got " +
+                      describeResolvedType(rightType));
         }
         return new HIRAssign(left, right, node->loc);
     }
@@ -497,10 +555,13 @@ class FunctionAnalyzer {
         auto *left = requireNonCallExpr(node->left);
         auto *right = requireNonCallExpr(node->right);
         if (left->getType() != right->getType()) {
-            error("type mismatch in binary operation");
+            error(node->loc,
+                  "binary operation type mismatch: left side is " +
+                      describeResolvedType(left->getType()) + ", right side is " +
+                      describeResolvedType(right->getType()));
         }
         if (left->getType() != i32Ty) {
-            error("only i32 binary operations are supported");
+            error(node->loc, "binary operations currently only support i32 operands");
         }
 
         TypeClass *resultType = i32Ty;
@@ -565,17 +626,30 @@ class FunctionAnalyzer {
             type = requireType(typeNode, "unknown variable type");
             rejectBareFunctionStorage(type, node);
             if (init && init->getType() != type) {
-                error("initializer type mismatch");
+                error(node->loc,
+                      "initializer type mismatch for `" +
+                          toStdString(node->getName()) + "`: expected " +
+                          describeResolvedType(type) + ", got " +
+                          describeResolvedType(init->getType()));
             }
         } else if (init) {
             rejectMethodSelectorStorage(init, node);
             type = init->getType();
             rejectBareFunctionStorage(type, node);
         } else {
-            error("cannot infer variable type without initializer");
+            error(node->loc,
+                  "cannot infer the type of `" + toStdString(node->getName()) +
+                      "` without an initializer",
+                  "Add an explicit type annotation or provide an initializer.");
         }
 
         auto *obj = type->newObj(Object::VARIABLE);
+        if (scope->hasLocalObj(node->getName())) {
+            error(node->loc,
+                  "duplicate variable definition for `" +
+                      toStdString(node->getName()) + "`",
+                  "Rename one of the variables or reuse the existing binding.");
+        }
         scope->addObj(node->getName(), obj);
         return new HIRVarDef(toStdString(node->getName()), obj, init, node->loc);
     }
@@ -616,7 +690,7 @@ class FunctionAnalyzer {
         auto *parent = requireExpr(node->parent);
         auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
         if (!structType) {
-            error("selector parent must be a struct value");
+            error(node->loc, "member access expects a struct value on the left side");
         }
 
         auto fieldName = toStdString(node->field->text);
@@ -627,7 +701,8 @@ class FunctionAnalyzer {
         if (structType->getFunc(llvm::StringRef(fieldName))) {
             return new HIRSelector(parent, fieldName, nullptr, node->loc);
         }
-        error("unknown struct field");
+        error(node->loc, "unknown struct field `" + fieldName + "`",
+              "Check the field name, or use a direct method call like `obj.method(...)`.");
     }
 
     HIRExpr *analyzeCall(AstFieldCall *node) {
@@ -699,12 +774,12 @@ public:
             lofunc = globalFunc ? globalFunc->as<Function>() : nullptr;
         }
         if (!lofunc) {
-            error("function declaration missing");
+            error(node->loc, "function declaration is missing from the symbol table");
         }
 
         auto *funcType = lofunc->getType()->as<FuncType>();
         if (!funcType) {
-            error("invalid function type");
+            error(node->loc, "internal function type is invalid");
         }
 
         hirFunc = new HIRFunc(llvm::cast<llvm::Function>(lofunc->getllvmValue()),
@@ -713,6 +788,9 @@ public:
 
         if (methodParent) {
             auto *selfObj = methodParent->newObj(Object::VARIABLE);
+            if (scope->hasLocalObj(llvm::StringRef("self"))) {
+                error(node->loc, "duplicate implicit `self` binding");
+            }
             scope->addObj(llvm::StringRef("self"), selfObj);
             hirFunc->setSelfBinding({"self", selfObj, node->loc});
         }
@@ -727,6 +805,12 @@ public:
                     decl->typeNode,
                     "unknown function argument type for `" + toStdString(decl->field) + "`");
                 auto *argObj = type->newObj(Object::VARIABLE);
+                if (scope->hasLocalObj(decl->field)) {
+                    error(decl->loc,
+                          "duplicate function parameter `" +
+                              toStdString(decl->field) + "`",
+                          "Rename one of the parameters so each binding is unique.");
+                }
                 scope->addObj(decl->field, argObj);
                 hirFunc->addParam({toStdString(decl->field), argObj, decl->loc});
             }
