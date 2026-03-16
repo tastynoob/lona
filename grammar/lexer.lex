@@ -125,20 +125,54 @@ static std::string describeLexeme(const char *text, int length) {
     return token::FUNC_PTR_OPEN;
 }
 
-(\+|-|\*|\/|!|~|<|>|\||&|^) {
-    // + - * / ! ~ < > | & ^
-    loc->columns(yyleng);
-    return yytext[0];
-}
-
 (\+=) {
     loc->columns(yyleng);
     return token::ASSIGN_ADD;
 }
 
+(\*=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_MUL;
+}
+
+(\/=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_DIV;
+}
+
+(%=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_MOD;
+}
+
 (-=) {
     loc->columns(yyleng);
     return token::ASSIGN_SUB;
+}
+
+(<<=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_SHL;
+}
+
+(>>=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_SHR;
+}
+
+(&=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_AND;
+}
+
+(\^=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_XOR;
+}
+
+(\|=) {
+    loc->columns(yyleng);
+    return token::ASSIGN_OR;
 }
 
 (==) {
@@ -156,15 +190,40 @@ static std::string describeLexeme(const char *text, int length) {
     return token::LOGIC_AND;
 }
 
+(\<=) {
+    loc->columns(yyleng);
+    return token::LOGIC_LE;
+}
+
+(\>=) {
+    loc->columns(yyleng);
+    return token::LOGIC_GE;
+}
+
+(\<\<) {
+    loc->columns(yyleng);
+    return token::SHIFT_LEFT;
+}
+
+(\>\>) {
+    loc->columns(yyleng);
+    return token::SHIFT_RIGHT;
+}
+
 (\|\|) {
     // ||
     loc->columns(yyleng);
     return token::LOGIC_OR;
 }
 
+(\+|-|\*|\/|%|!|~|<|>|\||&|^) {
+    // + - * / % ! ~ < > | & ^
+    loc->columns(yyleng);
+    return yytext[0];
+}
+
 (\{|\}) {
     // { }
-    skip_semi = true;
     loc->columns(yyleng);
     return yytext[0];
 }
@@ -189,10 +248,6 @@ static std::string describeLexeme(const char *text, int length) {
     }
     loc->lines(line_num);
     loc->columns(space_num);
-    if (skip_semi) {
-        skip_semi = false;
-        break;
-    }
     return token::NEWLINE;
 }
 

@@ -6,8 +6,9 @@ BIN="$ROOT/build/lona-ir"
 INPUT="$ROOT/tests/fixtures/acceptance_main.lo"
 TMPDIR_LOCAL="${TMPDIR:-/tmp/claude-1000}"
 if [ ! -d "$TMPDIR_LOCAL" ]; then
-    TMPDIR_LOCAL="/tmp/claude-1000"
+    TMPDIR_LOCAL="/tmp/lona-acceptance"
 fi
+mkdir -p "$TMPDIR_LOCAL"
 
 json_out="$(mktemp "$TMPDIR_LOCAL/lona-json-XXXXXX.txt")"
 ir_out="$(mktemp "$TMPDIR_LOCAL/lona-ir-XXXXXX.ll")"
@@ -83,6 +84,20 @@ large_struct_return_in="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.
 large_struct_return_out="$(mktemp "$TMPDIR_LOCAL/lona-large-struct-return-XXXXXX.ll")"
 grammar_subset_in="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.lo")"
 grammar_subset_out="$(mktemp "$TMPDIR_LOCAL/lona-grammar-subset-XXXXXX.ll")"
+milestone1_json_in="$(mktemp "$TMPDIR_LOCAL/lona-m1-json-XXXXXX.lo")"
+milestone1_json_out="$(mktemp "$TMPDIR_LOCAL/lona-m1-json-XXXXXX.json")"
+legacy_cast_in="$(mktemp "$TMPDIR_LOCAL/lona-legacy-cast-XXXXXX.lo")"
+legacy_cast_out="$(mktemp "$TMPDIR_LOCAL/lona-legacy-cast-XXXXXX.txt")"
+float_placeholder_in="$(mktemp "$TMPDIR_LOCAL/lona-float-placeholder-XXXXXX.lo")"
+float_placeholder_out="$(mktemp "$TMPDIR_LOCAL/lona-float-placeholder-XXXXXX.txt")"
+string_placeholder_in="$(mktemp "$TMPDIR_LOCAL/lona-string-placeholder-XXXXXX.lo")"
+string_placeholder_out="$(mktemp "$TMPDIR_LOCAL/lona-string-placeholder-XXXXXX.txt")"
+tuple_placeholder_in="$(mktemp "$TMPDIR_LOCAL/lona-tuple-placeholder-XXXXXX.lo")"
+tuple_placeholder_out="$(mktemp "$TMPDIR_LOCAL/lona-tuple-placeholder-XXXXXX.txt")"
+array_init_placeholder_in="$(mktemp "$TMPDIR_LOCAL/lona-array-init-placeholder-XXXXXX.lo")"
+array_init_placeholder_out="$(mktemp "$TMPDIR_LOCAL/lona-array-init-placeholder-XXXXXX.txt")"
+operator_placeholder_in="$(mktemp "$TMPDIR_LOCAL/lona-operator-placeholder-XXXXXX.lo")"
+operator_placeholder_out="$(mktemp "$TMPDIR_LOCAL/lona-operator-placeholder-XXXXXX.txt")"
 cleanup() {
     rm -f "$json_out" "$ir_out" "$debug_out" "$missing_return_in" \
         "$json_feature_in" "$json_feature_out" "$bool_in" "$bool_out" \
@@ -112,7 +127,14 @@ cleanup() {
         "$import_transitive_ok_out" "$import_transitive_bad_out" "$import_transitive_type_bad_out" \
         "$import_exec_dep_in" "$import_exec_main_in" "$import_exec_out" \
         "$large_struct_return_in" "$large_struct_return_out" \
-        "$grammar_subset_in" "$grammar_subset_out"
+        "$grammar_subset_in" "$grammar_subset_out" \
+        "$milestone1_json_in" "$milestone1_json_out" \
+        "$legacy_cast_in" "$legacy_cast_out" \
+        "$float_placeholder_in" "$float_placeholder_out" \
+        "$string_placeholder_in" "$string_placeholder_out" \
+        "$tuple_placeholder_in" "$tuple_placeholder_out" \
+        "$array_init_placeholder_in" "$array_init_placeholder_out" \
+        "$operator_placeholder_in" "$operator_placeholder_out"
     rm -rf "$import_dir"
 }
 trap cleanup EXIT
@@ -738,5 +760,89 @@ printf '%s' "$grammar_subset_source" >"$grammar_subset_in"
 "$BIN" --emit-ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
 grep -Eq '^%.*Name = type \{ i32, i32 \}' "$grammar_subset_out"
 grep -Eq '^define %.*Name @make_name' "$grammar_subset_out"
+
+milestone1_json_source='def show() {
+    var pair <i32, bool> = (1, true)
+    var matrix i32[4][5] = {{}}
+    ret
+}
+'
+printf '%s' "$milestone1_json_source" >"$milestone1_json_in"
+"$BIN" "$milestone1_json_in" >"$milestone1_json_out"
+grep -Fq '"declaredType": "<i32, bool>"' "$milestone1_json_out"
+grep -Fq '"type": "TupleLiteral"' "$milestone1_json_out"
+grep -Fq '"declaredType": "i32[?][?]"' "$milestone1_json_out"
+grep -Fq '"type": "ArrayInit"' "$milestone1_json_out"
+
+legacy_cast_source='def bad() i32 {
+    var x i32 = i32 1
+    ret x
+}
+'
+printf '%s' "$legacy_cast_source" >"$legacy_cast_in"
+if "$BIN" --emit-ir "$legacy_cast_in" >"$legacy_cast_out" 2>&1; then
+    echo 'expected legacy cast syntax program to fail' >&2
+    exit 1
+fi
+grep -Fq "lona doesn't support C-style cast syntax like \`i32 1\`." "$legacy_cast_out"
+grep -Fq 'byte-copy semantics' "$legacy_cast_out"
+
+float_placeholder_source='def bad() f32 {
+    ret 1.25
+}
+'
+printf '%s' "$float_placeholder_source" >"$float_placeholder_in"
+if "$BIN" --emit-ir "$float_placeholder_in" >"$float_placeholder_out" 2>&1; then
+    echo 'expected float placeholder program to fail' >&2
+    exit 1
+fi
+grep -Fq "floating-point literals are parsed, but \`f32\` / \`f64\` semantics are not implemented yet" "$float_placeholder_out"
+
+string_placeholder_source='def bad() i32 {
+    var msg = "hello"
+    ret 0
+}
+'
+printf '%s' "$string_placeholder_source" >"$string_placeholder_in"
+if "$BIN" --emit-ir "$string_placeholder_in" >"$string_placeholder_out" 2>&1; then
+    echo 'expected string placeholder program to fail' >&2
+    exit 1
+fi
+grep -Fq 'string literals are reserved, but runtime string semantics are not implemented yet' "$string_placeholder_out"
+
+tuple_placeholder_source='def bad() i32 {
+    var pair <i32, bool> = (1, true)
+    ret 0
+}
+'
+printf '%s' "$tuple_placeholder_source" >"$tuple_placeholder_in"
+if "$BIN" --emit-ir "$tuple_placeholder_in" >"$tuple_placeholder_out" 2>&1; then
+    echo 'expected tuple placeholder program to fail' >&2
+    exit 1
+fi
+grep -Fq 'tuple literals are parsed, but tuple semantics are not implemented yet' "$tuple_placeholder_out"
+
+array_init_placeholder_source='def bad() i32 {
+    var matrix i32[4][5] = {{}}
+    ret 0
+}
+'
+printf '%s' "$array_init_placeholder_source" >"$array_init_placeholder_in"
+if "$BIN" --emit-ir "$array_init_placeholder_in" >"$array_init_placeholder_out" 2>&1; then
+    echo 'expected array initializer placeholder program to fail' >&2
+    exit 1
+fi
+grep -Fq 'array initializers are parsed, but fixed-dimension array semantics are not implemented yet' "$array_init_placeholder_out"
+
+operator_placeholder_source='def bad(a i32, b i32) i32 {
+    ret a % b
+}
+'
+printf '%s' "$operator_placeholder_source" >"$operator_placeholder_in"
+if "$BIN" --emit-ir "$operator_placeholder_in" >"$operator_placeholder_out" 2>&1; then
+    echo 'expected placeholder operator program to fail' >&2
+    exit 1
+fi
+grep -Fq 'operator `%` is parsed, but semantic support is not implemented yet' "$operator_placeholder_out"
 
 printf 'acceptance checks passed\n'

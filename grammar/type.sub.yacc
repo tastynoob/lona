@@ -45,48 +45,56 @@ type_name
    ; */
 
 single_type
-    : FIELD { $$ = new BaseTypeNode($1->text); }
-    | TYPE { $$ = new BaseTypeNode($1->text); }
+    : FIELD { $$ = new BaseTypeNode($1->text, @$); }
+    | TYPE { $$ = new BaseTypeNode($1->text, @$); }
     | type_selector { $$ = $1; }
     ;
 
+tuple_type
+    : '<' type_name_seq '>' {
+        $$ = new TupleTypeNode(*$2, @$);
+        delete $2;
+    }
+    ;
+
 ptr_type
-    : base_type '*' { $$ = new PointerTypeNode($1); }
+    : base_type '*' { $$ = new PointerTypeNode($1, 1, @$); }
     ;
 
 array_type
-    : base_type '[' ']' { $$ = new ArrayTypeNode($1); }
+    : base_type '[' ']' { $$ = new ArrayTypeNode($1, {}, @$); }
     | base_type '[' expr_seq ']' {
-        $$ = new ArrayTypeNode($1, *$3);
+        $$ = new ArrayTypeNode($1, *$3, @$);
         delete $3;
     }
     | base_type '[' ',' expr_seq ']' {
         auto dims = *$4;
         dims.insert(dims.begin(), (AstNode*)nullptr);
-        $$ = new ArrayTypeNode($1, dims);
+        $$ = new ArrayTypeNode($1, dims, @$);
         delete $4;
     }
     ;
 
 base_type
     : single_type { $$ = $1; }
+    | tuple_type { $$ = $1; }
     | ptr_type { $$ = $1; }
     | array_type { $$ = $1; }
     ;
 
 func_head
-    : '(' ')' { $$ = new FuncTypeNode(); }
-    | '(' type_name_seq ')' { $$ = new FuncTypeNode(*$2); delete $2; }
-    | func_head '*' { $$ = new PointerTypeNode($1); }
-    | func_head '[' ']' { $$ = new ArrayTypeNode($1); }
+    : '(' ')' { $$ = new FuncTypeNode({}, nullptr, @$); }
+    | '(' type_name_seq ')' { $$ = new FuncTypeNode(*$2, nullptr, @$); delete $2; }
+    | func_head '*' { $$ = new PointerTypeNode($1, 1, @$); }
+    | func_head '[' ']' { $$ = new ArrayTypeNode($1, {}, @$); }
     | func_head '[' expr_seq ']' {
-        $$ = new ArrayTypeNode($1, *$3);
+        $$ = new ArrayTypeNode($1, *$3, @$);
         delete $3;
     }
     | func_head '[' ',' expr_seq ']' {
         auto dims = *$4;
         dims.insert(dims.begin(), (AstNode*)nullptr);
-        $$ = new ArrayTypeNode($1, dims);
+        $$ = new ArrayTypeNode($1, dims, @$);
         delete $4;
     }
     ;

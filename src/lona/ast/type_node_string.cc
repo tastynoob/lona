@@ -1,0 +1,72 @@
+#include "type_node_string.hh"
+#include <string>
+
+namespace lona {
+namespace {
+
+std::string
+toStdString(const string &value) {
+    return std::string(value.tochara(), value.size());
+}
+
+}  // namespace
+
+std::string
+describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
+    if (node == nullptr) {
+        return std::string(nullDescription);
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        return toStdString(base->name);
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        auto name = describeTypeNode(pointer->base, nullDescription);
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            name += "*";
+        }
+        return name;
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
+        auto name = describeTypeNode(array->base, nullDescription);
+        name += "[";
+        for (size_t i = 0; i < array->dim.size(); ++i) {
+            if (i != 0) {
+                name += ",";
+            }
+            if (array->dim[i] != nullptr) {
+                name += "?";
+            }
+        }
+        name += "]";
+        return name;
+    }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
+        std::string name = "<";
+        for (size_t i = 0; i < tuple->items.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += describeTypeNode(tuple->items[i], nullDescription);
+        }
+        name += ">";
+        return name;
+    }
+    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
+        std::string name = "(";
+        for (size_t i = 0; i < func->args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += describeTypeNode(func->args[i], nullDescription);
+        }
+        name += ")";
+        if (func->ret) {
+            name += " ";
+            name += describeTypeNode(func->ret, nullDescription);
+        }
+        return name;
+    }
+    return "<unknown type>";
+}
+
+}  // namespace lona

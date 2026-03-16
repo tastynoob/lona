@@ -32,14 +32,15 @@ createPointerOrArrayTypeNode(TypeNode *head, std::vector<AstNode *> *suffix) {
     TypeNode *node = head;
     for (auto *it : *suffix) {
         if (it == nullptr) {
-            node = new PointerTypeNode(node);
+            node = new PointerTypeNode(node, 1, node ? node->loc : location());
             continue;
         }
         if (it == reinterpret_cast<AstNode *>(1)) {
-            node = new ArrayTypeNode(node);
+            node = new ArrayTypeNode(node, {}, node ? node->loc : location());
             continue;
         }
-        node = new ArrayTypeNode(node, std::vector<AstNode *>{it});
+        node = new ArrayTypeNode(node, std::vector<AstNode *>{it},
+                                 node ? node->loc : location());
     }
     return node;
 }
@@ -62,6 +63,8 @@ DEF_ACCEPT(AstFuncRef)
 DEF_ACCEPT(AstAssign)
 DEF_ACCEPT(AstBinOper)
 DEF_ACCEPT(AstUnaryOper)
+DEF_ACCEPT(AstTupleLiteral)
+DEF_ACCEPT(AstArrayInit)
 DEF_ACCEPT(AstStructDecl)
 DEF_ACCEPT(AstImport)
 DEF_ACCEPT(AstVarDecl)

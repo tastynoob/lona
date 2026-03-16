@@ -1,5 +1,6 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
@@ -32,53 +33,6 @@ error(const std::string &message) {
 error(const location &loc, const std::string &message,
       const std::string &hint = std::string()) {
     throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
-}
-
-std::string
-describeTypeNode(TypeNode *node) {
-    if (node == nullptr) {
-        return "<unknown type>";
-    }
-    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        return toStdString(base->name);
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        auto name = describeTypeNode(pointer->base);
-        for (uint32_t i = 0; i < pointer->dim; ++i) {
-            name += "*";
-        }
-        return name;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto name = describeTypeNode(array->base);
-        name += "[";
-        for (size_t i = 0; i < array->dim.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (array->dim[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
-        return name;
-    }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
-        std::string name = "(";
-        for (size_t i = 0; i < func->args.size(); ++i) {
-            if (i != 0) {
-                name += ", ";
-            }
-            name += describeTypeNode(func->args[i]);
-        }
-        name += ")";
-        if (func->ret) {
-            name += " ";
-            name += describeTypeNode(func->ret);
-        }
-        return name;
-    }
-    return "<unknown type>";
 }
 
 std::string
@@ -355,6 +309,11 @@ class FunctionAnalyzer {
     }
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            error(tuple->loc,
+                  "tuple types are parsed, but tuple semantics are not implemented yet",
+                  "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
+        }
         auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
@@ -560,6 +519,16 @@ class FunctionAnalyzer {
         if (auto *unary = node->as<AstUnaryOper>()) {
             return analyzeUnaryOper(unary);
         }
+        if (node->is<AstTupleLiteral>()) {
+            error(node->loc,
+                  "tuple literals are parsed, but tuple semantics are not implemented yet",
+                  "This milestone only wires tuple syntax into the frontend. Tuple type checking and lowering will be added later.");
+        }
+        if (node->is<AstArrayInit>()) {
+            error(node->loc,
+                  "array initializers are parsed, but fixed-dimension array semantics are not implemented yet",
+                  "This milestone only wires array initializer syntax into the frontend. Array layout and lowering will be added later.");
+        }
         if (auto *selector = node->as<AstSelector>()) {
             return analyzeSelector(selector);
         }
@@ -577,8 +546,16 @@ class FunctionAnalyzer {
         case AstConst::Type::BOOL:
             return makeHIR<HIRValue>(new ConstVar(boolTy, *node->getBuf<bool>()),
                                      node->loc);
+        case AstConst::Type::FP32:
+            error(node->loc,
+                  "floating-point literals are parsed, but `f32` / `f64` semantics are not implemented yet",
+                  "This milestone only wires floating-point syntax into the frontend. Type checking and lowering will be added later.");
+        case AstConst::Type::STRING:
+            error(node->loc,
+                  "string literals are reserved, but runtime string semantics are not implemented yet",
+                  "String syntax is intentionally kept as a placeholder until the runtime representation is defined.");
         default:
-            error("only i32 and bool constants are supported");
+            error(node->loc, "unsupported constant literal");
         }
     }
 
@@ -673,11 +650,8 @@ class FunctionAnalyzer {
                       describeResolvedType(left->getType()) + ", right side is " +
                       describeResolvedType(right->getType()));
         }
-        if (left->getType() != i32Ty) {
-            error(node->loc, "binary operations currently only support i32 operands");
-        }
-
         TypeClass *resultType = i32Ty;
+        bool requiresI32 = true;
         switch (node->op) {
         case '+':
         case '-':
@@ -691,7 +665,29 @@ class FunctionAnalyzer {
             resultType = boolTy;
             break;
         default:
-            error("unsupported binary operator");
+            requiresI32 = false;
+            error(node->loc,
+                  "operator `" + toStdString(symbolToStr(node->op)) +
+                      "` is parsed, but semantic support is not implemented yet",
+                  "This milestone only normalizes the operator grammar and precedence table. Additional operator semantics will be added later.");
+        }
+
+        if (requiresI32 && left->getType() != i32Ty) {
+            error(node->loc, "binary operations currently only support i32 operands");
+        }
+
+        switch (node->op) {
+        case '+':
+        case '-':
+        case '*':
+        case '/':
+        case '<':
+        case '>':
+        case Parser::token::LOGIC_EQUAL:
+        case Parser::token::LOGIC_NOT_EQUAL:
+            break;
+        default:
+            break;
         }
 
         return makeHIR<HIRBinOper>(node->op, left, right, resultType, node->loc);
@@ -723,8 +719,10 @@ class FunctionAnalyzer {
                                          pointerType->getPointeeType(), node->loc);
         }
         default:
-            return makeHIR<HIRUnaryOper>(node->op, value, value->getType(),
-                                         node->loc);
+            error(node->loc,
+                  "operator `" + toStdString(symbolToStr(node->op)) +
+                      "` is parsed, but semantic support is not implemented yet",
+                  "This milestone only normalizes the operator grammar and precedence table. Additional operator semantics will be added later.");
         }
     }
 

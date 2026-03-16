@@ -49,6 +49,7 @@
 %token <token> CONST "literal" FIELD "identifier" RET "ret" TYPE "builtin type"
 %token <token> IMPORT_PATH "import path"
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
+%token LOGIC_LE "<=" LOGIC_GE ">=" SHIFT_LEFT "<<" SHIFT_RIGHT ">>"
 %token VAR "var"
 %token TRUE "true" FALSE "false"
 %token IF "if" ELSE "else" FOR "for"
@@ -57,16 +58,25 @@
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
+%token ASSIGN_MUL "*=" ASSIGN_DIV "/=" ASSIGN_MOD "%="
+%token ASSIGN_AND "&=" ASSIGN_XOR "^=" ASSIGN_OR "|="
+%token ASSIGN_SHL "<<=" ASSIGN_SHR ">>="
 
 %nonassoc type_suffix
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
-%right '=' ASSIGN_ADD ASSIGN_SUB
-%left LOGIC_EQUAL LOGIC_NOT_EQUAL 
-%left '&' '|'
-%left '<' '>'
+%right '=' ASSIGN_ADD ASSIGN_SUB ASSIGN_MUL ASSIGN_DIV ASSIGN_MOD
+%right ASSIGN_AND ASSIGN_XOR ASSIGN_OR ASSIGN_SHL ASSIGN_SHR
+%left LOGIC_OR
+%left LOGIC_AND
+%left '|'
+%left '^'
+%left '&'
+%left LOGIC_EQUAL LOGIC_NOT_EQUAL
+%left '<' '>' LOGIC_LE LOGIC_GE
+%left SHIFT_LEFT SHIFT_RIGHT
 %left '+' '-' // + -
-%left '*' '/' // * /
+%left '*' '/' '%' // * /
 %left '.'
 %left '(' ')' '[' ']'
 %right unary
@@ -75,15 +85,15 @@
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_statlist struct_stat stat_list stat
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
-%type <node> field_call
+%type <node> field_call tuple_literal array_init legacy_cast_expr
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
-%type <node> expr_paren single_value typed_value_operand field_selector func_pointer_expr
+%type <node> expr_paren single_value field_selector func_pointer_expr
 %type <typeNode> type_selector
 %type <node> var_decl var_def
 
-%type <typeNode> single_type ptr_type array_type base_type func_head type_name
+%type <typeNode> single_type ptr_type array_type base_type func_head type_name tuple_type
 
-%type <seq> expr_seq var_decl_seq
+%type <seq> expr_seq var_decl_seq array_init_seq
 %type <type_seq> type_name_seq
 
 %start pragram
@@ -215,6 +225,12 @@ struct_statlist
     : '{' struct_stat {
         $$ = new AstStatList($2);
     }
+    | '{' NEWLINE {
+        $$ = new AstStatList();
+    }
+    | struct_statlist NEWLINE {
+        $$ = $1;
+    }
     | struct_statlist struct_stat {
         $$ = $1;
         ($$)->as<AstStatList>()->push($2);
@@ -234,8 +250,11 @@ struct_stat
 var_def
     : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
     | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
+    | VAR var_decl '=' array_init { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
     | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
+    | VAR FIELD '=' array_init { $$ = new AstVarDef(*$2, $4); }
     | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
+    | FIELD ':' '=' array_init { $$ = new AstVarDef(*$1, $4); }
     ;
 
 /* expression */
@@ -265,6 +284,18 @@ expr_assign
     : expr_assign_left '=' expr { $$ = new AstAssign($1, $3); }
     | expr_assign_left ASSIGN_ADD expr { $$ = new AstAssign($1, new AstBinOper($1, '+', $3)); }
     | expr_assign_left ASSIGN_SUB expr { $$ = new AstAssign($1, new AstBinOper($1, '-', $3)); }
+    | expr_assign_left ASSIGN_MUL expr { $$ = new AstAssign($1, new AstBinOper($1, '*', $3)); }
+    | expr_assign_left ASSIGN_DIV expr { $$ = new AstAssign($1, new AstBinOper($1, '/', $3)); }
+    | expr_assign_left ASSIGN_MOD expr { $$ = new AstAssign($1, new AstBinOper($1, '%', $3)); }
+    | expr_assign_left ASSIGN_AND expr { $$ = new AstAssign($1, new AstBinOper($1, '&', $3)); }
+    | expr_assign_left ASSIGN_XOR expr { $$ = new AstAssign($1, new AstBinOper($1, '^', $3)); }
+    | expr_assign_left ASSIGN_OR expr { $$ = new AstAssign($1, new AstBinOper($1, '|', $3)); }
+    | expr_assign_left ASSIGN_SHL expr {
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_LEFT, $3));
+    }
+    | expr_assign_left ASSIGN_SHR expr {
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_RIGHT, $3));
+    }
     ;
 
 expr_assign_left
@@ -277,11 +308,20 @@ expr_binOp
     | expr '/' expr { $$ = new AstBinOper($1, '/', $3); }
     | expr '+' expr { $$ = new AstBinOper($1, '+', $3); }
     | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
+    | expr '%' expr { $$ = new AstBinOper($1, '%', $3); }
+    | expr SHIFT_LEFT expr { $$ = new AstBinOper($1, token::SHIFT_LEFT, $3); }
+    | expr SHIFT_RIGHT expr { $$ = new AstBinOper($1, token::SHIFT_RIGHT, $3); }
     | expr '<' expr { $$ = new AstBinOper($1, '<', $3); }
     | expr '>' expr { $$ = new AstBinOper($1, '>', $3); }
+    | expr LOGIC_LE expr { $$ = new AstBinOper($1, token::LOGIC_LE, $3); }
+    | expr LOGIC_GE expr { $$ = new AstBinOper($1, token::LOGIC_GE, $3); }
     | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
+    | expr '^' expr { $$ = new AstBinOper($1, '^', $3); }
+    | expr '|' expr { $$ = new AstBinOper($1, '|', $3); }
     | expr LOGIC_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_EQUAL, $3); }
     | expr LOGIC_NOT_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_NOT_EQUAL, $3); }
+    | expr LOGIC_AND expr { $$ = new AstBinOper($1, token::LOGIC_AND, $3); }
+    | expr LOGIC_OR expr { $$ = new AstBinOper($1, token::LOGIC_OR, $3); }
     ;
 
 expr_unary
@@ -301,28 +341,85 @@ expr_paren
     : '(' expr ')' { $$ = $2; }
     ;
 
-typed_value_operand
-    : FIELD { $$ = new AstField(*$1); }
-    | CONST { $$ = new AstConst(*$1); }
-    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
-    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
-    | expr_paren { $$ = $1; }
-    ;
-
 single_value
     : variable { $$ = $1; }
     | CONST { $$ = new AstConst(*$1); }
     | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
     | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
-    | TYPE typed_value_operand {
-        auto args = new std::vector<AstNode*>;
-        args->emplace_back($2);
-        $$ = new AstFieldCall(new AstField(*$1), args);
-    }
+    | legacy_cast_expr { $$ = $1; }
     | func_pointer_expr { $$ = $1; }
     | field_call { $$ = $1; }
     | expr_paren { $$ = $1; }
-    | '(' expr ',' expr_seq ')' {} // tuple
+    | tuple_literal { $$ = $1; }
+    ;
+
+legacy_cast_expr
+    : TYPE FIELD {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "lona doesn't support C-style cast syntax like `i32 value`.",
+            "Assignments use byte-copy semantics. Keep the original value, or call an explicit conversion helper such as `toInt(...)` when those helpers are added.");
+    }
+    | TYPE CONST {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "lona doesn't support C-style cast syntax like `i32 1`.",
+            "Assignments use byte-copy semantics. Use an explicit conversion helper instead of a cast expression.");
+    }
+    | TYPE TRUE {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "lona doesn't support C-style cast syntax like `bool true`.",
+            "Write the value directly, or use an explicit conversion helper when numeric conversion is required.");
+    }
+    | TYPE FALSE {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "lona doesn't support C-style cast syntax like `bool false`.",
+            "Write the value directly, or use an explicit conversion helper when numeric conversion is required.");
+    }
+    | TYPE expr_paren {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "lona doesn't support C-style cast syntax like `i32(expr)`.",
+            "Use normal assignment for byte-copy behavior. Explicit numeric conversion will be provided through helper functions instead of cast syntax.");
+    }
+    ;
+
+tuple_literal
+    : '(' expr ',' expr_seq ')' {
+        auto *items = $4;
+        items->insert(items->begin(), $2);
+        $$ = new AstTupleLiteral(@$, items);
+    }
+    ;
+
+array_init
+    : '{' '}' {
+        $$ = new AstArrayInit(@$, new std::vector<AstNode *>);
+    }
+    | '{' array_init_seq '}' {
+        $$ = new AstArrayInit(@$, $2);
+    }
+    ;
+
+array_init_seq
+    : expr {
+        $$ = new std::vector<AstNode *>;
+        $$->emplace_back($1);
+    }
+    | array_init {
+        $$ = new std::vector<AstNode *>;
+        $$->emplace_back($1);
+    }
+    | array_init_seq ',' expr {
+        $$ = $1;
+        $$->emplace_back($3);
+    }
+    | array_init_seq ',' array_init {
+        $$ = $1;
+        $$->emplace_back($3);
+    }
     ;
 
 func_pointer_expr
@@ -349,7 +446,7 @@ type_selector
         string name = $1->text;
         name += ".";
         name += $3->text;
-        $$ = new BaseTypeNode(name);
+        $$ = new BaseTypeNode(name, @$);
     }
     | type_selector '.' FIELD {
         auto *base = dynamic_cast<BaseTypeNode *>($1);
@@ -357,7 +454,7 @@ type_selector
         string name = base->name;
         name += ".";
         name += $3->text;
-        $$ = new BaseTypeNode(name);
+        $$ = new BaseTypeNode(name, @$);
     }
     ;
 

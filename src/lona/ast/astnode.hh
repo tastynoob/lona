@@ -36,35 +36,50 @@ const int pointerType_autoArray = 2;
 const int pointerType_fixedArray = 3;
 
 struct TypeNode {
+    location const loc;
+    explicit TypeNode(const location &loc = location()) : loc(loc) {}
     virtual ~TypeNode() = default;
 };
 
 struct BaseTypeNode : public TypeNode {
     string const name;
-    BaseTypeNode(string name) : name(name) {}
+    BaseTypeNode(string name, const location &loc = location())
+        : TypeNode(loc), name(name) {}
 };
 
 struct PointerTypeNode : public TypeNode {
     TypeNode *base;
     uint32_t dim;
 
-    PointerTypeNode(TypeNode *base, uint32_t dim = 1) : base(base), dim(dim) {}
+    PointerTypeNode(TypeNode *base, uint32_t dim = 1,
+                    const location &loc = location())
+        : TypeNode(loc), base(base), dim(dim) {}
 };
 
 struct ArrayTypeNode : public TypeNode {
     TypeNode *base;
     std::vector<AstNode*> dim;
 
-    ArrayTypeNode(TypeNode *base, std::vector<AstNode*> dim = {})
-        : base(base), dim(std::move(dim)) {}
+    ArrayTypeNode(TypeNode *base, std::vector<AstNode*> dim = {},
+                  const location &loc = location())
+        : TypeNode(loc), base(base), dim(std::move(dim)) {}
+};
+
+struct TupleTypeNode : public TypeNode {
+    std::vector<TypeNode *> items;
+
+    TupleTypeNode(std::vector<TypeNode *> items = {},
+                  const location &loc = location())
+        : TypeNode(loc), items(std::move(items)) {}
 };
 
 struct FuncTypeNode : public TypeNode {
     std::vector<TypeNode*> args;
     TypeNode* ret = nullptr;
 
-    FuncTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr)
-        : args(std::move(args)), ret(ret) {}
+    FuncTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr,
+                 const location &loc = location())
+        : TypeNode(loc), args(std::move(args)), ret(ret) {}
 };
 
 extern FuncTypeNode* findFuncTypeNode(TypeNode* node);
@@ -184,6 +199,28 @@ public:
     AstUnaryOper(token_type op, AstNode *expr);
     void toJson(Json &root) override;
 
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstTupleLiteral : public AstNode {
+public:
+    std::vector<AstNode *> *const items;
+
+    AstTupleLiteral(const location &loc, std::vector<AstNode *> *items)
+        : AstNode(loc), items(items) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstArrayInit : public AstNode {
+public:
+    std::vector<AstNode *> *const items;
+
+    AstArrayInit(const location &loc, std::vector<AstNode *> *items)
+        : AstNode(loc), items(items) {}
+
+    void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -354,6 +391,8 @@ public:
 
 class AstFieldCall : public AstNode {
 public:
+    // Generic parenthesis application node. The concrete meaning of `xxx(...)`
+    // is decided later during semantic analysis.
     AstNode *const value;
     std::vector<AstNode *> *const args = nullptr;
 

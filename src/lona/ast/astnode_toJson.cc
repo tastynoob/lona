@@ -1,57 +1,7 @@
 #include "astnode.hh"
+#include "type_node_string.hh"
 
 namespace lona {
-
-namespace {
-
-std::string
-typeNodeToString(TypeNode *node) {
-    if (node == nullptr) {
-        return "<unknown type>";
-    }
-    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        return std::string(base->name.tochara(), base->name.size());
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        auto name = typeNodeToString(pointer->base);
-        for (uint32_t i = 0; i < pointer->dim; ++i) {
-            name += "*";
-        }
-        return name;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto name = typeNodeToString(array->base);
-        name += "[";
-        for (size_t i = 0; i < array->dim.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (array->dim[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
-        return name;
-    }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
-        std::string name = "(";
-        for (size_t i = 0; i < func->args.size(); ++i) {
-            if (i != 0) {
-                name += ", ";
-            }
-            name += typeNodeToString(func->args[i]);
-        }
-        name += ")";
-        if (func->ret) {
-            name += " ";
-            name += typeNodeToString(func->ret);
-        }
-        return name;
-    }
-    return "<unknown type>";
-}
-
-}  // namespace
 
 void
 AstProgram::toJson(Json &root) {
@@ -97,7 +47,7 @@ AstFuncRef::toJson(Json &root) {
     root["args"] = Json::array();
     if (argTypes) {
         for (auto *argType : *argTypes) {
-            root["args"].push_back(typeNodeToString(argType));
+            root["args"].push_back(describeTypeNode(argType));
         }
     }
 }
@@ -130,6 +80,34 @@ AstUnaryOper::toJson(Json &root) {
 }
 
 void
+AstTupleLiteral::toJson(Json &root) {
+    root["type"] = "TupleLiteral";
+    root["items"] = Json::array();
+    if (!items) {
+        return;
+    }
+    for (auto *item : *items) {
+        Json child = Json::object();
+        item->toJson(child);
+        root["items"].push_back(child);
+    }
+}
+
+void
+AstArrayInit::toJson(Json &root) {
+    root["type"] = "ArrayInit";
+    root["items"] = Json::array();
+    if (!items) {
+        return;
+    }
+    for (auto *item : *items) {
+        Json child = Json::object();
+        item->toJson(child);
+        root["items"].push_back(child);
+    }
+}
+
+void
 AstStructDecl::toJson(Json &root) {
     root["type"] = "StructDecl";
     root["name"] = this->name.tochara();
@@ -147,9 +125,9 @@ void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
     root["field"] = this->field.tochara();
-    // if (typeHelper) {
-    //     root["typestr"] = typeHelper->toString();
-    // }
+    if (typeNode) {
+        root["declaredType"] = describeTypeNode(typeNode);
+    }
     if (right) {
         root["right"] = Json::object();
         this->right->toJson(root["right"]);
@@ -160,6 +138,9 @@ void
 AstVarDef::toJson(Json &root) {
     root["type"] = "VarDef";
     root["field"] = this->field.tochara();
+    if (this->typeNode != nullptr) {
+        root["declaredType"] = describeTypeNode(this->typeNode);
+    }
     if (this->initVal != nullptr) {
         root["init"] = Json::object();
         this->initVal->toJson(root["init"]);

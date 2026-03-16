@@ -5,8 +5,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/build/lona-ir"
 TMPDIR_LOCAL="${TMPDIR:-/tmp/claude-1000}"
 if [ ! -d "$TMPDIR_LOCAL" ]; then
-    TMPDIR_LOCAL="/tmp/claude-1000"
+    TMPDIR_LOCAL="/tmp/lona-bench"
 fi
+mkdir -p "$TMPDIR_LOCAL"
 
 if [ ! -x "$BIN" ]; then
     echo "missing compiler binary: $BIN" >&2

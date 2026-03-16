@@ -169,6 +169,22 @@ class FunctionResolver {
             resolveExpr(unary->expr);
             return;
         }
+        if (auto *tuple = dynamic_cast<const AstTupleLiteral *>(node)) {
+            if (tuple->items) {
+                for (auto *item : *tuple->items) {
+                    resolveExpr(item);
+                }
+            }
+            return;
+        }
+        if (auto *arrayInit = dynamic_cast<const AstArrayInit *>(node)) {
+            if (arrayInit->items) {
+                for (auto *item : *arrayInit->items) {
+                    resolveExpr(item);
+                }
+            }
+            return;
+        }
         if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
             resolveExpr(selector->parent);
             return;

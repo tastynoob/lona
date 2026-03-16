@@ -62,6 +62,7 @@ strToSymbol(const char *str) {
     if (strcmp(str, "-") == 0) return '-';
     if (strcmp(str, "*") == 0) return '*';
     if (strcmp(str, "/") == 0) return '/';
+    if (strcmp(str, "%") == 0) return '%';
     throw std::runtime_error("Invalid symbol");
 }
 
@@ -76,6 +77,8 @@ symbolToStr(int symbol) {
             return "*";
         case '/':
             return "/";
+        case '%':
+            return "%";
         case '<':
             return "<";
         case '>':
@@ -92,6 +95,14 @@ symbolToStr(int symbol) {
             return "==";
         case Parser::token::LOGIC_NOT_EQUAL:
             return "!=";
+        case Parser::token::LOGIC_LE:
+            return "<=";
+        case Parser::token::LOGIC_GE:
+            return ">=";
+        case Parser::token::SHIFT_LEFT:
+            return "<<";
+        case Parser::token::SHIFT_RIGHT:
+            return ">>";
         case Parser::token::LOGIC_AND:
             return "&&";
         case Parser::token::LOGIC_OR:

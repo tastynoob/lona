@@ -1,4 +1,5 @@
 #include "compilation_unit.hh"
+#include "lona/err/err.hh"
 #include "lona/type/type.hh"
 #include <cassert>
 #include <cstddef>
@@ -155,6 +156,14 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashTypeNode(seed, array->base);
         return;
     }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
+        hashText(seed, "tuple");
+        seed = combineHash(seed, tuple->items.size());
+        for (auto *item : tuple->items) {
+            hashTypeNode(seed, item);
+        }
+        return;
+    }
     if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
         hashText(seed, "func-type");
         seed = combineHash(seed, func->args.size());
@@ -220,6 +229,13 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         resolved = typeTable->createArrayType(elementType, array->dim);
         unit.cacheResolvedType(node, resolved);
         return resolved;
+    }
+
+    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Semantic, tuple->loc,
+            "tuple types are parsed, but tuple semantics are not implemented yet",
+            "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
     }
 
     if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {

@@ -2,6 +2,7 @@
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sym/func.hh"
@@ -257,53 +258,6 @@ emitDebugDeclare(DebugInfoContext *debug, FuncScope *scope, llvm::DIScope *dbgSc
 }
 
 std::string
-describeTypeNode(TypeNode *node) {
-    if (!node) {
-        return "void";
-    }
-    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        return toStdString(base->name);
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        auto name = describeTypeNode(pointer->base);
-        for (uint32_t i = 0; i < pointer->dim; ++i) {
-            name += "*";
-        }
-        return name;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto name = describeTypeNode(array->base);
-        name += "[";
-        for (size_t i = 0; i < array->dim.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (array->dim[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
-        return name;
-    }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
-        std::string name = "(";
-        for (size_t i = 0; i < func->args.size(); ++i) {
-            if (i != 0) {
-                name += ", ";
-            }
-            name += describeTypeNode(func->args[i]);
-        }
-        name += ")";
-        if (func->ret) {
-            name += " ";
-            name += describeTypeNode(func->ret);
-        }
-        return name;
-    }
-    return "<unknown type>";
-}
-
-std::string
 resolveTopLevelName(const CompilationUnit *unit, const string &name,
                     bool exportNamespace) {
     auto resolved = toStdString(name);
@@ -318,6 +272,11 @@ resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node)
     if (!typeMgr) {
         return nullptr;
     }
+    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+        error(tuple->loc,
+              "tuple types are parsed, but tuple semantics are not implemented yet",
+              "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
+    }
     return unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
 }
 
@@ -327,7 +286,7 @@ rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &conte
     if (!type || !type->as<FuncType>()) {
         return;
     }
-    error(loc, context + ": " + describeTypeNode(node),
+    error(loc, context + ": " + describeTypeNode(node, "void"),
           "Use an explicit function pointer type instead of a bare function type.");
 }
 
@@ -411,7 +370,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         if (!loretType) {
             error(node->loc,
                 "unknown return type for function `" + toStdString(func_name) +
-                "`: " + describeTypeNode(node->retType));
+                "`: " + describeTypeNode(node->retType, "void"));
         }
         rejectBareFunctionType(
             loretType, node->retType,
@@ -437,7 +396,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                     "unknown type for function parameter `" +
                     toStdString(varDecl->field) + "` in `" +
                     toStdString(func_name) + "`: " +
-                    describeTypeNode(varDecl->typeNode));
+                    describeTypeNode(varDecl->typeNode, "void"));
             }
             rejectBareFunctionType(
                 type, varDecl->typeNode,
@@ -506,7 +465,7 @@ class StructVisitor : public AstVisitorAny {
         if (!type) {
             error(node->loc, "unknown struct field type for `" +
                                  toStdString(name) + "`: " +
-                                 describeTypeNode(node->typeNode));
+                                 describeTypeNode(node->typeNode, "void"));
         }
         rejectBareFunctionType(
             type, node->typeNode,
@@ -706,6 +665,11 @@ class InterfaceCollector {
             }
             return interface_->getOrCreateArrayType(elementType, array->dim);
         }
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            error(tuple->loc,
+                  "tuple types are parsed, but tuple semantics are not implemented yet",
+                  "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
+        }
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
             argTypes.reserve(func->args.size());
@@ -768,7 +732,7 @@ class InterfaceCollector {
                         error(varDecl->loc,
                               "unknown struct field type for `" +
                                   toStdString(varDecl->field) + "`: " +
-                                  describeTypeNode(varDecl->typeNode));
+                                  describeTypeNode(varDecl->typeNode, "void"));
                     }
                     rejectBareFunctionType(
                         fieldType, varDecl->typeNode,
@@ -805,7 +769,7 @@ class InterfaceCollector {
                           "unknown type for function parameter `" +
                               toStdString(varDecl->field) + "` in `" +
                               toStdString(node->name) + "`: " +
-                              describeTypeNode(varDecl->typeNode));
+                              describeTypeNode(varDecl->typeNode, "void"));
                 }
                 rejectBareFunctionType(
                     argType, varDecl->typeNode,
@@ -824,7 +788,7 @@ class InterfaceCollector {
                 error(node->loc,
                       "unknown return type for function `" +
                           toStdString(node->name) + "`: " +
-                          describeTypeNode(node->retType));
+                          describeTypeNode(node->retType, "void"));
             }
             rejectBareFunctionType(
                 retType, node->retType,
