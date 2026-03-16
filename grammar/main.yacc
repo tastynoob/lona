@@ -84,7 +84,7 @@
 %type <typeNode> single_type ptr_type array_type base_type func_head type_name
 
 %type <seq> expr_seq var_decl_seq
-%type <type_seq> type_name_seq bare_type_seq
+%type <type_seq> type_name_seq
 
 %start pragram
 
@@ -113,7 +113,6 @@ pragram_statlist
 pragram_stat
     : stat { $$ = $1; }
     | import_stat { $$ = $1; }
-    | bare_type_seq NEWLINE { $$ = new AstStatList(); }
     ;
 
 import_stat
