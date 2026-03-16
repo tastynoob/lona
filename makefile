@@ -1,4 +1,8 @@
 ROOT ?= .
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+INSTALL ?= install
+PYTHON ?= python3
 
 CXX ?= ccache clang++
 CXXFLAGS := -std=c++20 -g
@@ -20,7 +24,7 @@ PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
 SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
 FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
 LIBRARY_SOURCE_FILES = $(filter-out $(ROOT)/src/main.cc,$(SOURCE_FILES))
-INCREMENTAL_SMOKE_SOURCES = $(ROOT)/tests/incremental_smoke.cc
+SESSION_RUNNER_SOURCES = $(ROOT)/tests/session_runner.cc
 
 LIBS = $(shell llvm-config-18 --libs core native asmparser linker)
 
@@ -30,10 +34,10 @@ CXXFLAGS += $(shell llvm-config-18 --cppflags)
 OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
 FRONTEND_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(FRONTEND_SOURCE_FILES))
 LIBRARY_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(LIBRARY_SOURCE_FILES))
-INCREMENTAL_SMOKE_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(INCREMENTAL_SMOKE_SOURCES))
+SESSION_RUNNER_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SESSION_RUNNER_SOURCES))
 target = $(OUT_DIR)/lona
 frontend_target = $(OUT_DIR)/lona-frontend
-incremental_smoke_target = $(OUT_DIR)/incremental_smoke
+session_runner_target = $(OUT_DIR)/lona-session-runner
 
 # require llvm-18
 ifeq ($(shell llvm-config-18 --version),)
@@ -48,7 +52,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke
+.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke install uninstall
 
 default:
 	mkdir -p build
@@ -66,8 +70,15 @@ test: acceptance bench_smoke incremental_smoke
 bench_smoke: $(target)
 	bash $(ROOT)/scripts/benchmark_smoke.sh
 
-incremental_smoke: $(incremental_smoke_target)
-	$(incremental_smoke_target)
+incremental_smoke: $(session_runner_target)
+	$(PYTHON) $(ROOT)/tests/incremental_smoke.py --runner $(session_runner_target)
+
+install: $(target)
+	$(INSTALL) -d $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/lona
 
 $(target): $(OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
@@ -75,7 +86,7 @@ $(target): $(OBJECTS)
 $(frontend_target): $(FRONTEND_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
-$(incremental_smoke_target): $(LIBRARY_OBJECTS) $(INCREMENTAL_SMOKE_OBJECTS)
+$(session_runner_target): $(LIBRARY_OBJECTS) $(SESSION_RUNNER_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
 $(OUT_DIR)/%.d: %.cc | $(GENERATED_PARSER_HEADERS)
@@ -89,7 +100,7 @@ $(OUT_DIR)/%.o: %.cc | $(GENERATED_PARSER_HEADERS)
 ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 -include $(OBJECTS:.o=.d)
 -include $(FRONTEND_OBJECTS:.o=.d)
--include $(INCREMENTAL_SMOKE_OBJECTS:.o=.d)
+-include $(SESSION_RUNNER_OBJECTS:.o=.d)
 endif
 
 $(GENERATED_LEXER_SOURCE): $(LEX_FILE) $(OUT_DIR)/parser.hh
