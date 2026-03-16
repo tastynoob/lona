@@ -1,6 +1,8 @@
 ROOT ?= .
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
+DATADIR ?= $(PREFIX)/share/lona
+RUNTIMEDIR ?= $(DATADIR)/runtime/linux_x86_64
 INSTALL ?= install
 PYTHON ?= python3
 
@@ -35,8 +37,8 @@ OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
 FRONTEND_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(FRONTEND_SOURCE_FILES))
 LIBRARY_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(LIBRARY_SOURCE_FILES))
 SESSION_RUNNER_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SESSION_RUNNER_SOURCES))
-target = $(OUT_DIR)/lona
-frontend_target = $(OUT_DIR)/lona-frontend
+target = $(OUT_DIR)/lona-ir
+frontend_target = $(OUT_DIR)/lona-ir-frontend
 session_runner_target = $(OUT_DIR)/lona-session-runner
 
 # require llvm-18
@@ -52,7 +54,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke install uninstall
+.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke native_smoke hosted_smoke install uninstall
 
 default:
 	mkdir -p build
@@ -65,7 +67,7 @@ frontend: $(frontend_target)
 acceptance: $(target)
 	bash $(ROOT)/scripts/acceptance.sh
 
-test: acceptance bench_smoke incremental_smoke
+test: acceptance bench_smoke incremental_smoke hosted_smoke native_smoke
 
 bench_smoke: $(target)
 	bash $(ROOT)/scripts/benchmark_smoke.sh
@@ -73,12 +75,27 @@ bench_smoke: $(target)
 incremental_smoke: $(session_runner_target)
 	$(PYTHON) $(ROOT)/tests/incremental_smoke.py --runner $(session_runner_target)
 
+native_smoke: $(target)
+	bash $(ROOT)/scripts/native_smoke.sh
+
+hosted_smoke: $(target)
+	bash $(ROOT)/scripts/hosted_smoke.sh
+
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona
+	$(INSTALL) -d $(DESTDIR)$(RUNTIMEDIR)
+	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona-ir
+	$(INSTALL) -m 755 $(ROOT)/scripts/lac.sh $(DESTDIR)$(BINDIR)/lac
+	$(INSTALL) -m 755 $(ROOT)/scripts/lac-native.sh $(DESTDIR)$(BINDIR)/lac-native
+	$(INSTALL) -m 644 $(ROOT)/runtime/linux_x86_64/lona_start.S $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
+	$(INSTALL) -m 644 $(ROOT)/runtime/linux_x86_64/lona.ld $(DESTDIR)$(RUNTIMEDIR)/lona.ld
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/lona
+	rm -f $(DESTDIR)$(BINDIR)/lona-ir
+	rm -f $(DESTDIR)$(BINDIR)/lac
+	rm -f $(DESTDIR)$(BINDIR)/lac-native
+	rm -f $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
+	rm -f $(DESTDIR)$(RUNTIMEDIR)/lona.ld
 
 $(target): $(OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@

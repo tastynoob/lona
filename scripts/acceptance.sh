@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/build/lona"
+BIN="$ROOT/build/lona-ir"
 INPUT="$ROOT/tests/fixtures/acceptance_main.lo"
 TMPDIR_LOCAL="${TMPDIR:-/tmp/claude-1000}"
 if [ ! -d "$TMPDIR_LOCAL" ]; then

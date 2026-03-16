@@ -96,6 +96,75 @@ parseArtifactModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) 
                           render);
 }
 
+llvm::Function *
+findExecutableEntryTarget(llvm::Module &module, const CompilationUnit &rootUnit) {
+    const std::string topLevelEntryName = rootUnit.path() + ".main";
+    if (auto *topLevelEntry = module.getFunction(topLevelEntryName)) {
+        return topLevelEntry;
+    }
+
+    auto *mainFunc = module.getFunction("main");
+    if (mainFunc == nullptr) {
+        return nullptr;
+    }
+
+    auto *funcType = mainFunc->getFunctionType();
+    if (funcType->getNumParams() != 0 ||
+        !funcType->getReturnType()->isIntegerTy(32)) {
+        return nullptr;
+    }
+    return mainFunc;
+}
+
+void
+ensureExecutableEntryWrapper(llvm::Module &module, const CompilationUnit &rootUnit) {
+    constexpr const char *wrapperName = "__lona_entry__";
+    if (module.getFunction(wrapperName) != nullptr) {
+        return;
+    }
+
+    auto *target = findExecutableEntryTarget(module, rootUnit);
+    if (target == nullptr) {
+        return;
+    }
+
+    auto &context = module.getContext();
+    auto *wrapperType =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+    auto *wrapper = llvm::Function::Create(
+        wrapperType, llvm::Function::ExternalLinkage, wrapperName, module);
+    auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
+    llvm::IRBuilder<> builder(entry);
+    builder.CreateRet(builder.CreateCall(target));
+}
+
+void
+ensureHostedMainWrapper(llvm::Module &module) {
+    auto *mainFunc = module.getFunction("main");
+    if (mainFunc != nullptr) {
+        auto *funcType = mainFunc->getFunctionType();
+        if (funcType->getNumParams() == 0 &&
+            funcType->getReturnType()->isIntegerTy(32)) {
+            return;
+        }
+        return;
+    }
+
+    auto *entryFunc = module.getFunction("__lona_entry__");
+    if (entryFunc == nullptr) {
+        return;
+    }
+
+    auto &context = module.getContext();
+    auto *mainType =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+    auto *wrapper = llvm::Function::Create(
+        mainType, llvm::Function::ExternalLinkage, "main", module);
+    auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
+    llvm::IRBuilder<> builder(entry);
+    builder.CreateRet(builder.CreateCall(entryFunc));
+}
+
 void
 appendHIRFunctions(HIRModule &target, const HIRModule &source) {
     for (auto *func : source.getFunctions()) {
@@ -276,6 +345,9 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
                 "Check for duplicate IR symbols or incompatible LLVM module state.");
         }
     }
+
+    ensureExecutableEntryWrapper(*linkedModule, rootUnit);
+    ensureHostedMainWrapper(*linkedModule);
 
     if (verifyIR) {
         auto verifyStart = Clock::now();
