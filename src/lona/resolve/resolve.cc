@@ -2,6 +2,7 @@
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/sym/func.hh"
+#include "lona/sym/object.hh"
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
 #include <cassert>
@@ -121,6 +122,15 @@ class FunctionResolver {
                 error(field->loc,
                       "undefined identifier `" + toStdString(field->name) + "`",
                       "Declare it with `var` before using it, or check the spelling.");
+            }
+            if (globalObject->as<ModuleObject>() &&
+                (!unit_ || !unit_->importsModule(toStdString(field->name)))) {
+                error(field->loc,
+                      "module `" + toStdString(field->name) +
+                          "` is not directly imported here",
+                      "Add an explicit `import " + toStdString(field->name) +
+                          "` in this file before using `" +
+                          toStdString(field->name) + ".xxx`.");
             }
             resolved_.bindField(field,
                                 ResolvedValueRef::global(toStdString(field->name)));

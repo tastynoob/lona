@@ -2,12 +2,26 @@
 #include "lona/err/err.hh"
 #include "lona/source/source_manager.hh"
 #include <algorithm>
+#include <unordered_set>
 #include <utility>
 
 namespace lona {
 namespace {
 
 const std::vector<std::string> kEmptyDependencies;
+
+void
+collectPostOrder(const ModuleGraph &moduleGraph, const std::string &path,
+                 std::unordered_set<std::string> &visited,
+                 std::vector<std::string> &ordered) {
+    if (!visited.emplace(path).second) {
+        return;
+    }
+    for (const auto &dependency : moduleGraph.dependenciesOf(path)) {
+        collectPostOrder(moduleGraph, dependency, visited, ordered);
+    }
+    ordered.push_back(path);
+}
 
 }
 
@@ -37,14 +51,6 @@ ModuleGraph::getOrCreate(const SourceBuffer &source) {
             std::make_unique<CompilationUnit>(source)));
     if (inserted.second) {
         const auto &moduleName = inserted.first->second->unit->moduleName();
-        auto existing = moduleNameToPath_.find(moduleName);
-        if (existing != moduleNameToPath_.end() && existing->second != source.path()) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Semantic,
-                "module name `" + moduleName + "` is ambiguous between `" +
-                    existing->second + "` and `" + source.path() + "`.",
-                "Rename one of the files so imported modules have distinct base names.");
-        }
         moduleNameToPath_[moduleName] = source.path();
         loadOrder_.push_back(source.path());
     } else {
@@ -116,10 +122,30 @@ ModuleGraph::root() const {
 }
 
 void
+ModuleGraph::resetDependencies(const std::string &path) {
+    auto &dependencies = requireRecord(path).dependencies;
+    for (const auto &dependency : dependencies) {
+        auto reverse = reverseDependencies_.find(dependency);
+        if (reverse == reverseDependencies_.end()) {
+            continue;
+        }
+        auto &dependents = reverse->second;
+        dependents.erase(
+            std::remove(dependents.begin(), dependents.end(), path),
+            dependents.end());
+        if (dependents.empty()) {
+            reverseDependencies_.erase(reverse);
+        }
+    }
+    dependencies.clear();
+}
+
+void
 ModuleGraph::addDependency(const std::string &path, std::string dependencyPath) {
     auto &dependencies = requireRecord(path).dependencies;
     if (std::find(dependencies.begin(), dependencies.end(), dependencyPath) ==
         dependencies.end()) {
+        reverseDependencies_[dependencyPath].push_back(path);
         dependencies.push_back(std::move(dependencyPath));
     }
 }
@@ -131,6 +157,27 @@ ModuleGraph::dependenciesOf(const std::string &path) const {
         return kEmptyDependencies;
     }
     return found->second->dependencies;
+}
+
+const std::vector<std::string> &
+ModuleGraph::dependentsOf(const std::string &path) const {
+    auto found = reverseDependencies_.find(path);
+    if (found == reverseDependencies_.end()) {
+        return kEmptyDependencies;
+    }
+    return found->second;
+}
+
+std::vector<std::string>
+ModuleGraph::postOrderFrom(const std::string &path) const {
+    if (find(path) == nullptr) {
+        return {};
+    }
+
+    std::unordered_set<std::string> visited;
+    std::vector<std::string> ordered;
+    collectPostOrder(*this, path, visited, ordered);
+    return ordered;
 }
 
 }  // namespace lona

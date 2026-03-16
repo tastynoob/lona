@@ -1,5 +1,6 @@
 #include "source_manager.hh"
 #include "lona/err/err.hh"
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -19,6 +20,14 @@ splitLines(const std::string &content) {
         lines.push_back(content);
     }
     return lines;
+}
+
+std::string
+normalizeSourcePath(const std::string &path) {
+    if (path.empty()) {
+        return path;
+    }
+    return std::filesystem::path(path).lexically_normal().string();
 }
 
 }  // namespace
@@ -44,15 +53,12 @@ SourceBuffer::resetContent(std::string content) {
 
 const SourceBuffer &
 SourceManager::loadFile(const std::string &path) {
-    if (const auto *existing = find(path)) {
-        return *existing;
-    }
-
-    std::ifstream input(path);
+    auto normalizedPath = normalizeSourcePath(path);
+    std::ifstream input(normalizedPath);
     if (!input) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "I couldn't open input file `" + path + "`.",
+            "I couldn't open input file `" + normalizedPath + "`.",
             "Check that the path exists and that you have read permission.");
     }
 
@@ -61,26 +67,30 @@ SourceManager::loadFile(const std::string &path) {
     if (!input.good() && !input.eof()) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "I couldn't read input file `" + path + "`.",
+            "I couldn't read input file `" + normalizedPath + "`.",
             "Check that the file is readable and not truncated.");
     }
 
-    return addSource(path, buffer.str());
+    return addSource(normalizedPath, buffer.str());
 }
 
 const SourceBuffer &
 SourceManager::addSource(std::string path, std::string content) {
-    auto inserted = sources_.emplace(
-        path, std::make_unique<SourceBuffer>(path, std::move(content)));
-    if (!inserted.second) {
-        inserted.first->second->resetContent(std::move(content));
+    path = normalizeSourcePath(path);
+    auto found = sources_.find(path);
+    if (found != sources_.end()) {
+        found->second->resetContent(std::move(content));
+        return *found->second;
     }
+
+    auto buffer = std::make_unique<SourceBuffer>(path, std::move(content));
+    auto inserted = sources_.emplace(path, std::move(buffer));
     return *inserted.first->second;
 }
 
 const SourceBuffer *
 SourceManager::find(const std::string &path) const {
-    auto found = sources_.find(path);
+    auto found = sources_.find(normalizeSourcePath(path));
     if (found == sources_.end()) {
         return nullptr;
     }

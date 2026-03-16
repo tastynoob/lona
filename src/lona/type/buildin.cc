@@ -109,62 +109,46 @@ FLoatType* f32Ty = nullptr;
 FLoatType* f64Ty = nullptr;
 BoolType* boolTy = nullptr;
 PointerType* strTy = nullptr;
+namespace {
+std::size_t activeBuiltinTableId = 0;
+}
 
 void
 initBuildinType(Scope* scope) {
+    auto *typeTable = scope ? scope->types() : nullptr;
+    if (!typeTable) {
+        return;
+    }
 
-    if (!u8Ty) {
+    if (activeBuiltinTableId != typeTable->instanceId()) {
+        activeBuiltinTableId = typeTable->instanceId();
         u8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::U8, "u8");
-    }
-    if (!i8Ty) {
         i8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::I8, "i8");
-    }
-    if (!u16Ty) {
         u16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::U16, "u16");
-    }
-    if (!i16Ty) {
         i16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::I16, "i16");
-    }
-    if (!u32Ty) {
         u32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::U32, "u32");
-    }
-    if (!i32Ty) {
         i32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::I32, "i32");
-    }
-    if (!u64Ty) {
         u64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::U64, "u64");
-    }
-    if (!i64Ty) {
         i64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::I64, "i64");
-    }
-    if (!f32Ty) {
         f32Ty = new FLoatType(scope->builder.getFloatTy(), BaseType::F32, "f32");
-    }
-    if (!f64Ty) {
         f64Ty = new FLoatType(scope->builder.getDoubleTy(), BaseType::F64, "f64");
-    }
-    if (!boolTy) {
         boolTy = new BoolType(scope->builder.getInt1Ty());
+        strTy = typeTable->createPointerType(i8Ty);
     }
 
-    if (auto *typeTable = scope->types()) {
-        if (!strTy) {
-            strTy = typeTable->createPointerType(i8Ty);
-        }
-        typeTable->addType(string("u8"), u8Ty);
-        typeTable->addType(string("i8"), i8Ty);
-        typeTable->addType(string("u16"), u16Ty);
-        typeTable->addType(string("i16"), i16Ty);
-        typeTable->addType(string("u32"), u32Ty);
-        typeTable->addType(string("i32"), i32Ty);
-        typeTable->addType(string("u64"), u64Ty);
-        typeTable->addType(string("i64"), i64Ty);
-        typeTable->addType(string("int"), i32Ty);
-        typeTable->addType(string("uint"), u32Ty);
-        typeTable->addType(string("f32"), f32Ty);
-        typeTable->addType(string("f64"), f64Ty);
-        typeTable->addType(string("bool"), boolTy);
-        typeTable->addType(string("str"), strTy);
-    }
+    typeTable->addType(string("u8"), u8Ty);
+    typeTable->addType(string("i8"), i8Ty);
+    typeTable->addType(string("u16"), u16Ty);
+    typeTable->addType(string("i16"), i16Ty);
+    typeTable->addType(string("u32"), u32Ty);
+    typeTable->addType(string("i32"), i32Ty);
+    typeTable->addType(string("u64"), u64Ty);
+    typeTable->addType(string("i64"), i64Ty);
+    typeTable->addType(string("int"), i32Ty);
+    typeTable->addType(string("uint"), u32Ty);
+    typeTable->addType(string("f32"), f32Ty);
+    typeTable->addType(string("f64"), f64Ty);
+    typeTable->addType(string("bool"), boolTy);
+    typeTable->addType(string("str"), strTy);
 }
 }

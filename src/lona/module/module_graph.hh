@@ -22,6 +22,7 @@ class ModuleGraph {
 
     std::unordered_map<std::string, std::unique_ptr<ModuleRecord>> records_;
     std::unordered_map<std::string, std::string> moduleNameToPath_;
+    std::unordered_map<std::string, std::vector<std::string>> reverseDependencies_;
     std::vector<std::string> loadOrder_;
     std::string rootPath_;
 
@@ -39,8 +40,11 @@ public:
     CompilationUnit *root();
     const CompilationUnit *root() const;
 
+    void resetDependencies(const std::string &path);
     void addDependency(const std::string &path, std::string dependencyPath);
     const std::vector<std::string> &dependenciesOf(const std::string &path) const;
+    const std::vector<std::string> &dependentsOf(const std::string &path) const;
+    std::vector<std::string> postOrderFrom(const std::string &path) const;
     const std::vector<std::string> &loadOrder() const { return loadOrder_; }
 };
 

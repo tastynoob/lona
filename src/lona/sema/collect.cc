@@ -673,6 +673,7 @@ collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespa
     }
     TypeCollector(requireTypeTable(global), global, unit.syntaxTree(), &unit,
                   exportNamespace);
+    unit.markInterfaceCollected(exportNamespace);
 }
 
 StructType *

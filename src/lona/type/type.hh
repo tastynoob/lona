@@ -256,17 +256,25 @@ class TypeTable {
             : type(type), pointer(nullptr), array(nullptr) {}
     };
 
+    static std::size_t nextInstanceId() {
+        static std::size_t nextId = 1;
+        return nextId++;
+    }
+
     llvm::Module& module;
+    std::size_t instanceId_;
 
     llvm::StringMap<TypeMap> typeMap;
 
     
 
 public:
-    TypeTable(llvm::Module& module) : module(module) {}
+    TypeTable(llvm::Module& module)
+        : module(module), instanceId_(nextInstanceId()) {}
 
     llvm::LLVMContext& getContext() { return module.getContext(); }
     llvm::Module& getModule() { return module; }
+    std::size_t instanceId() const { return instanceId_; }
 
     bool addType(llvm::StringRef name, TypeClass *type) {
         if (typeMap.find(name) != typeMap.end()) {

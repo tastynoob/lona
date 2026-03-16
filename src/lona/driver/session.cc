@@ -11,16 +11,19 @@
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
+#include <llvm/AsmParser/Parser.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/PassManager.h>
 #include <llvm-18/llvm/IR/Verifier.h>
+#include <llvm/Linker/Linker.h>
 #include <llvm-18/llvm/Passes/OptimizationLevel.h>
 #include <llvm-18/llvm/Passes/PassBuilder.h>
-#include <llvm-18/llvm/Support/raw_ostream.h>
+#include <llvm/Support/SourceMgr.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace lona {
@@ -31,7 +34,6 @@ double
 elapsedMillis(Clock::time_point start, Clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
-
 
 llvm::OptimizationLevel
 getOptimizationLevel(int optLevel) {
@@ -82,6 +84,24 @@ verifyCompiledModule(llvm::Module &module, std::ostream &out) {
     verifyOut.flush();
     out << verifyErrors;
     return false;
+}
+
+std::unique_ptr<llvm::Module>
+parseArtifactModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) {
+    llvm::SMDiagnostic error;
+    auto module = llvm::parseAssemblyString(artifact.llvmIR(), error, context);
+    if (module) {
+        return module;
+    }
+
+    std::string render;
+    llvm::raw_string_ostream renderOut(render);
+    error.print(artifact.path().c_str(), renderOut);
+    renderOut.flush();
+    throw DiagnosticError(DiagnosticError::Category::Internal,
+                          "failed to parse cached LLVM IR for module `" +
+                              artifact.path() + "`",
+                          render);
 }
 
 AstNode *
@@ -173,42 +193,37 @@ isAllowedImportedTopLevelNode(AstNode *node) {
 
 CompilerSession::CompilerSession()
     : diagnostics_(&sourceManager_),
+      moduleExecutor_(createSerialModuleExecutor()),
       irPipeline_(std::make_unique<CompilePipeline>()) {
     irPipeline_->addStage("collect-declarations", [this](IRPipelineContext &context) {
         auto start = Clock::now();
-        for (auto it = context.moduleGraph.loadOrder().rbegin();
-             it != context.moduleGraph.loadOrder().rend(); ++it) {
-            auto *loadedUnit = moduleGraph_.find(*it);
+        const bool exportEntryNamespace =
+            context.rootUnit && context.rootUnit->path() != context.entryUnit.path();
+        for (const auto &dependencyPath :
+             context.moduleGraph.dependenciesOf(context.entryUnit.path())) {
+            auto *loadedUnit = moduleGraph_.find(dependencyPath);
             if (loadedUnit == nullptr) {
                 throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module graph load order references a missing unit",
+                                      "module graph dependency references a missing unit",
                                       "This looks like a compiler module graph bug.");
             }
             validateImportedUnit(*loadedUnit);
-            collectUnitDeclarations(
-                &context.build.global, *loadedUnit,
-                context.rootUnit && context.rootUnit->path() != loadedUnit->path());
+            collectUnitDeclarations(&context.build.global, *loadedUnit, true);
         }
+        collectUnitDeclarations(&context.build.global, context.entryUnit,
+                                exportEntryNamespace);
         context.stats.declarationMs += elapsedMillis(start, Clock::now());
         return 0;
     });
 
     irPipeline_->addStage("lower-hir", [this](IRPipelineContext &context) {
         auto start = Clock::now();
-        for (const auto &path : context.moduleGraph.loadOrder()) {
-            auto *loadedUnit = moduleGraph_.find(path);
-            if (loadedUnit == nullptr) {
-                throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module graph load order references a missing unit",
-                                      "This looks like a compiler module graph bug.");
-            }
-            auto resolved =
-                resolveModule(&context.build.global, loadedUnit->syntaxTree(), loadedUnit);
-            auto hirModule =
-                analyzeModule(&context.build.global, *resolved, loadedUnit);
-            appendHIRFunctions(context.programHIR, *hirModule);
-            context.loweredModules.push_back(std::move(hirModule));
-        }
+        auto resolved = resolveModule(&context.build.global, context.entryUnit.syntaxTree(),
+                                      &context.entryUnit);
+        auto hirModule =
+            analyzeModule(&context.build.global, *resolved, &context.entryUnit);
+        appendHIRFunctions(context.programHIR, *hirModule);
+        context.loweredModules.push_back(std::move(hirModule));
         context.stats.lowerMs += elapsedMillis(start, Clock::now());
         return 0;
     });
@@ -258,7 +273,10 @@ CompilerSession::loadSource(const std::string &path) {
 CompilationUnit &
 CompilerSession::loadUnit(const std::string &path) {
     const auto &source = loadSource(path);
-    return moduleGraph_.getOrCreate(source);
+    auto &unit = moduleGraph_.getOrCreate(source);
+    unit.attachInterface(
+        moduleCache_.getOrCreate(source, unit.moduleKey(), unit.moduleName()));
+    return unit;
 }
 
 CompilationUnit &
@@ -290,6 +308,8 @@ CompilerSession::discoverUnitDependencies(CompilationUnit &unit) {
         return;
     }
 
+    moduleGraph_.resetDependencies(unit.path());
+    unit.clearImportedModules();
     auto *body = requireTopLevelBody(unit);
     for (auto *stmt : body->getBody()) {
         auto *importNode = dynamic_cast<AstImport *>(stmt);
@@ -307,29 +327,36 @@ CompilerSession::discoverUnitDependencies(CompilationUnit &unit) {
                 "Rename the file so its base name matches identifier syntax.");
         }
         moduleGraph_.addDependency(unit.path(), dependencyUnit.path());
+        unit.addImportedModule(dependencyUnit.moduleName(), dependencyUnit);
     }
     unit.markDependenciesScanned();
 }
 
 void
 CompilerSession::parseLoadedUnits() {
-    std::size_t index = 0;
-    while (index < moduleGraph_.loadOrder().size()) {
-        auto *unit = moduleGraph_.find(moduleGraph_.loadOrder()[index]);
-        if (unit == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module graph load order references a missing unit",
-                                  "This looks like a compiler module graph bug.");
-        }
+    auto *root = moduleGraph_.root();
+    if (root == nullptr) {
+        return;
+    }
+
+    std::vector<std::string> pending = {root->path()};
+    std::unordered_set<std::string> queued = {root->path()};
+    for (std::size_t index = 0; index < pending.size(); ++index) {
+        auto &loadedUnit = loadUnit(pending[index]);
         auto parseStart = Clock::now();
-        auto *tree = parseUnit(*unit);
+        auto *tree = parseUnit(loadedUnit);
         lastStats_.parseMs += elapsedMillis(parseStart, Clock::now());
         if (tree == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Syntax,
                                   "I couldn't parse this file.");
         }
-        discoverUnitDependencies(*unit);
-        ++index;
+        discoverUnitDependencies(loadedUnit);
+        for (const auto &dependencyPath :
+             moduleGraph_.dependenciesOf(loadedUnit.path())) {
+            if (queued.emplace(dependencyPath).second) {
+                pending.push_back(dependencyPath);
+            }
+        }
     }
 }
 
@@ -362,12 +389,147 @@ CompilerSession::emitJson(const CompilationUnit &unit, std::ostream &out) const 
     return 0;
 }
 
+std::unordered_map<std::string, std::uint64_t>
+CompilerSession::collectDependencyInterfaceHashes(const CompilationUnit &unit) const {
+    std::unordered_map<std::string, std::uint64_t> hashes;
+    for (const auto &dependencyPath : moduleGraph_.dependenciesOf(unit.path())) {
+        auto *dependency = moduleGraph_.find(dependencyPath);
+        if (dependency == nullptr) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "module graph dependency references a missing unit",
+                                  "This looks like a compiler module graph bug.");
+        }
+        hashes.emplace(dependency->moduleKey(), dependency->interfaceHash());
+    }
+    return hashes;
+}
+
+bool
+CompilerSession::canReuseArtifact(const CompilationUnit &unit,
+                                  const ModuleArtifact &artifact) const {
+    if (artifact.sourceHash() != unit.sourceHash() ||
+        artifact.interfaceHash() != unit.interfaceHash() ||
+        artifact.implementationHash() != unit.implementationHash()) {
+        return false;
+    }
+
+    return artifact.dependencyInterfaceHashes() ==
+        collectDependencyInterfaceHashes(unit);
+}
+
 int
-CompilerSession::emitIR(const CompilationUnit &unit,
-                        const CompileOptions &options, std::ostream &out) {
-    IRPipelineContext context(unit, moduleGraph_, options, out, lastStats_);
+CompilerSession::compileModuleArtifact(CompilationUnit &unit,
+                                       const CompileOptions &options,
+                                       ModuleArtifact &artifact,
+                                       std::ostream &out) {
+    std::ostringstream ir;
+    IRPipelineContext context(unit, moduleGraph_, options, ir, lastStats_);
     context.rootUnit = moduleGraph_.root();
-    return irPipeline_->run(context);
+    int exitCode = irPipeline_->run(context);
+    if (exitCode == 0) {
+        unit.markCompiled();
+        artifact.setLLVMIR(ir.str());
+        ++lastStats_.compiledModules;
+    } else {
+        out << ir.str();
+    }
+    return exitCode;
+}
+
+int
+CompilerSession::emitIR(CompilationUnit &unit, const CompileOptions &options,
+                        std::ostream &out) {
+    buildQueue_.reset(moduleGraph_, unit.path());
+    int exitCode = moduleExecutor_->execute(
+        buildQueue_, [&](const std::string &path) -> int {
+            auto *queuedUnit = moduleGraph_.find(path);
+            if (queuedUnit == nullptr) {
+                throw DiagnosticError(DiagnosticError::Category::Internal,
+                                      "module build queue references a missing unit",
+                                      "This looks like a compiler module queue bug.");
+            }
+
+            auto dependencyHashes = collectDependencyInterfaceHashes(*queuedUnit);
+            auto existing = moduleArtifacts_.find(queuedUnit->path());
+            if (existing != moduleArtifacts_.end() &&
+                canReuseArtifact(*queuedUnit, existing->second)) {
+                queuedUnit->markCompiled();
+                ++lastStats_.reusedModules;
+                return 0;
+            }
+
+            ModuleArtifact artifact(queuedUnit->path(), queuedUnit->moduleKey(),
+                                    queuedUnit->moduleName(), queuedUnit->sourceHash(),
+                                    queuedUnit->interfaceHash(),
+                                    queuedUnit->implementationHash());
+            artifact.setDependencyInterfaceHashes(std::move(dependencyHashes));
+            int exitCode =
+                compileModuleArtifact(*queuedUnit, options, artifact, out);
+            if (exitCode != 0) {
+                return exitCode;
+            }
+            moduleArtifacts_[queuedUnit->path()] = std::move(artifact);
+            return 0;
+        });
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    return linkArtifacts(unit, options, out);
+}
+
+int
+CompilerSession::linkArtifacts(const CompilationUnit &rootUnit,
+                               const CompileOptions &options,
+                               std::ostream &out) {
+    auto rootArtifact = moduleArtifacts_.find(rootUnit.path());
+    if (rootArtifact == moduleArtifacts_.end()) {
+        throw DiagnosticError(DiagnosticError::Category::Internal,
+                              "root module artifact was not produced",
+                              "This looks like a compiler module scheduling bug.");
+    }
+
+    auto start = Clock::now();
+    llvm::LLVMContext context;
+    auto linkedModule = parseArtifactModule(rootArtifact->second, context);
+    llvm::Linker linker(*linkedModule);
+    for (const auto &path : moduleGraph_.postOrderFrom(rootUnit.path())) {
+        if (path == rootUnit.path()) {
+            continue;
+        }
+        auto artifact = moduleArtifacts_.find(path);
+        if (artifact == moduleArtifacts_.end()) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "linked module is missing dependency artifact `" +
+                                      path + "`",
+                                  "This looks like a compiler module scheduling bug.");
+        }
+        auto dependencyModule = parseArtifactModule(artifact->second, context);
+        if (linker.linkInModule(std::move(dependencyModule))) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "failed to link module `" + artifact->second.path() +
+                    "` into root module `" + rootUnit.path() + "`",
+                "Check for duplicate IR symbols or incompatible LLVM module state.");
+        }
+    }
+
+    if (options.verifyIR) {
+        auto verifyStart = Clock::now();
+        if (!verifyCompiledModule(*linkedModule, out)) {
+            lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
+            return 1;
+        }
+        lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
+    }
+
+    std::string linkedIR;
+    llvm::raw_string_ostream irOut(linkedIR);
+    linkedModule->print(irOut, nullptr);
+    irOut.flush();
+    lastStats_.linkMs += elapsedMillis(start, Clock::now());
+    out << linkedIR;
+    return 0;
 }
 
 void
@@ -383,6 +545,9 @@ CompilerSession::printStats(std::ostream &out) const {
     out << "  codegen-ms: " << lastStats_.codegenMs << '\n';
     out << "  optimize-ms: " << lastStats_.optimizeMs << '\n';
     out << "  verify-ms: " << lastStats_.verifyMs << '\n';
+    out << "  link-ms: " << lastStats_.linkMs << '\n';
+    out << "  compiled-modules: " << lastStats_.compiledModules << '\n';
+    out << "  reused-modules: " << lastStats_.reusedModules << '\n';
     out << "  total-ms: " << lastStats_.totalMs << '\n';
     out.flags(oldFlags);
     out.precision(oldPrecision);
@@ -395,7 +560,9 @@ CompilerSession::runFile(const std::string &inputPath,
     lastStats_ = {};
     auto totalStart = Clock::now();
     auto finish = [&](int exitCode) {
-        lastStats_.loadedUnits = moduleGraph_.loadOrder().size();
+        auto *root = moduleGraph_.root();
+        lastStats_.loadedUnits =
+            root ? moduleGraph_.postOrderFrom(root->path()).size() : 0;
         lastStats_.totalMs = elapsedMillis(totalStart, Clock::now());
         return exitCode;
     };

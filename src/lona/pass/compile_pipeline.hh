@@ -29,7 +29,7 @@ struct IRBuildState {
 };
 
 struct IRPipelineContext {
-    const CompilationUnit &entryUnit;
+    CompilationUnit &entryUnit;
     const ModuleGraph &moduleGraph;
     const CompilationUnit *rootUnit = nullptr;
     const CompileOptions &options;
@@ -39,7 +39,7 @@ struct IRPipelineContext {
     HIRModule programHIR;
     std::vector<std::unique_ptr<HIRModule>> loweredModules;
 
-    IRPipelineContext(const CompilationUnit &entryUnit,
+    IRPipelineContext(CompilationUnit &entryUnit,
                       const ModuleGraph &moduleGraph,
                       const CompileOptions &options, std::ostream &out,
                       SessionStats &stats);

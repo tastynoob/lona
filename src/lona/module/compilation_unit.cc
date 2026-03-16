@@ -1,7 +1,10 @@
 #include "compilation_unit.hh"
 #include "lona/type/type.hh"
 #include <cassert>
+#include <cstddef>
 #include <filesystem>
+#include <functional>
+#include <string_view>
 #include <utility>
 
 namespace lona {
@@ -17,6 +20,160 @@ deriveModuleName(const std::string &path) {
     return fs::path(path).filename().string();
 }
 
+std::string
+deriveModuleKey(const std::string &path) {
+    namespace fs = std::filesystem;
+    auto normalized = fs::path(path).lexically_normal();
+    normalized.replace_extension();
+    auto key = normalized.string();
+    if (!key.empty()) {
+        return key;
+    }
+    return deriveModuleName(path);
+}
+
+constexpr std::uint64_t kHashSeed = 0x9e3779b97f4a7c15ULL;
+
+std::uint64_t
+combineHash(std::uint64_t seed, std::uint64_t value) {
+    seed ^= value + kHashSeed + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+std::string
+toStdString(const string &value) {
+    return {value.tochara(), value.size()};
+}
+
+void
+hashText(std::uint64_t &seed, std::string_view text) {
+    seed = combineHash(seed, std::hash<std::string_view>{}(text));
+}
+
+void
+hashTypeNode(std::uint64_t &seed, const TypeNode *node);
+
+void
+hashParamSignature(std::uint64_t &seed, AstNode *node) {
+    if (auto *decl = dynamic_cast<AstVarDecl *>(node)) {
+        hashText(seed, "param");
+        hashTypeNode(seed, decl->typeNode);
+        return;
+    }
+    if (auto *def = dynamic_cast<AstVarDef *>(node)) {
+        hashText(seed, "param");
+        hashTypeNode(seed, def->getTypeNode());
+        return;
+    }
+    hashText(seed, "unknown-param");
+}
+
+void
+hashInterfaceNode(std::uint64_t &seed, AstNode *node);
+
+void
+hashInterfaceList(std::uint64_t &seed, AstNode *node) {
+    auto *list = dynamic_cast<AstStatList *>(node);
+    if (!list) {
+        hashInterfaceNode(seed, node);
+        return;
+    }
+    hashText(seed, "list");
+    for (auto *stmt : list->getBody()) {
+        hashInterfaceNode(seed, stmt);
+    }
+}
+
+void
+hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
+    if (node == nullptr) {
+        hashText(seed, "null");
+        return;
+    }
+    if (auto *program = dynamic_cast<AstProgram *>(node)) {
+        hashText(seed, "program");
+        hashInterfaceList(seed, program->body);
+        return;
+    }
+    if (auto *list = dynamic_cast<AstStatList *>(node)) {
+        hashInterfaceList(seed, list);
+        return;
+    }
+    if (auto *importNode = dynamic_cast<AstImport *>(node)) {
+        (void)importNode;
+        return;
+    }
+    if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
+        hashText(seed, "struct");
+        hashText(seed, toStdString(structDecl->name));
+        hashInterfaceList(seed, structDecl->body);
+        return;
+    }
+    if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
+        hashText(seed, "func");
+        hashText(seed, toStdString(funcDecl->name));
+        if (funcDecl->args) {
+            seed = combineHash(seed, funcDecl->args->size());
+            for (auto *arg : *funcDecl->args) {
+                hashParamSignature(seed, arg);
+            }
+        } else {
+            seed = combineHash(seed, 0);
+        }
+        hashTypeNode(seed, funcDecl->retType);
+        return;
+    }
+    if (auto *varDecl = dynamic_cast<AstVarDecl *>(node)) {
+        hashText(seed, "field");
+        hashText(seed, toStdString(varDecl->field));
+        hashTypeNode(seed, varDecl->typeNode);
+        return;
+    }
+    hashText(seed, "non-interface");
+}
+
+void
+hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
+    if (node == nullptr) {
+        hashText(seed, "void");
+        return;
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        hashText(seed, "base");
+        hashText(seed, toStdString(base->name));
+        return;
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        hashText(seed, "ptr");
+        seed = combineHash(seed, pointer->dim);
+        hashTypeNode(seed, pointer->base);
+        return;
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
+        hashText(seed, "array");
+        seed = combineHash(seed, array->dim.size());
+        hashTypeNode(seed, array->base);
+        return;
+    }
+    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
+        hashText(seed, "func-type");
+        seed = combineHash(seed, func->args.size());
+        for (auto *arg : func->args) {
+            hashTypeNode(seed, arg);
+        }
+        hashTypeNode(seed, func->ret);
+        return;
+    }
+    hashText(seed, "unknown-type");
+}
+
+std::uint64_t
+computeInterfaceHash(AstNode *root) {
+    std::uint64_t seed = kHashSeed;
+    hashInterfaceNode(seed, root);
+    return seed;
+}
+
 TypeClass *
 resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node) {
     if (!typeTable || !node) {
@@ -30,12 +187,16 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     TypeClass *resolved = nullptr;
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
         auto rawName = std::string(base->name.tochara(), base->name.size());
-        if (rawName.find('.') == std::string::npos) {
+        auto separator = rawName.find('.');
+        if (separator == std::string::npos) {
             if (const auto *resolved = unit.findLocalType(rawName)) {
                 auto *type = typeTable->getType(llvm::StringRef(*resolved));
                 unit.cacheResolvedType(node, type);
                 return type;
             }
+        } else if (unit.importsModule(rawName.substr(0, separator)) == false) {
+            unit.cacheResolvedType(node, nullptr);
+            return nullptr;
         }
         resolved = typeTable->getType(base->name);
         unit.cacheResolvedType(node, resolved);
@@ -92,18 +253,63 @@ CompilationUnit::source() const {
     return *source_;
 }
 
+std::uint64_t
+CompilationUnit::sourceHash() const {
+    return moduleInterface_ ? moduleInterface_->sourceHash()
+                            : hashModuleSource(source().content());
+}
+
+std::uint64_t
+CompilationUnit::interfaceHash() const {
+    ensureHashes();
+    return interfaceHash_;
+}
+
+std::uint64_t
+CompilationUnit::implementationHash() const {
+    ensureHashes();
+    return implementationHash_;
+}
+
+void
+CompilationUnit::attachInterface(std::shared_ptr<ModuleInterface> moduleInterface) {
+    moduleInterface_ = std::move(moduleInterface);
+    if (moduleInterface_) {
+        moduleInterface_->refresh(path_, moduleKey_, moduleName_,
+                                  hashModuleSource(source().content()));
+    }
+}
+
 void
 CompilationUnit::refreshSource(const SourceBuffer &source) {
+    const auto newPath = source.path();
+    const auto newKey = deriveModuleKey(newPath);
+    const auto newName = deriveModuleName(newPath);
+    const auto newHash = hashModuleSource(source.content());
+    const bool changed = !source_ || path_ != newPath || !moduleInterface_ ||
+        moduleInterface_->sourceHash() != newHash;
+
     path_ = source.path();
-    moduleName_ = deriveModuleName(path_);
+    moduleKey_ = std::move(newKey);
+    moduleName_ = std::move(newName);
     source_ = &source;
-    clearInterface();
+    if (moduleInterface_) {
+        moduleInterface_->refresh(path_, moduleKey_, moduleName_, newHash);
+    }
+    if (changed) {
+        syntaxTree_ = nullptr;
+        stage_ = CompilationUnitStage::Discovered;
+        clearImportedModules();
+        invalidateCaches();
+        clearInterface();
+    }
 }
 
 void
 CompilationUnit::setSyntaxTree(AstNode *tree) {
     syntaxTree_ = tree;
-    stage_ = tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Loaded;
+    invalidateCaches();
+    stage_ = tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;
 }
 
 void
@@ -114,42 +320,97 @@ CompilationUnit::markDependenciesScanned() {
 }
 
 void
+CompilationUnit::markInterfaceCollected(bool namespaced) {
+    if (moduleInterface_) {
+        moduleInterface_->markCollected(namespaced);
+    }
+    if (syntaxTree_ != nullptr) {
+        stage_ = CompilationUnitStage::InterfaceCollected;
+    }
+}
+
+void
+CompilationUnit::markCompiled() {
+    if (syntaxTree_ != nullptr) {
+        stage_ = CompilationUnitStage::Compiled;
+    }
+}
+
+void
+CompilationUnit::clearImportedModules() {
+    importedModules_.clear();
+}
+
+bool
+CompilationUnit::addImportedModule(std::string alias, const CompilationUnit &unit) {
+    ImportedModule imported = {unit.path(), unit.moduleKey(), unit.moduleName(),
+                               unit.interface()};
+    return importedModules_.emplace(std::move(alias), std::move(imported)).second;
+}
+
+const CompilationUnit::ImportedModule *
+CompilationUnit::findImportedModule(const std::string &alias) const {
+    auto found = importedModules_.find(alias);
+    if (found == importedModules_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
+bool
+CompilationUnit::importsModule(const std::string &alias) const {
+    return findImportedModule(alias) != nullptr;
+}
+
+void
 CompilationUnit::clearInterface() {
-    localTypeNames_.clear();
-    localFunctionNames_.clear();
+    if (moduleInterface_) {
+        moduleInterface_->clear();
+    }
+    invalidateCaches();
     resolvedTypes_.clear();
+}
+
+void
+CompilationUnit::invalidateCaches() {
+    hashesReady_ = false;
+    interfaceHash_ = 0;
+    implementationHash_ = 0;
+}
+
+void
+CompilationUnit::ensureHashes() const {
+    if (hashesReady_) {
+        return;
+    }
+    interfaceHash_ = syntaxTree_ ? computeInterfaceHash(syntaxTree_) : 0;
+    implementationHash_ = sourceHash();
+    hashesReady_ = true;
 }
 
 bool
 CompilationUnit::bindLocalType(std::string localName, std::string resolvedName) {
-    return localTypeNames_
-        .emplace(std::move(localName), std::move(resolvedName))
-        .second;
+    return moduleInterface_
+        ? moduleInterface_->bindLocalType(std::move(localName), std::move(resolvedName))
+        : false;
 }
 
 bool
 CompilationUnit::bindLocalFunction(std::string localName, std::string resolvedName) {
-    return localFunctionNames_
-        .emplace(std::move(localName), std::move(resolvedName))
-        .second;
+    return moduleInterface_
+        ? moduleInterface_->bindLocalFunction(std::move(localName),
+                                              std::move(resolvedName))
+        : false;
 }
 
 const std::string *
 CompilationUnit::findLocalType(const std::string &localName) const {
-    auto found = localTypeNames_.find(localName);
-    if (found == localTypeNames_.end()) {
-        return nullptr;
-    }
-    return &found->second;
+    return moduleInterface_ ? moduleInterface_->findLocalType(localName) : nullptr;
 }
 
 const std::string *
 CompilationUnit::findLocalFunction(const std::string &localName) const {
-    auto found = localFunctionNames_.find(localName);
-    if (found == localFunctionNames_.end()) {
-        return nullptr;
-    }
-    return &found->second;
+    return moduleInterface_ ? moduleInterface_->findLocalFunction(localName) : nullptr;
 }
 
 TypeClass *

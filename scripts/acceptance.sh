@@ -70,6 +70,12 @@ import_dep_in="$import_dir/math.lo"
 import_main_in="$import_dir/main.lo"
 import_main_out="$(mktemp "$TMPDIR_LOCAL/lona-import-main-XXXXXX.ll")"
 import_type_out="$(mktemp "$TMPDIR_LOCAL/lona-import-type-XXXXXX.ll")"
+import_mid_in="$import_dir/mid.lo"
+import_leaf_in="$import_dir/leaf.lo"
+import_transitive_main_in="$import_dir/transitive_main.lo"
+import_transitive_ok_out="$(mktemp "$TMPDIR_LOCAL/lona-import-transitive-ok-XXXXXX.ll")"
+import_transitive_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-import-transitive-bad-XXXXXX.txt")"
+import_transitive_type_bad_out="$(mktemp "$TMPDIR_LOCAL/lona-import-transitive-type-bad-XXXXXX.txt")"
 import_exec_dep_in="$import_dir/bad_dep.lo"
 import_exec_main_in="$import_dir/bad_main.lo"
 import_exec_out="$(mktemp "$TMPDIR_LOCAL/lona-import-exec-XXXXXX.txt")"
@@ -103,6 +109,7 @@ cleanup() {
         "$method_self_in" "$method_self_out" \
         "$top_level_mix_in" "$top_level_mix_out" \
         "$import_main_out" "$import_type_out" \
+        "$import_transitive_ok_out" "$import_transitive_bad_out" "$import_transitive_type_bad_out" \
         "$import_exec_dep_in" "$import_exec_main_in" "$import_exec_out" \
         "$large_struct_return_in" "$large_struct_return_out" \
         "$grammar_subset_in" "$grammar_subset_out"
@@ -624,14 +631,39 @@ struct Point {
 printf '%s' "$import_dep_source" >"$import_dep_in"
 printf 'import math\n\ndef main() i32 {\n    ret math.helper(4)\n}\n' >"$import_main_in"
 "$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_main_out"
-grep -q '^define i32 @math.inc' "$import_main_out"
-grep -q '^define i32 @math.helper' "$import_main_out"
+grep -q '^define i32 @math.inc(i32' "$import_main_out"
+grep -q '^define i32 @math.helper(i32' "$import_main_out"
 grep -q 'call i32 @math.helper(i32 4)' "$import_main_out"
+if grep -q '^declare i32 @math.helper' "$import_main_out"; then
+    echo 'expected linked module IR to resolve imported function declarations' >&2
+    exit 1
+fi
 
 printf 'import math\n\ndef main() i32 {\n    var p math.Point\n    p.x = math.inc(4)\n    ret p.x\n}\n' >"$import_main_in"
 "$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_type_out"
 grep -q '^%math.Point = type { i32 }' "$import_type_out"
 grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
+
+printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"
+printf 'import leaf\n\ndef call_leaf(v i32) i32 {\n    ret leaf.inc(v)\n}\n' >"$import_mid_in"
+printf 'import mid\n\ndef main() i32 {\n    ret mid.call_leaf(4)\n}\n' >"$import_transitive_main_in"
+"$BIN" --emit-ir --verify-ir "$import_transitive_main_in" >"$import_transitive_ok_out"
+grep -q 'call i32 @mid.call_leaf(i32 4)' "$import_transitive_ok_out"
+
+printf 'import mid\n\ndef main() i32 {\n    ret leaf.inc(4)\n}\n' >"$import_transitive_main_in"
+if "$BIN" --emit-ir "$import_transitive_main_in" >"$import_transitive_bad_out" 2>&1; then
+    echo 'expected transitive import function access to fail' >&2
+    exit 1
+fi
+grep -Fq 'semantic error: undefined identifier `leaf`' "$import_transitive_bad_out"
+
+printf 'import mid\n\ndef main() i32 {\n    var p leaf.Point\n    ret 0\n}\n' >"$import_transitive_main_in"
+if "$BIN" --emit-ir "$import_transitive_main_in" >"$import_transitive_type_bad_out" 2>&1; then
+    echo 'expected transitive import type access to fail' >&2
+    exit 1
+fi
+grep -Fq 'semantic error: unknown variable type' "$import_transitive_type_bad_out"
+grep -Fq 'var p leaf.Point' "$import_transitive_type_bad_out"
 
 import_exec_dep_source='var x i32 = 1
 '

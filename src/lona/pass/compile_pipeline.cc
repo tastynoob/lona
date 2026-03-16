@@ -14,7 +14,7 @@ IRBuildState::IRBuildState(const CompilationUnit &unit)
     global.setTypeTable(&types);
 }
 
-IRPipelineContext::IRPipelineContext(const CompilationUnit &entryUnit,
+IRPipelineContext::IRPipelineContext(CompilationUnit &entryUnit,
                                      const ModuleGraph &moduleGraph,
                                      const CompileOptions &options,
                                      std::ostream &out, SessionStats &stats)

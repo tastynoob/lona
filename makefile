@@ -19,16 +19,21 @@ PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
 	$(ROOT)/src/lona/util/string.cc
 SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
 FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
+LIBRARY_SOURCE_FILES = $(filter-out $(ROOT)/src/main.cc,$(SOURCE_FILES))
+INCREMENTAL_SMOKE_SOURCES = $(ROOT)/tests/incremental_smoke.cc
 
-LIBS = $(shell llvm-config-18 --libs core native)
+LIBS = $(shell llvm-config-18 --libs core native asmparser linker)
 
 LD_FLAGS = $(shell llvm-config-18 --ldflags)
 CXXFLAGS += $(shell llvm-config-18 --cppflags)
 
 OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
 FRONTEND_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(FRONTEND_SOURCE_FILES))
+LIBRARY_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(LIBRARY_SOURCE_FILES))
+INCREMENTAL_SMOKE_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(INCREMENTAL_SMOKE_SOURCES))
 target = $(OUT_DIR)/lona
 frontend_target = $(OUT_DIR)/lona-frontend
+incremental_smoke_target = $(OUT_DIR)/incremental_smoke
 
 # require llvm-18
 ifeq ($(shell llvm-config-18 --version),)
@@ -43,7 +48,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke
+.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke
 
 default:
 	mkdir -p build
@@ -56,15 +61,21 @@ frontend: $(frontend_target)
 acceptance: $(target)
 	bash $(ROOT)/scripts/acceptance.sh
 
-test: acceptance bench_smoke
+test: acceptance bench_smoke incremental_smoke
 
 bench_smoke: $(target)
 	bash $(ROOT)/scripts/benchmark_smoke.sh
+
+incremental_smoke: $(incremental_smoke_target)
+	$(incremental_smoke_target)
 
 $(target): $(OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
 $(frontend_target): $(FRONTEND_OBJECTS)
+	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
+
+$(incremental_smoke_target): $(LIBRARY_OBJECTS) $(INCREMENTAL_SMOKE_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
 $(OUT_DIR)/%.d: %.cc | $(GENERATED_PARSER_HEADERS)
@@ -78,6 +89,7 @@ $(OUT_DIR)/%.o: %.cc | $(GENERATED_PARSER_HEADERS)
 ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 -include $(OBJECTS:.o=.d)
 -include $(FRONTEND_OBJECTS:.o=.d)
+-include $(INCREMENTAL_SMOKE_OBJECTS:.o=.d)
 endif
 
 $(GENERATED_LEXER_SOURCE): $(LEX_FILE) $(OUT_DIR)/parser.hh

@@ -218,17 +218,4 @@ public:
     }
 };
 
-
-class stringref : llvm::StringRef
-{
-public:
-    stringref() : llvm::StringRef() {}
-
-    stringref(const char* s) : llvm::StringRef(s) {}
-
-    stringref(const string& s) : llvm::StringRef(s.tochara(), s.size()) {}
-
-    stringref(const llvm::StringRef& s) : llvm::StringRef(s) {}
-};
-
 extern std::ostream& operator<<(std::ostream& os, const string& str);
