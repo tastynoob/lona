@@ -155,9 +155,9 @@ lac-native input.lo output/program
 
 ## 📚 更多文档
 
-- [编译器架构](/home/lurker/workspace/compiler/lona/docs/compiler_architecture.md)
-- [目标模式与执行边界](/home/lurker/workspace/compiler/lona/docs/target_modes.md)
-- [本地构建与运行](/home/lurker/workspace/compiler/lona/docs/native_build.md)
+- [编译器架构](docs/compiler_architecture.md)
+- [目标模式与执行边界](docs/target_modes.md)
+- [本地构建与运行](docs/native_build.md)
 
 ## 🙌 致谢
 

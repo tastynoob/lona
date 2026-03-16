@@ -2,7 +2,7 @@
 
 本文档描述当前 `lona` 编译器的整体架构，以及模块化、增量编译和 LLVM IR 生成在代码中的落点。
 
-关于 `native / managed` 两种目标模式的边界定义，见 [target_modes.md](/home/lurker/workspace/compiler/lona/docs/target_modes.md)。
+关于 `native / managed` 两种目标模式的边界定义，见 [target_modes.md](target_modes.md)。
 
 ## 1. 设计目标
 

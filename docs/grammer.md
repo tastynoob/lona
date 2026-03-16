@@ -4,13 +4,13 @@
 
 ## 示例索引
 
-- 程序结构与顶层项：[program.md](/home/lurker/workspace/compiler/lona/docs/program.md)
-- 变量定义：[vardef.md](/home/lurker/workspace/compiler/lona/docs/vardef.md)
-- 函数声明：[func.md](/home/lurker/workspace/compiler/lona/docs/func.md)
-- 结构体声明：[struct.md](/home/lurker/workspace/compiler/lona/docs/struct.md)
-- 控制流与块语句：[controlflow.md](/home/lurker/workspace/compiler/lona/docs/controlflow.md)
-- 表达式：[expr.md](/home/lurker/workspace/compiler/lona/docs/expr.md)
-- 类型写法：[type.md](/home/lurker/workspace/compiler/lona/docs/type.md)
+- 程序结构与顶层项：[program.md](program.md)
+- 变量定义：[vardef.md](vardef.md)
+- 函数声明：[func.md](func.md)
+- 结构体声明：[struct.md](struct.md)
+- 控制流与块语句：[controlflow.md](controlflow.md)
+- 表达式：[expr.md](expr.md)
+- 类型写法：[type.md](type.md)
 
 ## 1. 词法规则
 

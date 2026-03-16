@@ -20,8 +20,8 @@
 
 相关文件：
 
-- [scripts/lac.sh](/home/lurker/workspace/compiler/lona/scripts/lac.sh)
-- [scripts/hosted_smoke.sh](/home/lurker/workspace/compiler/lona/scripts/hosted_smoke.sh)
+- [scripts/lac.sh](../scripts/lac.sh)
+- [scripts/hosted_smoke.sh](../scripts/hosted_smoke.sh)
 
 这条路径的优点是：
 
@@ -45,10 +45,10 @@
 
 相关文件：
 
-- [scripts/lac-native.sh](/home/lurker/workspace/compiler/lona/scripts/lac-native.sh)
-- [scripts/native_smoke.sh](/home/lurker/workspace/compiler/lona/scripts/native_smoke.sh)
-- [runtime/linux_x86_64/lona_start.S](/home/lurker/workspace/compiler/lona/runtime/linux_x86_64/lona_start.S)
-- [runtime/linux_x86_64/lona.ld](/home/lurker/workspace/compiler/lona/runtime/linux_x86_64/lona.ld)
+- [scripts/lac-native.sh](../scripts/lac-native.sh)
+- [scripts/native_smoke.sh](../scripts/native_smoke.sh)
+- [runtime/linux_x86_64/lona_start.S](../runtime/linux_x86_64/lona_start.S)
+- [runtime/linux_x86_64/lona.ld](../runtime/linux_x86_64/lona.ld)
 
 职责分工：
 
