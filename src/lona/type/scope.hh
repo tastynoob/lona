@@ -33,6 +33,10 @@ public:
 
     void setTypeTable(TypeTable *table) { typeTable = table; }
     TypeTable *types() const { return typeTable; }
+    llvm::Type *getLLVMType(TypeClass *type) const;
+    llvm::FunctionType *getLLVMFunctionType(FuncType *type) const;
+    void bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func);
+    Function *getMethodFunction(const StructType *parent, llvm::StringRef name) const;
     void addObj(llvm::StringRef name, Object *var);
     void addObj(const ::string &name, Object *var) {
         addObj(llvm::StringRef(name.tochara(), name.size()), var);

@@ -369,10 +369,7 @@ declareStructType(TypeTable *typeMgr, AstStructDecl *node,
     }
 
     string struct_name(resolvedName.c_str());
-    auto *structTy = llvm::StructType::create(
-        typeMgr->getContext(),
-        llvm::StringRef(struct_name.tochara(), struct_name.size()));
-    auto *lostructTy = new StructType(structTy, struct_name);
+    auto *lostructTy = new StructType(struct_name);
 
     typeMgr->addType(struct_name, lostructTy);
     return lostructTy;
@@ -386,7 +383,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     auto resolvedFunctionName =
         resolveTopLevelName(unit, func_name, exportNamespace);
     if (methodParent) {
-        if (auto *existing = methodParent->getFunc(
+        if (auto *existing = typeMgr->getMethodFunction(
+                methodParent,
                 llvm::StringRef(func_name.tochara(), func_name.size()))) {
             return existing;
         }
@@ -407,13 +405,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     std::vector<TypeClass *> loargs;
-    std::vector<llvm::Type *> args;
-
     TypeClass *loretType = nullptr;
-    llvm::Type *retType = llvm::Type::getVoidTy(typeMgr->getContext());
-    bool returnByPointer = false;
-
-    std::string funcType_name = "f";
     if (node->retType) {
         loretType = resolveTypeNode(typeMgr, unit, node->retType);
         if (!loretType) {
@@ -425,26 +417,10 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
             loretType, node->retType,
             "unsupported bare function return type for `" + toStdString(func_name) + "`",
             node->loc);
-        returnByPointer = loretType->shouldReturnByPointer();
-        retType = returnByPointer
-            ? llvm::Type::getVoidTy(typeMgr->getContext())
-            : loretType->getLLVMType();
-        funcType_name += "_";
-        funcType_name.append(loretType->full_name.tochara(),
-                             loretType->full_name.size());
-
-        if (returnByPointer) {
-            auto *sroa_retType = typeMgr->createPointerType(loretType);
-            args.push_back(sroa_retType->getLLVMType());
-        }
     }
 
     if (methodParent) {
         loargs.push_back(methodParent);
-        args.push_back(methodParent->getLLVMType());
-        funcType_name += ".self_";
-        funcType_name.append(methodParent->full_name.tochara(),
-                             methodParent->full_name.size());
     }
 
     if (node->args) {
@@ -470,19 +446,14 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                     toStdString(func_name) + "`",
                 varDecl->loc);
             loargs.push_back(type);
-            args.push_back(type->getLLVMType());
-            funcType_name += ".";
-            funcType_name.append(type->full_name.tochara(),
-                                 type->full_name.size());
         }
     }
 
-    TypeClass *lofuncType = typeMgr->getType(llvm::StringRef(funcType_name));
-    if (!lofuncType) {
-        auto *llfuncType = llvm::FunctionType::get(retType, args, false);
-        lofuncType = new FuncType(
-            llfuncType, std::move(loargs), loretType, func_name, 0);
-        typeMgr->addType(funcType_name, lofuncType);
+    auto *lofuncType = typeMgr->getOrCreateFunctionType(loargs, loretType);
+    if (methodParent && !methodParent->getMethodType(
+            llvm::StringRef(func_name.tochara(), func_name.size()))) {
+        methodParent->addMethodType(
+            llvm::StringRef(func_name.tochara(), func_name.size()), lofuncType);
     }
 
     std::string llvmName = resolvedFunctionName.empty()
@@ -493,14 +464,15 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     auto *llfunc = llvm::Function::Create(
-        (llvm::FunctionType *)lofuncType->llvmType,
+        typeMgr->getLLVMFunctionType(lofuncType),
         llvm::Function::ExternalLinkage,
         llvm::Twine(llvmName),
         typeMgr->getModule());
-    auto *lofunc = new Function(llfunc, lofuncType->as<FuncType>());
+    auto *lofunc = new Function(llfunc, lofuncType);
 
     if (methodParent) {
-        methodParent->addFunc(
+        typeMgr->bindMethodFunction(
+            methodParent,
             llvm::StringRef(func_name.tochara(), func_name.size()), lofunc);
     } else {
         scope.addObj(llvm::StringRef(llvmName), lofunc);
@@ -542,7 +514,7 @@ class StructVisitor : public AstVisitorAny {
                 toStdString(name) + "`",
             node->loc);
 
-        llvmmembers.push_back(type->getLLVMType());
+        llvmmembers.push_back(typeMgr->getLLVMType(type));
         members.insert({llvm::StringRef(name.tochara(), name.size()),
                         {type, static_cast<int>(llvmmembers.size() - 1)}});
 
@@ -556,7 +528,6 @@ public:
         : typeMgr(typeMgr), unit(unit), exportNamespace(exportNamespace) {
         auto *lostructTy = declareStructType(typeMgr, node, unit, exportNamespace);
         assert(lostructTy);
-        assert(lostructTy->llvmType);
 
         if (!lostructTy->isOpaque()) {
             return;
@@ -564,13 +535,11 @@ public:
 
         this->visit(node->body);
 
-        ((llvm::StructType *)lostructTy->llvmType)->setBody(llvmmembers);
-
+        lostructTy->complete(members, 0);
+        auto *llvmStruct =
+            llvm::cast<llvm::StructType>(typeMgr->getLLVMType(lostructTy));
         auto typesize =
-            typeMgr->getModule().getDataLayout().getTypeSizeInBits(
-                lostructTy->llvmType) /
-            8;
-
+            typeMgr->getModule().getDataLayout().getTypeSizeInBits(llvmStruct) / 8;
         lostructTy->complete(members, typesize);
     }
 };
@@ -650,6 +619,353 @@ public:
     }
 };
 
+namespace {
+
+TypeClass *
+lookupBuiltinType(llvm::StringRef name) {
+    if (name == "u8") return u8Ty;
+    if (name == "i8") return i8Ty;
+    if (name == "u16") return u16Ty;
+    if (name == "i16") return i16Ty;
+    if (name == "u32") return u32Ty;
+    if (name == "i32") return i32Ty;
+    if (name == "u64") return u64Ty;
+    if (name == "i64") return i64Ty;
+    if (name == "int") return i32Ty;
+    if (name == "uint") return u32Ty;
+    if (name == "f32") return f32Ty;
+    if (name == "f64") return f64Ty;
+    if (name == "bool") return boolTy;
+    if (name == "str") return strTy;
+    return nullptr;
+}
+
+std::uint32_t
+computeSemanticStructSize(StructType *structType) {
+    if (!structType || structType->isOpaque()) {
+        return 0;
+    }
+
+    llvm::LLVMContext context;
+    llvm::Module module("interface-size", context);
+    llvm::IRBuilder<> builder(context);
+    GlobalScope scope(builder, module);
+    TypeTable types(module);
+    scope.setTypeTable(&types);
+    initBuildinType(&scope);
+    types.internType(structType);
+    auto *llvmStruct = llvm::cast<llvm::StructType>(types.getLLVMType(structType));
+    return static_cast<std::uint32_t>(
+        module.getDataLayout().getTypeSizeInBits(llvmStruct) / 8);
+}
+
+class InterfaceCollector {
+    CompilationUnit &unit_;
+    ModuleInterface *interface_;
+    std::vector<AstStructDecl *> structDecls_;
+    std::vector<AstFuncDecl *> funcDecls_;
+
+    TypeClass *resolveType(TypeNode *node) {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+            auto rawName = toStdString(base->name);
+            auto separator = rawName.find('.');
+            if (separator == std::string::npos) {
+                if (auto *builtin = lookupBuiltinType(
+                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
+                    return builtin;
+                }
+                if (const auto *typeDecl = interface_->findType(rawName)) {
+                    return typeDecl->type;
+                }
+                return nullptr;
+            }
+
+            auto moduleName = rawName.substr(0, separator);
+            auto typeName = rawName.substr(separator + 1);
+            const auto *imported = unit_.findImportedModule(moduleName);
+            if (!imported || !imported->interface) {
+                return nullptr;
+            }
+            auto *importedDecl = imported->interface->findType(typeName);
+            return importedDecl ? importedDecl->type : nullptr;
+        }
+        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+            auto *baseType = resolveType(pointer->base);
+            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
+                baseType = interface_->getOrCreatePointerType(baseType);
+            }
+            return baseType;
+        }
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+            auto *elementType = resolveType(array->base);
+            if (!elementType) {
+                return nullptr;
+            }
+            return interface_->getOrCreateArrayType(elementType, array->dim);
+        }
+        if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(func->args.size());
+            for (auto *arg : func->args) {
+                auto *argType = resolveType(arg);
+                if (!argType) {
+                    return nullptr;
+                }
+                argTypes.push_back(argType);
+            }
+            auto *retType = resolveType(func->ret);
+            return interface_->getOrCreateFunctionType(argTypes, retType);
+        }
+        return nullptr;
+    }
+
+    void collectTopLevelLists(AstNode *root) {
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body = dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return;
+        }
+        for (auto *stmt : body->getBody()) {
+            if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
+                structDecls_.push_back(structDecl);
+            } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
+                funcDecls_.push_back(funcDecl);
+            }
+        }
+    }
+
+    void declareStructs() {
+        for (auto *structDecl : structDecls_) {
+            interface_->declareStructType(toStdString(structDecl->name));
+        }
+    }
+
+    void completeStructs() {
+        for (auto *structDecl : structDecls_) {
+            auto *typeDecl = interface_->findType(toStdString(structDecl->name));
+            auto *structType = typeDecl ? typeDecl->type->as<StructType>() : nullptr;
+            if (!structType) {
+                error(structDecl->loc, "failed to declare struct interface");
+            }
+            if (structType->isOpaque() == false) {
+                continue;
+            }
+
+            llvm::StringMap<StructType::ValueTy> members;
+            auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+            if (body) {
+                int index = 0;
+                for (auto *stmt : body->getBody()) {
+                    auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
+                    if (!varDecl) {
+                        continue;
+                    }
+                    auto *fieldType = resolveType(varDecl->typeNode);
+                    if (!fieldType) {
+                        error(varDecl->loc,
+                              "unknown struct field type for `" +
+                                  toStdString(varDecl->field) + "`: " +
+                                  describeTypeNode(varDecl->typeNode));
+                    }
+                    rejectBareFunctionType(
+                        fieldType, varDecl->typeNode,
+                        "unsupported bare function struct field type for `" +
+                            toStdString(varDecl->field) + "`",
+                        varDecl->loc);
+                    members.insert({llvm::StringRef(varDecl->field.tochara(),
+                                                    varDecl->field.size()),
+                                    {fieldType, index++}});
+                }
+            }
+
+            structType->complete(members, 0);
+            structType->complete(members, computeSemanticStructSize(structType));
+        }
+    }
+
+    FuncType *buildFunctionType(AstFuncDecl *node, StructType *methodParent) {
+        std::vector<TypeClass *> argTypes;
+        if (methodParent) {
+            argTypes.push_back(methodParent);
+        }
+        if (node->args) {
+            for (auto *arg : *node->args) {
+                auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+                if (!varDecl) {
+                    error(node->loc,
+                          "invalid function parameter declaration in `" +
+                              toStdString(node->name) + "`");
+                }
+                auto *argType = resolveType(varDecl->typeNode);
+                if (!argType) {
+                    error(varDecl->loc,
+                          "unknown type for function parameter `" +
+                              toStdString(varDecl->field) + "` in `" +
+                              toStdString(node->name) + "`: " +
+                              describeTypeNode(varDecl->typeNode));
+                }
+                rejectBareFunctionType(
+                    argType, varDecl->typeNode,
+                    "unsupported bare function parameter type for `" +
+                        toStdString(varDecl->field) + "` in `" +
+                        toStdString(node->name) + "`",
+                    varDecl->loc);
+                argTypes.push_back(argType);
+            }
+        }
+
+        TypeClass *retType = nullptr;
+        if (node->retType) {
+            retType = resolveType(node->retType);
+            if (!retType) {
+                error(node->loc,
+                      "unknown return type for function `" +
+                          toStdString(node->name) + "`: " +
+                          describeTypeNode(node->retType));
+            }
+            rejectBareFunctionType(
+                retType, node->retType,
+                "unsupported bare function return type for `" +
+                    toStdString(node->name) + "`",
+                node->loc);
+        }
+
+        return interface_->getOrCreateFunctionType(argTypes, retType);
+    }
+
+    void declareFunctions() {
+        for (auto *structDecl : structDecls_) {
+            auto *typeDecl = interface_->findType(toStdString(structDecl->name));
+            auto *structType = typeDecl ? typeDecl->type->as<StructType>() : nullptr;
+            auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+            if (!structType || !body) {
+                continue;
+            }
+            for (auto *stmt : body->getBody()) {
+                auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+                if (!funcDecl) {
+                    continue;
+                }
+                auto *funcType = buildFunctionType(funcDecl, structType);
+                if (structType->getMethodType(
+                        llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size())) ==
+                    nullptr) {
+                    structType->addMethodType(
+                        llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()),
+                        funcType);
+                }
+            }
+        }
+
+        for (auto *funcDecl : funcDecls_) {
+            auto *funcType = buildFunctionType(funcDecl, nullptr);
+            interface_->declareFunction(toStdString(funcDecl->name), funcType);
+        }
+    }
+
+public:
+    explicit InterfaceCollector(CompilationUnit &unit)
+        : unit_(unit), interface_(unit.interface()) {
+        assert(interface_);
+    }
+
+    void collect() {
+        interface_->clear();
+        collectTopLevelLists(unit_.syntaxTree());
+        declareStructs();
+        completeStructs();
+        declareFunctions();
+        interface_->markCollected();
+    }
+};
+
+void
+ensureUnitInterfaceCollected(CompilationUnit &unit) {
+    if (unit.interfaceCollected()) {
+        return;
+    }
+    InterfaceCollector(unit).collect();
+}
+
+Function *
+materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType,
+                            llvm::StringRef llvmName) {
+    auto *existing = scope.getObj(llvmName);
+    if (existing) {
+        return existing->as<Function>();
+    }
+    auto *llvmFunc = llvm::Function::Create(typeMgr->getLLVMFunctionType(funcType),
+                                            llvm::Function::ExternalLinkage,
+                                            llvm::Twine(llvmName),
+                                            typeMgr->getModule());
+    auto *func = new Function(llvmFunc, funcType);
+    scope.addObj(llvmName, func);
+    return func;
+}
+
+void
+materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamespace) {
+    initBuildinType(global);
+    ensureUnitInterfaceCollected(unit);
+    auto *interface = unit.interface();
+    auto *typeMgr = requireTypeTable(global);
+    unit.clearLocalBindings();
+
+    if (exportNamespace) {
+        declareModuleNamespace(*global, unit);
+    }
+
+    for (const auto &entry : interface->types()) {
+        auto *type = typeMgr->internType(entry.second.type);
+        if (!type) {
+            error("failed to materialize imported type `" + entry.first + "`");
+        }
+        unit.bindLocalType(entry.first, toStdString(type->full_name));
+    }
+
+    for (const auto &entry : interface->functions()) {
+        auto *funcType = typeMgr->internType(entry.second.type)->as<FuncType>();
+        if (!funcType) {
+            error("failed to materialize imported function signature `" + entry.first +
+                  "`");
+        }
+        auto runtimeName = exportNamespace ? entry.second.exportedName : entry.first;
+        unit.bindLocalFunction(entry.first, runtimeName);
+        materializeDeclaredFunction(*global, typeMgr, funcType,
+                                    llvm::StringRef(runtimeName));
+    }
+
+    for (const auto &entry : interface->types()) {
+        auto *structType = typeMgr->internType(entry.second.type)->as<StructType>();
+        if (!structType) {
+            continue;
+        }
+        for (const auto &method : structType->getMethodTypes()) {
+            auto *methodType = typeMgr->internType(method.second)->as<FuncType>();
+            if (!methodType) {
+                continue;
+            }
+            if (typeMgr->getMethodFunction(structType, method.first())) {
+                continue;
+            }
+            auto methodName = toStdString(structType->full_name) + "." + method.first().str();
+            auto *llvmFunc = llvm::Function::Create(typeMgr->getLLVMFunctionType(methodType),
+                                                    llvm::Function::ExternalLinkage,
+                                                    llvm::Twine(methodName),
+                                                    typeMgr->getModule());
+            typeMgr->bindMethodFunction(structType, method.first(),
+                                        new Function(llvmFunc, methodType));
+        }
+    }
+
+    unit.markInterfaceCollected();
+}
+
+}  // namespace
+
 Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent) {
     initBuildinType(&scope);
@@ -666,14 +982,7 @@ scanningType(Scope *global, AstNode *root) {
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace) {
-    initBuildinType(global);
-    unit.clearInterface();
-    if (exportNamespace) {
-        declareModuleNamespace(*global, unit);
-    }
-    TypeCollector(requireTypeTable(global), global, unit.syntaxTree(), &unit,
-                  exportNamespace);
-    unit.markInterfaceCollected(exportNamespace);
+    materializeUnitInterface(global, unit, exportNamespace);
 }
 
 StructType *
@@ -724,7 +1033,7 @@ class FunctionCompiler {
         auto *obj = type->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
         if (initVal != nullptr) {
-            obj->set(scope->builder, initVal);
+            obj->set(scope, initVal);
         }
         return obj;
     }
@@ -735,7 +1044,7 @@ class FunctionCompiler {
         }
         obj->createllvmValue(scope);
         if (initVal != nullptr) {
-            obj->set(scope->builder, initVal);
+            obj->set(scope, initVal);
         }
         return obj;
     }
@@ -770,7 +1079,7 @@ class FunctionCompiler {
             if (!dst || !src) {
                 error("assignment requires values");
             }
-            dst->set(scope->builder, src);
+            dst->set(scope, src);
             return dst;
         }
         if (auto *bin = dynamic_cast<HIRBinOper *>(expr)) {
@@ -790,7 +1099,7 @@ class FunctionCompiler {
                 return value;
             }
             case '-': {
-                auto *llvmValue = value->get(scope->builder);
+                auto *llvmValue = value->get(scope);
                 if (value->getType() != i32Ty) {
                     error("unary - expects i32");
                 }
@@ -823,7 +1132,7 @@ class FunctionCompiler {
                     error("dereference expects a pointer value");
                 }
                 auto *result = pointerType->getPointeeType()->newObj(Object::VARIABLE);
-                result->setllvmValue(value->get(scope->builder));
+                result->setllvmValue(value->get(scope));
                 return result;
             }
             default:
@@ -838,7 +1147,7 @@ class FunctionCompiler {
                 if (selector->getType() == nullptr) {
                     error(kMethodSelectorDirectCallError);
                 }
-                return structParent->getField(scope->builder, fieldName);
+                return structParent->getField(scope, fieldName);
             }
             error("selector parent must be a struct value");
         }
@@ -855,7 +1164,8 @@ class FunctionCompiler {
                 if (!structType) {
                     error("selector call parent must be a struct value");
                 }
-                auto *callee = structType->getFunc(llvm::StringRef(selector->getFieldName()));
+                auto *callee = scope->getMethodFunction(
+                    structType, llvm::StringRef(selector->getFieldName()));
                 if (!callee) {
                     error("unknown struct method");
                 }
@@ -874,7 +1184,7 @@ class FunctionCompiler {
                 if (!funcType) {
                     error("callee must be a function, function pointer, or method selector");
                 }
-                calleeValue = calleeObj->get(scope->builder);
+                calleeValue = calleeObj->get(scope);
             }
 
             args.reserve(args.size() + call->getArgs().size());
@@ -917,7 +1227,7 @@ class FunctionCompiler {
                 if (!retSlot) {
                     error("unexpected return value in void function");
                 }
-                retSlot->set(scope->builder, value);
+                retSlot->set(scope, value);
             } else if (retSlot) {
                 error("missing return value");
             }
@@ -925,7 +1235,7 @@ class FunctionCompiler {
             if (scope->retBlock()) {
                 scope->builder.CreateBr(scope->retBlock());
             } else if (retSlot) {
-                scope->builder.CreateRet(retSlot->get(scope->builder));
+                scope->builder.CreateRet(retSlot->get(scope));
             } else {
                 scope->builder.CreateRetVoid();
             }
@@ -1010,14 +1320,14 @@ class FunctionCompiler {
     }
 
     llvm::Value *emitBoolCast(Object *obj) {
-        auto *value = obj->get(scope->builder);
+        auto *value = obj->get(scope);
         auto *type = obj->getType();
         if (type == boolTy) {
             return value;
         }
         if (type == i32Ty) {
             return scope->builder.CreateICmpNE(
-                value, llvm::ConstantInt::get(i32Ty->getLLVMType(), 0));
+                value, llvm::ConstantInt::get(scope->getLLVMType(i32Ty), 0));
         }
         error("unsupported condition type");
     }
@@ -1030,8 +1340,8 @@ class FunctionCompiler {
             error("only i32 binary operations are supported");
         }
 
-        auto *lhs = left->get(scope->builder);
-        auto *rhs = right->get(scope->builder);
+        auto *lhs = left->get(scope);
+        auto *rhs = right->get(scope);
         llvm::Value *result = nullptr;
         TypeClass *resultType = i32Ty;
 
@@ -1086,7 +1396,7 @@ class FunctionCompiler {
             if (returnByPointer) {
                 scope->builder.CreateRetVoid();
             } else {
-                scope->builder.CreateRet(scope->retVal()->get(scope->builder));
+                scope->builder.CreateRet(scope->retVal()->get(scope));
             }
         } else {
             scope->builder.CreateRetVoid();
@@ -1157,7 +1467,7 @@ public:
             }
             scope->initRetVal(retSlot);
             if (hirFunc->isTopLevelEntry() && retType == i32Ty) {
-                retSlot->set(scope->builder, new ConstVar(i32Ty, int32_t(0)));
+                retSlot->set(scope, new ConstVar(i32Ty, int32_t(0)));
             }
             auto *retBB = llvm::BasicBlock::Create(context, "return", llvmFunc);
             scope->initRetBlock(retBB);

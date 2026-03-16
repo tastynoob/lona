@@ -18,22 +18,24 @@ Object::createllvmValue(Scope *scope)
 }
 
 llvm::Value *
-Object::get(llvm::IRBuilder<> &builder) {
+Object::get(Scope *scope) {
+    auto &builder = scope->builder;
     if (isRegVal()) {
         if (val) {
             return val;
         }
         if (auto *constant = dynamic_cast<ConstVar *>(this)) {
-            return constant->ConstVar::get(builder);
+            return constant->ConstVar::get(scope);
         }
         throw "register value is not materialized";
     }
     assert(val->getType()->isPointerTy());
-    return builder.CreateLoad(type->getLLVMType(), val);
+    return builder.CreateLoad(scope->getLLVMType(type), val);
 }
 
 void
-Object::set(llvm::IRBuilder<> &builder, Object *src) {
+Object::set(Scope *scope, Object *src) {
+    auto &builder = scope->builder;
     if (isReadOnly() || isRegVal()) {
         throw "readonly";
     }
@@ -43,22 +45,24 @@ Object::set(llvm::IRBuilder<> &builder, Object *src) {
     }
 
     assert(val->getType()->isPointerTy());
-    builder.CreateStore(src->get(builder), val);
+    builder.CreateStore(src->get(scope), val);
 }
 
 llvm::Value *
-ConstVar::get(llvm::IRBuilder<> &builder) {
+ConstVar::get(Scope *scope) {
+    auto &builder = scope->builder;
     if (val) {
         return val;
     }
 
     if (type == i32Ty) {
-        val = llvm::ConstantInt::get(type->getLLVMType(),
+        val = llvm::ConstantInt::get(scope->getLLVMType(type),
                                      std::any_cast<int32_t>(value), true);
         return val;
     }
     if (type == boolTy) {
-        val = llvm::ConstantInt::get(type->getLLVMType(), std::any_cast<bool>(value));
+        val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                     std::any_cast<bool>(value));
         return val;
     }
 
@@ -66,7 +70,8 @@ ConstVar::get(llvm::IRBuilder<> &builder) {
 }
 
 Object *
-StructVar::getField(llvm::IRBuilder<> &builder, std::string name) {
+StructVar::getField(Scope *scope, std::string name) {
+    auto &builder = scope->builder;
     if (isRegVal()) {
         throw "struct field access on register value is not supported";
     }
@@ -81,19 +86,20 @@ StructVar::getField(llvm::IRBuilder<> &builder, std::string name) {
 
     auto *fieldType = member->first;
     auto *field = fieldType->newObj(Object::VARIABLE);
-    field->setllvmValue(builder.CreateStructGEP(type->getLLVMType(), val,
+    field->setllvmValue(builder.CreateStructGEP(scope->getLLVMType(type), val,
                                                 member->second));
     return field;
 }
 
 void
-StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
+StructVar::set(Scope *scope, Object *src) {
+    auto &builder = scope->builder;
     if (this->getType() != src->getType()) {
         throw "type mismatch";
     }
 
     if (src->isRegVal()) {
-        builder.CreateStore(src->get(builder), val);
+        builder.CreateStore(src->get(scope), val);
     } else {
         auto struct_src = dynamic_cast<StructVar *>(src);
         llvm::ConstantInt::get(builder.getInt32Ty(), type->typeSize);
@@ -103,12 +109,12 @@ StructVar::set(llvm::IRBuilder<> &builder, Object *src) {
 }
 
 llvm::Value *
-ModuleObject::get(llvm::IRBuilder<> &builder) {
+ModuleObject::get(Scope *scope) {
     throw "module namespace is not a runtime value";
 }
 
 void
-ModuleObject::set(llvm::IRBuilder<> &builder, Object *src) {
+ModuleObject::set(Scope *scope, Object *src) {
     throw "module namespace is read-only";
 }
 
@@ -116,7 +122,7 @@ Object *
 emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
                  std::vector<Object *> &args) {
     auto &builder = scope->builder;
-    auto *llvmFuncType = llvm::cast<llvm::FunctionType>(funcType->getLLVMType());
+    auto *llvmFuncType = scope->getLLVMFunctionType(funcType);
     auto *retType = funcType->getRetType();
     const auto &argTypes = funcType->getArgTypes();
     std::vector<llvm::Value *> llvmargs;
@@ -134,7 +140,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
             if (args[i]->getType() != argTypes[i]) {
                 throw "Call argument type mismatch";
             }
-            llvmargs.push_back(args[i]->get(builder));
+            llvmargs.push_back(args[i]->get(scope));
         }
     else {
         throw "Call argument number mismatch";

@@ -252,7 +252,8 @@ class ModuleResolver {
         Function *function = nullptr;
         auto resolvedFunctionName = toStdString(node->name);
         if (methodParent) {
-            function = methodParent->getFunc(
+            function = typeMgr_->getMethodFunction(
+                methodParent,
                 llvm::StringRef(node->name.tochara(), node->name.size()));
         } else {
             if (unit_) {

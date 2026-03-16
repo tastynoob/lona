@@ -68,8 +68,8 @@ public:
 
     
 
-    virtual llvm::Value *get(llvm::IRBuilder<> &builder);
-    virtual void set(llvm::IRBuilder<> &builder, Object *src);
+    virtual llvm::Value *get(Scope *scope);
+    virtual void set(Scope *scope, Object *src);
 };
 
 using ObjectPtr = Object *;
@@ -90,7 +90,7 @@ public:
     ConstVar(TypeClass *type, std::any value)
         : BaseVar(type, Object::REG_VAL | Object::READONLY), value(value) {}
 
-    llvm::Value *get(llvm::IRBuilder<> &builder) override;
+    llvm::Value *get(Scope *scope) override;
 };
 
 class PointerVar : public Object {
@@ -99,10 +99,10 @@ public:
     PointerVar(ObjectPtr obj)
         : Object(obj->getType(), obj->getSpecifiers()), pointee(obj) {
     }
-    void set(llvm::IRBuilder<> &builder, Object *src) override {
+    void set(Scope *scope, Object *src) override {
         assert(false);
     }
-    llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
+    llvm::Value *get(Scope *scope) override { return val; }
 };
 
 class StructVar : public Object {
@@ -110,9 +110,9 @@ public:
     StructVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
 
-    Object *getField(llvm::IRBuilder<> &builder, std::string name);
+    Object *getField(Scope *scope, std::string name);
 
-    void set(llvm::IRBuilder<> &builder, Object *src) override;
+    void set(Scope *scope, Object *src) override;
 };
 
 class ModuleObject : public Object {
@@ -124,8 +124,8 @@ public:
 
     const CompilationUnit *unit() const { return unit_; }
 
-    llvm::Value *get(llvm::IRBuilder<> &builder) override;
-    void set(llvm::IRBuilder<> &builder, Object *src) override;
+    llvm::Value *get(Scope *scope) override;
+    void set(Scope *scope, Object *src) override;
 };
 
 

@@ -1,8 +1,18 @@
 #include "module_interface.hh"
+#include "lona/type/type.hh"
 #include <functional>
 #include <utility>
 
 namespace lona {
+
+namespace {
+
+std::string
+toStdString(const string &value) {
+    return {value.tochara(), value.size()};
+}
+
+}
 
 ModuleInterface::ModuleInterface(std::string sourcePath, std::string moduleKey,
                                  std::string moduleName, std::uint64_t sourceHash)
@@ -10,6 +20,13 @@ ModuleInterface::ModuleInterface(std::string sourcePath, std::string moduleKey,
       moduleKey_(std::move(moduleKey)),
       moduleName_(std::move(moduleName)),
       sourceHash_(sourceHash) {}
+
+ModuleInterface::~ModuleInterface() = default;
+
+std::string
+ModuleInterface::exportedNameFor(const std::string &localName) const {
+    return moduleName_.empty() ? localName : moduleName_ + "." + localName;
+}
 
 void
 ModuleInterface::refresh(std::string sourcePath, std::string moduleKey,
@@ -28,38 +45,118 @@ ModuleInterface::refresh(std::string sourcePath, std::string moduleKey,
 void
 ModuleInterface::clear() {
     collected_ = false;
-    namespaced_ = false;
-    localTypeNames_.clear();
-    localFunctionNames_.clear();
+    ownedTypes_.clear();
+    derivedTypes_.clear();
+    localTypes_.clear();
+    localFunctions_.clear();
+}
+
+StructType *
+ModuleInterface::declareStructType(const std::string &localName) {
+    auto found = localTypes_.find(localName);
+    if (found != localTypes_.end()) {
+        return found->second.type ? found->second.type->as<StructType>() : nullptr;
+    }
+
+    auto exportedName = exportedNameFor(localName);
+    auto type = std::make_unique<StructType>(string(exportedName.c_str()));
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[exportedName] = typePtr;
+    localTypes_.emplace(localName, TypeDecl{localName, exportedName, typePtr});
+    return typePtr->as<StructType>();
 }
 
 bool
-ModuleInterface::bindLocalType(std::string localName, std::string resolvedName) {
-    return localTypeNames_
-        .emplace(std::move(localName), std::move(resolvedName))
+ModuleInterface::declareFunction(std::string localName, FuncType *type) {
+    return localFunctions_
+        .emplace(localName,
+                 FunctionDecl{localName, exportedNameFor(localName), type})
         .second;
 }
 
-bool
-ModuleInterface::bindLocalFunction(std::string localName, std::string resolvedName) {
-    return localFunctionNames_
-        .emplace(std::move(localName), std::move(resolvedName))
-        .second;
+PointerType *
+ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
+    if (!pointeeType) {
+        return nullptr;
+    }
+
+    auto pointerName = std::string(pointeeType->full_name.tochara(),
+                                   pointeeType->full_name.size()) + "*";
+    auto found = derivedTypes_.find(pointerName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<PointerType>();
+    }
+
+    auto type = std::make_unique<PointerType>(pointeeType);
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[pointerName] = typePtr;
+    return typePtr->as<PointerType>();
 }
 
-const std::string *
-ModuleInterface::findLocalType(const std::string &localName) const {
-    auto found = localTypeNames_.find(localName);
-    if (found == localTypeNames_.end()) {
+ArrayType *
+ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
+                                      std::vector<AstNode *> dimensions) {
+    if (!elementType) {
+        return nullptr;
+    }
+
+    auto arrayName = toStdString(ArrayType::buildName(elementType, dimensions));
+    auto found = derivedTypes_.find(arrayName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<ArrayType>();
+    }
+
+    auto type = std::make_unique<ArrayType>(elementType, std::move(dimensions));
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[arrayName] = typePtr;
+    return typePtr->as<ArrayType>();
+}
+
+FuncType *
+ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
+                                         TypeClass *retType) {
+    std::string funcTypeName = "f";
+    if (retType) {
+        funcTypeName += "_";
+        funcTypeName.append(retType->full_name.tochara(), retType->full_name.size());
+    }
+    for (auto *argType : argTypes) {
+        if (!argType) {
+            return nullptr;
+        }
+        funcTypeName += ".";
+        funcTypeName.append(argType->full_name.tochara(), argType->full_name.size());
+    }
+
+    auto found = derivedTypes_.find(funcTypeName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<FuncType>();
+    }
+
+    auto type = std::make_unique<FuncType>(std::vector<TypeClass *>(argTypes),
+                                           retType, string(funcTypeName.c_str()));
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[funcTypeName] = typePtr;
+    return typePtr->as<FuncType>();
+}
+
+const ModuleInterface::TypeDecl *
+ModuleInterface::findType(const std::string &localName) const {
+    auto found = localTypes_.find(localName);
+    if (found == localTypes_.end()) {
         return nullptr;
     }
     return &found->second;
 }
 
-const std::string *
-ModuleInterface::findLocalFunction(const std::string &localName) const {
-    auto found = localFunctionNames_.find(localName);
-    if (found == localFunctionNames_.end()) {
+const ModuleInterface::FunctionDecl *
+ModuleInterface::findFunction(const std::string &localName) const {
+    auto found = localFunctions_.find(localName);
+    if (found == localFunctions_.end()) {
         return nullptr;
     }
     return &found->second;

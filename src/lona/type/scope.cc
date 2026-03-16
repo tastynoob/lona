@@ -8,6 +8,30 @@ Scope::~Scope() {
     }
 }
 
+llvm::Type *
+Scope::getLLVMType(TypeClass *type) const {
+    assert(typeTable);
+    return typeTable->getLLVMType(type);
+}
+
+llvm::FunctionType *
+Scope::getLLVMFunctionType(FuncType *type) const {
+    assert(typeTable);
+    return typeTable->getLLVMFunctionType(type);
+}
+
+void
+Scope::bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func) {
+    assert(typeTable);
+    typeTable->bindMethodFunction(parent, name, func);
+}
+
+Function *
+Scope::getMethodFunction(const StructType *parent, llvm::StringRef name) const {
+    assert(typeTable);
+    return typeTable->getMethodFunction(parent, name);
+}
+
 void
 Scope::addObj(llvm::StringRef name, Object *var) {
     if (variables.find(name) != variables.end()) {
@@ -41,24 +65,24 @@ GlobalScope::allocate(TypeClass *type, bool is_extern) {
 llvm::Value *
 FuncScope::allocate(TypeClass *type, bool is_temp) {
     auto &entryBB = builder.GetInsertBlock()->getParent()->getEntryBlock();
-    assert(type->llvmType);
+    auto *llvmType = getLLVMType(type);
     if (alloc_point) {
         if (alloc_point == &entryBB.back()) {
-            alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", &entryBB);
+            alloc_point = new llvm::AllocaInst(llvmType, 0, "", &entryBB);
         } else {
             auto *next = alloc_point->getNextNode();
             if (next) {
-                alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", next);
+                alloc_point = new llvm::AllocaInst(llvmType, 0, "", next);
             } else {
-                alloc_point = new llvm::AllocaInst(type->llvmType, 0, "", &entryBB);
+                alloc_point = new llvm::AllocaInst(llvmType, 0, "", &entryBB);
             }
         }
     } else {
         if (entryBB.empty()) {
-            alloc_point = builder.CreateAlloca(type->llvmType);
+            alloc_point = builder.CreateAlloca(llvmType);
         } else {
             auto t =
-                new llvm::AllocaInst(type->llvmType, 0, "", &entryBB.front());
+                new llvm::AllocaInst(llvmType, 0, "", &entryBB.front());
             alloc_point = t;
         }
     }

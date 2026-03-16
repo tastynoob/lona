@@ -144,7 +144,7 @@ describeStorageType(TypeClass *type, AstVarDef *node) {
 }
 
 FuncType *
-getMethodSelectorType(HIRSelector *selector) {
+getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     if (!selector || selector->getType() != nullptr) {
         return nullptr;
     }
@@ -155,11 +155,9 @@ getMethodSelectorType(HIRSelector *selector) {
         return nullptr;
     }
 
-    auto *func = structType->getFunc(llvm::StringRef(selector->getFieldName()));
-    if (!func) {
-        return nullptr;
-    }
-    return func->getType() ? func->getType()->as<FuncType>() : nullptr;
+    auto *func = typeMgr ? typeMgr->getMethodFunction(
+        structType, llvm::StringRef(selector->getFieldName())) : nullptr;
+    return func && func->getType() ? func->getType()->as<FuncType>() : nullptr;
 }
 
 FuncType *
@@ -199,9 +197,9 @@ describeMethodSelectorType(HIRSelector *selector, FuncType *type) {
 }
 
 void
-rejectMethodSelectorStorage(HIRExpr *expr, AstVarDef *node) {
+rejectMethodSelectorStorage(TypeTable *typeMgr, HIRExpr *expr, AstVarDef *node) {
     auto *selector = dynamic_cast<HIRSelector *>(expr);
-    auto *funcType = getMethodSelectorType(selector);
+    auto *funcType = getMethodSelectorType(typeMgr, selector);
     if (!selector || !funcType || !node) {
         return;
     }
@@ -214,9 +212,9 @@ rejectMethodSelectorStorage(HIRExpr *expr, AstVarDef *node) {
 }
 
 void
-rejectNonCallMethodSelector(HIRExpr *expr) {
+rejectNonCallMethodSelector(TypeTable *typeMgr, HIRExpr *expr) {
     auto *selector = dynamic_cast<HIRSelector *>(expr);
-    if (!selector || !getMethodSelectorType(selector)) {
+    if (!selector || !getMethodSelectorType(typeMgr, selector)) {
         return;
     }
 
@@ -281,15 +279,7 @@ mainFunctionTypeName() {
 
 FuncType *
 getOrCreateMainType(TypeTable *typeMgr) {
-    if (auto *existing = typeMgr->getType(llvm::StringRef(mainFunctionTypeName()))) {
-        return existing->as<FuncType>();
-    }
-
-    auto *llvmMainType = llvm::FunctionType::get(i32Ty->getLLVMType(), false);
-    auto typeName = mainFunctionTypeName();
-    auto *mainType = new FuncType(llvmMainType, {}, i32Ty, string(typeName.c_str()), 0);
-    typeMgr->addType(llvm::StringRef(typeName), mainType);
-    return mainType;
+    return typeMgr->getOrCreateFunctionType({}, i32Ty);
 }
 
 llvm::Function *
@@ -302,7 +292,7 @@ getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
     }
 
     return llvm::Function::Create(
-        llvm::cast<llvm::FunctionType>(mainType->getLLVMType()),
+        typeMgr->getLLVMFunctionType(mainType),
         llvm::Function::ExternalLinkage, llvm::Twine(entryName), global->module);
 }
 
@@ -448,7 +438,9 @@ class FunctionAnalyzer {
         if (resolved.isMethod()) {
             auto *structType = requireStructTypeByName(
                 resolved.methodParentTypeName(), loc, "method parent type");
-            auto *func = structType->getFunc(llvm::StringRef(resolved.functionName()));
+            auto *func =
+                typeMgr->getMethodFunction(structType,
+                                           llvm::StringRef(resolved.functionName()));
             if (!func) {
                 internalError(loc,
                               "resolved method `" + resolved.methodParentTypeName() +
@@ -473,7 +465,7 @@ class FunctionAnalyzer {
 
     HIRExpr *requireNonCallExpr(AstNode *node) {
         auto *expr = requireExpr(node);
-        rejectNonCallMethodSelector(expr);
+        rejectNonCallMethodSelector(typeMgr, expr);
         return expr;
     }
 
@@ -755,7 +747,7 @@ class FunctionAnalyzer {
                           describeResolvedType(init->getType()));
             }
         } else if (init) {
-            rejectMethodSelectorStorage(init, node);
+            rejectMethodSelectorStorage(typeMgr, init, node);
             type = init->getType();
             if (!type) {
                 error(node->loc,
@@ -845,7 +837,7 @@ class FunctionAnalyzer {
         if (member) {
             return makeHIR<HIRSelector>(parent, fieldName, member->first, node->loc);
         }
-        if (structType->getFunc(llvm::StringRef(fieldName))) {
+        if (structType->getMethodType(llvm::StringRef(fieldName))) {
             return makeHIR<HIRSelector>(parent, fieldName, nullptr, node->loc);
         }
         error(node->loc, "unknown struct field `" + fieldName + "`",
@@ -870,11 +862,11 @@ class FunctionAnalyzer {
             if (!structType) {
                 error("selector call parent must be a struct value");
             }
-            auto *func = structType->getFunc(llvm::StringRef(selector->getFieldName()));
-            if (!func) {
+            funcType =
+                structType->getMethodType(llvm::StringRef(selector->getFieldName()));
+            if (!funcType) {
                 error("unknown struct method");
             }
-            funcType = func->getType()->as<FuncType>();
             argOffset = getMethodCallArgOffset(selector, funcType);
         } else if (auto *func = getDirectFunctionCallee(callee)) {
             funcType = func->getType()->as<FuncType>();

@@ -7,11 +7,8 @@ namespace lona {
 class IntType : public BaseType {
 
 public:
-    IntType(llvm::Type* llvm_type, Type id, std::string name)
-        : BaseType(id, string(name.c_str())) {
-        llvmType = llvm_type;
-        typeSize = llvm_type->getIntegerBitWidth() / 8;
-    }
+    IntType(Type id, std::string name)
+        : BaseType(id, string(name.c_str())) {}
 
     bool isSigned() {
         return type == I8 || type == I16 || type == I32 || type == I64;
@@ -25,19 +22,13 @@ public:
 
 class FLoatType : public BaseType {
 public:
-    FLoatType(llvm::Type* llvm_type, Type id, std::string name)
-        : BaseType(id, string(name.c_str())) {
-        llvmType = llvm_type;
-        typeSize = llvm_type->getPrimitiveSizeInBits() / 8;
-    }
+    FLoatType(Type id, std::string name)
+        : BaseType(id, string(name.c_str())) {}
 };
 
 class BoolType : public BaseType {
 public:
-    BoolType(llvm::Type* llvm_type) : BaseType(BOOL, "bool") {
-        llvmType = llvm_type;
-        typeSize = 1;
-    }
+    BoolType() : BaseType(BOOL, "bool") {}
 
     // Object* binaryOperation(llvm::IRBuilder<>& builder, Object* left,
     //     token_type op, Object* right) override;

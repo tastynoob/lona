@@ -109,9 +109,6 @@ FLoatType* f32Ty = nullptr;
 FLoatType* f64Ty = nullptr;
 BoolType* boolTy = nullptr;
 PointerType* strTy = nullptr;
-namespace {
-std::size_t activeBuiltinTableId = 0;
-}
 
 void
 initBuildinType(Scope* scope) {
@@ -120,20 +117,21 @@ initBuildinType(Scope* scope) {
         return;
     }
 
-    if (activeBuiltinTableId != typeTable->instanceId()) {
-        activeBuiltinTableId = typeTable->instanceId();
-        u8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::U8, "u8");
-        i8Ty = new IntType(scope->builder.getInt8Ty(), BaseType::I8, "i8");
-        u16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::U16, "u16");
-        i16Ty = new IntType(scope->builder.getInt16Ty(), BaseType::I16, "i16");
-        u32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::U32, "u32");
-        i32Ty = new IntType(scope->builder.getInt32Ty(), BaseType::I32, "i32");
-        u64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::U64, "u64");
-        i64Ty = new IntType(scope->builder.getInt64Ty(), BaseType::I64, "i64");
-        f32Ty = new FLoatType(scope->builder.getFloatTy(), BaseType::F32, "f32");
-        f64Ty = new FLoatType(scope->builder.getDoubleTy(), BaseType::F64, "f64");
-        boolTy = new BoolType(scope->builder.getInt1Ty());
-        strTy = typeTable->createPointerType(i8Ty);
+    if (!u8Ty) {
+        u8Ty = new IntType(BaseType::U8, "u8");
+        i8Ty = new IntType(BaseType::I8, "i8");
+        u16Ty = new IntType(BaseType::U16, "u16");
+        i16Ty = new IntType(BaseType::I16, "i16");
+        u32Ty = new IntType(BaseType::U32, "u32");
+        i32Ty = new IntType(BaseType::I32, "i32");
+        u64Ty = new IntType(BaseType::U64, "u64");
+        i64Ty = new IntType(BaseType::I64, "i64");
+        f32Ty = new FLoatType(BaseType::F32, "f32");
+        f64Ty = new FLoatType(BaseType::F64, "f64");
+        boolTy = new BoolType();
+    }
+    if (!strTy) {
+        strTy = new PointerType(i8Ty);
     }
 
     typeTable->addType(string("u8"), u8Ty);

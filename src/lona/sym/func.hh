@@ -15,9 +15,9 @@ public:
 
     Object *call(Scope *scope, std::vector<Object *> &args);
 
-    llvm::Value *get(llvm::IRBuilder<> &builder) override { return val; }
+    llvm::Value *get(Scope *scope) override { return val; }
 
-    void set(llvm::IRBuilder<> &builder, Object *src) override {
+    void set(Scope *scope, Object *src) override {
         throw "readonly literal value";
     }
 };

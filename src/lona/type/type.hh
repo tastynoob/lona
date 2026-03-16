@@ -3,9 +3,9 @@
 #include "../ast/astnode.hh"
 #include "../visitor.hh"
 #include "../sym/object.hh"
-#include "lona/type/llvmenv.hh"
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
 #include <llvm-18/llvm/ADT/StringMap.h>
 #include <llvm-18/llvm/IR/DerivedTypes.h>
@@ -16,6 +16,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lona {
@@ -23,14 +24,15 @@ namespace lona {
 class TypeClass;
 class PointerType;
 class StructType;
+class TypeTable;
+class Function;
 
 static const int RVO_THRESHOLD = 16;
 
 class TypeClass {
 public:
-    llvm::Type * llvmType = nullptr;
     string const full_name;
-    int typeSize;  // the size of the type in bytes
+    int typeSize = 0;  // the size of the type in bytes
 
     TypeClass(string full_name)
         : full_name(full_name) {}
@@ -49,14 +51,8 @@ public:
         return false;
     }
 
-    llvm::Type* getLLVMType() {
-        if (!llvmType) panic("LLVM type not generated yet");
-        return llvmType;
-    }
+    virtual llvm::Type* buildLLVMType(TypeTable& types) = 0;
 
-    virtual llvm::Type* genLLVMType(Env& env) = 0;
-
-    virtual ObjectPtr newObj(Env& env, uint32_t specifiers = Object::EMPTY);
     virtual ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) {
         return new BaseVar(this, specifiers);
     }
@@ -66,9 +62,33 @@ class BaseType : public TypeClass {
 public:
     enum Type { U8, I8, U16, I16, U32, I32, U64, I64, F32, F64, BOOL } type;
     BaseType(Type type, string full_name)
-        : TypeClass(full_name), type(type) {}
+        : TypeClass(full_name), type(type) {
+        switch (type) {
+        case U8:
+        case I8:
+            typeSize = 1;
+            break;
+        case U16:
+        case I16:
+            typeSize = 2;
+            break;
+        case U32:
+        case I32:
+        case F32:
+            typeSize = 4;
+            break;
+        case U64:
+        case I64:
+        case F64:
+            typeSize = 8;
+            break;
+        case BOOL:
+            typeSize = 1;
+            break;
+        }
+    }
 
-    llvm::Type* genLLVMType(Env& env) override;
+    llvm::Type* buildLLVMType(TypeTable& types) override;
 };
 
 class StructType : public TypeClass {
@@ -78,18 +98,13 @@ public:
 
 private:
     llvm::StringMap<ValueTy> members;
-    llvm::StringMap<Function *> funcs;
+    llvm::StringMap<FuncType *> methodTypes;
 
     bool opaque = false;
 public:
     StructType(llvm::StringMap<ValueTy> &&members,
                string full_name)
         : TypeClass(full_name), members(members), opaque(false) {}
-
-    StructType(llvm::StructType *llvm_type, string full_name)
-        : TypeClass(full_name), opaque(true) {
-        llvmType = llvm_type;
-    }
 
     // create opaque struct
     StructType(string full_name)
@@ -103,8 +118,8 @@ public:
         opaque = false;
     }
 
-    void addFunc(llvm::StringRef name, Function *func) {
-        funcs[name] = func;
+    void addMethodType(llvm::StringRef name, FuncType *funcType) {
+        methodTypes[name] = funcType;
     }
 
     ValueTy *getMember(llvm::StringRef name) {
@@ -115,20 +130,18 @@ public:
         return &it->second;
     }
 
-    Function *getFunc(llvm::StringRef name) {
-        auto it = funcs.find(name);
-        if (it == funcs.end()) {
+    FuncType *getMethodType(llvm::StringRef name) {
+        auto it = methodTypes.find(name);
+        if (it == methodTypes.end()) {
             return nullptr;
         }
         return it->second;
     }
 
-    llvm::Type *genLLVMType(Env& env) override {
-        if (!llvmType) {
-            llvmType = llvm::StructType::create(env.getContext(), full_name.tochara());
-        }
-        return llvmType;
-    }
+    const llvm::StringMap<ValueTy> &getMembers() const { return members; }
+    const llvm::StringMap<FuncType *> &getMethodTypes() const { return methodTypes; }
+
+    llvm::Type *buildLLVMType(TypeTable& types) override;
 
     ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
         return new StructVar(this, specifiers);
@@ -153,33 +166,7 @@ public:
         // if hasSroa, the first arg is the return value
     }
 
-    FuncType(llvm::FunctionType *llvm_type,
-             std::vector<TypeClass *> &&args,
-             TypeClass *retType,
-             string full_name,
-             int typeSize)
-        : TypeClass(full_name),
-          argTypes(args),
-          retType(retType),
-          hasSROA(retType && retType->shouldReturnByPointer()) {
-        llvmType = llvm_type;
-        this->typeSize = typeSize;
-    }
-
-    llvm::Type *genLLVMType(Env& env) override {
-        if (!llvmType) {
-            std::vector<llvm::Type *> llvmArgTypes;
-            llvmArgTypes.reserve(argTypes.size());
-            for (auto *argType : argTypes) {
-                llvmArgTypes.push_back(argType->llvmType ? argType->llvmType : argType->genLLVMType(env));
-            }
-            auto *llvmRetType = retType
-                ? (retType->llvmType ? retType->llvmType : retType->genLLVMType(env))
-                : llvm::Type::getVoidTy(env.getContext());
-            llvmType = llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
-        }
-        return llvmType;
-    }
+    llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
 class PointerType : public TypeClass {
@@ -189,18 +176,11 @@ public:
     PointerType(TypeClass *pointeeType)
         : TypeClass(pointeeType->full_name + "*"),
           pointeeType(pointeeType) {
+        typeSize = sizeof(void *);
     }
     TypeClass *getPointeeType() { return pointeeType; }
 
-    llvm::Type *genLLVMType(Env& env) override {
-        if (!llvmType) {
-            auto *llvmPointeeType = pointeeType->llvmType
-                ? pointeeType->llvmType
-                : pointeeType->genLLVMType(env);
-            llvmType = llvm::PointerType::getUnqual(llvmPointeeType);
-        }
-        return llvmType;
-    }
+    llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
 class ArrayType : public TypeClass {
@@ -227,21 +207,13 @@ public:
         : TypeClass(buildName(elementType, dimensions)),
           elementType(elementType),
           dimensions(std::move(dimensions)) {
+        typeSize = sizeof(void *);
     }
 
     TypeClass *getElementType() { return elementType; }
     const std::vector<AstNode *> &getDimensions() const { return dimensions; }
 
-    llvm::Type *genLLVMType(Env& env) override {
-        if (!llvmType) {
-            auto *llvmElementType = elementType->llvmType
-                ? elementType->llvmType
-                : elementType->genLLVMType(env);
-            llvmType = llvm::PointerType::getUnqual(llvmElementType);
-            typeSize = sizeof(void *);
-        }
-        return llvmType;
-    }
+    llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
 
@@ -265,6 +237,22 @@ class TypeTable {
     std::size_t instanceId_;
 
     llvm::StringMap<TypeMap> typeMap;
+    std::unordered_map<const TypeClass *, llvm::Type *> llvmTypes_;
+    struct MethodBindingKey {
+        const StructType *parent = nullptr;
+        std::string name;
+
+        bool operator==(const MethodBindingKey &other) const {
+            return parent == other.parent && name == other.name;
+        }
+    };
+    struct MethodBindingKeyHash {
+        std::size_t operator()(const MethodBindingKey &key) const {
+            return std::hash<const StructType *>{}(key.parent) ^
+                (std::hash<std::string>{}(key.name) << 1);
+        }
+    };
+    std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash> methodFunctions_;
 
     
 
@@ -275,6 +263,49 @@ public:
     llvm::LLVMContext& getContext() { return module.getContext(); }
     llvm::Module& getModule() { return module; }
     std::size_t instanceId() const { return instanceId_; }
+    llvm::Type *getLLVMType(TypeClass *type) {
+        if (!type) {
+            return nullptr;
+        }
+
+        auto found = llvmTypes_.find(type);
+        if (found != llvmTypes_.end()) {
+            if (auto *structType = type->as<StructType>()) {
+                auto *llvmStruct = llvm::cast<llvm::StructType>(found->second);
+                if (!structType->isOpaque() && llvmStruct->isOpaque()) {
+                    std::vector<llvm::Type *> memberTypes;
+                    memberTypes.reserve(structType->getMembers().size());
+                    for (const auto &member : structType->getMembers()) {
+                        memberTypes.push_back(getLLVMType(member.second.first));
+                    }
+                    llvmStruct->setBody(memberTypes);
+                }
+            }
+            return found->second;
+        }
+
+        if (auto *structType = type->as<StructType>()) {
+            auto *llvmStruct = llvm::cast<llvm::StructType>(
+                structType->buildLLVMType(*this));
+            llvmTypes_[type] = llvmStruct;
+            if (!structType->isOpaque() && llvmStruct->isOpaque()) {
+                std::vector<llvm::Type *> memberTypes;
+                memberTypes.reserve(structType->getMembers().size());
+                for (const auto &member : structType->getMembers()) {
+                    memberTypes.push_back(getLLVMType(member.second.first));
+                }
+                llvmStruct->setBody(memberTypes);
+            }
+            return llvmStruct;
+        }
+
+        auto *llvmType = type->buildLLVMType(*this);
+        llvmTypes_[type] = llvmType;
+        return llvmType;
+    }
+    llvm::FunctionType *getLLVMFunctionType(FuncType *type) {
+        return llvm::cast<llvm::FunctionType>(getLLVMType(type));
+    }
 
     bool addType(llvm::StringRef name, TypeClass *type) {
         if (typeMap.find(name) != typeMap.end()) {
@@ -306,8 +337,6 @@ public:
             return type->as<PointerType>();
         }
         auto *pointerType = new PointerType(pointeeType);
-        pointerType->llvmType = llvm::PointerType::getUnqual(pointeeType->llvmType);
-        pointerType->typeSize = sizeof(void *);
         addType(pointerName, pointerType);
         return pointerType;
     }
@@ -320,16 +349,12 @@ public:
         }
 
         auto *arrayType = new ArrayType(elementType, std::move(dimensions));
-        arrayType->llvmType = llvm::PointerType::getUnqual(elementType->getLLVMType());
-        arrayType->typeSize = sizeof(void *);
         addType(arrayName, arrayType);
         return arrayType;
     }
 
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                       TypeClass *retType) {
-        std::vector<llvm::Type *> llvmArgTypes;
-        llvmArgTypes.reserve(argTypes.size());
         string funcTypeName = "f";
         if (retType) {
             funcTypeName += "_";
@@ -339,22 +364,105 @@ public:
             if (!argType) {
                 return nullptr;
             }
-            llvmArgTypes.push_back(argType->llvmType);
             funcTypeName += ".";
             funcTypeName += argType->full_name;
         }
         if (auto *existing = getType(funcTypeName)) {
             return existing->as<FuncType>();
         }
-        auto *llvmRetType =
-            retType ? retType->llvmType : llvm::Type::getVoidTy(module.getContext());
-        auto *llvmFuncType = llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
         auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
                                       funcTypeName);
-        funcType->llvmType = llvmFuncType;
         funcType->typeSize = 0;
         addType(funcTypeName, funcType);
         return funcType;
+    }
+
+    TypeClass *internType(TypeClass *type) {
+        if (!type) {
+            return nullptr;
+        }
+        if (type->as<BaseType>()) {
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            addType(type->full_name, type);
+            return type;
+        }
+        if (auto *structType = type->as<StructType>()) {
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            addType(type->full_name, type);
+            for (const auto &member : structType->getMembers()) {
+                internType(member.second.first);
+            }
+            for (const auto &method : structType->getMethodTypes()) {
+                internType(method.second);
+            }
+            return type;
+        }
+        if (auto *pointer = type->as<PointerType>()) {
+            auto *pointeeType = internType(pointer->getPointeeType());
+            if (!pointeeType) {
+                return nullptr;
+            }
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (pointeeType == pointer->getPointeeType()) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return createPointerType(pointeeType);
+        }
+        if (auto *array = type->as<ArrayType>()) {
+            auto *elementType = internType(array->getElementType());
+            if (!elementType) {
+                return nullptr;
+            }
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (elementType == array->getElementType()) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return createArrayType(elementType, array->getDimensions());
+        }
+        if (auto *func = type->as<FuncType>()) {
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(func->getArgTypes().size());
+            bool reusedOriginalArgs = true;
+            for (auto *arg : func->getArgTypes()) {
+                auto *internedArg = internType(arg);
+                if (!internedArg) {
+                    return nullptr;
+                }
+                reusedOriginalArgs = reusedOriginalArgs && internedArg == arg;
+                argTypes.push_back(internedArg);
+            }
+            auto *retType = internType(func->getRetType());
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (reusedOriginalArgs && retType == func->getRetType()) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return getOrCreateFunctionType(argTypes, retType);
+        }
+        return type;
+    }
+
+    void bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func) {
+        methodFunctions_[{parent, name.str()}] = func;
+    }
+    Function *getMethodFunction(const StructType *parent, llvm::StringRef name) const {
+        auto found = methodFunctions_.find({parent, name.str()});
+        if (found == methodFunctions_.end()) {
+            return nullptr;
+        }
+        return found->second;
     }
 
     TypeClass *getType(TypeNode *node) {

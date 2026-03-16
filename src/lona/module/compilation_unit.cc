@@ -300,6 +300,7 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
         syntaxTree_ = nullptr;
         stage_ = CompilationUnitStage::Discovered;
         clearImportedModules();
+        clearLocalBindings();
         invalidateCaches();
         clearInterface();
     }
@@ -320,9 +321,9 @@ CompilationUnit::markDependenciesScanned() {
 }
 
 void
-CompilationUnit::markInterfaceCollected(bool namespaced) {
+CompilationUnit::markInterfaceCollected() {
     if (moduleInterface_) {
-        moduleInterface_->markCollected(namespaced);
+        moduleInterface_->markCollected();
     }
     if (syntaxTree_ != nullptr) {
         stage_ = CompilationUnitStage::InterfaceCollected;
@@ -339,6 +340,12 @@ CompilationUnit::markCompiled() {
 void
 CompilationUnit::clearImportedModules() {
     importedModules_.clear();
+}
+
+void
+CompilationUnit::clearLocalBindings() {
+    localTypeBindings_.clear();
+    localFunctionBindings_.clear();
 }
 
 bool
@@ -367,6 +374,7 @@ CompilationUnit::clearInterface() {
     if (moduleInterface_) {
         moduleInterface_->clear();
     }
+    clearLocalBindings();
     invalidateCaches();
     resolvedTypes_.clear();
 }
@@ -390,27 +398,34 @@ CompilationUnit::ensureHashes() const {
 
 bool
 CompilationUnit::bindLocalType(std::string localName, std::string resolvedName) {
-    return moduleInterface_
-        ? moduleInterface_->bindLocalType(std::move(localName), std::move(resolvedName))
-        : false;
+    return localTypeBindings_
+        .emplace(std::move(localName), std::move(resolvedName))
+        .second;
 }
 
 bool
 CompilationUnit::bindLocalFunction(std::string localName, std::string resolvedName) {
-    return moduleInterface_
-        ? moduleInterface_->bindLocalFunction(std::move(localName),
-                                              std::move(resolvedName))
-        : false;
+    return localFunctionBindings_
+        .emplace(std::move(localName), std::move(resolvedName))
+        .second;
 }
 
 const std::string *
 CompilationUnit::findLocalType(const std::string &localName) const {
-    return moduleInterface_ ? moduleInterface_->findLocalType(localName) : nullptr;
+    auto found = localTypeBindings_.find(localName);
+    if (found == localTypeBindings_.end()) {
+        return nullptr;
+    }
+    return &found->second;
 }
 
 const std::string *
 CompilationUnit::findLocalFunction(const std::string &localName) const {
-    return moduleInterface_ ? moduleInterface_->findLocalFunction(localName) : nullptr;
+    auto found = localFunctionBindings_.find(localName);
+    if (found == localFunctionBindings_.end()) {
+        return nullptr;
+    }
+    return &found->second;
 }
 
 TypeClass *

@@ -122,7 +122,7 @@ grep -q '"type": "Program"' "$json_out"
 grep -q '"type": "FieldCall"' "$json_out"
 
 "$BIN" --emit-ir --verify-ir "$INPUT" >"$ir_out"
-grep -q '^define %Complex @Complex.add' "$ir_out"
+grep -Eq '^define %.*Complex @.*Complex\.add' "$ir_out"
 grep -q '^define i32 @fibo' "$ir_out"
 if grep -q 'llvm.dbg.declare' "$ir_out"; then
     echo 'unexpected debug metadata in non-debug IR' >&2
@@ -344,7 +344,7 @@ if "$BIN" --emit-ir "$func_inferred_method_local_bad_in" >"$func_inferred_method
     echo 'expected inferred bare method local variable program to fail' >&2
     exit 1
 fi
-grep -q 'unsupported bare function variable type for `cb`: (Complex) Complex' "$func_inferred_method_local_bad_out"
+grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex\) [^ ]*Complex' "$func_inferred_method_local_bad_out"
 
 func_inferred_method_top_bad_source='struct Complex {
     real i32
@@ -373,7 +373,7 @@ if "$BIN" --emit-ir "$func_inferred_method_top_bad_in" >"$func_inferred_method_t
     echo 'expected inferred bare method top-level variable program to fail' >&2
     exit 1
 fi
-grep -q 'unsupported bare function variable type for `cb`: (Complex) Complex' "$func_inferred_method_top_bad_out"
+grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex\) [^ ]*Complex' "$func_inferred_method_top_bad_out"
 
 func_method_return_bad_source='struct Complex {
     real i32
@@ -601,8 +601,8 @@ def main() i32 {
 '
 printf '%s' "$method_self_source" >"$method_self_in"
 "$BIN" --emit-ir --verify-ir "$method_self_in" >"$method_self_out"
-grep -q '@Counter.bump' "$method_self_out"
-grep -q 'getelementptr inbounds %Counter' "$method_self_out"
+grep -Eq '@.*Counter\.bump' "$method_self_out"
+grep -Eq 'getelementptr inbounds %.*Counter' "$method_self_out"
 
 top_level_mix_source='def inc(a i32) i32 {
     ret a + 1
@@ -713,12 +713,12 @@ var sample = make_big(3)
 '
 printf '%s' "$large_struct_return_source" >"$large_struct_return_in"
 "$BIN" --emit-ir --verify-ir "$large_struct_return_in" >"$large_struct_return_out"
-grep -q '^%Big = type { i32, i32, i32, i32, i32 }' "$large_struct_return_out"
-grep -q '^define void @Big.add(ptr ' "$large_struct_return_out"
-grep -q '^define void @Big(ptr ' "$large_struct_return_out"
+grep -Eq '^%.*Big = type \{ i32, i32, i32, i32, i32 \}' "$large_struct_return_out"
+grep -Eq '^define void @.*Big\.add\(ptr ' "$large_struct_return_out"
+grep -Eq '^define void @.*Big\(ptr ' "$large_struct_return_out"
 grep -q '^define void @make_big(ptr ' "$large_struct_return_out"
-grep -q 'call void @Big(ptr ' "$large_struct_return_out"
-grep -q 'call void @Big.add(ptr ' "$large_struct_return_out"
+grep -Eq 'call void @.*Big\(ptr ' "$large_struct_return_out"
+grep -Eq 'call void @.*Big\.add\(ptr ' "$large_struct_return_out"
 
 grammar_subset_source='struct Name {
     a i32
@@ -736,7 +736,7 @@ var sample = make_name(1, 2)
 '
 printf '%s' "$grammar_subset_source" >"$grammar_subset_in"
 "$BIN" --emit-ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
-grep -q '^%Name = type { i32, i32 }' "$grammar_subset_out"
-grep -q '^define %Name @make_name' "$grammar_subset_out"
+grep -Eq '^%.*Name = type \{ i32, i32 \}' "$grammar_subset_out"
+grep -Eq '^define %.*Name @make_name' "$grammar_subset_out"
 
 printf 'acceptance checks passed\n'
