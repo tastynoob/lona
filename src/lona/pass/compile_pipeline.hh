@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lona/driver/session.hh"
+#include "lona/driver/session_types.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/sema/hir.hh"
 #include "lona/type/scope.hh"
@@ -15,7 +15,6 @@
 #include <vector>
 
 namespace lona {
-
 class ModuleGraph;
 
 struct IRBuildState {

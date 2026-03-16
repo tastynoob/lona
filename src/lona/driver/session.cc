@@ -1,30 +1,9 @@
 #include "session.hh"
+#include "lona/ast/astnode.hh"
 #include "lona/err/err.hh"
-#include "lona/module/compilation_unit.hh"
-#include "lona/pass/compile_pipeline.hh"
-#include "lona/resolve/resolve.hh"
-#include "lona/scan/driver.hh"
-#include "lona/sema/hir.hh"
-#include "lona/type/scope.hh"
-#include "lona/type/type.hh"
-#include "lona/visitor.hh"
 #include <chrono>
-#include <filesystem>
 #include <iomanip>
-#include <llvm/AsmParser/Parser.h>
-#include <llvm-18/llvm/IR/LLVMContext.h>
-#include <llvm-18/llvm/IR/Module.h>
-#include <llvm-18/llvm/IR/PassManager.h>
-#include <llvm-18/llvm/IR/Verifier.h>
-#include <llvm/Linker/Linker.h>
-#include <llvm-18/llvm/Passes/OptimizationLevel.h>
-#include <llvm-18/llvm/Passes/PassBuilder.h>
-#include <llvm/Support/SourceMgr.h>
-#include <memory>
 #include <nlohmann/json.hpp>
-#include <sstream>
-#include <unordered_set>
-#include <utility>
 
 namespace lona {
 namespace {
@@ -33,75 +12,6 @@ using Clock = std::chrono::steady_clock;
 double
 elapsedMillis(Clock::time_point start, Clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-llvm::OptimizationLevel
-getOptimizationLevel(int optLevel) {
-    switch (optLevel) {
-    case 0:
-        return llvm::OptimizationLevel::O0;
-    case 1:
-        return llvm::OptimizationLevel::O1;
-    case 2:
-        return llvm::OptimizationLevel::O2;
-    case 3:
-        return llvm::OptimizationLevel::O3;
-    default:
-        return llvm::OptimizationLevel::O0;
-    }
-}
-
-void
-optimizeModule(llvm::Module &module, int optLevel) {
-    if (optLevel <= 0) {
-        return;
-    }
-
-    llvm::LoopAnalysisManager loopAM;
-    llvm::FunctionAnalysisManager functionAM;
-    llvm::CGSCCAnalysisManager cgsccAM;
-    llvm::ModuleAnalysisManager moduleAM;
-    llvm::PassBuilder passBuilder;
-
-    passBuilder.registerLoopAnalyses(loopAM);
-    passBuilder.registerFunctionAnalyses(functionAM);
-    passBuilder.registerCGSCCAnalyses(cgsccAM);
-    passBuilder.registerModuleAnalyses(moduleAM);
-    passBuilder.crossRegisterProxies(loopAM, functionAM, cgsccAM, moduleAM);
-
-    llvm::ModulePassManager modulePasses =
-        passBuilder.buildPerModuleDefaultPipeline(getOptimizationLevel(optLevel));
-    modulePasses.run(module, moduleAM);
-}
-
-bool
-verifyCompiledModule(llvm::Module &module, std::ostream &out) {
-    std::string verifyErrors;
-    llvm::raw_string_ostream verifyOut(verifyErrors);
-    if (!llvm::verifyModule(module, &verifyOut)) {
-        return true;
-    }
-    verifyOut.flush();
-    out << verifyErrors;
-    return false;
-}
-
-std::unique_ptr<llvm::Module>
-parseArtifactModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) {
-    llvm::SMDiagnostic error;
-    auto module = llvm::parseAssemblyString(artifact.llvmIR(), error, context);
-    if (module) {
-        return module;
-    }
-
-    std::string render;
-    llvm::raw_string_ostream renderOut(render);
-    error.print(artifact.path().c_str(), renderOut);
-    renderOut.flush();
-    throw DiagnosticError(DiagnosticError::Category::Internal,
-                          "failed to parse cached LLVM IR for module `" +
-                              artifact.path() + "`",
-                          render);
 }
 
 AstNode *
@@ -116,421 +26,13 @@ requireSyntaxTree(const CompilationUnit &unit) {
     return tree;
 }
 
-AstStatList *
-requireTopLevelBody(const CompilationUnit &unit) {
-    auto *tree = requireSyntaxTree(unit);
-    if (auto *program = dynamic_cast<AstProgram *>(tree)) {
-        return program->body;
-    }
-    if (auto *body = dynamic_cast<AstStatList *>(tree)) {
-        return body;
-    }
-    throw DiagnosticError(DiagnosticError::Category::Internal,
-                          "compilation unit `" + unit.path() +
-                              "` does not have a top-level statement list",
-                          "This looks like a parser/session integration bug.");
-}
-
-std::string
-resolveImportPath(const CompilationUnit &unit, const AstImport &importNode) {
-    namespace fs = std::filesystem;
-    fs::path importPath(importNode.path);
-    if (importPath.has_extension()) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Syntax, importNode.loc,
-            "import paths should omit the file suffix",
-            "Write imports like `import path/to/file`, not `import path/to/file.lo`.");
-    }
-    importPath += ".lo";
-    if (importPath.is_relative()) {
-        importPath = fs::path(unit.path()).parent_path() / importPath;
-    }
-    return importPath.lexically_normal().string();
-}
-
-bool
-isValidModuleName(const std::string &name) {
-    if (name.empty()) {
-        return false;
-    }
-    auto isHead = [](char ch) {
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_';
-    };
-    auto isBody = [&](char ch) {
-        return isHead(ch) || (ch >= '0' && ch <= '9');
-    };
-    if (!isHead(name.front())) {
-        return false;
-    }
-    for (char ch : name) {
-        if (!isBody(ch)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void
-appendHIRFunctions(HIRModule &target, const HIRModule &source) {
-    for (auto *func : source.getFunctions()) {
-        target.addFunction(func);
-    }
-}
-
-bool
-isAllowedImportedTopLevelNode(AstNode *node) {
-    if (node == nullptr) {
-        return true;
-    }
-    if (node->is<AstImport>() || node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {
-        return true;
-    }
-    auto *list = dynamic_cast<AstStatList *>(node);
-    return list != nullptr && list->isEmpty();
-}
-
 }  // namespace
 
 CompilerSession::CompilerSession()
-    : diagnostics_(&sourceManager_),
-      moduleExecutor_(createSerialModuleExecutor()),
-      irPipeline_(std::make_unique<CompilePipeline>()) {
-    irPipeline_->addStage("collect-declarations", [this](IRPipelineContext &context) {
-        auto start = Clock::now();
-        const bool exportEntryNamespace =
-            context.rootUnit && context.rootUnit->path() != context.entryUnit.path();
-        for (const auto &dependencyPath :
-             context.moduleGraph.dependenciesOf(context.entryUnit.path())) {
-            auto *loadedUnit = moduleGraph_.find(dependencyPath);
-            if (loadedUnit == nullptr) {
-                throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module graph dependency references a missing unit",
-                                      "This looks like a compiler module graph bug.");
-            }
-            validateImportedUnit(*loadedUnit);
-            collectUnitDeclarations(&context.build.global, *loadedUnit, true);
-        }
-        collectUnitDeclarations(&context.build.global, context.entryUnit,
-                                exportEntryNamespace);
-        context.stats.declarationMs += elapsedMillis(start, Clock::now());
-        return 0;
-    });
-
-    irPipeline_->addStage("lower-hir", [this](IRPipelineContext &context) {
-        auto start = Clock::now();
-        auto resolved = resolveModule(&context.build.global, context.entryUnit.syntaxTree(),
-                                      &context.entryUnit);
-        auto hirModule =
-            analyzeModule(&context.build.global, *resolved, &context.entryUnit);
-        appendHIRFunctions(context.programHIR, *hirModule);
-        context.loweredModules.push_back(std::move(hirModule));
-        context.stats.lowerMs += elapsedMillis(start, Clock::now());
-        return 0;
-    });
-
-    irPipeline_->addStage("emit-llvm", [](IRPipelineContext &context) {
-        auto start = Clock::now();
-        emitHIRModule(&context.build.global, &context.programHIR,
-                      context.options.debugInfo, context.entryUnit.path());
-        context.stats.codegenMs += elapsedMillis(start, Clock::now());
-        return 0;
-    });
-
-    irPipeline_->addStage("optimize-llvm", [](IRPipelineContext &context) {
-        auto start = Clock::now();
-        optimizeModule(context.build.module, context.options.optLevel);
-        context.stats.optimizeMs += elapsedMillis(start, Clock::now());
-        return 0;
-    });
-
-    irPipeline_->addStage("verify-llvm", [](IRPipelineContext &context) {
-        if (!context.options.verifyIR) {
-            return 0;
-        }
-        auto start = Clock::now();
-        bool verifyOk = verifyCompiledModule(context.build.module, context.out);
-        context.stats.verifyMs += elapsedMillis(start, Clock::now());
-        return verifyOk ? 0 : 1;
-    });
-
-    irPipeline_->addStage("print-llvm", [](IRPipelineContext &context) {
-        std::string ir;
-        llvm::raw_string_ostream irOut(ir);
-        context.build.module.print(irOut, nullptr);
-        irOut.flush();
-        context.out << ir;
-        return 0;
-    });
-}
+    : loader_(workspace_),
+      builder_(workspace_, loader_) {}
 
 CompilerSession::~CompilerSession() = default;
-
-const SourceBuffer &
-CompilerSession::loadSource(const std::string &path) {
-    return sourceManager_.loadFile(path);
-}
-
-CompilationUnit &
-CompilerSession::loadUnit(const std::string &path) {
-    const auto &source = loadSource(path);
-    auto &unit = moduleGraph_.getOrCreate(source);
-    unit.attachInterface(
-        moduleCache_.getOrCreate(source, unit.moduleKey(), unit.moduleName()));
-    return unit;
-}
-
-CompilationUnit &
-CompilerSession::loadRootUnit(const std::string &path) {
-    auto &unit = loadUnit(path);
-    moduleGraph_.markRoot(unit.path());
-    return unit;
-}
-
-AstNode *
-CompilerSession::parseUnit(CompilationUnit &unit) {
-    if (unit.hasSyntaxTree()) {
-        return unit.syntaxTree();
-    }
-
-    std::istringstream input(unit.source().content());
-    Driver driver;
-    driver.input(&input, unit.source());
-    auto *tree = driver.parse();
-    if (tree != nullptr) {
-        unit.setSyntaxTree(tree);
-    }
-    return tree;
-}
-
-void
-CompilerSession::discoverUnitDependencies(CompilationUnit &unit) {
-    if (unit.dependenciesScanned()) {
-        return;
-    }
-
-    moduleGraph_.resetDependencies(unit.path());
-    unit.clearImportedModules();
-    auto *body = requireTopLevelBody(unit);
-    for (auto *stmt : body->getBody()) {
-        auto *importNode = dynamic_cast<AstImport *>(stmt);
-        if (!importNode) {
-            continue;
-        }
-        auto importPath = resolveImportPath(unit, *importNode);
-        auto &dependencyUnit = loadUnit(importPath);
-        if (!isValidModuleName(dependencyUnit.moduleName())) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Semantic, importNode->loc,
-                "imported module `" + dependencyUnit.path() +
-                    "` cannot be referenced as `file.xxx` because `" +
-                    dependencyUnit.moduleName() + "` is not a valid identifier",
-                "Rename the file so its base name matches identifier syntax.");
-        }
-        moduleGraph_.addDependency(unit.path(), dependencyUnit.path());
-        unit.addImportedModule(dependencyUnit.moduleName(), dependencyUnit);
-    }
-    unit.markDependenciesScanned();
-}
-
-void
-CompilerSession::parseLoadedUnits() {
-    auto *root = moduleGraph_.root();
-    if (root == nullptr) {
-        return;
-    }
-
-    std::vector<std::string> pending = {root->path()};
-    std::unordered_set<std::string> queued = {root->path()};
-    for (std::size_t index = 0; index < pending.size(); ++index) {
-        auto &loadedUnit = loadUnit(pending[index]);
-        auto parseStart = Clock::now();
-        auto *tree = parseUnit(loadedUnit);
-        lastStats_.parseMs += elapsedMillis(parseStart, Clock::now());
-        if (tree == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Syntax,
-                                  "I couldn't parse this file.");
-        }
-        discoverUnitDependencies(loadedUnit);
-        for (const auto &dependencyPath :
-             moduleGraph_.dependenciesOf(loadedUnit.path())) {
-            if (queued.emplace(dependencyPath).second) {
-                pending.push_back(dependencyPath);
-            }
-        }
-    }
-}
-
-void
-CompilerSession::validateImportedUnit(const CompilationUnit &unit) const {
-    const auto *root = moduleGraph_.root();
-    if (root != nullptr && root->path() == unit.path()) {
-        return;
-    }
-
-    auto *body = requireTopLevelBody(unit);
-    for (auto *stmt : body->getBody()) {
-        if (isAllowedImportedTopLevelNode(stmt)) {
-            continue;
-        }
-        throw DiagnosticError(
-            DiagnosticError::Category::Semantic, stmt->loc,
-            "imported file `" + unit.path() +
-                "` cannot contain top-level executable statements",
-            "Move this statement into a function, or keep top-level execution only in the root file.");
-    }
-}
-
-int
-CompilerSession::emitJson(const CompilationUnit &unit, std::ostream &out) const {
-    auto *tree = requireSyntaxTree(unit);
-    Json root = Json::object();
-    tree->toJson(root);
-    out << root.dump(2) << std::endl;
-    return 0;
-}
-
-std::unordered_map<std::string, std::uint64_t>
-CompilerSession::collectDependencyInterfaceHashes(const CompilationUnit &unit) const {
-    std::unordered_map<std::string, std::uint64_t> hashes;
-    for (const auto &dependencyPath : moduleGraph_.dependenciesOf(unit.path())) {
-        auto *dependency = moduleGraph_.find(dependencyPath);
-        if (dependency == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module graph dependency references a missing unit",
-                                  "This looks like a compiler module graph bug.");
-        }
-        hashes.emplace(dependency->moduleKey(), dependency->interfaceHash());
-    }
-    return hashes;
-}
-
-bool
-CompilerSession::canReuseArtifact(const CompilationUnit &unit,
-                                  const ModuleArtifact &artifact) const {
-    if (artifact.sourceHash() != unit.sourceHash() ||
-        artifact.interfaceHash() != unit.interfaceHash() ||
-        artifact.implementationHash() != unit.implementationHash()) {
-        return false;
-    }
-
-    return artifact.dependencyInterfaceHashes() ==
-        collectDependencyInterfaceHashes(unit);
-}
-
-int
-CompilerSession::compileModuleArtifact(CompilationUnit &unit,
-                                       const CompileOptions &options,
-                                       ModuleArtifact &artifact,
-                                       std::ostream &out) {
-    std::ostringstream ir;
-    IRPipelineContext context(unit, moduleGraph_, options, ir, lastStats_);
-    context.rootUnit = moduleGraph_.root();
-    int exitCode = irPipeline_->run(context);
-    if (exitCode == 0) {
-        unit.markCompiled();
-        artifact.setLLVMIR(ir.str());
-        ++lastStats_.compiledModules;
-    } else {
-        out << ir.str();
-    }
-    return exitCode;
-}
-
-int
-CompilerSession::emitIR(CompilationUnit &unit, const CompileOptions &options,
-                        std::ostream &out) {
-    buildQueue_.reset(moduleGraph_, unit.path());
-    int exitCode = moduleExecutor_->execute(
-        buildQueue_, [&](const std::string &path) -> int {
-            auto *queuedUnit = moduleGraph_.find(path);
-            if (queuedUnit == nullptr) {
-                throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module build queue references a missing unit",
-                                      "This looks like a compiler module queue bug.");
-            }
-
-            auto dependencyHashes = collectDependencyInterfaceHashes(*queuedUnit);
-            auto existing = moduleArtifacts_.find(queuedUnit->path());
-            if (existing != moduleArtifacts_.end() &&
-                canReuseArtifact(*queuedUnit, existing->second)) {
-                queuedUnit->markCompiled();
-                ++lastStats_.reusedModules;
-                return 0;
-            }
-
-            ModuleArtifact artifact(queuedUnit->path(), queuedUnit->moduleKey(),
-                                    queuedUnit->moduleName(), queuedUnit->sourceHash(),
-                                    queuedUnit->interfaceHash(),
-                                    queuedUnit->implementationHash());
-            artifact.setDependencyInterfaceHashes(std::move(dependencyHashes));
-            int exitCode =
-                compileModuleArtifact(*queuedUnit, options, artifact, out);
-            if (exitCode != 0) {
-                return exitCode;
-            }
-            moduleArtifacts_[queuedUnit->path()] = std::move(artifact);
-            return 0;
-        });
-    if (exitCode != 0) {
-        return exitCode;
-    }
-
-    return linkArtifacts(unit, options, out);
-}
-
-int
-CompilerSession::linkArtifacts(const CompilationUnit &rootUnit,
-                               const CompileOptions &options,
-                               std::ostream &out) {
-    auto rootArtifact = moduleArtifacts_.find(rootUnit.path());
-    if (rootArtifact == moduleArtifacts_.end()) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "root module artifact was not produced",
-                              "This looks like a compiler module scheduling bug.");
-    }
-
-    auto start = Clock::now();
-    llvm::LLVMContext context;
-    auto linkedModule = parseArtifactModule(rootArtifact->second, context);
-    llvm::Linker linker(*linkedModule);
-    for (const auto &path : moduleGraph_.postOrderFrom(rootUnit.path())) {
-        if (path == rootUnit.path()) {
-            continue;
-        }
-        auto artifact = moduleArtifacts_.find(path);
-        if (artifact == moduleArtifacts_.end()) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "linked module is missing dependency artifact `" +
-                                      path + "`",
-                                  "This looks like a compiler module scheduling bug.");
-        }
-        auto dependencyModule = parseArtifactModule(artifact->second, context);
-        if (linker.linkInModule(std::move(dependencyModule))) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "failed to link module `" + artifact->second.path() +
-                    "` into root module `" + rootUnit.path() + "`",
-                "Check for duplicate IR symbols or incompatible LLVM module state.");
-        }
-    }
-
-    if (options.verifyIR) {
-        auto verifyStart = Clock::now();
-        if (!verifyCompiledModule(*linkedModule, out)) {
-            lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
-            return 1;
-        }
-        lastStats_.verifyMs += elapsedMillis(verifyStart, Clock::now());
-    }
-
-    std::string linkedIR;
-    llvm::raw_string_ostream irOut(linkedIR);
-    linkedModule->print(irOut, nullptr);
-    irOut.flush();
-    lastStats_.linkMs += elapsedMillis(start, Clock::now());
-    out << linkedIR;
-    return 0;
-}
 
 void
 CompilerSession::printStats(std::ostream &out) const {
@@ -560,16 +62,16 @@ CompilerSession::runFile(const std::string &inputPath,
     lastStats_ = {};
     auto totalStart = Clock::now();
     auto finish = [&](int exitCode) {
-        auto *root = moduleGraph_.root();
-        lastStats_.loadedUnits =
-            root ? moduleGraph_.postOrderFrom(root->path()).size() : 0;
+        lastStats_.loadedUnits = builder_.loadedUnitCount();
         lastStats_.totalMs = elapsedMillis(totalStart, Clock::now());
         return exitCode;
     };
 
     try {
-        auto &unit = loadRootUnit(inputPath);
-        parseLoadedUnits();
+        auto &unit = loader_.loadRootUnit(inputPath);
+        loader_.loadTransitiveUnits([this](const CompilationUnit &, double parseMs) {
+            lastStats_.parseMs += parseMs;
+        });
         AstNode *tree = unit.syntaxTree();
         if (tree == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Syntax,
@@ -577,21 +79,25 @@ CompilerSession::runFile(const std::string &inputPath,
         }
 
         if (options.outputMode == OutputMode::LLVMIR) {
-            return finish(emitIR(unit, options.compile, out));
+            return finish(builder_.emitIR(unit, options.compile, lastStats_, out));
         }
-        return finish(emitJson(unit, out));
+        auto *jsonTree = requireSyntaxTree(unit);
+        Json root = Json::object();
+        jsonTree->toJson(root);
+        out << root.dump(2) << std::endl;
+        return finish(0);
     } catch (const DiagnosticError &error) {
-        diagnostics_.emit(error, diag, inputPath);
+        diagnostics().emit(error, diag, inputPath);
         return finish(1);
     } catch (const std::exception &ex) {
-        diagnostics_.emit(
+        diagnostics().emit(
             DiagnosticError(DiagnosticError::Category::Internal,
                             ex.what(),
                             "This looks like a compiler bug or infrastructure failure."),
             diag, inputPath);
         return finish(1);
     } catch (const char *ex) {
-        diagnostics_.emit(
+        diagnostics().emit(
             DiagnosticError(DiagnosticError::Category::Internal,
                             ex,
                             "This looks like a compiler bug or infrastructure failure."),
