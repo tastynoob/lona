@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ast/astnode.hh"
+#include "../ast/array_dim.hh"
 #include "../visitor.hh"
 #include "../sym/object.hh"
 #include <cassert>
@@ -227,16 +228,8 @@ class ArrayType : public TypeClass {
 public:
     static string buildName(TypeClass *elementType,
                             const std::vector<AstNode *> &dimensions) {
-        string name = elementType->full_name + "[";
-        for (size_t i = 0; i < dimensions.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (dimensions[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
+        string name = elementType->full_name;
+        name += string(describeArrayDimensions(dimensions).c_str());
         return name;
     }
 
@@ -244,11 +237,55 @@ public:
         : TypeClass(buildName(elementType, dimensions)),
           elementType(elementType),
           dimensions(std::move(dimensions)) {
-        typeSize = sizeof(void *);
+        typeSize = computeStaticSize();
     }
 
     TypeClass *getElementType() { return elementType; }
     const std::vector<AstNode *> &getDimensions() const { return dimensions; }
+    std::size_t indexArity() const { return arrayIndexArity(dimensions); }
+    bool usesLegacyPrefixSyntax() const {
+        return isLegacyArrayDimensionPrefix(dimensions);
+    }
+    std::vector<std::int64_t> staticDimensions(bool *ok = nullptr) const {
+        std::vector<std::int64_t> values;
+        values.reserve(dimensions.size());
+        bool allStatic = true;
+        for (auto *dimension : dimensions) {
+            if (dimension == nullptr) {
+                continue;
+            }
+            std::int64_t value = 0;
+            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
+                allStatic = false;
+                break;
+            }
+            values.push_back(value);
+        }
+        if (ok) {
+            *ok = allStatic;
+        }
+        if (!allStatic) {
+            values.clear();
+        }
+        return values;
+    }
+    bool hasStaticLayout() const {
+        bool ok = false;
+        auto values = staticDimensions(&ok);
+        return ok && !values.empty();
+    }
+    int computeStaticSize() const {
+        bool ok = false;
+        auto values = staticDimensions(&ok);
+        if (!ok || values.empty() || !elementType) {
+            return static_cast<int>(sizeof(void *));
+        }
+        std::int64_t total = elementType->typeSize;
+        for (auto value : values) {
+            total *= value;
+        }
+        return total > 0 ? static_cast<int>(total) : static_cast<int>(sizeof(void *));
+    }
 
     llvm::Type *buildLLVMType(TypeTable& types) override;
 };

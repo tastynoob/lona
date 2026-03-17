@@ -1,4 +1,5 @@
 #include "type_node_string.hh"
+#include "array_dim.hh"
 #include <string>
 
 namespace lona {
@@ -28,16 +29,7 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
         auto name = describeTypeNode(array->base, nullDescription);
-        name += "[";
-        for (size_t i = 0; i < array->dim.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (array->dim[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
+        name += describeArrayDimensions(array->dim);
         return name;
     }
     if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {

@@ -301,6 +301,7 @@ expr_assign
 expr_assign_left
     : variable { $$ = $1; }
     | expr_getpointee { $$ = $1; }
+    | field_call { $$ = $1; }
     ;
 
 expr_binOp

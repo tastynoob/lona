@@ -1,4 +1,5 @@
 #include "compilation_unit.hh"
+#include "lona/ast/array_dim.hh"
 #include "lona/err/err.hh"
 #include "lona/type/type.hh"
 #include <cassert>
@@ -53,6 +54,24 @@ hashText(std::uint64_t &seed, std::string_view text) {
 
 void
 hashTypeNode(std::uint64_t &seed, const TypeNode *node);
+
+void
+hashArrayDimensions(std::uint64_t &seed, const std::vector<AstNode *> &dimensions) {
+    seed = combineHash(seed, dimensions.size());
+    for (auto *dimension : dimensions) {
+        if (dimension == nullptr) {
+            hashText(seed, "array-dim:null");
+            continue;
+        }
+        std::int64_t value = 0;
+        if (tryExtractArrayDimension(dimension, value)) {
+            hashText(seed, "array-dim:int");
+            seed = combineHash(seed, static_cast<std::uint64_t>(value));
+            continue;
+        }
+        hashText(seed, "array-dim:expr");
+    }
+}
 
 void
 hashParamSignature(std::uint64_t &seed, AstNode *node) {
@@ -152,7 +171,7 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
         hashText(seed, "array");
-        seed = combineHash(seed, array->dim.size());
+        hashArrayDimensions(seed, array->dim);
         hashTypeNode(seed, array->base);
         return;
     }
@@ -466,6 +485,11 @@ CompilationUnit::cacheResolvedType(TypeNode *node, TypeClass *type) const {
     if (node) {
         resolvedTypes_[node] = type;
     }
+}
+
+void
+CompilationUnit::clearResolvedTypes() {
+    resolvedTypes_.clear();
 }
 
 TypeClass *

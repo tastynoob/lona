@@ -19,12 +19,20 @@ string_placeholder_in="$(new_tmp_file string-placeholder)"
 string_placeholder_out="$(new_tmp_file string-placeholder-out)"
 tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
+tuple_flow_in="$(new_tmp_file tuple-flow)"
+tuple_flow_out="$(new_tmp_file tuple-flow-out)"
 tuple_no_context_in="$(new_tmp_file tuple-no-context)"
 tuple_no_context_out="$(new_tmp_file tuple-no-context-out)"
 array_init_in="$(new_tmp_file array-init)"
 array_init_out="$(new_tmp_file array-init-out)"
-array_index_in="$(new_tmp_file array-index)"
-array_index_out="$(new_tmp_file array-index-out)"
+array_group_in="$(new_tmp_file array-group)"
+array_group_out="$(new_tmp_file array-group-out)"
+array_mixed_in="$(new_tmp_file array-mixed)"
+array_mixed_out="$(new_tmp_file array-mixed-out)"
+array_value_init_in="$(new_tmp_file array-value-init)"
+array_value_init_out="$(new_tmp_file array-value-init-out)"
+array_bad_dim_in="$(new_tmp_file array-bad-dim)"
+array_bad_dim_out="$(new_tmp_file array-bad-dim-out)"
 operator_placeholder_in="$(new_tmp_file operator-placeholder)"
 operator_placeholder_out="$(new_tmp_file operator-placeholder-out)"
 
@@ -38,7 +46,7 @@ EOF
 "$BIN" "$milestone_json_in" >"$milestone_json_out"
 grep -Fq '"declaredType": "<i32, bool>"' "$milestone_json_out"
 grep -Fq '"type": "TupleLiteral"' "$milestone_json_out"
-grep -Fq '"declaredType": "i32[?][?]"' "$milestone_json_out"
+grep -Fq '"declaredType": "i32[4][5]"' "$milestone_json_out"
 grep -Fq '"type": "ArrayInit"' "$milestone_json_out"
 
 cat >"$legacy_cast_in" <<'EOF'
@@ -116,6 +124,21 @@ EOF
 grep -q 'alloca { i32, i1 }' "$tuple_out"
 grep -q 'store { i32, i1 } { i32 1, i1 true }' "$tuple_out"
 
+cat >"$tuple_flow_in" <<'EOF'
+def echo(pair <i32, bool>) <i32, bool> {
+    ret pair
+}
+
+def main() i32 {
+    var pair <i32, bool> = (1, true)
+    var out <i32, bool> = echo(pair)
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
+grep -q '^define { i32, i1 } @echo' "$tuple_flow_out"
+grep -q 'call { i32, i1 } @echo' "$tuple_flow_out"
+
 cat >"$tuple_no_context_in" <<'EOF'
 def bad() i32 {
     var pair = (1, true)
@@ -128,19 +151,57 @@ grep -Fq 'tuple literals need an explicit tuple target type' "$tuple_no_context_
 cat >"$array_init_in" <<'EOF'
 def bad() i32 {
     var matrix i32[4][5] = {{}}
+    matrix(1)(2) = 7
+    ret matrix(1)(2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_init_in" >"$array_init_out"
+grep -Fq 'alloca [5 x [4 x i32]]' "$array_init_out"
+grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_init_out"
+grep -Fq 'store i32 7' "$array_init_out"
+grep -Fq 'ret i32' "$array_init_out"
+
+cat >"$array_group_in" <<'EOF'
+def bad() i32 {
+    var matrix i32[5, 4] = {}
+    matrix(1, 2) = 9
+    ret matrix(1, 2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_group_in" >"$array_group_out"
+grep -Fq 'alloca [5 x [4 x i32]]' "$array_group_out"
+grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_group_out"
+grep -Fq 'store i32 9' "$array_group_out"
+
+cat >"$array_mixed_in" <<'EOF'
+def bad() i32 {
+    var tensor i32[3][4, 5] = {}
+    tensor(1, 2)(0) = 11
+    ret tensor(1, 2)(0)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_mixed_in" >"$array_mixed_out"
+grep -Fq 'alloca [4 x [5 x [3 x i32]]]' "$array_mixed_out"
+grep -Fq 'getelementptr inbounds [4 x [5 x [3 x i32]]]' "$array_mixed_out"
+grep -Fq 'store i32 11' "$array_mixed_out"
+
+cat >"$array_value_init_in" <<'EOF'
+def bad() i32 {
+    var matrix i32[4][5] = {{1}}
     ret 0
 }
 EOF
-expect_emit_ir_failure "$array_init_in" "$array_init_out" 'expected array initializer placeholder program to fail'
-grep -Fq 'array initializers are parsed, but fixed-dimension array semantics are not implemented yet' "$array_init_out"
+expect_emit_ir_failure "$array_value_init_in" "$array_value_init_out" 'expected explicit array value initializer program to fail'
+grep -Fq 'array initializers currently only support zero-initialization placeholders' "$array_value_init_out"
 
-cat >"$array_index_in" <<'EOF'
-def use(table i32[4][5]) i32 {
-    ret table(1)(2)
+cat >"$array_bad_dim_in" <<'EOF'
+def bad() i32 {
+    var matrix i32[0][5] = {}
+    ret 0
 }
 EOF
-expect_emit_ir_failure "$array_index_in" "$array_index_out" 'expected array index lowering placeholder program to fail'
-grep -Fq 'array indexing lowering is not implemented yet' "$array_index_out"
+expect_emit_ir_failure "$array_bad_dim_in" "$array_bad_dim_out" 'expected invalid array dimension program to fail'
+grep -Fq 'fixed-dimension arrays require positive integer literal sizes' "$array_bad_dim_out"
 
 cat >"$operator_placeholder_in" <<'EOF'
 def bad(a i32, b i32) i32 {

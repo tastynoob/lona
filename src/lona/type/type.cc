@@ -71,7 +71,17 @@ PointerType::buildLLVMType(TypeTable &types) {
 
 llvm::Type *
 ArrayType::buildLLVMType(TypeTable &types) {
-    return llvm::PointerType::getUnqual(types.getLLVMType(elementType));
+    bool ok = false;
+    auto extents = staticDimensions(&ok);
+    if (!ok || extents.empty()) {
+        return llvm::PointerType::getUnqual(types.getLLVMType(elementType));
+    }
+
+    llvm::Type *llvmType = types.getLLVMType(elementType);
+    for (auto it = extents.rbegin(); it != extents.rend(); ++it) {
+        llvmType = llvm::ArrayType::get(llvmType, static_cast<std::uint64_t>(*it));
+    }
+    return llvmType;
 }
 
 }  // namespace lona

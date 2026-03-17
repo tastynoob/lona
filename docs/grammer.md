@@ -272,7 +272,8 @@ array-init-seq    ::= expr
 - `legacy-cast-expr` 不是正式特性，而是为了给旧式 `i32 value` / `i32(expr)` 写法提供明确错误诊断。
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
-- 数组初始化和数组 lowering 仍是后续工作。
+- 固定维度数组现在已经支持零初始化占位与 `()` 索引 lowering。
+- 显式数组元素列表仍未实现；当前只接受零初始化占位。
 
 ### 3.6 类型语法
 
@@ -343,14 +344,14 @@ type-name-seq     ::= type-name
 
 - 上表描述的是 parser 当前的优先级表。
 - 并不是所有运算符都已经形成完整语义；未实现的项会在语义阶段给出明确占位错误。
-- `[]` 目前仍主要出现在类型层；表达式层的访问语义后续通过“括号应用”模型继续收口。
+- 表达式层的数组访问统一走 `()`，并在语义阶段区分为函数调用或数组索引。
 
 ## 5. 当前实现边界
 
 ### 5.1 仍保留为占位的能力
 
-- fixed array initializer
-- array indexing lowering
+- explicit array element initializer
+- array dimension inference
 - string runtime semantics
 - 新扩进来的部分运算符家族
 

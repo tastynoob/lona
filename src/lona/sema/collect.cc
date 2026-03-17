@@ -3,6 +3,7 @@
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
+#include "lona/ast/array_dim.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sym/func.hh"
@@ -594,6 +595,49 @@ lookupBuiltinType(llvm::StringRef name) {
     return nullptr;
 }
 
+[[noreturn]] void
+errorInvalidArrayDimension(const location &loc) {
+    error(loc,
+          "fixed-dimension arrays require positive integer literal sizes",
+          "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
+}
+
+void
+validateTypeNodeLayout(TypeNode *node) {
+    if (!node) {
+        return;
+    }
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        validateTypeNodeLayout(array->base);
+        for (auto *dimension : array->dim) {
+            if (dimension == nullptr) {
+                continue;
+            }
+            std::int64_t value = 0;
+            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
+                errorInvalidArrayDimension(dimension->loc);
+            }
+        }
+        return;
+    }
+    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+        for (auto *item : tuple->items) {
+            validateTypeNodeLayout(item);
+        }
+        return;
+    }
+    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        for (auto *arg : func->args) {
+            validateTypeNodeLayout(arg);
+        }
+        validateTypeNodeLayout(func->ret);
+    }
+}
+
 std::uint32_t
 computeSemanticStructSize(StructType *structType) {
     if (!structType || structType->isOpaque()) {
@@ -623,6 +667,7 @@ class InterfaceCollector {
         if (!node) {
             return nullptr;
         }
+        validateTypeNodeLayout(node);
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = toStdString(base->name);
             auto separator = rawName.find('.');
@@ -1073,6 +1118,19 @@ class FunctionCompiler {
             result->bindllvmValue(aggregate);
             return result;
         }
+        if (auto *arrayInit = dynamic_cast<HIRArrayInit *>(expr)) {
+            setLocation(arrayInit);
+            auto *arrayType = arrayInit->getType() ? arrayInit->getType()->as<ArrayType>()
+                                                   : nullptr;
+            if (!arrayType || !arrayType->hasStaticLayout()) {
+                error("array initializer requires a fixed-layout array type");
+            }
+            auto *result =
+                arrayType->newObj(Object::REG_VAL | Object::READONLY);
+            result->bindllvmValue(llvm::Constant::getNullValue(
+                scope->getLLVMType(arrayType)));
+            return result;
+        }
         if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
             setLocation(assign);
             auto *dst = compileExpr(assign->getLeft());
@@ -1205,9 +1263,43 @@ class FunctionCompiler {
         }
         if (auto *index = dynamic_cast<HIRIndex *>(expr)) {
             setLocation(index);
-            (void)compileExpr(index->getTarget());
-            error("array indexing lowering is not implemented yet",
-                  "Semantic checking now understands `a(...)` as array indexing when the left side is an array. LLVM lowering will be added in the next milestone.");
+            auto *target = compileExpr(index->getTarget());
+            if (!target) {
+                error("array indexing target did not produce a value");
+            }
+            auto *arrayType = target->getType() ? target->getType()->as<ArrayType>() : nullptr;
+            if (!arrayType) {
+                error("array indexing expects an array value");
+            }
+            if (!arrayType->hasStaticLayout()) {
+                error("array indexing requires a fixed-layout array type");
+            }
+            auto *targetPtr = target->getllvmValue();
+            if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
+                error("array indexing expects an addressable array value");
+            }
+
+            std::vector<llvm::Value *> gepIndices;
+            gepIndices.reserve(index->getIndices().size() + 1);
+            gepIndices.push_back(
+                llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true));
+            for (auto *argExpr : index->getIndices()) {
+                auto *arg = compileExpr(argExpr);
+                if (!arg || arg->getType() != i32Ty) {
+                    error("array indexing expects `i32` indices");
+                }
+                gepIndices.push_back(arg->get(scope));
+            }
+
+            auto *resultType = index->getType();
+            if (!resultType) {
+                error("array indexing result type is missing");
+            }
+            auto *elementPtr = scope->builder.CreateInBoundsGEP(
+                scope->getLLVMType(arrayType), targetPtr, gepIndices);
+            auto *result = resultType->newObj(Object::VARIABLE);
+            result->setllvmValue(elementPtr);
+            return result;
         }
         error("unsupported HIR expression");
     }

@@ -64,6 +64,12 @@ public:
     const std::vector<HIRExpr *> &getItems() const { return items; }
 };
 
+class HIRArrayInit : public HIRExpr {
+public:
+    explicit HIRArrayInit(TypeClass *type = nullptr, const location &loc = location())
+        : HIRExpr(type, loc) {}
+};
+
 class HIRUnaryOper : public HIRExpr {
     token_type op;
     HIRExpr *expr;

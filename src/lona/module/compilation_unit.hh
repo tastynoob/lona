@@ -89,6 +89,7 @@ public:
     const std::string *findLocalFunction(const std::string &localName) const;
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
+    void clearResolvedTypes();
     TypeClass *resolveType(TypeTable *typeTable, TypeNode *node) const;
 };
 

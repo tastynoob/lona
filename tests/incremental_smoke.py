@@ -99,6 +99,31 @@ def dependency_with_helper(delta: int, helper_name: str) -> str:
     )
 
 
+def array_dependency_text(columns: int, rows: int, value: int) -> str:
+    return (
+        "struct Box {\n"
+        f"    data i32[{columns}][{rows}]\n"
+        "}\n\n"
+        "def make() Box {\n"
+        f"    var matrix i32[{columns}][{rows}] = {{}}\n"
+        f"    matrix(0)(0) = {value}\n"
+        "    var box Box\n"
+        "    box.data = matrix\n"
+        "    ret box\n"
+        "}\n"
+    )
+
+
+def array_program_text(module_name: str) -> str:
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        f"    var box {module_name}.Box = {module_name}.make()\n"
+        "    ret box.data(0)(0)\n"
+        "}\n"
+    )
+
+
 def run_body_vs_interface_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     dep_name = "dep"
     dep_path = root / f"{dep_name}.lo"
@@ -132,6 +157,22 @@ def run_duplicate_basename_case(rng: random.Random, runner: SessionRunner, root:
         expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
 
 
+def run_array_interface_hash_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    first_cols = rng.randint(2, 4)
+    second_cols = first_cols + 1
+    rows = rng.randint(2, 4)
+    value = rng.randint(3, 9)
+
+    write_file(dep_path, array_dependency_text(first_cols, rows, value))
+    write_file(app_path, array_program_text("dep"))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, array_dependency_text(second_cols, rows, value))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     case_count = 3
     for index in range(case_count):
@@ -160,6 +201,10 @@ def main() -> int:
             suite.add(
                 "duplicate-basenames-across-roots",
                 lambda: run_duplicate_basename_case(rng, runner, root / "duplicate_roots"),
+            )
+            suite.add(
+                "array-interface-hash-invalidation",
+                lambda: run_array_interface_hash_case(rng, runner, root / "array_interface"),
             )
             suite.add(
                 "randomized-template-cases",

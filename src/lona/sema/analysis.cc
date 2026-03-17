@@ -1,6 +1,7 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
+#include "lona/ast/array_dim.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
@@ -69,19 +70,7 @@ describeResolvedType(TypeClass *type) {
         return describeResolvedType(pointer->getPointeeType()) + "*";
     }
     if (auto *array = type->as<ArrayType>()) {
-        auto name = describeResolvedType(array->getElementType());
-        name += "[";
-        const auto &dimensions = array->getDimensions();
-        for (size_t i = 0; i < dimensions.size(); ++i) {
-            if (i != 0) {
-                name += ",";
-            }
-            if (dimensions[i] != nullptr) {
-                name += "?";
-            }
-        }
-        name += "]";
-        return name;
+        return toStdString(array->full_name);
     }
     if (auto *func = type->as<FuncType>()) {
         return describeResolvedFuncType(func);
@@ -105,6 +94,49 @@ isFloatType(TypeClass *type) {
 bool
 isArithmeticType(TypeClass *type) {
     return type == i32Ty || isFloatType(type);
+}
+
+[[noreturn]] void
+errorInvalidArrayDimension(const location &loc) {
+    error(loc,
+          "fixed-dimension arrays require positive integer literal sizes",
+          "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
+}
+
+void
+validateTypeNodeLayout(TypeNode *node) {
+    if (!node) {
+        return;
+    }
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        validateTypeNodeLayout(array->base);
+        for (auto *dimension : array->dim) {
+            if (dimension == nullptr) {
+                continue;
+            }
+            std::int64_t value = 0;
+            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
+                errorInvalidArrayDimension(dimension->loc);
+            }
+        }
+        return;
+    }
+    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+        for (auto *item : tuple->items) {
+            validateTypeNodeLayout(item);
+        }
+        return;
+    }
+    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        for (auto *arg : func->args) {
+            validateTypeNodeLayout(arg);
+        }
+        validateTypeNodeLayout(func->ret);
+    }
 }
 
 FuncType *
@@ -319,6 +351,7 @@ class FunctionAnalyzer {
     }
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
+        validateTypeNodeLayout(node);
         auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
@@ -458,6 +491,9 @@ class FunctionAnalyzer {
         if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
             return unary->getOp() == '*' && unary->getType() != nullptr;
         }
+        if (dynamic_cast<HIRIndex *>(expr)) {
+            return true;
+        }
         return false;
     }
 
@@ -538,10 +574,8 @@ class FunctionAnalyzer {
         if (auto *tuple = node->as<AstTupleLiteral>()) {
             return analyzeTupleLiteral(tuple, expectedType);
         }
-        if (node->is<AstArrayInit>()) {
-            error(node->loc,
-                  "array initializers are parsed, but fixed-dimension array semantics are not implemented yet",
-                  "This milestone only wires array initializer syntax into the frontend. Array layout and lowering will be added later.");
+        if (auto *arrayInit = node->as<AstArrayInit>()) {
+            return analyzeArrayInit(arrayInit, expectedType);
         }
         if (auto *selector = node->as<AstSelector>()) {
             return analyzeSelector(selector);
@@ -609,6 +643,39 @@ class FunctionAnalyzer {
             items.push_back(item);
         }
         return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
+    }
+
+    bool isZeroArrayInit(const AstArrayInit *node) {
+        if (!node || !node->items) {
+            return false;
+        }
+        for (auto *item : *node->items) {
+            auto *nested = dynamic_cast<AstArrayInit *>(item);
+            if (!nested || !isZeroArrayInit(nested)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    HIRExpr *analyzeArrayInit(AstArrayInit *node, TypeClass *expectedType) {
+        auto *arrayType = expectedType ? expectedType->as<ArrayType>() : nullptr;
+        if (!arrayType) {
+            error(node->loc,
+                  "array initializers need an explicit array target type",
+                  "Write a declaration like `var matrix i32[4][5] = {{}}` so the initializer knows the array layout.");
+        }
+        if (!arrayType->hasStaticLayout()) {
+            error(node->loc,
+                  "array initializers currently require fixed explicit dimensions",
+                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+        }
+        if (!isZeroArrayInit(node)) {
+            error(node->loc,
+                  "array initializers currently only support zero-initialization placeholders",
+                  "Use `{}` or nested empty braces like `{{}}` for now. Explicit element lists will be added later.");
+        }
+        return makeHIR<HIRArrayInit>(arrayType, node->loc);
     }
 
     HIRExpr *analyzeField(AstField *node) {
@@ -681,6 +748,11 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeAssign(AstAssign *node) {
         auto *left = requireNonCallExpr(node->left);
+        if (!isAddressable(left)) {
+            error(node->left ? node->left->loc : node->loc,
+                  "assignment expects an addressable value on the left side",
+                  "You can assign to variables, struct fields, dereferenced pointers, or array indexing expressions.");
+        }
         auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
         auto *leftType = left->getType();
         auto *rightType = right->getType();
@@ -934,11 +1006,15 @@ class FunctionAnalyzer {
         } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
             funcType = pointerTarget;
         } else if (auto *arrayType = callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
-            const auto &dimensions = arrayType->getDimensions();
-            if (actualArgCount != dimensions.size()) {
+            if (!arrayType->hasStaticLayout()) {
+                error(node->loc,
+                      "array indexing requires fixed explicit dimensions",
+                      "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+            }
+            if (actualArgCount != arrayType->indexArity()) {
                 error(node->loc,
                       "array index arity mismatch: expected " +
-                          std::to_string(dimensions.size()) + ", got " +
+                          std::to_string(arrayType->indexArity()) + ", got " +
                           std::to_string(actualArgCount));
             }
             if (node->args) {

@@ -88,6 +88,7 @@ def generate_case(rng: random.Random, case_id: int) -> GeneratedCase:
         "pointer",
         "float",
         "tuple",
+        "array",
         "struct",
         "func_ptr",
         "import",
@@ -179,6 +180,25 @@ def tuple_keep_{case_id}(pair <i32, bool>) <i32, bool> {{
             ]
         )
         expected_ir.extend([f"@tuple_make_{case_id}", f"@tuple_keep_{case_id}"])
+
+    if "array" in chosen:
+        matrix_rows = rng.randint(2, 4)
+        matrix_cols = rng.randint(2, 5)
+        vector_rows = rng.randint(2, 4)
+        vector_cols = rng.randint(2, 5)
+        add_definition(
+            f"""
+def array_use_{case_id}() i32 {{
+    var matrix_{case_id} i32[{matrix_cols}][{matrix_rows}] = {{}}
+    matrix_{case_id}(1)(1) = {rng.randint(3, 9)}
+    var grid_{case_id} i32[{vector_rows}, {vector_cols}] = {{}}
+    grid_{case_id}(1, 1) = matrix_{case_id}(1)(1)
+    ret grid_{case_id}(1, 1)
+}}
+"""
+        )
+        main_body.append(f"    score = score + array_use_{case_id}()")
+        expected_ir.append(f"@array_use_{case_id}")
 
     if "struct" in chosen:
         add_definition(

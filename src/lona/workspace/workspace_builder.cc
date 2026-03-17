@@ -296,6 +296,7 @@ int
 WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &options,
                                 ModuleArtifact &artifact, SessionStats &stats,
                                 std::ostream &out) const {
+    unit.clearResolvedTypes();
     std::ostringstream ir;
     IRPipelineContext context(unit, workspace_.moduleGraph(), options, ir, stats);
     context.rootUnit = workspace_.moduleGraph().root();
