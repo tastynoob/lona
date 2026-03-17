@@ -78,9 +78,14 @@ public:
 };
 
 class HIRArrayInit : public HIRExpr {
+    std::vector<HIRExpr *> items;
+
 public:
-    explicit HIRArrayInit(TypeClass *type = nullptr, const location &loc = location())
-        : HIRExpr(type, loc) {}
+    HIRArrayInit(std::vector<HIRExpr *> items = {}, TypeClass *type = nullptr,
+                 const location &loc = location())
+        : HIRExpr(type, loc), items(std::move(items)) {}
+
+    const std::vector<HIRExpr *> &getItems() const { return items; }
 };
 
 class HIRNumericCast : public HIRExpr {

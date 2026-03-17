@@ -205,9 +205,9 @@ def tuple_keep_{case_id}(pair <i32, bool>) <i32, bool> {{
         add_definition(
             f"""
 def array_use_{case_id}() i32 {{
-    var matrix_{case_id} i32[{matrix_cols}][{matrix_rows}] = {{}}
+    var matrix_{case_id} i32[{matrix_cols}][{matrix_rows}] = {{{{1, 2}}}}
     matrix_{case_id}(1)(1) = {rng.randint(3, 9)}
-    var grid_{case_id} i32[{vector_rows}, {vector_cols}] = {{}}
+    var grid_{case_id} i32[{vector_rows}, {vector_cols}] = {{{{1}}, {{2}}}}
     grid_{case_id}(1, 1) = matrix_{case_id}(1)(1)
     ret grid_{case_id}(1, 1)
 }}

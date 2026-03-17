@@ -33,6 +33,8 @@ bool_bytecopy_bad_in="$(new_tmp_file bool-bytecopy-bad)"
 bool_bytecopy_bad_out="$(new_tmp_file bool-bytecopy-bad-out)"
 string_placeholder_in="$(new_tmp_file string-placeholder)"
 string_placeholder_out="$(new_tmp_file string-placeholder-out)"
+initial_list_hidden_in="$(new_tmp_file initial-list-hidden)"
+initial_list_hidden_out="$(new_tmp_file initial-list-hidden-out)"
 tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
 tuple_flow_in="$(new_tmp_file tuple-flow)"
@@ -43,6 +45,8 @@ tuple_field_bad_in="$(new_tmp_file tuple-field-bad)"
 tuple_field_bad_out="$(new_tmp_file tuple-field-bad-out)"
 tuple_no_context_in="$(new_tmp_file tuple-no-context)"
 tuple_no_context_out="$(new_tmp_file tuple-no-context-out)"
+tuple_array_in="$(new_tmp_file tuple-array)"
+tuple_array_out="$(new_tmp_file tuple-array-out)"
 array_init_in="$(new_tmp_file array-init)"
 array_init_out="$(new_tmp_file array-init-out)"
 array_group_in="$(new_tmp_file array-group)"
@@ -51,10 +55,14 @@ array_mixed_in="$(new_tmp_file array-mixed)"
 array_mixed_out="$(new_tmp_file array-mixed-out)"
 array_value_init_in="$(new_tmp_file array-value-init)"
 array_value_init_out="$(new_tmp_file array-value-init-out)"
+array_overflow_in="$(new_tmp_file array-overflow)"
+array_overflow_out="$(new_tmp_file array-overflow-out)"
 array_bad_dim_in="$(new_tmp_file array-bad-dim)"
 array_bad_dim_out="$(new_tmp_file array-bad-dim-out)"
-array_bad_zero_shape_in="$(new_tmp_file array-bad-zero-shape)"
-array_bad_zero_shape_out="$(new_tmp_file array-bad-zero-shape-out)"
+array_bad_shape_in="$(new_tmp_file array-bad-shape)"
+array_bad_shape_out="$(new_tmp_file array-bad-shape-out)"
+array_bad_depth_in="$(new_tmp_file array-bad-depth)"
+array_bad_depth_out="$(new_tmp_file array-bad-depth-out)"
 struct_init_in="$(new_tmp_file struct-init)"
 struct_init_out="$(new_tmp_file struct-init-out)"
 named_call_bad_in="$(new_tmp_file named-call-bad)"
@@ -256,6 +264,16 @@ EOF
 expect_emit_ir_failure "$string_placeholder_in" "$string_placeholder_out" 'expected string placeholder program to fail'
 grep -Fq 'string literals are reserved, but runtime string semantics are not implemented yet' "$string_placeholder_out"
 
+cat >"$initial_list_hidden_in" <<'EOF'
+def bad() i32 {
+    var x initial_list
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$initial_list_hidden_in" "$initial_list_hidden_out" 'expected internal initial_list type use to fail'
+grep -Fq '`initial_list` is a compiler-internal initialization interface' "$initial_list_hidden_out"
+grep -Fq 'Use brace initialization like `{1, 2, 3}` instead.' "$initial_list_hidden_out"
+
 cat >"$tuple_in" <<'EOF'
 def bad() i32 {
     var pair <i32, bool> = (1, true)
@@ -319,9 +337,22 @@ EOF
 expect_emit_ir_failure "$tuple_no_context_in" "$tuple_no_context_out" 'expected context-free tuple literal program to fail'
 grep -Fq 'tuple literals need an explicit tuple target type' "$tuple_no_context_out"
 
+cat >"$tuple_array_in" <<'EOF'
+def main() i32 {
+    var items <i32, bool>[2] = {(1, true), (2, false)}
+    if items(0)._2 {
+        ret items(0)._1
+    }
+    ret items(1)._1
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$tuple_array_in" >"$tuple_array_out"
+grep -Fq 'alloca [2 x { i32, i1 }]' "$tuple_array_out"
+grep -Fq 'store [2 x { i32, i1 }]' "$tuple_array_out"
+
 cat >"$array_init_in" <<'EOF'
 def bad() i32 {
-    var matrix i32[4][5] = {{}}
+    var matrix i32[4][5] = {{1}, {2}}
     matrix(1)(2) = 7
     ret matrix(1)(2)
 }
@@ -329,12 +360,14 @@ EOF
 "$BIN" --emit-ir --verify-ir "$array_init_in" >"$array_init_out"
 grep -Fq 'alloca [5 x [4 x i32]]' "$array_init_out"
 grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_init_out"
+grep -Fq '[4 x i32] [i32 1, i32 0, i32 0, i32 0]' "$array_init_out"
+grep -Fq '[4 x i32] [i32 2, i32 0, i32 0, i32 0]' "$array_init_out"
 grep -Fq 'store i32 7' "$array_init_out"
 grep -Fq 'ret i32' "$array_init_out"
 
 cat >"$array_group_in" <<'EOF'
 def bad() i32 {
-    var matrix i32[5, 4] = {}
+    var matrix i32[5, 4] = {{1, 2}, {3}}
     matrix(1, 2) = 9
     ret matrix(1, 2)
 }
@@ -342,6 +375,8 @@ EOF
 "$BIN" --emit-ir --verify-ir "$array_group_in" >"$array_group_out"
 grep -Fq 'alloca [5 x [4 x i32]]' "$array_group_out"
 grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_group_out"
+grep -Fq '[4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_group_out"
+grep -Fq '[4 x i32] [i32 3, i32 0, i32 0, i32 0]' "$array_group_out"
 grep -Fq 'store i32 9' "$array_group_out"
 
 cat >"$array_mixed_in" <<'EOF'
@@ -357,14 +392,13 @@ grep -Fq 'getelementptr inbounds [4 x [5 x [3 x i32]]]' "$array_mixed_out"
 grep -Fq 'store i32 11' "$array_mixed_out"
 
 cat >"$array_value_init_in" <<'EOF'
-def bad() i32 {
-    var matrix i32[4][5] = {{1}}
-    ret 0
+def main() i32 {
+    var row i32[4] = {1, 2}
+    ret row(0) + row(1) + row(2) + row(3)
 }
 EOF
-expect_emit_ir_failure "$array_value_init_in" "$array_value_init_out" 'expected explicit array value initializer program to fail'
-grep -Fq "array zero-initialization placeholder doesn't match the array shape" "$array_value_init_out"
-grep -Fq 'Explicit element lists will be added in the next step.' "$array_value_init_out"
+"$BIN" --emit-ir --verify-ir "$array_value_init_in" >"$array_value_init_out"
+grep -Fq 'store [4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_value_init_out"
 
 cat >"$array_bad_dim_in" <<'EOF'
 def bad() i32 {
@@ -375,14 +409,32 @@ EOF
 expect_emit_ir_failure "$array_bad_dim_in" "$array_bad_dim_out" 'expected invalid array dimension program to fail'
 grep -Fq 'fixed-dimension arrays require positive integer literal sizes' "$array_bad_dim_out"
 
-cat >"$array_bad_zero_shape_in" <<'EOF'
+cat >"$array_overflow_in" <<'EOF'
 def bad() i32 {
-    var a i32[1] = {{}}
+    var a i32[2] = {1, 2, 3}
     ret 0
 }
 EOF
-expect_emit_ir_failure "$array_bad_zero_shape_in" "$array_bad_zero_shape_out" 'expected mismatched zero-shape array initializer program to fail'
-grep -Fq "array zero-initialization placeholder doesn't match the array shape" "$array_bad_zero_shape_out"
+expect_emit_ir_failure "$array_overflow_in" "$array_overflow_out" 'expected overflowing array initializer program to fail'
+grep -Fq 'array initializer has too many elements' "$array_overflow_out"
+
+cat >"$array_bad_shape_in" <<'EOF'
+def bad() i32 {
+    var a i32[4][5] = {1, 2}
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_bad_shape_in" "$array_bad_shape_out" 'expected mismatched nested array initializer program to fail'
+grep -Fq 'array initializer expects a nested brace group at index 0' "$array_bad_shape_out"
+
+cat >"$array_bad_depth_in" <<'EOF'
+def bad() i32 {
+    var a i32[1] = {{1}}
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_bad_depth_in" "$array_bad_depth_out" 'expected too-deep array initializer program to fail'
+grep -Fq 'array initializer nesting is deeper than the array shape' "$array_bad_depth_out"
 
 cat >"$struct_init_in" <<'EOF'
 struct Complex {

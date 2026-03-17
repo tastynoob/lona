@@ -299,11 +299,12 @@ brace-init-item   ::= expr
 - 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
 - 元组成员访问沿用 `field-selector` 规则，字段名按 `_1`、`_2`、`_3` 这种自动生成名称访问。
-- 固定维度数组现在已经支持零初始化占位与 `()` 索引 lowering。
+- 固定维度数组现在已经支持花括号显式初始化、零补齐与 `()` 索引 lowering。
 - 花括号初始化当前用于数组。
+- 花括号初始化在内部会先形成一个 `initial_list` 风格抽象，再按目标数组类型物化；`initial_list` 当前不是用户可写类型。
 - 结构体类型名可以直接作为构造调用目标，例如 `var c = Complex(real = 1, img = 2)`。
 - 命名实参与位置实参可以混排，但顺序必须与 Python 类似：先位置、后命名。
-- 显式数组元素列表目前都已经进入 parser / AST，但语义层仍保留占位诊断。
+- 数组初始化按容器层级递归匹配；例如 `i32[4][5]` 适合写成 `{{1}, {2}}`，缺失元素会自动补零。
 
 ### 3.6 类型语法
 
@@ -380,7 +381,6 @@ type-name-seq     ::= type-name
 
 ### 5.1 仍保留为占位的能力
 
-- explicit array element initializer
 - array dimension inference
 - string runtime semantics
 

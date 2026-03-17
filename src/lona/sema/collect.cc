@@ -286,10 +286,19 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
     return unit->moduleName() + "." + resolved;
 }
 
+bool isReservedInitialListTypeName(llvm::StringRef name);
+[[noreturn]] void errorReservedInitialListType(const location &loc);
+
 TypeClass *
 resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node) {
     if (!typeMgr) {
         return nullptr;
+    }
+    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+        auto rawName = llvm::StringRef(base->name.tochara(), base->name.size());
+        if (isReservedInitialListTypeName(rawName)) {
+            errorReservedInitialListType(base->loc);
+        }
     }
     return unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
 }
@@ -614,6 +623,18 @@ lookupBuiltinType(llvm::StringRef name) {
     return nullptr;
 }
 
+bool
+isReservedInitialListTypeName(llvm::StringRef name) {
+    return name == "initial_list";
+}
+
+[[noreturn]] void
+errorReservedInitialListType(const location &loc) {
+    error(loc,
+          "`initial_list` is a compiler-internal initialization interface",
+          "Use brace initialization like `{1, 2, 3}` instead. User-visible generic `initial_list<T>` support is not implemented.");
+}
+
 [[noreturn]] void
 errorInvalidArrayDimension(const location &loc) {
     error(loc,
@@ -691,6 +712,10 @@ class InterfaceCollector {
             auto rawName = toStdString(base->name);
             auto separator = rawName.find('.');
             if (separator == std::string::npos) {
+                if (isReservedInitialListTypeName(
+                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
+                    errorReservedInitialListType(base->loc);
+                }
                 if (auto *builtin = lookupBuiltinType(
                         llvm::StringRef(rawName.c_str(), rawName.size()))) {
                     return builtin;
@@ -1095,6 +1120,43 @@ class FunctionCompiler {
         return obj;
     }
 
+    std::vector<AstNode *> consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
+        std::vector<AstNode *> remaining;
+        remaining.reserve(dims.size());
+        bool consumed = false;
+        const bool legacyPrefix = isLegacyArrayDimensionPrefix(dims);
+        for (auto *dim : dims) {
+            if (dim == nullptr) {
+                continue;
+            }
+            if (!consumed) {
+                consumed = true;
+                continue;
+            }
+            remaining.push_back(dim);
+        }
+        if (legacyPrefix && remaining.size() > 1) {
+            remaining.insert(remaining.begin(), nullptr);
+        }
+        return remaining;
+    }
+
+    TypeClass *arrayInitChildType(ArrayType *arrayType) {
+        if (!arrayType) {
+            return nullptr;
+        }
+        bool ok = false;
+        auto dims = arrayType->staticDimensions(&ok);
+        if (!ok || dims.empty()) {
+            return nullptr;
+        }
+        if (dims.size() == 1) {
+            return arrayType->getElementType();
+        }
+        auto childDims = consumeArrayOuterDimension(arrayType->getDimensions());
+        return typeMgr->createArrayType(arrayType->getElementType(), std::move(childDims));
+    }
+
     void setLocation(const location &loc) {
         currentLocation = loc;
         hasCurrentLocation = true;
@@ -1196,10 +1258,25 @@ class FunctionCompiler {
             if (!arrayType || !arrayType->hasStaticLayout()) {
                 error("array initializer requires a fixed-layout array type");
             }
-            auto *result =
-                arrayType->newObj(Object::REG_VAL | Object::READONLY);
-            result->bindllvmValue(llvm::Constant::getNullValue(
-                scope->getLLVMType(arrayType)));
+            auto *childType = arrayInitChildType(arrayType);
+            if (!childType) {
+                error("array initializer is missing its child element type");
+            }
+            llvm::Value *aggregate = llvm::Constant::getNullValue(
+                scope->getLLVMType(arrayType));
+            for (std::size_t i = 0; i < arrayInit->getItems().size(); ++i) {
+                auto *item = compileExpr(arrayInit->getItems()[i]);
+                if (!item) {
+                    error("array initializer item did not produce a value");
+                }
+                if (item->getType() != childType) {
+                    error("array initializer item type mismatch during lowering");
+                }
+                aggregate = scope->builder.CreateInsertValue(
+                    aggregate, item->get(scope), {static_cast<unsigned>(i)});
+            }
+            auto *result = arrayType->newObj(Object::REG_VAL | Object::READONLY);
+            result->bindllvmValue(aggregate);
             return result;
         }
         if (auto *cast = dynamic_cast<HIRNumericCast *>(expr)) {

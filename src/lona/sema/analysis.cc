@@ -163,6 +163,22 @@ bitCopyHint() {
     return "Use `.tobits()` when you want raw bit-copy behavior. It returns `u8[N]`, and `u8[N].toXXX()` converts those bytes back with truncation or zero-fill.";
 }
 
+bool
+isReservedInitialListTypeNode(TypeNode *node) {
+    auto *base = dynamic_cast<BaseTypeNode *>(node);
+    if (!base) {
+        return false;
+    }
+    return toStdString(base->name) == "initial_list";
+}
+
+[[noreturn]] void
+errorReservedInitialListType(const location &loc) {
+    error(loc,
+          "`initial_list` is a compiler-internal initialization interface",
+          "Use brace initialization like `{1, 2, 3}` instead. User-visible generic `initial_list<T>` support is not implemented.");
+}
+
 std::string
 describeInjectedMemberHelp(TypeClass *receiverType, const std::string &memberName) {
     return "Call injected members directly as `<expr>." + memberName +
@@ -393,6 +409,9 @@ class FunctionAnalyzer {
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
         validateTypeNodeLayout(node);
+        if (isReservedInitialListTypeNode(node)) {
+            errorReservedInitialListType(node->loc);
+        }
         auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
@@ -869,30 +888,171 @@ class FunctionAnalyzer {
         return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
     }
 
-    bool isZeroBraceInitShape(const AstBraceInit *node, ArrayType *arrayType) {
-        if (!node || !node->items || !arrayType) {
-            return false;
+    struct InitialList;
+
+    struct InitialListItem {
+        location loc;
+        AstNode *expr = nullptr;
+        std::unique_ptr<InitialList> nested;
+    };
+
+    struct InitialList {
+        location loc;
+        std::vector<InitialListItem> items;
+    };
+
+    std::vector<AstNode *> consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
+        std::vector<AstNode *> remaining;
+        remaining.reserve(dims.size());
+        bool consumed = false;
+        const bool legacyPrefix = isLegacyArrayDimensionPrefix(dims);
+        for (auto *dim : dims) {
+            if (dim == nullptr) {
+                continue;
+            }
+            if (!consumed) {
+                consumed = true;
+                continue;
+            }
+            remaining.push_back(dim);
         }
-        if (node->items->empty()) {
-            return true;
+        if (legacyPrefix && remaining.size() > 1) {
+            remaining.insert(remaining.begin(), nullptr);
+        }
+        return remaining;
+    }
+
+    TypeClass *arrayInitChildType(ArrayType *arrayType) {
+        if (!arrayType) {
+            return nullptr;
+        }
+        bool ok = false;
+        auto dims = arrayType->staticDimensions(&ok);
+        if (!ok || dims.empty()) {
+            return nullptr;
+        }
+        if (dims.size() == 1) {
+            return arrayType->getElementType();
+        }
+        auto childDims = consumeArrayOuterDimension(arrayType->getDimensions());
+        return typeMgr->createArrayType(arrayType->getElementType(), std::move(childDims));
+    }
+
+    std::unique_ptr<InitialList> buildInitialList(AstBraceInit *node) {
+        if (!node) {
+            return nullptr;
+        }
+        auto initList = std::make_unique<InitialList>();
+        initList->loc = node->loc;
+        if (!node->items || node->items->empty()) {
+            return initList;
+        }
+        initList->items.reserve(node->items->size());
+        for (auto *rawItem : *node->items) {
+            auto *braceItem = dynamic_cast<AstBraceInitItem *>(rawItem);
+            if (!braceItem || !braceItem->value) {
+                error(node->loc,
+                      "array initializer contains an invalid item",
+                      "Each item must be an expression or a nested brace group.");
+            }
+            InitialListItem item;
+            item.loc = braceItem->value->loc;
+            if (auto *nested = dynamic_cast<AstBraceInit *>(braceItem->value)) {
+                item.nested = buildInitialList(nested);
+            } else {
+                item.expr = braceItem->value;
+            }
+            initList->items.push_back(std::move(item));
+        }
+        return initList;
+    }
+
+    HIRExpr *materializeArrayInit(const InitialList &initList, ArrayType *arrayType,
+                                  const location &loc) {
+        if (!arrayType) {
+            error("invalid array initializer materialization");
+        }
+        if (!arrayType->hasStaticLayout()) {
+            error(loc,
+                  "array initializers currently require fixed explicit dimensions",
+                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
         }
 
-        auto *nestedArrayType = arrayType->getElementType()
-            ? arrayType->getElementType()->as<ArrayType>()
-            : nullptr;
-        if (!nestedArrayType || node->items->size() != 1) {
-            return false;
+        bool ok = false;
+        auto dims = arrayType->staticDimensions(&ok);
+        if (!ok || dims.empty()) {
+            error(loc,
+                  "array initializers currently require fixed explicit dimensions",
+                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+        }
+        const auto outerExtent = static_cast<std::size_t>(dims.front());
+        auto *childType = arrayInitChildType(arrayType);
+        if (!childType) {
+            error(loc,
+                  "array initializer is missing its element type",
+                  "This looks like a compiler pipeline bug.");
         }
 
-        auto *braceItem = dynamic_cast<AstBraceInitItem *>(node->items->front());
-        if (!braceItem) {
-            return false;
+        std::vector<HIRExpr *> items;
+        if (initList.items.size() > outerExtent) {
+            error(loc,
+                  "array initializer has too many elements: expected at most " +
+                      std::to_string(outerExtent) + ", got " +
+                      std::to_string(initList.items.size()),
+                  "Remove extra elements or increase the array dimension.");
         }
-        auto *nested = dynamic_cast<AstBraceInit *>(braceItem->value);
-        if (!nested) {
-            return false;
+
+        items.reserve(initList.items.size());
+        for (std::size_t i = 0; i < initList.items.size(); ++i) {
+            const auto &item = initList.items[i];
+            if (item.nested) {
+                auto *childArrayType = childType->as<ArrayType>();
+                if (!childArrayType) {
+                    error(item.loc,
+                          "array initializer nesting is deeper than the array shape",
+                          "Remove this brace level, or make the target element type another array.");
+                }
+                items.push_back(materializeArrayInit(*item.nested, childArrayType,
+                                                     item.loc));
+                continue;
+            }
+
+            if (childType->as<ArrayType>()) {
+                error(item.loc,
+                      "array initializer expects a nested brace group at index " +
+                          std::to_string(i),
+                      "Write nested rows like `{{1, 2}, {3, 4}}` so the brace structure matches the array shape.");
+            }
+
+            auto *value = requireNonCallExpr(item.expr, childType);
+            value = coerceNumericExpr(value, childType, item.loc, false);
+            requireCompatibleTypes(item.loc, childType, value->getType(),
+                                   "array initializer element type mismatch at index " +
+                                       std::to_string(i));
+            items.push_back(value);
         }
-        return isZeroBraceInitShape(nested, nestedArrayType);
+
+        return makeHIR<HIRArrayInit>(std::move(items), arrayType, loc);
+    }
+
+    HIRExpr *materializeInitList(const InitialList &initList, TypeClass *expectedType,
+                                 const location &loc) {
+        if (!expectedType) {
+            error("invalid initializer-list materialization");
+        }
+        if (auto *arrayType = expectedType->as<ArrayType>()) {
+            return materializeArrayInit(initList, arrayType, loc);
+        }
+        if (auto *structType = expectedType->as<StructType>()) {
+            error(loc,
+                  "brace initialization currently applies to arrays only",
+                  "For structs, call the type directly like `" +
+                      describeResolvedType(structType) +
+                      "(...)` using positional or named arguments. `initial_list` remains an internal array-initialization interface.");
+        }
+        error(loc,
+              "brace initializer currently supports arrays only when the target type is already known",
+              "Write a declaration like `var matrix i32[4][5] = {{1}, {2}}`, or call a struct type like `Vec2(x=1, y=2)` for struct construction.");
     }
 
     HIRExpr *analyzeBraceInit(AstBraceInit *node, TypeClass *expectedType) {
@@ -901,30 +1061,8 @@ class FunctionAnalyzer {
                   "brace initializer needs an explicit target type",
                   "Use it in a typed variable declaration like `var matrix i32[4][5] = {{}}`, or pass it to a call target that already expects an array type.");
         }
-        if (auto *structType = expectedType->as<StructType>()) {
-            error(node->loc,
-                  "brace initialization currently applies to arrays only",
-                  "For structs, call the type directly like `" +
-                      describeResolvedType(structType) +
-                      "(...)` using positional or named arguments. Brace initialization remains array-only.");
-        }
-        auto *arrayType = expectedType ? expectedType->as<ArrayType>() : nullptr;
-        if (!arrayType) {
-            error(node->loc,
-                  "brace initializer currently supports arrays only when the target type is already known",
-                  "Write a declaration like `var matrix i32[4][5] = {{}}`, or call a struct type like `Vec2(x=1, y=2)` for struct construction.");
-        }
-        if (!arrayType->hasStaticLayout()) {
-            error(node->loc,
-                  "array initializers currently require fixed explicit dimensions",
-                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
-        }
-        if (!isZeroBraceInitShape(node, arrayType)) {
-            error(node->loc,
-                  "array zero-initialization placeholder doesn't match the array shape",
-                  "Use `{}` for whole-array zeroing, or one nested empty brace group per nested array layer such as `{{}}` for `i32[4][5]`. Explicit element lists will be added in the next step.");
-        }
-        return makeHIR<HIRArrayInit>(arrayType, node->loc);
+        auto initList = buildInitialList(node);
+        return materializeInitList(*initList, expectedType, node->loc);
     }
 
     HIRExpr *analyzeField(AstField *node) {

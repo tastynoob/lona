@@ -21,10 +21,10 @@ def keep(pair <i32, bool>) <i32, bool> {
 }
 
 def use_matrix(seed i32) i32 {
-    var matrix i32[4][5] = {{}}
+    var matrix i32[4][5] = {{1}, {2}}
     matrix(1)(2) = seed
 
-    var grid i32[5, 4] = {}
+    var grid i32[5, 4] = {{1, 2}, {3}}
     grid(1, 2) = matrix(1)(2) << 1
 
     var tensor i32[3][4, 5] = {}
