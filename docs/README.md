@@ -22,6 +22,7 @@
 ## 构建与运行
 
 - [native_build.md](native_build.md): `lona-ir`、`lac`、`lac-native` 的构建和运行方式。
+- [../example/README.md](../example/README.md): 示例程序索引。
 
 ## 建议查阅顺序
 

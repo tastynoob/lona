@@ -1,0 +1,44 @@
+// Syntax-closure sample: float, tuple, fixed arrays, and builtin operators.
+
+def blend(a f32, b f32) f32 {
+    var sum f32 = a + b
+    var diff f32 = a - b
+    ret (sum * 2.0) / (diff + 1.0)
+}
+
+def pack(v i32, ok bool) <i32, bool> {
+    var pair <i32, bool> = (v, ok)
+    ret pair
+}
+
+def keep(pair <i32, bool>) <i32, bool> {
+    ret pair
+}
+
+def use_matrix(seed i32) i32 {
+    var matrix i32[4][5] = {{}}
+    matrix(1)(2) = seed
+
+    var grid i32[5, 4] = {}
+    grid(1, 2) = matrix(1)(2) << 1
+
+    var tensor i32[3][4, 5] = {}
+    tensor(1, 2)(0) = grid(1, 2) ^ ~seed
+
+    if (tensor(1, 2)(0) > 0) && (seed != 0) {
+        ret tensor(1, 2)(0) | (seed & 7)
+    }
+    ret tensor(1, 2)(0)
+}
+
+def main() i32 {
+    var sample f32 = blend(3.0, 1.0)
+    var pair <i32, bool> = pack(11, sample >= 2.0)
+    var kept <i32, bool> = keep(pair)
+    var score i32 = use_matrix(11)
+    if (sample >= 2.0) || (score < 0) {
+        ret score
+    }
+    kept = pair
+    ret 0
+}
