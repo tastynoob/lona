@@ -63,6 +63,21 @@ strToSymbol(const char *str) {
     if (strcmp(str, "*") == 0) return '*';
     if (strcmp(str, "/") == 0) return '/';
     if (strcmp(str, "%") == 0) return '%';
+    if (strcmp(str, "&") == 0) return '&';
+    if (strcmp(str, "^") == 0) return '^';
+    if (strcmp(str, "|") == 0) return '|';
+    if (strcmp(str, "!") == 0) return '!';
+    if (strcmp(str, "~") == 0) return '~';
+    if (strcmp(str, "<") == 0) return '<';
+    if (strcmp(str, ">") == 0) return '>';
+    if (strcmp(str, "==") == 0) return Parser::token::LOGIC_EQUAL;
+    if (strcmp(str, "!=") == 0) return Parser::token::LOGIC_NOT_EQUAL;
+    if (strcmp(str, "<=") == 0) return Parser::token::LOGIC_LE;
+    if (strcmp(str, ">=") == 0) return Parser::token::LOGIC_GE;
+    if (strcmp(str, "<<") == 0) return Parser::token::SHIFT_LEFT;
+    if (strcmp(str, ">>") == 0) return Parser::token::SHIFT_RIGHT;
+    if (strcmp(str, "&&") == 0) return Parser::token::LOGIC_AND;
+    if (strcmp(str, "||") == 0) return Parser::token::LOGIC_OR;
     throw std::runtime_error("Invalid symbol");
 }
 

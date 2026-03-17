@@ -8,6 +8,7 @@ for script in \
     functions.sh \
     diagnostics.sh \
     modules.sh \
+    operators.sh \
     syntax_features.sh
 do
     bash "$ROOT/tests/acceptance/$script"

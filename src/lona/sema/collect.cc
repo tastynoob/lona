@@ -6,6 +6,7 @@
 #include "lona/ast/array_dim.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
+#include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/sema/hir.hh"
 #include "parser.hh"
@@ -1143,65 +1144,17 @@ class FunctionCompiler {
         }
         if (auto *bin = dynamic_cast<HIRBinOper *>(expr)) {
             setLocation(bin);
+            if (bin->getBinding().shortCircuit) {
+                return emitShortCircuitBinary(bin);
+            }
             auto *left = compileExpr(bin->getLeft());
             auto *right = compileExpr(bin->getRight());
-            return emitBinaryIntOp(bin->getOp(), left, right);
+            return emitBinaryOperator(bin->getBinding(), left, right);
         }
         if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
             setLocation(unary);
             auto *value = compileExpr(unary->getExpr());
-            switch (unary->getOp()) {
-            case '+': {
-                if (value->getType() != i32Ty && value->getType() != f32Ty &&
-                    value->getType() != f64Ty) {
-                    error("unary + expects `i32`, `f32`, or `f64`");
-                }
-                return value;
-            }
-            case '-': {
-                auto *llvmValue = value->get(scope);
-                if (value->getType() != i32Ty && value->getType() != f32Ty &&
-                    value->getType() != f64Ty) {
-                    error("unary - expects `i32`, `f32`, or `f64`");
-                }
-                auto *result =
-                    value->getType()->newObj(Object::REG_VAL | Object::READONLY);
-                result->bindllvmValue(
-                    value->getType() == i32Ty ? scope->builder.CreateNeg(llvmValue)
-                                              : scope->builder.CreateFNeg(llvmValue));
-                return result;
-            }
-            case '!': {
-                auto *result = boolTy->newObj(Object::REG_VAL | Object::READONLY);
-                result->bindllvmValue(scope->builder.CreateNot(emitBoolCast(value)));
-                return result;
-            }
-            case '&': {
-                if (!value->isVariable() || value->isRegVal() || !value->getllvmValue()) {
-                    error("address-of expects an addressable value");
-                }
-                auto *pointerType = unary->getType() ? unary->getType()->as<PointerType>()
-                                                     : nullptr;
-                if (!pointerType) {
-                    error("address-of expects a pointer result type");
-                }
-                auto *result = pointerType->newObj(Object::REG_VAL | Object::READONLY);
-                result->bindllvmValue(value->getllvmValue());
-                return result;
-            }
-            case '*': {
-                auto *pointerType = value->getType() ? value->getType()->as<PointerType>()
-                                                     : nullptr;
-                if (!pointerType) {
-                    error("dereference expects a pointer value");
-                }
-                auto *result = pointerType->getPointeeType()->newObj(Object::VARIABLE);
-                result->setllvmValue(value->get(scope));
-                return result;
-            }
-            default:
-                error("unsupported unary operator");
-            }
+            return emitUnaryOperator(unary->getBinding(), value);
         }
         if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
             setLocation(selector);
@@ -1426,12 +1379,12 @@ class FunctionCompiler {
     llvm::Value *emitBoolCast(Object *obj) {
         auto *value = obj->get(scope);
         auto *type = obj->getType();
-        if (type == boolTy) {
+        if (isBoolStorageType(type)) {
             return value;
         }
-        if (type == i32Ty) {
+        if (isIntegerType(type)) {
             return scope->builder.CreateICmpNE(
-                value, llvm::ConstantInt::get(scope->getLLVMType(i32Ty), 0));
+                value, llvm::ConstantInt::get(scope->getLLVMType(type), 0));
         }
         if (type == f32Ty) {
             return scope->builder.CreateFCmpUNE(
@@ -1441,70 +1394,210 @@ class FunctionCompiler {
             return scope->builder.CreateFCmpUNE(
                 value, llvm::ConstantFP::get(scope->getLLVMType(f64Ty), 0.0));
         }
+        if (type && type->as<PointerType>()) {
+            return scope->builder.CreateICmpNE(
+                value, llvm::ConstantPointerNull::get(
+                           llvm::cast<llvm::PointerType>(value->getType())));
+        }
         error("unsupported condition type");
     }
 
-    Object *emitBinaryIntOp(token_type op, Object *left, Object *right) {
-        if (left->getType() != right->getType()) {
-            error("type mismatch in binary operation");
-        }
+    Object *makeReadonlyValue(TypeClass *type, llvm::Value *value) {
+        auto *obj = type->newObj(Object::REG_VAL | Object::READONLY);
+        obj->bindllvmValue(value);
+        return obj;
+    }
 
+    Object *emitUnaryOperator(const UnaryOperatorBinding &binding, Object *value) {
+        auto *llvmValue = binding.kind == UnaryOperatorKind::AddressOf
+            ? value->getllvmValue()
+            : (binding.kind == UnaryOperatorKind::Dereference ? value->get(scope)
+                                                              : value->get(scope));
+
+        switch (binding.kind) {
+        case UnaryOperatorKind::Identity:
+            return value;
+        case UnaryOperatorKind::Negate:
+            return makeReadonlyValue(
+                binding.resultType,
+                binding.operandClass == OperatorOperandClass::Float
+                    ? scope->builder.CreateFNeg(llvmValue)
+                    : scope->builder.CreateNeg(llvmValue));
+        case UnaryOperatorKind::LogicalNot:
+            return makeReadonlyValue(boolTy, scope->builder.CreateNot(emitBoolCast(value)));
+        case UnaryOperatorKind::BitwiseNot:
+            return makeReadonlyValue(binding.resultType,
+                                     scope->builder.CreateNot(llvmValue));
+        case UnaryOperatorKind::AddressOf:
+            if (!value->isVariable() || value->isRegVal() || !llvmValue) {
+                error("address-of expects an addressable value");
+            }
+            return makeReadonlyValue(binding.resultType, llvmValue);
+        case UnaryOperatorKind::Dereference: {
+            auto *result = binding.resultType->newObj(Object::VARIABLE);
+            result->setllvmValue(llvmValue);
+            return result;
+        }
+        default:
+            error("unsupported unary operator binding");
+        }
+    }
+
+    Object *emitBinaryOperator(const BinaryOperatorBinding &binding, Object *left,
+                               Object *right) {
         auto *lhs = left->get(scope);
         auto *rhs = right->get(scope);
         llvm::Value *result = nullptr;
-        auto *operandType = left->getType();
-        TypeClass *resultType = operandType;
 
-        if (operandType != i32Ty && operandType != f32Ty && operandType != f64Ty) {
-            error("binary operations only support `i32`, `f32`, and `f64` values");
-        }
-
-        const bool isFloat = operandType == f32Ty || operandType == f64Ty;
-
-        switch (op) {
-        case '+':
-            result = isFloat ? scope->builder.CreateFAdd(lhs, rhs)
-                             : scope->builder.CreateAdd(lhs, rhs);
+        switch (binding.kind) {
+        case BinaryOperatorKind::Add:
+            result = binding.leftClass == OperatorOperandClass::Float
+                ? scope->builder.CreateFAdd(lhs, rhs)
+                : scope->builder.CreateAdd(lhs, rhs);
             break;
-        case '-':
-            result = isFloat ? scope->builder.CreateFSub(lhs, rhs)
-                             : scope->builder.CreateSub(lhs, rhs);
+        case BinaryOperatorKind::Sub:
+            result = binding.leftClass == OperatorOperandClass::Float
+                ? scope->builder.CreateFSub(lhs, rhs)
+                : scope->builder.CreateSub(lhs, rhs);
             break;
-        case '*':
-            result = isFloat ? scope->builder.CreateFMul(lhs, rhs)
-                             : scope->builder.CreateMul(lhs, rhs);
+        case BinaryOperatorKind::Mul:
+            result = binding.leftClass == OperatorOperandClass::Float
+                ? scope->builder.CreateFMul(lhs, rhs)
+                : scope->builder.CreateMul(lhs, rhs);
             break;
-        case '/':
-            result = isFloat ? scope->builder.CreateFDiv(lhs, rhs)
-                             : scope->builder.CreateSDiv(lhs, rhs);
+        case BinaryOperatorKind::Div:
+            if (binding.leftClass == OperatorOperandClass::Float) {
+                result = scope->builder.CreateFDiv(lhs, rhs);
+            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
+                result = scope->builder.CreateUDiv(lhs, rhs);
+            } else {
+                result = scope->builder.CreateSDiv(lhs, rhs);
+            }
             break;
-        case '<':
-            result = isFloat ? scope->builder.CreateFCmpOLT(lhs, rhs)
-                             : scope->builder.CreateICmpSLT(lhs, rhs);
-            resultType = boolTy;
+        case BinaryOperatorKind::Mod:
+            result = binding.leftClass == OperatorOperandClass::UnsignedInt
+                ? scope->builder.CreateURem(lhs, rhs)
+                : scope->builder.CreateSRem(lhs, rhs);
             break;
-        case '>':
-            result = isFloat ? scope->builder.CreateFCmpOGT(lhs, rhs)
-                             : scope->builder.CreateICmpSGT(lhs, rhs);
-            resultType = boolTy;
+        case BinaryOperatorKind::ShiftLeft:
+            result = scope->builder.CreateShl(lhs, rhs);
             break;
-        case Parser::token::LOGIC_EQUAL:
-            result = isFloat ? scope->builder.CreateFCmpOEQ(lhs, rhs)
-                             : scope->builder.CreateICmpEQ(lhs, rhs);
-            resultType = boolTy;
+        case BinaryOperatorKind::ShiftRight:
+            result = binding.leftClass == OperatorOperandClass::UnsignedInt
+                ? scope->builder.CreateLShr(lhs, rhs)
+                : scope->builder.CreateAShr(lhs, rhs);
             break;
-        case Parser::token::LOGIC_NOT_EQUAL:
-            result = isFloat ? scope->builder.CreateFCmpUNE(lhs, rhs)
-                             : scope->builder.CreateICmpNE(lhs, rhs);
-            resultType = boolTy;
+        case BinaryOperatorKind::BitAnd:
+            result = scope->builder.CreateAnd(lhs, rhs);
+            break;
+        case BinaryOperatorKind::BitXor:
+            result = scope->builder.CreateXor(lhs, rhs);
+            break;
+        case BinaryOperatorKind::BitOr:
+            result = scope->builder.CreateOr(lhs, rhs);
+            break;
+        case BinaryOperatorKind::Less:
+            if (binding.leftClass == OperatorOperandClass::Float) {
+                result = scope->builder.CreateFCmpOLT(lhs, rhs);
+            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
+                result = scope->builder.CreateICmpULT(lhs, rhs);
+            } else {
+                result = scope->builder.CreateICmpSLT(lhs, rhs);
+            }
+            break;
+        case BinaryOperatorKind::Greater:
+            if (binding.leftClass == OperatorOperandClass::Float) {
+                result = scope->builder.CreateFCmpOGT(lhs, rhs);
+            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
+                result = scope->builder.CreateICmpUGT(lhs, rhs);
+            } else {
+                result = scope->builder.CreateICmpSGT(lhs, rhs);
+            }
+            break;
+        case BinaryOperatorKind::LessEqual:
+            if (binding.leftClass == OperatorOperandClass::Float) {
+                result = scope->builder.CreateFCmpOLE(lhs, rhs);
+            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
+                result = scope->builder.CreateICmpULE(lhs, rhs);
+            } else {
+                result = scope->builder.CreateICmpSLE(lhs, rhs);
+            }
+            break;
+        case BinaryOperatorKind::GreaterEqual:
+            if (binding.leftClass == OperatorOperandClass::Float) {
+                result = scope->builder.CreateFCmpOGE(lhs, rhs);
+            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
+                result = scope->builder.CreateICmpUGE(lhs, rhs);
+            } else {
+                result = scope->builder.CreateICmpSGE(lhs, rhs);
+            }
+            break;
+        case BinaryOperatorKind::Equal:
+            result = binding.leftClass == OperatorOperandClass::Float
+                ? scope->builder.CreateFCmpOEQ(lhs, rhs)
+                : scope->builder.CreateICmpEQ(lhs, rhs);
+            break;
+        case BinaryOperatorKind::NotEqual:
+            result = binding.leftClass == OperatorOperandClass::Float
+                ? scope->builder.CreateFCmpUNE(lhs, rhs)
+                : scope->builder.CreateICmpNE(lhs, rhs);
             break;
         default:
-            error("unsupported binary operator");
+            error("unsupported binary operator binding");
         }
 
-        auto *obj = resultType->newObj(Object::REG_VAL | Object::READONLY);
-        obj->bindllvmValue(result);
-        return obj;
+        return makeReadonlyValue(binding.resultType, result);
+    }
+
+    Object *emitShortCircuitBinary(HIRBinOper *bin) {
+        const auto &binding = bin->getBinding();
+        auto *left = compileExpr(bin->getLeft());
+        auto *lhsBool = emitBoolCast(left);
+
+        auto &context = scope->builder.getContext();
+        auto *function = scope->builder.GetInsertBlock()
+            ? scope->builder.GetInsertBlock()->getParent()
+            : nullptr;
+        if (!function) {
+            error("logical short-circuit needs an active function");
+        }
+
+        auto *lhsBlock = scope->builder.GetInsertBlock();
+        auto *rhsBB = llvm::BasicBlock::Create(context, "logic.rhs", function);
+        auto *shortBB = llvm::BasicBlock::Create(context, "logic.short", function);
+        auto *mergeBB = llvm::BasicBlock::Create(context, "logic.merge", function);
+
+        if (binding.kind == BinaryOperatorKind::LogicalAnd) {
+            scope->builder.CreateCondBr(lhsBool, rhsBB, shortBB);
+        } else {
+            scope->builder.CreateCondBr(lhsBool, shortBB, rhsBB);
+        }
+
+        scope->builder.SetInsertPoint(shortBB);
+        scope->builder.CreateBr(mergeBB);
+        auto *shortEnd = scope->builder.GetInsertBlock();
+
+        scope->builder.SetInsertPoint(rhsBB);
+        auto *right = compileExpr(bin->getRight());
+        auto *rhsBool = emitBoolCast(right);
+        scope->builder.CreateBr(mergeBB);
+        auto *rhsEnd = scope->builder.GetInsertBlock();
+
+        scope->builder.SetInsertPoint(mergeBB);
+        auto *phi = scope->builder.CreatePHI(scope->builder.getInt1Ty(), 2);
+        phi->addIncoming(
+            llvm::ConstantInt::getFalse(scope->builder.getInt1Ty()),
+            binding.kind == BinaryOperatorKind::LogicalAnd ? shortEnd : rhsEnd);
+        phi->addIncoming(
+            llvm::ConstantInt::getTrue(scope->builder.getInt1Ty()),
+            binding.kind == BinaryOperatorKind::LogicalOr ? shortEnd : rhsEnd);
+        if (binding.kind == BinaryOperatorKind::LogicalAnd) {
+            phi->setIncomingValue(1, rhsBool);
+        } else {
+            phi->setIncomingValue(0, rhsBool);
+        }
+        (void)lhsBlock;
+        return makeReadonlyValue(boolTy, phi);
     }
 
     void ensureTerminatorForCurrentBlock() {

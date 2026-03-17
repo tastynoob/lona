@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
+#include "lona/sema/operator_resolver.hh"
 #include "lona/support/arena.hh"
 #include <memory>
 #include <string>
@@ -71,29 +72,37 @@ public:
 };
 
 class HIRUnaryOper : public HIRExpr {
-    token_type op;
+    UnaryOperatorBinding binding_;
     HIRExpr *expr;
 
 public:
-    HIRUnaryOper(token_type op, HIRExpr *expr, TypeClass *type = nullptr,
+    HIRUnaryOper(UnaryOperatorBinding binding, HIRExpr *expr,
+                 TypeClass *type = nullptr,
                  const location &loc = location())
-        : HIRExpr(type, loc), op(op), expr(expr) {}
+        : HIRExpr(type ? type : binding.resultType, loc),
+          binding_(std::move(binding)),
+          expr(expr) {}
 
-    token_type getOp() const { return op; }
+    token_type getOp() const { return binding_.token; }
+    const UnaryOperatorBinding &getBinding() const { return binding_; }
     HIRExpr *getExpr() const { return expr; }
 };
 
 class HIRBinOper : public HIRExpr {
-    token_type op;
+    BinaryOperatorBinding binding_;
     HIRExpr *left;
     HIRExpr *right;
 
 public:
-    HIRBinOper(token_type op, HIRExpr *left, HIRExpr *right,
+    HIRBinOper(BinaryOperatorBinding binding, HIRExpr *left, HIRExpr *right,
                TypeClass *type = nullptr, const location &loc = location())
-        : HIRExpr(type, loc), op(op), left(left), right(right) {}
+        : HIRExpr(type ? type : binding.resultType, loc),
+          binding_(std::move(binding)),
+          left(left),
+          right(right) {}
 
-    token_type getOp() const { return op; }
+    token_type getOp() const { return binding_.token; }
+    const BinaryOperatorBinding &getBinding() const { return binding_; }
     HIRExpr *getLeft() const { return left; }
     HIRExpr *getRight() const { return right; }
 };

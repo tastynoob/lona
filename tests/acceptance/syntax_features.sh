@@ -33,8 +33,6 @@ array_value_init_in="$(new_tmp_file array-value-init)"
 array_value_init_out="$(new_tmp_file array-value-init-out)"
 array_bad_dim_in="$(new_tmp_file array-bad-dim)"
 array_bad_dim_out="$(new_tmp_file array-bad-dim-out)"
-operator_placeholder_in="$(new_tmp_file operator-placeholder)"
-operator_placeholder_out="$(new_tmp_file operator-placeholder-out)"
 
 cat >"$milestone_json_in" <<'EOF'
 def show() {
@@ -202,11 +200,3 @@ def bad() i32 {
 EOF
 expect_emit_ir_failure "$array_bad_dim_in" "$array_bad_dim_out" 'expected invalid array dimension program to fail'
 grep -Fq 'fixed-dimension arrays require positive integer literal sizes' "$array_bad_dim_out"
-
-cat >"$operator_placeholder_in" <<'EOF'
-def bad(a i32, b i32) i32 {
-    ret a % b
-}
-EOF
-expect_emit_ir_failure "$operator_placeholder_in" "$operator_placeholder_out" 'expected placeholder operator program to fail'
-grep -Fq 'operator `%` is parsed, but semantic support is not implemented yet' "$operator_placeholder_out"

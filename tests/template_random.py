@@ -89,6 +89,7 @@ def generate_case(rng: random.Random, case_id: int) -> GeneratedCase:
         "float",
         "tuple",
         "array",
+        "operators",
         "struct",
         "func_ptr",
         "import",
@@ -199,6 +200,26 @@ def array_use_{case_id}() i32 {{
         )
         main_body.append(f"    score = score + array_use_{case_id}()")
         expected_ir.append(f"@array_use_{case_id}")
+
+    if "operators" in chosen:
+        add_definition(
+            f"""
+def operator_mix_{case_id}(a i32, b i32, flag bool) i32 {{
+    var mix i32 = a % b
+    mix = mix + (a << 1)
+    mix = mix - (b >> 1)
+    mix = mix ^ ~a
+    if (mix <= a) || (flag && (b >= a)) {{
+        mix = mix | (a & b)
+    }}
+    ret mix
+}}
+"""
+        )
+        main_body.append(
+            f"    score = score + operator_mix_{case_id}(score + {rng.randint(3, 8)}, {rng.randint(2, 5)}, true)"
+        )
+        expected_ir.append(f"@operator_mix_{case_id}")
 
     if "struct" in chosen:
         add_definition(

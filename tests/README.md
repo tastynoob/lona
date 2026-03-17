@@ -9,7 +9,8 @@
 - [acceptance/functions.sh](acceptance/functions.sh): 函数指针、裸函数类型限制、方法选择器、调用检查。
 - [acceptance/diagnostics.sh](acceptance/diagnostics.sh): 语法和语义错误诊断。
 - [acceptance/modules.sh](acceptance/modules.sh): 模块导入、结构体返回、顶层执行。
-- [acceptance/syntax_features.sh](acceptance/syntax_features.sh): float、tuple、数组占位、运算符占位、旧语法拒绝。
+- [acceptance/operators.sh](acceptance/operators.sh): 算术、位运算、比较、逻辑短路和非法运算符诊断。
+- [acceptance/syntax_features.sh](acceptance/syntax_features.sh): float、tuple、数组、旧语法拒绝。
 - [acceptance/lib.sh](acceptance/lib.sh): acceptance 公共环境和断言辅助。
 
 ## Smoke

@@ -5,6 +5,7 @@
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
+#include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -84,16 +85,6 @@ describeStorageType(TypeClass *type, AstVarDef *node) {
         return describeTypeNode(node->getTypeNode());
     }
     return describeResolvedType(type);
-}
-
-bool
-isFloatType(TypeClass *type) {
-    return type == f32Ty || type == f64Ty;
-}
-
-bool
-isArithmeticType(TypeClass *type) {
-    return type == i32Ty || isFloatType(type);
 }
 
 [[noreturn]] void
@@ -297,6 +288,7 @@ class FunctionAnalyzer {
     GlobalScope *global;
     const CompilationUnit *unit;
     const ResolvedFunction &resolved;
+    OperatorResolver operatorResolver;
     HIRModule *ownerModule;
     HIRFunc *hirFunc;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
@@ -765,7 +757,7 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeBinOper(AstBinOper *node, TypeClass *expectedType = nullptr) {
         TypeClass *contextualOperandType =
-            expectedType && isArithmeticType(expectedType) ? expectedType : nullptr;
+            expectedType && isNumericType(expectedType) ? expectedType : nullptr;
         auto *left = requireNonCallExpr(node->left, contextualOperandType);
         auto *right = requireNonCallExpr(
             node->right, contextualOperandType ? contextualOperandType
@@ -778,92 +770,27 @@ class FunctionAnalyzer {
             }
         }
         if (left->getType() != right->getType()) {
-            error(node->loc,
-                  "binary operation type mismatch: left side is " +
-                      describeResolvedType(left->getType()) + ", right side is " +
-                      describeResolvedType(right->getType()));
+            auto *rightConst = node->right ? node->right->as<AstConst>() : nullptr;
+            if (rightConst && rightConst->getType() == AstConst::Type::FP64 &&
+                isFloatType(left->getType())) {
+                right = requireNonCallExpr(node->right, left->getType());
+            }
         }
-        auto *operandType = left->getType();
-        TypeClass *resultType = operandType;
-        bool requiresArithmetic = false;
-        switch (node->op) {
-        case '+':
-        case '-':
-        case '*':
-        case '/':
-            requiresArithmetic = true;
-            break;
-        case '<':
-        case '>':
-        case Parser::token::LOGIC_EQUAL:
-        case Parser::token::LOGIC_NOT_EQUAL:
-            resultType = boolTy;
-            requiresArithmetic = true;
-            break;
-        default:
-            error(node->loc,
-                  "operator `" + toStdString(symbolToStr(node->op)) +
-                      "` is parsed, but semantic support is not implemented yet",
-                  "This milestone only normalizes the operator grammar and precedence table. Additional operator semantics will be added later.");
-        }
-
-        if (requiresArithmetic && !isArithmeticType(operandType)) {
-            error(node->loc,
-                  "binary operator `" + toStdString(symbolToStr(node->op)) +
-                      "` expects `i32`, `f32`, or `f64` operands");
-        }
-
-        switch (node->op) {
-        case '+':
-        case '-':
-        case '*':
-        case '/':
-        case '<':
-        case '>':
-        case Parser::token::LOGIC_EQUAL:
-        case Parser::token::LOGIC_NOT_EQUAL:
-            break;
-        default:
-            break;
-        }
-
-        return makeHIR<HIRBinOper>(node->op, left, right, resultType, node->loc);
+        auto binding =
+            operatorResolver.resolveBinary(node->op, left->getType(),
+                                           right->getType(), node->loc);
+        return makeHIR<HIRBinOper>(binding, left, right, binding.resultType,
+                                   node->loc);
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node, TypeClass *expectedType = nullptr) {
         TypeClass *contextualOperandType =
-            expectedType && isArithmeticType(expectedType) ? expectedType : nullptr;
+            expectedType && isNumericType(expectedType) ? expectedType : nullptr;
         auto *value = requireNonCallExpr(node->expr, contextualOperandType);
-        switch (node->op) {
-        case '+':
-        case '-':
-            if (!isArithmeticType(value->getType())) {
-                error(node->op == '+' ? "unary + expects `i32`, `f32`, or `f64`"
-                                      : "unary - expects `i32`, `f32`, or `f64`");
-            }
-            return makeHIR<HIRUnaryOper>(node->op, value, value->getType(), node->loc);
-        case '!':
-            return makeHIR<HIRUnaryOper>(node->op, value, boolTy, node->loc);
-        case '&':
-            if (!isAddressable(value)) {
-                error("address-of expects an addressable value");
-            }
-            return makeHIR<HIRUnaryOper>(
-                node->op, value, typeMgr->createPointerType(value->getType()), node->loc);
-        case '*': {
-            auto *pointerType = value->getType() ? value->getType()->as<PointerType>() : nullptr;
-            if (!pointerType) {
-                error("dereference expects a pointer value");
-            }
-            return makeHIR<HIRUnaryOper>(node->op, value,
-                                         pointerType->getPointeeType(), node->loc);
-        }
-        default:
-            error(node->loc,
-                  "operator `" + toStdString(symbolToStr(node->op)) +
-                      "` is parsed, but semantic support is not implemented yet",
-                  "This milestone only normalizes the operator grammar and precedence table. Additional operator semantics will be added later.");
-        }
+        auto binding =
+            operatorResolver.resolveUnary(node->op, value->getType(),
+                                          isAddressable(value), node->loc);
+        return makeHIR<HIRUnaryOper>(binding, value, binding.resultType, node->loc);
     }
 
     HIRNode *analyzeVarDef(AstVarDef *node) {
@@ -932,6 +859,11 @@ class FunctionAnalyzer {
 
     HIRNode *analyzeIf(AstIf *node) {
         auto *cond = requireNonCallExpr(node->condition);
+        if (!isTruthyScalarType(cond->getType())) {
+            error(node->condition ? node->condition->loc : node->loc,
+                  "if condition expects a scalar truthy value",
+                  "Use `bool`, numeric values, or pointers in condition expressions.");
+        }
         auto *thenBlock = analyzeBlock(node->then);
         auto *elseBlock = node->hasElse() ? analyzeBlock(node->els) : nullptr;
         return makeHIR<HIRIf>(cond, thenBlock, elseBlock, node->loc);
@@ -939,6 +871,11 @@ class FunctionAnalyzer {
 
     HIRNode *analyzeFor(AstFor *node) {
         auto *cond = requireNonCallExpr(node->expr);
+        if (!isTruthyScalarType(cond->getType())) {
+            error(node->expr ? node->expr->loc : node->loc,
+                  "for condition expects a scalar truthy value",
+                  "Use `bool`, numeric values, or pointers in loop conditions.");
+        }
         auto *body = analyzeBlock(node->body);
         return makeHIR<HIRFor>(cond, body, node->loc);
     }
@@ -1070,6 +1007,7 @@ public:
           global(global),
           unit(unit),
           resolved(resolved),
+          operatorResolver(typeMgr),
           ownerModule(ownerModule),
           hirFunc(nullptr) {
         if (resolved.isTopLevelEntry()) {

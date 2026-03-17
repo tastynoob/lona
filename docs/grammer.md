@@ -71,7 +71,7 @@
 
 - `&<` 是显式函数取指针的专用起始符。
 - 词法层已经把常见 C 风格运算符家族接了进来。
-- 其中一部分运算符当前还只完成了 parser / precedence 接线，语义阶段会给出明确占位错误。
+- 当前 grammar 里列出的常见一元 / 二元 / 复合赋值运算符，已经都接通了 built-in 语义。
 
 ## 2. 记号约定
 
@@ -343,7 +343,7 @@ type-name-seq     ::= type-name
 说明：
 
 - 上表描述的是 parser 当前的优先级表。
-- 并不是所有运算符都已经形成完整语义；未实现的项会在语义阶段给出明确占位错误。
+- 当前 grammar 里列出的常见运算符已经形成完整 built-in 语义；后续如需扩展重载，会继续沿用语义阶段的运算符解析层。
 - 表达式层的数组访问统一走 `()`，并在语义阶段区分为函数调用或数组索引。
 
 ## 5. 当前实现边界
@@ -353,7 +353,6 @@ type-name-seq     ::= type-name
 - explicit array element initializer
 - array dimension inference
 - string runtime semantics
-- 新扩进来的部分运算符家族
 
 这些路径当前不会再落入模糊的 generic unsupported，而是给出明确的面向用户的占位诊断。
 
