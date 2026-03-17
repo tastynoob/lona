@@ -13,6 +13,7 @@ class StructType;
 class FuncType;
 class ArrayType;
 class PointerType;
+class TupleType;
 class AstNode;
 
 class ModuleInterface {
@@ -64,6 +65,7 @@ public:
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});
+    TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                       TypeClass *retType);
     const TypeDecl *findType(const std::string &localName) const;

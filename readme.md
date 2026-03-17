@@ -155,6 +155,7 @@ lac-native input.lo output/program
 
 ## 📚 更多文档
 
+- [文档目录](docs/README.md)
 - [编译器架构](docs/compiler_architecture.md)
 - [目标模式与执行边界](docs/target_modes.md)
 - [本地构建与运行](docs/native_build.md)

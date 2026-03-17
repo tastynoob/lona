@@ -17,9 +17,9 @@ AstConst::toJson(Json &root) {
             root["type"] = "const";
             root["value"] = *(int32_t *)this->buf;
             break;
-        case Type::FP32:
+        case Type::FP64:
             root["type"] = "const";
-            root["value"] = *(float *)this->buf;
+            root["value"] = *(double *)this->buf;
             break;
         case Type::STRING:
             root["type"] = "const";

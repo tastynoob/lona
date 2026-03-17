@@ -129,7 +129,7 @@ public:
 
 class AstConst : public AstNode {
 public:
-    enum class Type { INT32, FP32, STRING, BOOL };
+    enum class Type { INT32, FP64, STRING, BOOL };
 
 private:
     // the type of the constant

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_HOSTED="$ROOT/scripts/lac.sh"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}"
 WORKDIR="$(mktemp -d "$TMPDIR_LOCAL/lona-hosted-smoke-XXXXXX")"

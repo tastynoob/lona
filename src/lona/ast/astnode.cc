@@ -87,9 +87,9 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
             this->vtype = Type::INT32;
             this->buf = (char *)new int32_t(token.text.toI32());
             break;
-        case TokenType::ConstFP32:
-            this->vtype = Type::FP32;
-            this->buf = (char *)new float(token.text.toF32());
+        case TokenType::ConstFP64:
+            this->vtype = Type::FP64;
+            this->buf = (char *)new double(std::stod(token.text.tochara()));
             break;
         case TokenType::ConstStr:
             this->vtype = Type::STRING;

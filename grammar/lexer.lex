@@ -101,7 +101,7 @@ static std::string describeLexeme(const char *text, int length) {
 
 [0-9]+\.[0-9]+ {
     loc->columns(yyleng);
-    lval->token = new AstToken(TokenType::ConstFP32, yytext, *loc);
+    lval->token = new AstToken(TokenType::ConstFP64, yytext, *loc);
     return token::CONST;
 }
 

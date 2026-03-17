@@ -97,6 +97,16 @@ describeStorageType(TypeClass *type, AstVarDef *node) {
     return describeResolvedType(type);
 }
 
+bool
+isFloatType(TypeClass *type) {
+    return type == f32Ty || type == f64Ty;
+}
+
+bool
+isArithmeticType(TypeClass *type) {
+    return type == i32Ty || isFloatType(type);
+}
+
 FuncType *
 getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     if (!selector || selector->getType() != nullptr) {
@@ -309,16 +319,22 @@ class FunctionAnalyzer {
     }
 
     TypeClass *requireType(TypeNode *node, const std::string &context) {
-        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-            error(tuple->loc,
-                  "tuple types are parsed, but tuple semantics are not implemented yet",
-                  "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
-        }
         auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
             error(currentLocation, context);
         }
         return type;
+    }
+
+    void requireCompatibleTypes(const location &loc, TypeClass *expectedType,
+                                TypeClass *actualType,
+                                const std::string &context) {
+        if (expectedType && actualType && isByteCopyCompatible(expectedType, actualType)) {
+            return;
+        }
+        error(loc, context + ": expected " + describeResolvedType(expectedType) +
+                        ", got " + describeResolvedType(actualType),
+              "lona does not do implicit numeric casts. Cross-type value flow only works when byte-copy compatibility is explicit.");
     }
 
     template<typename T, typename... Args>
@@ -413,8 +429,8 @@ class FunctionAnalyzer {
                                      "function declaration");
     }
 
-    HIRExpr *requireExpr(AstNode *node) {
-        auto *expr = analyzeExpr(node);
+    HIRExpr *requireExpr(AstNode *node, TypeClass *expectedType = nullptr) {
+        auto *expr = analyzeExpr(node, expectedType);
         if (!expr) {
             error(node ? node->loc : currentLocation,
                   "expression did not produce a value");
@@ -422,8 +438,8 @@ class FunctionAnalyzer {
         return expr;
     }
 
-    HIRExpr *requireNonCallExpr(AstNode *node) {
-        auto *expr = requireExpr(node);
+    HIRExpr *requireNonCallExpr(AstNode *node, TypeClass *expectedType = nullptr) {
+        auto *expr = requireExpr(node, expectedType);
         rejectNonCallMethodSelector(typeMgr, expr);
         return expr;
     }
@@ -496,13 +512,13 @@ class FunctionAnalyzer {
         return expr;
     }
 
-    HIRExpr *analyzeExpr(AstNode *node) {
+    HIRExpr *analyzeExpr(AstNode *node, TypeClass *expectedType = nullptr) {
         ScopedLocation scopedLocation(*this, node ? node->loc : location());
         if (!node) {
             return nullptr;
         }
         if (auto *constant = node->as<AstConst>()) {
-            return analyzeConst(constant);
+            return analyzeConst(constant, expectedType);
         }
         if (auto *field = node->as<AstField>()) {
             return analyzeField(field);
@@ -514,15 +530,13 @@ class FunctionAnalyzer {
             return analyzeAssign(assign);
         }
         if (auto *bin = node->as<AstBinOper>()) {
-            return analyzeBinOper(bin);
+            return analyzeBinOper(bin, expectedType);
         }
         if (auto *unary = node->as<AstUnaryOper>()) {
-            return analyzeUnaryOper(unary);
+            return analyzeUnaryOper(unary, expectedType);
         }
-        if (node->is<AstTupleLiteral>()) {
-            error(node->loc,
-                  "tuple literals are parsed, but tuple semantics are not implemented yet",
-                  "This milestone only wires tuple syntax into the frontend. Tuple type checking and lowering will be added later.");
+        if (auto *tuple = node->as<AstTupleLiteral>()) {
+            return analyzeTupleLiteral(tuple, expectedType);
         }
         if (node->is<AstArrayInit>()) {
             error(node->loc,
@@ -538,7 +552,7 @@ class FunctionAnalyzer {
         error("unsupported AST node in HIR analysis");
     }
 
-    HIRExpr *analyzeConst(AstConst *node) {
+    HIRExpr *analyzeConst(AstConst *node, TypeClass *expectedType = nullptr) {
         switch (node->getType()) {
         case AstConst::Type::INT32:
             return makeHIR<HIRValue>(new ConstVar(i32Ty, *node->getBuf<int32_t>()),
@@ -546,10 +560,19 @@ class FunctionAnalyzer {
         case AstConst::Type::BOOL:
             return makeHIR<HIRValue>(new ConstVar(boolTy, *node->getBuf<bool>()),
                                      node->loc);
-        case AstConst::Type::FP32:
+        case AstConst::Type::FP64: {
+            auto value = *node->getBuf<double>();
+            if (expectedType == f32Ty) {
+                return makeHIR<HIRValue>(new ConstVar(f32Ty, static_cast<float>(value)),
+                                         node->loc);
+            }
+            if (expectedType == nullptr || expectedType == f64Ty) {
+                return makeHIR<HIRValue>(new ConstVar(f64Ty, value), node->loc);
+            }
             error(node->loc,
-                  "floating-point literals are parsed, but `f32` / `f64` semantics are not implemented yet",
-                  "This milestone only wires floating-point syntax into the frontend. Type checking and lowering will be added later.");
+                  "floating-point literal doesn't match the expected target type",
+                  "Use a `f32` or `f64` destination. Other types only support byte-copy from already-typed values.");
+        }
         case AstConst::Type::STRING:
             error(node->loc,
                   "string literals are reserved, but runtime string semantics are not implemented yet",
@@ -557,6 +580,35 @@ class FunctionAnalyzer {
         default:
             error(node->loc, "unsupported constant literal");
         }
+    }
+
+    HIRExpr *analyzeTupleLiteral(AstTupleLiteral *node, TypeClass *expectedType) {
+        auto *tupleType = expectedType ? expectedType->as<TupleType>() : nullptr;
+        if (!tupleType) {
+            error(node->loc,
+                  "tuple literals need an explicit tuple target type",
+                  "Write a declaration like `var pair <i32, bool> = (1, true)`, or pass the literal to a parameter that already expects a tuple type.");
+        }
+
+        const auto &itemTypes = tupleType->getItemTypes();
+        const auto actualCount = node->items ? node->items->size() : 0;
+        if (actualCount != itemTypes.size()) {
+            error(node->loc,
+                  "tuple literal arity mismatch: expected " +
+                      std::to_string(itemTypes.size()) + " items, got " +
+                      std::to_string(actualCount));
+        }
+
+        std::vector<HIRExpr *> items;
+        items.reserve(actualCount);
+        for (size_t i = 0; i < actualCount; ++i) {
+            auto *item = requireNonCallExpr(node->items->at(i), itemTypes[i]);
+            requireCompatibleTypes(node->items->at(i)->loc, itemTypes[i], item->getType(),
+                                   "tuple element type mismatch at index " +
+                                       std::to_string(i));
+            items.push_back(item);
+        }
+        return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
     }
 
     HIRExpr *analyzeField(AstField *node) {
@@ -629,51 +681,64 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeAssign(AstAssign *node) {
         auto *left = requireNonCallExpr(node->left);
-        auto *right = requireNonCallExpr(node->right);
+        auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
         auto *leftType = left->getType();
         auto *rightType = right->getType();
-        if (!leftType || !rightType || leftType != rightType) {
-            error(node->loc,
-                  "assignment type mismatch: expected " +
-                      describeResolvedType(leftType) + ", got " +
-                      describeResolvedType(rightType));
+        if (!leftType || !rightType || !isByteCopyCompatible(leftType, rightType)) {
+            requireCompatibleTypes(node->loc, leftType, rightType,
+                                   "assignment type mismatch");
         }
         return makeHIR<HIRAssign>(left, right, node->loc);
     }
 
-    HIRExpr *analyzeBinOper(AstBinOper *node) {
-        auto *left = requireNonCallExpr(node->left);
-        auto *right = requireNonCallExpr(node->right);
+    HIRExpr *analyzeBinOper(AstBinOper *node, TypeClass *expectedType = nullptr) {
+        TypeClass *contextualOperandType =
+            expectedType && isArithmeticType(expectedType) ? expectedType : nullptr;
+        auto *left = requireNonCallExpr(node->left, contextualOperandType);
+        auto *right = requireNonCallExpr(
+            node->right, contextualOperandType ? contextualOperandType
+                                               : (left ? left->getType() : nullptr));
+        if (left->getType() != right->getType()) {
+            auto *leftConst = node->left ? node->left->as<AstConst>() : nullptr;
+            if (leftConst && leftConst->getType() == AstConst::Type::FP64 &&
+                isFloatType(right->getType())) {
+                left = requireNonCallExpr(node->left, right->getType());
+            }
+        }
         if (left->getType() != right->getType()) {
             error(node->loc,
                   "binary operation type mismatch: left side is " +
                       describeResolvedType(left->getType()) + ", right side is " +
                       describeResolvedType(right->getType()));
         }
-        TypeClass *resultType = i32Ty;
-        bool requiresI32 = true;
+        auto *operandType = left->getType();
+        TypeClass *resultType = operandType;
+        bool requiresArithmetic = false;
         switch (node->op) {
         case '+':
         case '-':
         case '*':
         case '/':
+            requiresArithmetic = true;
             break;
         case '<':
         case '>':
         case Parser::token::LOGIC_EQUAL:
         case Parser::token::LOGIC_NOT_EQUAL:
             resultType = boolTy;
+            requiresArithmetic = true;
             break;
         default:
-            requiresI32 = false;
             error(node->loc,
                   "operator `" + toStdString(symbolToStr(node->op)) +
                       "` is parsed, but semantic support is not implemented yet",
                   "This milestone only normalizes the operator grammar and precedence table. Additional operator semantics will be added later.");
         }
 
-        if (requiresI32 && left->getType() != i32Ty) {
-            error(node->loc, "binary operations currently only support i32 operands");
+        if (requiresArithmetic && !isArithmeticType(operandType)) {
+            error(node->loc,
+                  "binary operator `" + toStdString(symbolToStr(node->op)) +
+                      "` expects `i32`, `f32`, or `f64` operands");
         }
 
         switch (node->op) {
@@ -693,15 +758,18 @@ class FunctionAnalyzer {
         return makeHIR<HIRBinOper>(node->op, left, right, resultType, node->loc);
     }
 
-    HIRExpr *analyzeUnaryOper(AstUnaryOper *node) {
-        auto *value = requireNonCallExpr(node->expr);
+    HIRExpr *analyzeUnaryOper(AstUnaryOper *node, TypeClass *expectedType = nullptr) {
+        TypeClass *contextualOperandType =
+            expectedType && isArithmeticType(expectedType) ? expectedType : nullptr;
+        auto *value = requireNonCallExpr(node->expr, contextualOperandType);
         switch (node->op) {
         case '+':
         case '-':
-            if (value->getType() != i32Ty) {
-                error(node->op == '+' ? "unary + expects i32" : "unary - expects i32");
+            if (!isArithmeticType(value->getType())) {
+                error(node->op == '+' ? "unary + expects `i32`, `f32`, or `f64`"
+                                      : "unary - expects `i32`, `f32`, or `f64`");
             }
-            return makeHIR<HIRUnaryOper>(node->op, value, i32Ty, node->loc);
+            return makeHIR<HIRUnaryOper>(node->op, value, value->getType(), node->loc);
         case '!':
             return makeHIR<HIRUnaryOper>(node->op, value, boolTy, node->loc);
         case '&':
@@ -727,22 +795,24 @@ class FunctionAnalyzer {
     }
 
     HIRNode *analyzeVarDef(AstVarDef *node) {
-        HIRExpr *init = nullptr;
-        if (node->withInitVal()) {
-            init = requireExpr(node->getInitVal());
-        }
         rejectUninitializedFunctionDerivedStorage(node);
 
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
             type = requireType(typeNode, "unknown variable type");
             rejectBareFunctionStorage(type, node);
-            if (init && init->getType() != type) {
-                error(node->loc,
-                      "initializer type mismatch for `" +
-                          toStdString(node->getName()) + "`: expected " +
-                          describeResolvedType(type) + ", got " +
-                          describeResolvedType(init->getType()));
+        }
+
+        HIRExpr *init = nullptr;
+        if (node->withInitVal()) {
+            init = requireExpr(node->getInitVal(), type);
+        }
+
+        if (type) {
+            if (init) {
+                requireCompatibleTypes(node->loc, type, init->getType(),
+                                       "initializer type mismatch for `" +
+                                           toStdString(node->getName()) + "`");
             }
         } else if (init) {
             rejectMethodSelectorStorage(typeMgr, init, node);
@@ -776,15 +846,12 @@ class FunctionAnalyzer {
         auto *retType = hirFunc->getFuncType()->getRetType();
         HIRExpr *expr = nullptr;
         if (node->expr) {
-            expr = requireNonCallExpr(node->expr);
+            expr = requireNonCallExpr(node->expr, retType);
             if (!retType) {
                 error("unexpected return value in void function");
             }
-            if (expr->getType() != retType) {
-                error("return type mismatch: expected " +
-                      describeResolvedType(retType) + ", got " +
-                      describeResolvedType(expr->getType()));
-            }
+            requireCompatibleTypes(node->loc, retType, expr->getType(),
+                                   "return type mismatch");
         } else if (retType) {
             error("missing return value");
         }
@@ -844,13 +911,9 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeCall(AstFieldCall *node) {
         auto *callee = requireExpr(node->value);
+        const auto actualArgCount = node->args ? node->args->size() : 0;
         std::vector<HIRExpr *> args;
-        if (node->args) {
-            args.reserve(node->args->size());
-            for (auto *arg : *node->args) {
-                args.push_back(requireNonCallExpr(arg));
-            }
-        }
+        args.reserve(actualArgCount);
 
         FuncType *funcType = nullptr;
         size_t argOffset = 0;
@@ -870,24 +933,52 @@ class FunctionAnalyzer {
             funcType = func->getType()->as<FuncType>();
         } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
             funcType = pointerTarget;
+        } else if (auto *arrayType = callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
+            const auto &dimensions = arrayType->getDimensions();
+            if (actualArgCount != dimensions.size()) {
+                error(node->loc,
+                      "array index arity mismatch: expected " +
+                          std::to_string(dimensions.size()) + ", got " +
+                          std::to_string(actualArgCount));
+            }
+            if (node->args) {
+                for (size_t i = 0; i < node->args->size(); ++i) {
+                    auto *arg = requireNonCallExpr(node->args->at(i), i32Ty);
+                    requireCompatibleTypes(node->args->at(i)->loc, i32Ty, arg->getType(),
+                                           "array index type mismatch at index " +
+                                               std::to_string(i));
+                    args.push_back(arg);
+                }
+            }
+            return makeHIR<HIRIndex>(callee, std::move(args),
+                                     arrayType->getElementType(), node->loc);
         } else {
             error("callee must be a function, function pointer, or method selector");
         }
 
         const auto &paramTypes = funcType->getArgTypes();
-        if (args.size() + argOffset != paramTypes.size()) {
+        if (actualArgCount + argOffset != paramTypes.size()) {
             error("call argument count mismatch: expected " +
                   std::to_string(paramTypes.size() - argOffset) + ", got " +
-                  std::to_string(args.size()));
+                  std::to_string(actualArgCount));
+        }
+        if (node->args) {
+            for (size_t i = 0; i < node->args->size(); ++i) {
+                auto *expectedType = paramTypes[i + argOffset];
+                auto *arg = requireNonCallExpr(node->args->at(i), expectedType);
+                requireCompatibleTypes(node->args->at(i)->loc, expectedType,
+                                       arg->getType(),
+                                       "call argument type mismatch at index " +
+                                           std::to_string(i));
+                args.push_back(arg);
+            }
         }
         for (size_t i = 0; i < args.size(); ++i) {
             auto *expectedType = paramTypes[i + argOffset];
             auto *actualType = args[i]->getType();
-            if (actualType != expectedType) {
-                error("call argument type mismatch at index " + std::to_string(i) +
-                      ": expected " + describeResolvedType(expectedType) +
-                      ", got " + describeResolvedType(actualType));
-            }
+            requireCompatibleTypes(node->loc, expectedType, actualType,
+                                   "call argument type mismatch at index " +
+                                       std::to_string(i));
         }
 
         auto *retType = funcType ? funcType->getRetType() : nullptr;

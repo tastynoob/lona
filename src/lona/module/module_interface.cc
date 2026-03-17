@@ -115,6 +115,21 @@ ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
     return typePtr->as<ArrayType>();
 }
 
+TupleType *
+ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes) {
+    auto tupleName = toStdString(TupleType::buildName(itemTypes));
+    auto found = derivedTypes_.find(tupleName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<TupleType>();
+    }
+
+    auto type = std::make_unique<TupleType>(std::vector<TypeClass *>(itemTypes));
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[tupleName] = typePtr;
+    return typePtr->as<TupleType>();
+}
+
 FuncType *
 ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                          TypeClass *retType) {

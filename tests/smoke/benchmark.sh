@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="$ROOT/build/lona-ir"
 TMPDIR_LOCAL="${TMPDIR:-/tmp/claude-1000}"
+
 if [ ! -d "$TMPDIR_LOCAL" ]; then
     TMPDIR_LOCAL="/tmp/lona-bench"
 fi
@@ -16,7 +17,6 @@ fi
 
 bench_dir="$(mktemp -d "$TMPDIR_LOCAL/lona-bench-XXXXXX")"
 synthetic_in="$bench_dir/synthetic.lo"
-synthetic_log="$bench_dir/synthetic.log"
 trap 'rm -rf "$bench_dir"' EXIT
 
 {
@@ -47,8 +47,8 @@ run_case() {
     local name="$1"
     local input="$2"
     local log="$bench_dir/$name.log"
-
     local start end elapsed_ms
+
     start=$(date +%s%N)
     "$BIN" --emit-ir --verify-ir --stats "$input" >/dev/null 2>"$log"
     end=$(date +%s%N)

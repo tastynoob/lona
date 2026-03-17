@@ -232,10 +232,18 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     }
 
     if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Semantic, tuple->loc,
-            "tuple types are parsed, but tuple semantics are not implemented yet",
-            "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
+        std::vector<TypeClass *> itemTypes;
+        itemTypes.reserve(tuple->items.size());
+        for (auto *item : tuple->items) {
+            auto *itemType = resolveTypeNode(typeTable, unit, item);
+            if (!itemType) {
+                return nullptr;
+            }
+            itemTypes.push_back(itemType);
+        }
+        resolved = typeTable->getOrCreateTupleType(itemTypes);
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
     }
 
     if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {

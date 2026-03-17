@@ -35,6 +35,16 @@ StructType::buildLLVMType(TypeTable &types) {
 }
 
 llvm::Type *
+TupleType::buildLLVMType(TypeTable &types) {
+    std::vector<llvm::Type *> memberTypes;
+    memberTypes.reserve(itemTypes.size());
+    for (auto *itemType : itemTypes) {
+        memberTypes.push_back(types.getLLVMType(itemType));
+    }
+    return llvm::StructType::get(types.getContext(), memberTypes, false);
+}
+
+llvm::Type *
 FuncType::buildLLVMType(TypeTable &types) {
     std::vector<llvm::Type *> llvmArgTypes;
     llvmArgTypes.reserve(argTypes.size() + (hasSROA ? 1 : 0));

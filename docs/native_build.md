@@ -21,7 +21,7 @@
 相关文件：
 
 - [scripts/lac.sh](../scripts/lac.sh)
-- [scripts/hosted_smoke.sh](../scripts/hosted_smoke.sh)
+- [tests/smoke/hosted.sh](../tests/smoke/hosted.sh)
 
 这条路径的优点是：
 
@@ -46,7 +46,7 @@
 相关文件：
 
 - [scripts/lac-native.sh](../scripts/lac-native.sh)
-- [scripts/native_smoke.sh](../scripts/native_smoke.sh)
+- [tests/smoke/native.sh](../tests/smoke/native.sh)
 - [runtime/linux_x86_64/lona_start.S](../runtime/linux_x86_64/lona_start.S)
 - [runtime/linux_x86_64/lona.ld](../runtime/linux_x86_64/lona.ld)
 

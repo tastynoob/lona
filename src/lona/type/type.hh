@@ -24,6 +24,7 @@ namespace lona {
 class TypeClass;
 class PointerType;
 class StructType;
+class TupleType;
 class TypeTable;
 class Function;
 
@@ -146,6 +147,42 @@ public:
     ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
         return new StructVar(this, specifiers);
     }
+};
+
+class TupleType : public TypeClass {
+    std::vector<TypeClass *> itemTypes;
+
+public:
+    static string buildName(const std::vector<TypeClass *> &itemTypes) {
+        std::string name = "<";
+        for (size_t i = 0; i < itemTypes.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            auto *itemType = itemTypes[i];
+            if (itemType) {
+                name.append(itemType->full_name.tochara(), itemType->full_name.size());
+            } else {
+                name += "<unknown>";
+            }
+        }
+        name += ">";
+        return string(name.c_str());
+    }
+
+    explicit TupleType(std::vector<TypeClass *> itemTypes)
+        : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {
+        typeSize = 0;
+        for (auto *itemType : this->itemTypes) {
+            if (itemType) {
+                typeSize += itemType->typeSize;
+            }
+        }
+    }
+
+    const std::vector<TypeClass *> &getItemTypes() const { return itemTypes; }
+
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class FuncType : public TypeClass {
@@ -353,6 +390,17 @@ public:
         return arrayType;
     }
 
+    TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes) {
+        auto tupleName = TupleType::buildName(itemTypes);
+        if (auto *existing = getType(tupleName)) {
+            return existing->as<TupleType>();
+        }
+
+        auto *tupleType = new TupleType(std::vector<TypeClass *>(itemTypes));
+        addType(tupleName, tupleType);
+        return tupleType;
+    }
+
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                       TypeClass *retType) {
         string funcTypeName = "f";
@@ -429,6 +477,27 @@ public:
             }
             return createArrayType(elementType, array->getDimensions());
         }
+        if (auto *tuple = type->as<TupleType>()) {
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->getItemTypes().size());
+            bool reusedOriginalItems = true;
+            for (auto *item : tuple->getItemTypes()) {
+                auto *internedItem = internType(item);
+                if (!internedItem) {
+                    return nullptr;
+                }
+                reusedOriginalItems = reusedOriginalItems && internedItem == item;
+                itemTypes.push_back(internedItem);
+            }
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (reusedOriginalItems) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return getOrCreateTupleType(itemTypes);
+        }
         if (auto *func = type->as<FuncType>()) {
             std::vector<TypeClass *> argTypes;
             argTypes.reserve(func->getArgTypes().size());
@@ -490,6 +559,19 @@ public:
             return createArrayType(elementType, array->dim);
         }
 
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->items.size());
+            for (auto *item : tuple->items) {
+                auto *itemType = getType(item);
+                if (!itemType) {
+                    return nullptr;
+                }
+                itemTypes.push_back(itemType);
+            }
+            return getOrCreateTupleType(itemTypes);
+        }
+
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
             auto *retType = getType(func->ret);
@@ -506,5 +588,33 @@ public:
         return nullptr;
     }
 };
+
+inline bool
+isByteCopyPlainType(TypeClass *type) {
+    return type && (type->as<BaseType>() || type->as<PointerType>());
+}
+
+inline bool
+isBoolStorageType(TypeClass *type) {
+    auto *base = type ? type->as<BaseType>() : nullptr;
+    return base && base->type == BaseType::BOOL;
+}
+
+inline bool
+isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
+    if (!dstType || !srcType) {
+        return false;
+    }
+    if (dstType == srcType) {
+        return true;
+    }
+    if (!isByteCopyPlainType(dstType) || !isByteCopyPlainType(srcType)) {
+        return false;
+    }
+    if (isBoolStorageType(dstType) || isBoolStorageType(srcType)) {
+        return false;
+    }
+    return dstType->typeSize == srcType->typeSize;
+}
 
 }  // namespace lona

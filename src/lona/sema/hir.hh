@@ -53,6 +53,17 @@ public:
     ObjectPtr getValue() const { return value; }
 };
 
+class HIRTupleLiteral : public HIRExpr {
+    std::vector<HIRExpr *> items;
+
+public:
+    HIRTupleLiteral(std::vector<HIRExpr *> items, TypeClass *type = nullptr,
+                    const location &loc = location())
+        : HIRExpr(type, loc), items(std::move(items)) {}
+
+    const std::vector<HIRExpr *> &getItems() const { return items; }
+};
+
 class HIRUnaryOper : public HIRExpr {
     token_type op;
     HIRExpr *expr;
@@ -120,6 +131,19 @@ public:
 
     HIRExpr *getCallee() const { return callee; }
     const std::vector<HIRExpr *> &getArgs() const { return args; }
+};
+
+class HIRIndex : public HIRExpr {
+    HIRExpr *target;
+    std::vector<HIRExpr *> indices;
+
+public:
+    HIRIndex(HIRExpr *target, std::vector<HIRExpr *> indices,
+             TypeClass *type = nullptr, const location &loc = location())
+        : HIRExpr(type, loc), target(target), indices(std::move(indices)) {}
+
+    HIRExpr *getTarget() const { return target; }
+    const std::vector<HIRExpr *> &getIndices() const { return indices; }
 };
 
 class HIRVarDef : public HIRNode {

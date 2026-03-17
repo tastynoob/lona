@@ -25,7 +25,7 @@
 说明：
 
 - `INT`、`FLOAT`、`STRING` 在语法层统一归为 `CONST`。
-- `FLOAT`、`STRING` 当前已经进入词法和 AST，但后续语义 / lowering 仍处于占位阶段。
+- `FLOAT` 当前已经形成最小浮点语义闭环；`STRING` 仍保留为占位。
 
 ### 1.2 关键字
 
@@ -271,7 +271,8 @@ array-init-seq    ::= expr
 
 - `legacy-cast-expr` 不是正式特性，而是为了给旧式 `i32 value` / `i32(expr)` 写法提供明确错误诊断。
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
-- 元组字面量和数组初始化当前已经进入 AST，但完整的语义和 lowering 仍是后续工作。
+- 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
+- 数组初始化和数组 lowering 仍是后续工作。
 
 ### 3.6 类型语法
 
@@ -346,11 +347,10 @@ type-name-seq     ::= type-name
 
 ## 5. 当前实现边界
 
-### 5.1 已接入 parser，但语义仍是占位
+### 5.1 仍保留为占位的能力
 
-- tuple type / tuple literal
 - fixed array initializer
-- `f32` / `f64` literal lowering
+- array indexing lowering
 - string runtime semantics
 - 新扩进来的部分运算符家族
 

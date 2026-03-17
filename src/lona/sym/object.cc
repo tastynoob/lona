@@ -6,6 +6,65 @@
 #include <cassert>
 
 namespace lona {
+namespace {
+
+llvm::Value *
+reinterpretValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
+                     TypeClass *dstType) {
+    if (!scope || !value || !srcType || !dstType || srcType == dstType) {
+        return value;
+    }
+    if (!isByteCopyCompatible(dstType, srcType)) {
+        throw "type mismatch";
+    }
+
+    auto *srcLLVMType = scope->getLLVMType(srcType);
+    auto *dstLLVMType = scope->getLLVMType(dstType);
+    if (srcLLVMType == dstLLVMType && value->getType() == dstLLVMType) {
+        return value;
+    }
+
+    auto *bitsType = llvm::IntegerType::get(scope->builder.getContext(),
+                                            static_cast<unsigned>(srcType->typeSize * 8));
+    llvm::Value *bits = value;
+    if (value->getType()->isPointerTy()) {
+        bits = scope->builder.CreatePtrToInt(value, bitsType);
+    } else if (value->getType()->isFloatingPointTy()) {
+        bits = scope->builder.CreateBitCast(value, bitsType);
+    } else if (value->getType()->isIntegerTy()) {
+        if (value->getType() != bitsType) {
+            bits = scope->builder.CreateZExtOrTrunc(value, bitsType);
+        }
+    } else {
+        throw "type mismatch";
+    }
+
+    if (dstLLVMType->isPointerTy()) {
+        return scope->builder.CreateIntToPtr(bits, dstLLVMType);
+    }
+    if (dstLLVMType->isFloatingPointTy()) {
+        return scope->builder.CreateBitCast(bits, dstLLVMType);
+    }
+    if (dstLLVMType->isIntegerTy()) {
+        if (bits->getType() == dstLLVMType) {
+            return bits;
+        }
+        return scope->builder.CreateZExtOrTrunc(bits, dstLLVMType);
+    }
+    throw "type mismatch";
+}
+
+llvm::Value *
+coerceObjectValue(Scope *scope, Object *src, TypeClass *dstType) {
+    if (!scope || !src || !dstType) {
+        return nullptr;
+    }
+    auto *srcType = src->getType();
+    auto *value = src->get(scope);
+    return reinterpretValueBits(scope, value, srcType, dstType);
+}
+
+}  // namespace
 
 
 void
@@ -40,12 +99,12 @@ Object::set(Scope *scope, Object *src) {
         throw "readonly";
     }
 
-    if (this->getType() != src->getType()) {
+    if (!isByteCopyCompatible(this->getType(), src->getType())) {
         throw "type mismatch";
     }
 
     assert(val->getType()->isPointerTy());
-    builder.CreateStore(src->get(scope), val);
+    builder.CreateStore(coerceObjectValue(scope, src, this->getType()), val);
 }
 
 llvm::Value *
@@ -58,6 +117,16 @@ ConstVar::get(Scope *scope) {
     if (type == i32Ty) {
         val = llvm::ConstantInt::get(scope->getLLVMType(type),
                                      std::any_cast<int32_t>(value), true);
+        return val;
+    }
+    if (type == f32Ty) {
+        val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                    std::any_cast<float>(value));
+        return val;
+    }
+    if (type == f64Ty) {
+        val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                    std::any_cast<double>(value));
         return val;
     }
     if (type == boolTy) {
@@ -137,10 +206,10 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     // check args type
     if (argTypes.size() == args.size())
         for (int i = 0; i < args.size(); i++) {
-            if (args[i]->getType() != argTypes[i]) {
+            if (!isByteCopyCompatible(argTypes[i], args[i]->getType())) {
                 throw "Call argument type mismatch";
             }
-            llvmargs.push_back(args[i]->get(scope));
+            llvmargs.push_back(coerceObjectValue(scope, args[i], argTypes[i]));
         }
     else {
         throw "Call argument number mismatch";

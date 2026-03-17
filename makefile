@@ -5,6 +5,7 @@ DATADIR ?= $(PREFIX)/share/lona
 RUNTIMEDIR ?= $(DATADIR)/runtime/linux_x86_64
 INSTALL ?= install
 PYTHON ?= python3
+CLANG ?= clang-18
 
 CXX ?= ccache clang++
 CXXFLAGS := -std=c++20 -g
@@ -54,7 +55,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke native_smoke hosted_smoke install uninstall
+.PHONY: clean format default frontend acceptance test bench_smoke incremental_smoke native_smoke hosted_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -65,21 +66,27 @@ all: $(target)
 frontend: $(frontend_target)
 
 acceptance: $(target)
-	bash $(ROOT)/scripts/acceptance.sh
+	bash $(ROOT)/tests/acceptance/run.sh
 
-test: acceptance bench_smoke incremental_smoke hosted_smoke native_smoke
+test: acceptance bench_smoke incremental_smoke template_random hosted_smoke native_smoke
 
 bench_smoke: $(target)
-	bash $(ROOT)/scripts/benchmark_smoke.sh
+	bash $(ROOT)/tests/smoke/benchmark.sh
 
 incremental_smoke: $(session_runner_target)
 	$(PYTHON) $(ROOT)/tests/incremental_smoke.py --runner $(session_runner_target)
 
+template_random: $(target)
+	$(PYTHON) $(ROOT)/tests/template_random.py --compiler $(target) --clang $(CLANG)
+
+ai_test:
+	bash $(ROOT)/tests/test_agent.sh
+
 native_smoke: $(target)
-	bash $(ROOT)/scripts/native_smoke.sh
+	bash $(ROOT)/tests/smoke/native.sh
 
 hosted_smoke: $(target)
-	bash $(ROOT)/scripts/hosted_smoke.sh
+	bash $(ROOT)/tests/smoke/hosted.sh
 
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)

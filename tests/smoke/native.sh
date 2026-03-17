@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_NATIVE="$ROOT/scripts/lac-native.sh"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}"
 WORKDIR="$(mktemp -d "$TMPDIR_LOCAL/lona-native-smoke-XXXXXX")"

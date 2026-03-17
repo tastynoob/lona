@@ -13,7 +13,7 @@ namespace lona {
 
 enum class TokenType {
     ConstInt32,
-    ConstFP32,
+    ConstFP64,
     ConstStr,
     Operlv0,    // * /
     Operlv1,    // + -
@@ -31,7 +31,7 @@ inline const char *
 tokenTypeToStr(TokenType type) {
     switch (type) {
         case TokenType::ConstInt32:
-        case TokenType::ConstFP32:
+        case TokenType::ConstFP64:
         case TokenType::ConstStr:
         case TokenType::ConstBool:
             return "Const";

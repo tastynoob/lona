@@ -272,11 +272,6 @@ resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node)
     if (!typeMgr) {
         return nullptr;
     }
-    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-        error(tuple->loc,
-              "tuple types are parsed, but tuple semantics are not implemented yet",
-              "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
-    }
     return unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
 }
 
@@ -666,9 +661,16 @@ class InterfaceCollector {
             return interface_->getOrCreateArrayType(elementType, array->dim);
         }
         if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-            error(tuple->loc,
-                  "tuple types are parsed, but tuple semantics are not implemented yet",
-                  "This milestone only wires tuple type syntax into the frontend. Tuple layout and lowering will be added later.");
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->items.size());
+            for (auto *item : tuple->items) {
+                auto *itemType = resolveType(item);
+                if (!itemType) {
+                    return nullptr;
+                }
+                itemTypes.push_back(itemType);
+            }
+            return interface_->getOrCreateTupleType(itemTypes);
         }
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
@@ -993,6 +995,13 @@ class FunctionCompiler {
         lona::error(message);
     }
 
+    [[noreturn]] void error(const std::string &message, const std::string &hint) {
+        if (hasCurrentLocation) {
+            lona::error(currentLocation, message, hint);
+        }
+        throw DiagnosticError(DiagnosticError::Category::Semantic, message, hint);
+    }
+
     Object *materializeLocal(TypeClass *type, Object *initVal) {
         auto *obj = type->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
@@ -1036,6 +1045,34 @@ class FunctionCompiler {
         if (auto *value = dynamic_cast<HIRValue *>(expr)) {
             return value->getValue();
         }
+        if (auto *tuple = dynamic_cast<HIRTupleLiteral *>(expr)) {
+            setLocation(tuple);
+            auto *tupleType = tuple->getType() ? tuple->getType()->as<TupleType>() : nullptr;
+            if (!tupleType) {
+                error("tuple literal is missing its tuple type");
+            }
+            auto *llvmTupleType = typeMgr->getLLVMType(tupleType);
+            llvm::Value *aggregate = llvm::UndefValue::get(llvmTupleType);
+            const auto &itemTypes = tupleType->getItemTypes();
+            if (itemTypes.size() != tuple->getItems().size()) {
+                error("tuple literal item count mismatch during lowering");
+            }
+            for (size_t i = 0; i < tuple->getItems().size(); ++i) {
+                auto *item = compileExpr(tuple->getItems()[i]);
+                if (!item) {
+                    error("tuple literal item did not produce a value");
+                }
+                auto *itemValue = item->get(scope);
+                if (item->getType() != itemTypes[i]) {
+                    error("tuple literal item type mismatch during lowering");
+                }
+                aggregate = scope->builder.CreateInsertValue(
+                    aggregate, itemValue, {static_cast<unsigned>(i)});
+            }
+            auto *result = tupleType->newObj(Object::REG_VAL | Object::READONLY);
+            result->bindllvmValue(aggregate);
+            return result;
+        }
         if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
             setLocation(assign);
             auto *dst = compileExpr(assign->getLeft());
@@ -1057,18 +1094,23 @@ class FunctionCompiler {
             auto *value = compileExpr(unary->getExpr());
             switch (unary->getOp()) {
             case '+': {
-                if (value->getType() != i32Ty) {
-                    error("unary + expects i32");
+                if (value->getType() != i32Ty && value->getType() != f32Ty &&
+                    value->getType() != f64Ty) {
+                    error("unary + expects `i32`, `f32`, or `f64`");
                 }
                 return value;
             }
             case '-': {
                 auto *llvmValue = value->get(scope);
-                if (value->getType() != i32Ty) {
-                    error("unary - expects i32");
+                if (value->getType() != i32Ty && value->getType() != f32Ty &&
+                    value->getType() != f64Ty) {
+                    error("unary - expects `i32`, `f32`, or `f64`");
                 }
-                auto *result = i32Ty->newObj(Object::REG_VAL | Object::READONLY);
-                result->bindllvmValue(scope->builder.CreateNeg(llvmValue));
+                auto *result =
+                    value->getType()->newObj(Object::REG_VAL | Object::READONLY);
+                result->bindllvmValue(
+                    value->getType() == i32Ty ? scope->builder.CreateNeg(llvmValue)
+                                              : scope->builder.CreateFNeg(llvmValue));
                 return result;
             }
             case '!': {
@@ -1160,6 +1202,12 @@ class FunctionCompiler {
                 args.push_back(value);
             }
             return emitFunctionCall(scope, calleeValue, funcType, args);
+        }
+        if (auto *index = dynamic_cast<HIRIndex *>(expr)) {
+            setLocation(index);
+            (void)compileExpr(index->getTarget());
+            error("array indexing lowering is not implemented yet",
+                  "Semantic checking now understands `a(...)` as array indexing when the left side is an array. LLVM lowering will be added in the next milestone.");
         }
         error("unsupported HIR expression");
     }
@@ -1293,6 +1341,14 @@ class FunctionCompiler {
             return scope->builder.CreateICmpNE(
                 value, llvm::ConstantInt::get(scope->getLLVMType(i32Ty), 0));
         }
+        if (type == f32Ty) {
+            return scope->builder.CreateFCmpUNE(
+                value, llvm::ConstantFP::get(scope->getLLVMType(f32Ty), 0.0f));
+        }
+        if (type == f64Ty) {
+            return scope->builder.CreateFCmpUNE(
+                value, llvm::ConstantFP::get(scope->getLLVMType(f64Ty), 0.0));
+        }
         error("unsupported condition type");
     }
 
@@ -1300,42 +1356,54 @@ class FunctionCompiler {
         if (left->getType() != right->getType()) {
             error("type mismatch in binary operation");
         }
-        if (left->getType() != i32Ty) {
-            error("only i32 binary operations are supported");
-        }
 
         auto *lhs = left->get(scope);
         auto *rhs = right->get(scope);
         llvm::Value *result = nullptr;
-        TypeClass *resultType = i32Ty;
+        auto *operandType = left->getType();
+        TypeClass *resultType = operandType;
+
+        if (operandType != i32Ty && operandType != f32Ty && operandType != f64Ty) {
+            error("binary operations only support `i32`, `f32`, and `f64` values");
+        }
+
+        const bool isFloat = operandType == f32Ty || operandType == f64Ty;
 
         switch (op) {
         case '+':
-            result = scope->builder.CreateAdd(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFAdd(lhs, rhs)
+                             : scope->builder.CreateAdd(lhs, rhs);
             break;
         case '-':
-            result = scope->builder.CreateSub(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFSub(lhs, rhs)
+                             : scope->builder.CreateSub(lhs, rhs);
             break;
         case '*':
-            result = scope->builder.CreateMul(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFMul(lhs, rhs)
+                             : scope->builder.CreateMul(lhs, rhs);
             break;
         case '/':
-            result = scope->builder.CreateSDiv(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFDiv(lhs, rhs)
+                             : scope->builder.CreateSDiv(lhs, rhs);
             break;
         case '<':
-            result = scope->builder.CreateICmpSLT(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFCmpOLT(lhs, rhs)
+                             : scope->builder.CreateICmpSLT(lhs, rhs);
             resultType = boolTy;
             break;
         case '>':
-            result = scope->builder.CreateICmpSGT(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFCmpOGT(lhs, rhs)
+                             : scope->builder.CreateICmpSGT(lhs, rhs);
             resultType = boolTy;
             break;
         case Parser::token::LOGIC_EQUAL:
-            result = scope->builder.CreateICmpEQ(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFCmpOEQ(lhs, rhs)
+                             : scope->builder.CreateICmpEQ(lhs, rhs);
             resultType = boolTy;
             break;
         case Parser::token::LOGIC_NOT_EQUAL:
-            result = scope->builder.CreateICmpNE(lhs, rhs);
+            result = isFloat ? scope->builder.CreateFCmpUNE(lhs, rhs)
+                             : scope->builder.CreateICmpNE(lhs, rhs);
             resultType = boolTy;
             break;
         default:
