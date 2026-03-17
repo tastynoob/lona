@@ -646,20 +646,31 @@ isBoolStorageType(TypeClass *type) {
 }
 
 inline bool
-isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
-    if (!dstType || !srcType) {
+isNumericStorageType(TypeClass *type) {
+    auto *base = type ? type->as<BaseType>() : nullptr;
+    if (!base) {
         return false;
     }
-    if (dstType == srcType) {
+    switch (base->type) {
+    case BaseType::U8:
+    case BaseType::I8:
+    case BaseType::U16:
+    case BaseType::I16:
+    case BaseType::U32:
+    case BaseType::I32:
+    case BaseType::U64:
+    case BaseType::I64:
+    case BaseType::F32:
+    case BaseType::F64:
         return true;
-    }
-    if (!isByteCopyPlainType(dstType) || !isByteCopyPlainType(srcType)) {
+    default:
         return false;
     }
-    if (isBoolStorageType(dstType) || isBoolStorageType(srcType)) {
-        return false;
-    }
-    return dstType->typeSize == srcType->typeSize;
+}
+
+inline bool
+isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
+    return dstType && srcType && dstType == srcType;
 }
 
 }  // namespace lona

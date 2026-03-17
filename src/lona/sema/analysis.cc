@@ -5,6 +5,7 @@
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
+#include "lona/sema/injected_member.hh"
 #include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
@@ -12,6 +13,7 @@
 #include "parser.hh"
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -150,6 +152,22 @@ describeTupleFieldHelp(TupleType *tupleType) {
     return hint;
 }
 
+std::string
+numericConversionHint() {
+    return "Integer-to-integer and float-to-float convert implicitly. Integer/float cross-conversion requires an explicit `.toXXX()` call like `1.tof32()` or `1.5.toi32()`.";
+}
+
+std::string
+bitCopyHint() {
+    return "Use `.tobits()` when you want raw bit-copy behavior. It returns `u8[N]`, and `u8[N].toXXX()` converts those bytes back with truncation or zero-fill.";
+}
+
+std::string
+describeInjectedMemberHelp(TypeClass *receiverType, const std::string &memberName) {
+    return "Call injected members directly as `<expr>." + memberName +
+           "(...)`. Built-in numeric conversion members are injected on numeric values.";
+}
+
 FuncType *
 getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     if (!selector || selector->getType() != nullptr) {
@@ -227,6 +245,16 @@ rejectNonCallMethodSelector(TypeTable *typeMgr, HIRExpr *expr) {
 
     error(selector->getLocation(), kMethodSelectorDirectCallError,
           "Call the method directly as `obj.method(...)`.");
+}
+
+std::optional<InjectedMemberBinding>
+resolveInjectedMemberBinding(TypeTable *typeMgr, HIRExpr *receiver,
+                             const std::string &memberName) {
+    if (!typeMgr || !receiver) {
+        return std::nullopt;
+    }
+    return resolveInjectedMember(typeMgr, receiver->getType(),
+                                 llvm::StringRef(memberName));
 }
 
 void
@@ -379,7 +407,7 @@ class FunctionAnalyzer {
         }
         error(loc, context + ": expected " + describeResolvedType(expectedType) +
                         ", got " + describeResolvedType(actualType),
-              "lona does not do implicit numeric casts. Cross-type value flow only works when byte-copy compatibility is explicit.");
+              numericConversionHint() + " " + bitCopyHint());
     }
 
     template<typename T, typename... Args>
@@ -481,6 +509,50 @@ class FunctionAnalyzer {
                   "expression did not produce a value");
         }
         return expr;
+    }
+
+    HIRExpr *coerceNumericExpr(HIRExpr *expr, TypeClass *targetType,
+                               const location &loc, bool explicitRequest) {
+        if (!expr || !targetType) {
+            return expr;
+        }
+        auto *sourceType = expr->getType();
+        if (!sourceType || sourceType == targetType) {
+            return expr;
+        }
+        if (explicitRequest) {
+            if (canExplicitNumericConversion(targetType, sourceType)) {
+                return makeHIR<HIRNumericCast>(expr, targetType, true, loc);
+            }
+            error(loc,
+                  "explicit numeric conversion is not available from `" +
+                      describeResolvedType(sourceType) + "` to `" +
+                      describeResolvedType(targetType) + "`",
+                  numericConversionHint());
+        }
+        if (canImplicitNumericConversion(targetType, sourceType)) {
+            return makeHIR<HIRNumericCast>(expr, targetType, false, loc);
+        }
+        return expr;
+    }
+
+    HIRExpr *coerceBitCopyExpr(HIRExpr *expr, TypeClass *targetType,
+                               const location &loc) {
+        if (!expr || !targetType) {
+            return expr;
+        }
+        auto *sourceType = expr->getType();
+        if (!sourceType || sourceType == targetType) {
+            return expr;
+        }
+        if (!canExplicitBitCopy(targetType, sourceType)) {
+            error(loc,
+                  "raw bit-copy is not available from `" +
+                      describeResolvedType(sourceType) + "` to `" +
+                      describeResolvedType(targetType) + "`",
+                  bitCopyHint());
+        }
+        return makeHIR<HIRBitCast>(expr, targetType, loc);
     }
 
     HIRExpr *requireNonCallExpr(AstNode *node, TypeClass *expectedType = nullptr) {
@@ -593,7 +665,7 @@ class FunctionAnalyzer {
             return analyzeSelector(selector);
         }
         if (auto *call = node->as<AstFieldCall>()) {
-            return analyzeCall(call);
+            return analyzeCall(call, expectedType);
         }
         error("unsupported AST node in HIR analysis");
     }
@@ -617,7 +689,7 @@ class FunctionAnalyzer {
             }
             error(node->loc,
                   "floating-point literal doesn't match the expected target type",
-                  "Use a `f32` or `f64` destination. Other types only support byte-copy from already-typed values.");
+                  "Use a `f32` or `f64` destination. For numeric conversion, call an explicit helper like `1.5.toi32()`. For raw bits, call `.tobits()` and keep the resulting `u8[N]` array.");
         }
         case AstConst::Type::STRING:
             error(node->loc,
@@ -649,6 +721,8 @@ class FunctionAnalyzer {
         items.reserve(actualCount);
         for (size_t i = 0; i < actualCount; ++i) {
             auto *item = requireNonCallExpr(node->items->at(i), itemTypes[i]);
+            item = coerceNumericExpr(item, itemTypes[i], node->items->at(i)->loc,
+                                     false);
             requireCompatibleTypes(node->items->at(i)->loc, itemTypes[i], item->getType(),
                                    "tuple element type mismatch at index " +
                                        std::to_string(i));
@@ -766,6 +840,8 @@ class FunctionAnalyzer {
                   "You can assign to variables, struct fields, dereferenced pointers, or array indexing expressions.");
         }
         auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
+        right = coerceNumericExpr(right, left ? left->getType() : nullptr, node->loc,
+                                  false);
         auto *leftType = left->getType();
         auto *rightType = right->getType();
         if (!leftType || !rightType || !isByteCopyCompatible(leftType, rightType)) {
@@ -794,6 +870,12 @@ class FunctionAnalyzer {
             if (rightConst && rightConst->getType() == AstConst::Type::FP64 &&
                 isFloatType(left->getType())) {
                 right = requireNonCallExpr(node->right, left->getType());
+            }
+        }
+        if (left->getType() != right->getType()) {
+            if (auto *commonType = commonNumericType(left->getType(), right->getType())) {
+                left = coerceNumericExpr(left, commonType, node->left->loc, false);
+                right = coerceNumericExpr(right, commonType, node->right->loc, false);
             }
         }
         auto binding =
@@ -829,6 +911,7 @@ class FunctionAnalyzer {
 
         if (type) {
             if (init) {
+                init = coerceNumericExpr(init, type, node->loc, false);
                 requireCompatibleTypes(node->loc, type, init->getType(),
                                        "initializer type mismatch for `" +
                                            toStdString(node->getName()) + "`");
@@ -869,6 +952,7 @@ class FunctionAnalyzer {
             if (!retType) {
                 error("unexpected return value in void function");
             }
+            expr = coerceNumericExpr(expr, retType, node->expr->loc, false);
             requireCompatibleTypes(node->loc, retType, expr->getType(),
                                    "return type mismatch");
         } else if (retType) {
@@ -922,6 +1006,12 @@ class FunctionAnalyzer {
             }
         }
         auto fieldName = toStdString(node->field->text);
+        if (resolveInjectedMemberBinding(typeMgr, parent, fieldName)) {
+            error(node->loc,
+                  "injected member `" + fieldName +
+                      "` can only be used as a direct call callee",
+                  describeInjectedMemberHelp(parent->getType(), fieldName));
+        }
         auto *tupleType = parent->getType() ? parent->getType()->as<TupleType>() : nullptr;
         if (tupleType) {
             TupleType::ValueTy member;
@@ -949,7 +1039,33 @@ class FunctionAnalyzer {
               "Check the field name, or use a direct method call like `obj.method(...)`.");
     }
 
-    HIRExpr *analyzeCall(AstFieldCall *node) {
+    HIRExpr *analyzeCall(AstFieldCall *node, TypeClass *expectedType = nullptr) {
+        if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
+            auto *receiver = requireExpr(selectorNode->parent);
+            auto fieldName = toStdString(selectorNode->field->text);
+            if (auto binding = resolveInjectedMemberBinding(typeMgr, receiver, fieldName)) {
+                if (binding->kind == InjectedMemberKind::NumericConversion) {
+                    if (node->args && !node->args->empty()) {
+                        error(node->loc,
+                              "numeric conversion member `" + fieldName +
+                                  "` does not take arguments",
+                              "Call it as `<expr>." + fieldName + "()`.");
+                    }
+                    return coerceNumericExpr(receiver, binding->resultType, node->loc,
+                                             true);
+                }
+                if (binding->kind == InjectedMemberKind::BitCopy) {
+                    if (node->args && !node->args->empty()) {
+                        error(node->loc,
+                              "raw bit-copy member `" + fieldName +
+                                  "` does not take arguments",
+                              "Call it as `<expr>." + fieldName + "()`.");
+                    }
+                    return coerceBitCopyExpr(receiver, binding->resultType, node->loc);
+                }
+            }
+        }
+
         auto *callee = requireExpr(node->value);
         const auto actualArgCount = node->args ? node->args->size() : 0;
         std::vector<HIRExpr *> args;
@@ -988,6 +1104,7 @@ class FunctionAnalyzer {
             if (node->args) {
                 for (size_t i = 0; i < node->args->size(); ++i) {
                     auto *arg = requireNonCallExpr(node->args->at(i), i32Ty);
+                    arg = coerceNumericExpr(arg, i32Ty, node->args->at(i)->loc, false);
                     requireCompatibleTypes(node->args->at(i)->loc, i32Ty, arg->getType(),
                                            "array index type mismatch at index " +
                                                std::to_string(i));
@@ -1010,6 +1127,8 @@ class FunctionAnalyzer {
             for (size_t i = 0; i < node->args->size(); ++i) {
                 auto *expectedType = paramTypes[i + argOffset];
                 auto *arg = requireNonCallExpr(node->args->at(i), expectedType);
+                arg = coerceNumericExpr(arg, expectedType, node->args->at(i)->loc,
+                                        false);
                 requireCompatibleTypes(node->args->at(i)->loc, expectedType,
                                        arg->getType(),
                                        "call argument type mismatch at index " +

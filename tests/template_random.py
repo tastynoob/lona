@@ -161,6 +161,17 @@ def float_mix_{case_id}(v f32) f32 {{
         main_body.append(f"    var sample_{case_id} f32 = float_mix_{case_id}(1.0)")
         expected_ir.append(f"@float_mix_{case_id}")
 
+        main_body.extend(
+            [
+                f"    var conv_src_{case_id} i32 = {rng.randint(1, 9)}",
+                f"    var conv_mid_{case_id} f32 = conv_src_{case_id}.tof32()",
+                f"    var conv_dst_{case_id} f64 = conv_mid_{case_id}",
+                f"    score = score + conv_dst_{case_id}.toi32()",
+                f"    var bits_{case_id} u8[4] = conv_mid_{case_id}.tobits()",
+                f"    score = score + bits_{case_id}.toi32()",
+            ]
+        )
+
     if "tuple" in chosen:
         add_definition(
             f"""

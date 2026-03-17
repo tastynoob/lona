@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
+#include "lona/sema/injected_member.hh"
 #include "lona/sema/operator_resolver.hh"
 #include "lona/support/arena.hh"
 #include <memory>
@@ -69,6 +70,29 @@ class HIRArrayInit : public HIRExpr {
 public:
     explicit HIRArrayInit(TypeClass *type = nullptr, const location &loc = location())
         : HIRExpr(type, loc) {}
+};
+
+class HIRNumericCast : public HIRExpr {
+    HIRExpr *expr;
+    bool explicitRequest_ = false;
+
+public:
+    HIRNumericCast(HIRExpr *expr, TypeClass *targetType, bool explicitRequest,
+                   const location &loc = location())
+        : HIRExpr(targetType, loc), expr(expr), explicitRequest_(explicitRequest) {}
+
+    HIRExpr *getExpr() const { return expr; }
+    bool explicitRequest() const { return explicitRequest_; }
+};
+
+class HIRBitCast : public HIRExpr {
+    HIRExpr *expr;
+
+public:
+    HIRBitCast(HIRExpr *expr, TypeClass *targetType, const location &loc = location())
+        : HIRExpr(targetType, loc), expr(expr) {}
+
+    HIRExpr *getExpr() const { return expr; }
 };
 
 class HIRUnaryOper : public HIRExpr {

@@ -9,6 +9,9 @@ operator_bad_in="$(new_tmp_file operator-bad)"
 operator_bad_out="$(new_tmp_file operator-bad-out)"
 short_circuit_in="$(new_tmp_file short-circuit)"
 short_circuit_bin="$(new_tmp_file short-circuit-bin)"
+mixed_sign_in="$(new_tmp_file mixed-sign)"
+mixed_sign_out="$(new_tmp_file mixed-sign-out)"
+mixed_sign_bin="$(new_tmp_file mixed-sign-bin)"
 
 cat >"$operator_ir_in" <<'EOF'
 def compute(a i32, b i32, flag bool) bool {
@@ -98,5 +101,41 @@ short_circuit_status=$?
 set -e
 if [ "$short_circuit_status" -ne 0 ]; then
     echo "expected short-circuit program to exit with 0, got $short_circuit_status" >&2
+    exit 1
+fi
+
+cat >"$mixed_sign_in" <<'EOF'
+def less(a i64, b u8) bool {
+    ret a < b
+}
+
+def divide(a i64, b u8) i64 {
+    ret a / b
+}
+
+def shift(a i64, b u8) i64 {
+    ret a >> b
+}
+
+def main() i32 {
+    var a i64 = -1
+    var b u8 = 1
+    if less(a, b) && divide(a, b) == -1 && shift(a, b) == -1 {
+        ret 0
+    }
+    ret 1
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$mixed_sign_in" >"$mixed_sign_out"
+grep -Fq 'icmp slt i64' "$mixed_sign_out"
+grep -Fq 'sdiv i64' "$mixed_sign_out"
+grep -Fq 'ashr i64' "$mixed_sign_out"
+bash "$ROOT/scripts/lac.sh" "$mixed_sign_in" "$mixed_sign_bin"
+set +e
+"$mixed_sign_bin"
+mixed_sign_status=$?
+set -e
+if [ "$mixed_sign_status" -ne 0 ]; then
+    echo "expected mixed signedness program to exit with 0, got $mixed_sign_status" >&2
     exit 1
 fi

@@ -359,13 +359,13 @@ legacy_cast_expr
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "lona doesn't support C-style cast syntax like `i32 value`.",
-            "Assignments use byte-copy semantics. Keep the original value, or call an explicit conversion helper such as `toInt(...)` when those helpers are added.");
+            "Use injected conversion members like `value.toi32()` for numeric conversion, or `value.tobits()` for raw byte views.");
     }
     | TYPE CONST {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "lona doesn't support C-style cast syntax like `i32 1`.",
-            "Assignments use byte-copy semantics. Use an explicit conversion helper instead of a cast expression.");
+            "Use `1.toi32()` / `1.tof32()` for numeric conversion instead of a cast expression.");
     }
     | TYPE TRUE {
         throw lona::DiagnosticError(
@@ -383,7 +383,7 @@ legacy_cast_expr
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "lona doesn't support C-style cast syntax like `i32(expr)`.",
-            "Use normal assignment for byte-copy behavior. Explicit numeric conversion will be provided through helper functions instead of cast syntax.");
+            "Use injected conversion members like `expr.toi32()` or `expr.tobits()` instead of cast syntax.");
     }
     ;
 

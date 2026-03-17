@@ -32,7 +32,10 @@ def use_matrix(seed i32) i32 {
 }
 
 def main() i32 {
-    var sample f32 = blend(3.0, 1.0)
+    var sample f32 = 11.tof32()
+    sample = blend(sample, 1.0)
+    var sample_bits u8[4] = sample.tobits()
+    sample = sample_bits.tof32()
     var pair <i32, bool> = pack(11, sample >= 2.0)
     var kept <i32, bool> = keep(pair)
     kept._1 = kept._1 + 1

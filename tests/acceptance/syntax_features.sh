@@ -9,6 +9,22 @@ legacy_cast_in="$(new_tmp_file legacy-cast)"
 legacy_cast_out="$(new_tmp_file legacy-cast-out)"
 float_in="$(new_tmp_file float)"
 float_out="$(new_tmp_file float-out)"
+numeric_convert_in="$(new_tmp_file numeric-convert)"
+numeric_convert_out="$(new_tmp_file numeric-convert-out)"
+tobits_in="$(new_tmp_file tobits)"
+tobits_out="$(new_tmp_file tobits-out)"
+tobits_infer_in="$(new_tmp_file tobits-infer)"
+tobits_infer_out="$(new_tmp_file tobits-infer-out)"
+wide_bits_in="$(new_tmp_file wide-bits)"
+wide_bits_out="$(new_tmp_file wide-bits-out)"
+implicit_numeric_in="$(new_tmp_file implicit-numeric)"
+implicit_numeric_out="$(new_tmp_file implicit-numeric-out)"
+mixed_numeric_op_in="$(new_tmp_file mixed-numeric-op)"
+mixed_numeric_op_out="$(new_tmp_file mixed-numeric-op-out)"
+numeric_cross_bad_in="$(new_tmp_file numeric-cross-bad)"
+numeric_cross_bad_out="$(new_tmp_file numeric-cross-bad-out)"
+injected_member_bad_in="$(new_tmp_file injected-member-bad)"
+injected_member_bad_out="$(new_tmp_file injected-member-bad-out)"
 float_literal_target_bad_in="$(new_tmp_file float-literal-target-bad)"
 float_literal_target_bad_out="$(new_tmp_file float-literal-target-bad-out)"
 float_nan_cmp_in="$(new_tmp_file float-nan-cmp)"
@@ -59,7 +75,7 @@ def bad() i32 {
 EOF
 expect_emit_ir_failure "$legacy_cast_in" "$legacy_cast_out" 'expected legacy cast syntax program to fail'
 grep -Fq "lona doesn't support C-style cast syntax like \`i32 1\`." "$legacy_cast_out"
-grep -Fq 'byte-copy semantics' "$legacy_cast_out"
+grep -Fq '.toi32()' "$legacy_cast_out"
 
 cat >"$float_in" <<'EOF'
 def id(v f32) f32 {
@@ -77,6 +93,103 @@ grep -q '^define float @bad' "$float_out"
 grep -q 'store float 3.000000e+00' "$float_out"
 grep -q 'fneg float %' "$float_out"
 grep -q 'call float @id(float %' "$float_out"
+
+cat >"$numeric_convert_in" <<'EOF'
+def main() i32 {
+    var base i32 = 1.5.toi32()
+    var sample f32 = base.tof32()
+    var promoted f64 = sample
+    ret promoted.toi32()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$numeric_convert_in" >"$numeric_convert_out"
+grep -q 'fptosi double' "$numeric_convert_out"
+grep -q 'sitofp i32' "$numeric_convert_out"
+grep -q 'fpext float' "$numeric_convert_out"
+
+cat >"$tobits_in" <<'EOF'
+def main() i32 {
+    var v i8 = -1
+    var raw u8[1] = v.tobits()
+    var wide i32 = raw.toi32()
+    ret wide
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$tobits_in" >"$tobits_out"
+grep -q 'insertvalue \[1 x i8\]' "$tobits_out"
+grep -q 'extractvalue \[1 x i8\]' "$tobits_out"
+grep -q 'zext i8' "$tobits_out"
+! grep -q 'sext i8' "$tobits_out"
+
+cat >"$tobits_infer_in" <<'EOF'
+def main() i32 {
+    var raw = 7.tobits()
+    ret raw.toi32()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$tobits_infer_in" >"$tobits_infer_out"
+grep -q 'alloca \[4 x i8\]' "$tobits_infer_out"
+grep -q 'store \[4 x i8\] c"\\07\\00\\00\\00"' "$tobits_infer_out"
+grep -q 'extractvalue \[4 x i8\]' "$tobits_infer_out"
+
+cat >"$wide_bits_in" <<'EOF'
+def main() i32 {
+    var raw u8[256] = {}
+    ret raw.toi32()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$wide_bits_in" >"$wide_bits_out"
+extract_count="$(grep -c 'extractvalue \[256 x i8\]' "$wide_bits_out")"
+if [ "$extract_count" -ne 4 ]; then
+    echo "expected wide raw-toi32 program to extract exactly 4 bytes, got $extract_count" >&2
+    exit 1
+fi
+! grep -q 'i2048' "$wide_bits_out"
+
+cat >"$implicit_numeric_in" <<'EOF'
+def widen(v u8) u16 {
+    ret v
+}
+
+def main() i32 {
+    var x u8 = 1
+    ret widen(x)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$implicit_numeric_in" >"$implicit_numeric_out"
+grep -q 'store i8 1' "$implicit_numeric_out"
+grep -q 'zext i8' "$implicit_numeric_out"
+grep -q 'zext i16' "$implicit_numeric_out"
+
+cat >"$mixed_numeric_op_in" <<'EOF'
+def main() i32 {
+    var a u8 = 1
+    var b i32 = 2
+    ret a + b
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$mixed_numeric_op_in" >"$mixed_numeric_op_out"
+grep -q 'zext i8' "$mixed_numeric_op_out"
+grep -q 'add i32' "$mixed_numeric_op_out"
+
+cat >"$numeric_cross_bad_in" <<'EOF'
+def main() i32 {
+    var x f32 = 1
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$numeric_cross_bad_in" "$numeric_cross_bad_out" 'expected implicit int-to-float program to fail'
+grep -Fq 'initializer type mismatch for `x`: expected f32, got i32' "$numeric_cross_bad_out"
+grep -Fq '.toXXX()' "$numeric_cross_bad_out"
+
+cat >"$injected_member_bad_in" <<'EOF'
+def main() i32 {
+    var x = 1.tof32
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$injected_member_bad_in" "$injected_member_bad_out" 'expected non-call injected member program to fail'
+grep -Fq 'injected member `tof32` can only be used as a direct call callee' "$injected_member_bad_out"
 
 cat >"$float_literal_target_bad_in" <<'EOF'
 def bad() u64 {

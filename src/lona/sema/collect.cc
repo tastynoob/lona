@@ -1132,6 +1132,14 @@ class FunctionCompiler {
                 scope->getLLVMType(arrayType)));
             return result;
         }
+        if (auto *cast = dynamic_cast<HIRNumericCast *>(expr)) {
+            setLocation(cast);
+            return emitNumericCast(cast);
+        }
+        if (auto *bitCast = dynamic_cast<HIRBitCast *>(expr)) {
+            setLocation(bitCast);
+            return emitBitCopyCast(bitCast);
+        }
         if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
             setLocation(assign);
             auto *dst = compileExpr(assign->getLeft());
@@ -1412,6 +1420,154 @@ class FunctionCompiler {
         auto *obj = type->newObj(Object::REG_VAL | Object::READONLY);
         obj->bindllvmValue(value);
         return obj;
+    }
+
+    Object *emitNumericCast(HIRNumericCast *cast) {
+        auto *source = compileExpr(cast->getExpr());
+        if (!source || !source->getType() || !cast->getType()) {
+            error("numeric cast requires concrete source and target types");
+        }
+
+        auto *sourceType = source->getType();
+        auto *targetType = cast->getType();
+        auto *value = source->get(scope);
+        if (sourceType == targetType) {
+            return makeReadonlyValue(targetType, value);
+        }
+
+        llvm::Value *result = nullptr;
+        if (isIntegerType(sourceType) && isIntegerType(targetType)) {
+            auto sourceBits = static_cast<unsigned>(sourceType->typeSize * 8);
+            auto targetBits = static_cast<unsigned>(targetType->typeSize * 8);
+            if (sourceBits == targetBits) {
+                result = value;
+            } else if (sourceBits < targetBits) {
+                result = isSignedIntegerType(sourceType)
+                    ? scope->builder.CreateSExt(value, scope->getLLVMType(targetType))
+                    : scope->builder.CreateZExt(value, scope->getLLVMType(targetType));
+            } else {
+                result = scope->builder.CreateTrunc(value, scope->getLLVMType(targetType));
+            }
+        } else if (isFloatType(sourceType) && isFloatType(targetType)) {
+            auto sourceBits = static_cast<unsigned>(sourceType->typeSize * 8);
+            auto targetBits = static_cast<unsigned>(targetType->typeSize * 8);
+            if (sourceBits == targetBits) {
+                result = value;
+            } else if (sourceBits < targetBits) {
+                result = scope->builder.CreateFPExt(value, scope->getLLVMType(targetType));
+            } else {
+                result = scope->builder.CreateFPTrunc(value, scope->getLLVMType(targetType));
+            }
+        } else if (isIntegerType(sourceType) && isFloatType(targetType)) {
+            result = isSignedIntegerType(sourceType)
+                ? scope->builder.CreateSIToFP(value, scope->getLLVMType(targetType))
+                : scope->builder.CreateUIToFP(value, scope->getLLVMType(targetType));
+        } else if (isFloatType(sourceType) && isIntegerType(targetType)) {
+            result = isSignedIntegerType(targetType)
+                ? scope->builder.CreateFPToSI(value, scope->getLLVMType(targetType))
+                : scope->builder.CreateFPToUI(value, scope->getLLVMType(targetType));
+        } else {
+            error("unsupported numeric cast");
+        }
+
+        return makeReadonlyValue(targetType, result);
+    }
+
+    Object *emitBitCopyCast(HIRBitCast *cast) {
+        auto *source = compileExpr(cast->getExpr());
+        if (!source || !source->getType() || !cast->getType()) {
+            error("bit-copy cast requires concrete source and target types");
+        }
+
+        auto *sourceType = source->getType();
+        auto *targetType = cast->getType();
+        auto *sourceValue = source->get(scope);
+        if (sourceType == targetType) {
+            return makeReadonlyValue(targetType, sourceValue);
+        }
+
+        auto targetBitsWidth = static_cast<unsigned>(targetType->typeSize * 8);
+        auto *targetBitsType =
+            llvm::IntegerType::get(scope->builder.getContext(), targetBitsWidth);
+
+        auto isBitsArray = [](TypeClass *type) {
+            auto *array = type ? type->as<ArrayType>() : nullptr;
+            return array && array->getElementType() == u8Ty && array->hasStaticLayout() &&
+                array->staticDimensions().size() == 1;
+        };
+
+        llvm::Value *bits = nullptr;
+        unsigned bitsWidth = 0;
+        if (sourceValue->getType()->isIntegerTy()) {
+            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            auto *sourceBitsType =
+                llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
+            bits = sourceValue;
+            if (bits->getType() != sourceBitsType) {
+                bits = scope->builder.CreateTruncOrBitCast(bits, sourceBitsType);
+            }
+        } else if (sourceValue->getType()->isFloatingPointTy()) {
+            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            auto *sourceBitsType =
+                llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
+            bits = scope->builder.CreateBitCast(sourceValue, sourceBitsType);
+        } else if (sourceValue->getType()->isPointerTy()) {
+            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            auto *sourceBitsType =
+                llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
+            bits = scope->builder.CreatePtrToInt(sourceValue, sourceBitsType);
+        } else if (isBitsArray(sourceType)) {
+            auto dims = sourceType->as<ArrayType>()->staticDimensions();
+            const auto relevantBytes =
+                std::max<std::int64_t>(1, std::min<std::int64_t>(dims[0], targetType->typeSize));
+            bitsWidth = static_cast<unsigned>(relevantBytes * 8);
+            auto *sourceBitsType =
+                llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
+            bits = llvm::ConstantInt::get(sourceBitsType, 0);
+            for (std::int64_t i = 0; i < relevantBytes; ++i) {
+                auto *byteValue =
+                    scope->builder.CreateExtractValue(sourceValue, {static_cast<unsigned>(i)});
+                auto *byteBits = scope->builder.CreateZExt(byteValue, sourceBitsType);
+                if (i != 0) {
+                    byteBits = scope->builder.CreateShl(
+                        byteBits, llvm::ConstantInt::get(sourceBitsType, i * 8));
+                }
+                bits = scope->builder.CreateOr(bits, byteBits);
+            }
+        } else {
+            error("unsupported source type for raw bit-copy");
+        }
+
+        if (bitsWidth < targetBitsWidth) {
+            bits = scope->builder.CreateZExt(bits, targetBitsType);
+        } else if (bitsWidth > targetBitsWidth) {
+            bits = scope->builder.CreateTrunc(bits, targetBitsType);
+        }
+
+        auto *targetLLVMType = scope->getLLVMType(targetType);
+        llvm::Value *result = nullptr;
+        if (targetLLVMType->isIntegerTy()) {
+            result = bits;
+        } else if (targetLLVMType->isFloatingPointTy()) {
+            result = scope->builder.CreateBitCast(bits, targetLLVMType);
+        } else if (targetLLVMType->isPointerTy()) {
+            result = scope->builder.CreateIntToPtr(bits, targetLLVMType);
+        } else if (isBitsArray(targetType)) {
+            result = llvm::UndefValue::get(targetLLVMType);
+            auto dims = targetType->as<ArrayType>()->staticDimensions();
+            for (std::int64_t i = 0; i < dims[0]; ++i) {
+                auto *shift =
+                    i == 0 ? bits : scope->builder.CreateLShr(
+                                         bits, llvm::ConstantInt::get(targetBitsType, i * 8));
+                auto *byteValue = scope->builder.CreateTrunc(shift, scope->getLLVMType(u8Ty));
+                result = scope->builder.CreateInsertValue(
+                    result, byteValue, {static_cast<unsigned>(i)});
+            }
+        } else {
+            error("unsupported target type for raw bit-copy");
+        }
+
+        return makeReadonlyValue(targetType, result);
     }
 
     Object *emitUnaryOperator(const UnaryOperatorBinding &binding, Object *value) {
