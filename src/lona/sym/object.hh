@@ -8,6 +8,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 #include <sys/types.h>
+#include <string>
 
 namespace lona {
 
@@ -131,6 +132,19 @@ public:
         : Object(nullptr, Object::READONLY), unit_(unit) {}
 
     const CompilationUnit *unit() const { return unit_; }
+
+    llvm::Value *get(Scope *scope) override;
+    void set(Scope *scope, Object *src) override;
+};
+
+class TypeObject : public Object {
+    TypeClass *declaredType_ = nullptr;
+
+public:
+    explicit TypeObject(TypeClass *declaredType)
+        : Object(nullptr, Object::READONLY), declaredType_(declaredType) {}
+
+    TypeClass *declaredType() const { return declaredType_; }
 
     llvm::Value *get(Scope *scope) override;
     void set(Scope *scope, Object *src) override;

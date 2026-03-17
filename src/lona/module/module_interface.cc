@@ -68,10 +68,12 @@ ModuleInterface::declareStructType(const std::string &localName) {
 }
 
 bool
-ModuleInterface::declareFunction(std::string localName, FuncType *type) {
+ModuleInterface::declareFunction(std::string localName, FuncType *type,
+                                 std::vector<std::string> paramNames) {
     return localFunctions_
         .emplace(localName,
-                 FunctionDecl{localName, exportedNameFor(localName), type})
+                 FunctionDecl{localName, exportedNameFor(localName), type,
+                              std::move(paramNames)})
         .second;
 }
 

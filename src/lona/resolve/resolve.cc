@@ -32,6 +32,7 @@ error(const location &loc, const std::string &message,
 
 class FunctionResolver {
     GlobalScope *global_;
+    TypeTable *typeMgr_;
     const CompilationUnit *unit_;
     ResolvedModule &module_;
     ResolvedFunction &resolved_;
@@ -115,10 +116,26 @@ class FunctionResolver {
                     resolved_.bindField(field, ResolvedValueRef::global(*functionName));
                     return;
                 }
+                if (const auto *typeName =
+                        unit_->findLocalType(toStdString(field->name))) {
+                    resolved_.bindField(field,
+                                        ResolvedValueRef::globalType(*typeName));
+                    return;
+                }
             }
 
             auto *globalObject = global_->getObj(field->name);
             if (!globalObject) {
+                auto *globalType = typeMgr_
+                    ? typeMgr_->getType(llvm::StringRef(field->name.tochara(),
+                                                        field->name.size()))
+                    : nullptr;
+                if (globalType) {
+                    resolved_.bindField(field,
+                                        ResolvedValueRef::globalType(
+                                            toStdString(globalType->full_name)));
+                    return;
+                }
                 error(field->loc,
                       "undefined identifier `" + toStdString(field->name) + "`",
                       "Declare it with `var` before using it, or check the spelling.");
@@ -177,11 +194,23 @@ class FunctionResolver {
             }
             return;
         }
-        if (auto *arrayInit = dynamic_cast<const AstArrayInit *>(node)) {
-            if (arrayInit->items) {
-                for (auto *item : *arrayInit->items) {
+        if (auto *braceItem = dynamic_cast<const AstBraceInitItem *>(node)) {
+            if (braceItem->value) {
+                resolveExpr(braceItem->value);
+            }
+            return;
+        }
+        if (auto *braceInit = dynamic_cast<const AstBraceInit *>(node)) {
+            if (braceInit->items) {
+                for (auto *item : *braceInit->items) {
                     resolveExpr(item);
                 }
+            }
+            return;
+        }
+        if (auto *namedArg = dynamic_cast<const AstNamedCallArg *>(node)) {
+            if (namedArg->value) {
+                resolveExpr(namedArg->value);
             }
             return;
         }
@@ -207,10 +236,12 @@ class FunctionResolver {
     }
 
 public:
-    FunctionResolver(GlobalScope *global, const CompilationUnit *unit,
+    FunctionResolver(GlobalScope *global, TypeTable *typeMgr,
+                     const CompilationUnit *unit,
                      ResolvedModule &module,
                      ResolvedFunction &resolved)
-        : global_(global), unit_(unit), module_(module), resolved_(resolved) {}
+        : global_(global), typeMgr_(typeMgr), unit_(unit), module_(module),
+          resolved_(resolved) {}
 
     void resolve() {
         if (resolved_.hasSelfBinding()) {
@@ -292,7 +323,7 @@ class ModuleResolver {
             methodParent ? toStdString(methodParent->full_name) : std::string(),
             node->loc, false,
             node->body && node->body->hasTerminator());
-        FunctionResolver(global_, unit_, *module_, *resolved).resolve();
+        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
     }
 
     void resolveStruct(AstStructDecl *node) {
@@ -341,7 +372,7 @@ class ModuleResolver {
             auto *resolved = createResolvedFunction(
                 nullptr, body, std::string(), std::string(), body->loc, true,
                 body->hasTerminator());
-            FunctionResolver(global_, unit_, *module_, *resolved).resolve();
+            FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
         }
     }
 

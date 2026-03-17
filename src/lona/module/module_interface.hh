@@ -28,6 +28,7 @@ public:
         std::string localName;
         std::string exportedName;
         FuncType *type = nullptr;
+        std::vector<std::string> paramNames;
     };
 
 private:
@@ -61,7 +62,8 @@ public:
 
     void clear();
     StructType *declareStructType(const std::string &localName);
-    bool declareFunction(std::string localName, FuncType *type);
+    bool declareFunction(std::string localName, FuncType *type,
+                         std::vector<std::string> paramNames = {});
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});

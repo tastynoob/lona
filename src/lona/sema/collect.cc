@@ -37,6 +37,23 @@ toStdString(const string &value) {
     return std::string(value.tochara(), value.size());
 }
 
+std::vector<std::string>
+extractParamNames(AstFuncDecl *node) {
+    std::vector<std::string> names;
+    if (!node || !node->args) {
+        return names;
+    }
+    names.reserve(node->args->size());
+    for (auto *arg : *node->args) {
+        auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+        if (!varDecl) {
+            continue;
+        }
+        names.push_back(toStdString(varDecl->field));
+    }
+    return names;
+}
+
 [[noreturn]] void
 error(const std::string &message) {
     throw DiagnosticError(DiagnosticError::Category::Semantic, message);
@@ -409,7 +426,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     if (methodParent && !methodParent->getMethodType(
             llvm::StringRef(func_name.tochara(), func_name.size()))) {
         methodParent->addMethodType(
-            llvm::StringRef(func_name.tochara(), func_name.size()), lofuncType);
+            llvm::StringRef(func_name.tochara(), func_name.size()), lofuncType,
+            extractParamNames(node));
     }
 
     std::string llvmName = resolvedFunctionName.empty()
@@ -424,7 +442,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         llvm::Function::ExternalLinkage,
         llvm::Twine(llvmName),
         typeMgr->getModule());
-    auto *lofunc = new Function(llfunc, lofuncType);
+    auto *lofunc = new Function(llfunc, lofuncType, extractParamNames(node));
 
     if (methodParent) {
         typeMgr->bindMethodFunction(
@@ -867,14 +885,15 @@ class InterfaceCollector {
                     nullptr) {
                     structType->addMethodType(
                         llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()),
-                        funcType);
+                        funcType, extractParamNames(funcDecl));
                 }
             }
         }
 
         for (auto *funcDecl : funcDecls_) {
             auto *funcType = buildFunctionType(funcDecl, nullptr);
-            interface_->declareFunction(toStdString(funcDecl->name), funcType);
+            interface_->declareFunction(toStdString(funcDecl->name), funcType,
+                                        extractParamNames(funcDecl));
         }
     }
 
@@ -904,7 +923,8 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
 
 Function *
 materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType,
-                            llvm::StringRef llvmName) {
+                            llvm::StringRef llvmName,
+                            std::vector<std::string> paramNames = {}) {
     auto *existing = scope.getObj(llvmName);
     if (existing) {
         return existing->as<Function>();
@@ -913,7 +933,7 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType
                                             llvm::Function::ExternalLinkage,
                                             llvm::Twine(llvmName),
                                             typeMgr->getModule());
-    auto *func = new Function(llvmFunc, funcType);
+    auto *func = new Function(llvmFunc, funcType, std::move(paramNames));
     scope.addObj(llvmName, func);
     return func;
 }
@@ -947,7 +967,8 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
         auto runtimeName = exportNamespace ? entry.second.exportedName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);
         materializeDeclaredFunction(*global, typeMgr, funcType,
-                                    llvm::StringRef(runtimeName));
+                                    llvm::StringRef(runtimeName),
+                                    entry.second.paramNames);
     }
 
     for (const auto &entry : interface->types()) {
@@ -968,8 +989,14 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
                                                     llvm::Function::ExternalLinkage,
                                                     llvm::Twine(methodName),
                                                     typeMgr->getModule());
-            typeMgr->bindMethodFunction(structType, method.first(),
-                                        new Function(llvmFunc, methodType));
+            std::vector<std::string> paramNames;
+            if (const auto *storedParamNames =
+                    structType->getMethodParamNames(method.first())) {
+                paramNames = *storedParamNames;
+            }
+            typeMgr->bindMethodFunction(
+                structType, method.first(),
+                new Function(llvmFunc, methodType, std::move(paramNames)));
         }
     }
 
@@ -1116,6 +1143,49 @@ class FunctionCompiler {
                     aggregate, itemValue, {static_cast<unsigned>(i)});
             }
             auto *result = tupleType->newObj(Object::REG_VAL | Object::READONLY);
+            result->bindllvmValue(aggregate);
+            return result;
+        }
+        if (auto *structLiteral = dynamic_cast<HIRStructLiteral *>(expr)) {
+            setLocation(structLiteral);
+            auto *structType =
+                structLiteral->getType() ? structLiteral->getType()->as<StructType>() : nullptr;
+            if (!structType) {
+                error("struct literal is missing its struct type");
+            }
+            auto *llvmStructType =
+                llvm::dyn_cast<llvm::StructType>(typeMgr->getLLVMType(structType));
+            if (!llvmStructType) {
+                error("struct literal lowering requires an LLVM struct type");
+            }
+
+            std::vector<std::pair<TypeClass *, int>> orderedMembers(
+                structType->getMembers().size(), {nullptr, -1});
+            for (const auto &member : structType->getMembers()) {
+                const auto index = static_cast<size_t>(member.second.second);
+                if (index >= orderedMembers.size()) {
+                    error("struct literal member index is out of range");
+                }
+                orderedMembers[index] = member.second;
+            }
+            if (orderedMembers.size() != structLiteral->getFields().size()) {
+                error("struct literal field count mismatch during lowering");
+            }
+
+            llvm::Value *aggregate = llvm::UndefValue::get(llvmStructType);
+            for (size_t i = 0; i < structLiteral->getFields().size(); ++i) {
+                auto *field = compileExpr(structLiteral->getFields()[i]);
+                if (!field) {
+                    error("struct literal field did not produce a value");
+                }
+                auto *fieldType = orderedMembers[i].first;
+                if (field->getType() != fieldType) {
+                    error("struct literal field type mismatch during lowering");
+                }
+                aggregate = scope->builder.CreateInsertValue(
+                    aggregate, field->get(scope), {static_cast<unsigned>(i)});
+            }
+            auto *result = structType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
         }

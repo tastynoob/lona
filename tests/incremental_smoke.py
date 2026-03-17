@@ -72,6 +72,14 @@ def expect_compile_ok(result: dict, compiled: int, reused: int) -> None:
     expect_equal(stats["reused_modules"], reused, "reused module count")
 
 
+def expect_compile_failure(result: dict, compiled: int, reused: int, needle: str) -> None:
+    expect(result["exit_code"] != 0, "expected compile failure")
+    expect(needle in result["stderr"], f"expected diagnostic containing {needle!r}")
+    stats = result["stats"]
+    expect_equal(stats["compiled_modules"], compiled, "compiled module count")
+    expect_equal(stats["reused_modules"], reused, "reused module count")
+
+
 def program_text(module_name: str, argument: int) -> str:
     return (
         f"import {module_name}\n\n"
@@ -120,6 +128,28 @@ def array_program_text(module_name: str) -> str:
         "def main() i32 {\n"
         f"    var box {module_name}.Box = {module_name}.make()\n"
         "    ret box.data(0)(0)\n"
+        "}\n"
+    )
+
+
+def method_dependency_text(dx_name: str, dy_name: str) -> str:
+    return (
+        "struct Vec2 {\n"
+        "    x i32\n"
+        "    y i32\n\n"
+        f"    def add({dx_name} i32, {dy_name} i32) i32 {{\n"
+        f"        ret self.x + self.y + {dx_name} + {dy_name}\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+def method_program_text(module_name: str, dx_name: str, dy_name: str) -> str:
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        f"    var v = {module_name}.Vec2(x = 1, y = 2)\n"
+        f"    ret v.add({dx_name} = 3, {dy_name} = 4)\n"
         "}\n"
     )
 
@@ -173,6 +203,28 @@ def run_array_interface_hash_case(rng: random.Random, runner: SessionRunner, roo
     expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
 
 
+def run_named_method_interface_hash_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    first_dx = f"dx_{rng.randint(10, 99)}"
+    first_dy = f"dy_{rng.randint(10, 99)}"
+    second_dx = f"left_{rng.randint(10, 99)}"
+    second_dy = f"right_{rng.randint(10, 99)}"
+
+    write_file(dep_path, method_dependency_text(first_dx, first_dy))
+    write_file(app_path, method_program_text("dep", first_dx, first_dy))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, method_dependency_text(second_dx, second_dy))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        f"unknown parameter `{first_dx}` for function call",
+    )
+
+
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     case_count = 3
     for index in range(case_count):
@@ -205,6 +257,12 @@ def main() -> int:
             suite.add(
                 "array-interface-hash-invalidation",
                 lambda: run_array_interface_hash_case(rng, runner, root / "array_interface"),
+            )
+            suite.add(
+                "named-method-interface-hash-invalidation",
+                lambda: run_named_method_interface_hash_case(
+                    rng, runner, root / "named_method_interface"
+                ),
             )
             suite.add(
                 "randomized-template-cases",

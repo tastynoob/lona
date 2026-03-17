@@ -246,7 +246,7 @@ single-value      ::= variable
                     | tuple-literal
 
 field-call        ::= single-value "(" ")"
-                    | single-value "(" expr-seq ")"
+                    | single-value "(" call-arg-seq ")"
 
 variable          ::= IDENT
                     | field-selector
@@ -256,15 +256,38 @@ field-selector    ::= single-value "." IDENT
 expr-seq          ::= expr
                     | expr-seq "," expr
 
-array-init        ::= "{ }"
+call-arg-seq      ::= call-arg
+                    | call-arg-seq "," NL* call-arg
+
+call-arg          ::= expr
+                    | brace-init
+                    | named-call-arg
+
+named-call-arg    ::= IDENT "=" expr
+                    | IDENT "=" brace-init
+
+brace-init        ::= "{ }"
                     | "{"
-                      array-init-seq
+                      NL*
+                      "}"
+                    | "{"
+                      brace-inline-body
+                      "}"
+                    | "{"
+                      NL
+                      brace-line-body
                       "}"
 
-array-init-seq    ::= expr
-                    | array-init
-                    | array-init-seq "," expr
-                    | array-init-seq "," array-init
+brace-inline-body ::= brace-init-item
+                    | brace-inline-body "," NL* brace-init-item
+
+brace-line-body   ::= NL* brace-line-seq NL*
+
+brace-line-seq    ::= brace-init-item
+                    | brace-line-seq NL NL* brace-init-item
+
+brace-init-item   ::= expr
+                    | brace-init
 ```
 
 说明：
@@ -272,10 +295,15 @@ array-init-seq    ::= expr
 - `legacy-cast-expr` 不是正式特性，而是为了给旧式 `i32 value` / `i32(expr)` 写法提供明确错误诊断。
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
 - 当前 `aaa.bbb(...)` 除了结构体方法，也可以命中“成员函数注入”入口；内建数值转换 `aaa.tof32()` / `aaa.toi32()` 和位模式视图 `aaa.tobits()` 都走这条路径，但后端会直接 lower 成高效 cast / byte-copy，不生成真实函数调用。
+- 普通函数调用和类型构造调用共用同一套参数语法；`Vec2(x=1, y=2)` 与 `mix(x=1, y=2)` 在 parser 层没有分成两套节点。
+- 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
 - 元组成员访问沿用 `field-selector` 规则，字段名按 `_1`、`_2`、`_3` 这种自动生成名称访问。
 - 固定维度数组现在已经支持零初始化占位与 `()` 索引 lowering。
-- 显式数组元素列表仍未实现；当前只接受零初始化占位。
+- 花括号初始化当前用于数组。
+- 结构体类型名可以直接作为构造调用目标，例如 `var c = Complex(real = 1, img = 2)`。
+- 命名实参与位置实参可以混排，但顺序必须与 Python 类似：先位置、后命名。
+- 显式数组元素列表目前都已经进入 parser / AST，但语义层仍保留占位诊断。
 
 ### 3.6 类型语法
 

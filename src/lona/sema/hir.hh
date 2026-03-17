@@ -66,6 +66,17 @@ public:
     const std::vector<HIRExpr *> &getItems() const { return items; }
 };
 
+class HIRStructLiteral : public HIRExpr {
+    std::vector<HIRExpr *> fields;
+
+public:
+    HIRStructLiteral(std::vector<HIRExpr *> fields, TypeClass *type = nullptr,
+                     const location &loc = location())
+        : HIRExpr(type, loc), fields(std::move(fields)) {}
+
+    const std::vector<HIRExpr *> &getFields() const { return fields; }
+};
+
 class HIRArrayInit : public HIRExpr {
 public:
     explicit HIRArrayInit(TypeClass *type = nullptr, const location &loc = location())

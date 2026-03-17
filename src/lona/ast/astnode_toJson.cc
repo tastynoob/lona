@@ -94,8 +94,18 @@ AstTupleLiteral::toJson(Json &root) {
 }
 
 void
-AstArrayInit::toJson(Json &root) {
-    root["type"] = "ArrayInit";
+AstBraceInitItem::toJson(Json &root) {
+    root["type"] = "BraceInitItem";
+    root["kind"] = "positional";
+    root["value"] = Json::object();
+    if (value) {
+        value->toJson(root["value"]);
+    }
+}
+
+void
+AstBraceInit::toJson(Json &root) {
+    root["type"] = "BraceInit";
     root["items"] = Json::array();
     if (!items) {
         return;
@@ -104,6 +114,16 @@ AstArrayInit::toJson(Json &root) {
         Json child = Json::object();
         item->toJson(child);
         root["items"].push_back(child);
+    }
+}
+
+void
+AstNamedCallArg::toJson(Json &root) {
+    root["type"] = "NamedCallArg";
+    root["name"] = name.tochara();
+    root["value"] = Json::object();
+    if (value) {
+        value->toJson(root["value"]);
     }
 }
 

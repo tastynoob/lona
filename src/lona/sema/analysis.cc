@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -477,6 +478,18 @@ class FunctionAnalyzer {
         return structType;
     }
 
+    TypeClass *requireTypeByName(const std::string &name, const location &loc,
+                                 const std::string &context) {
+        auto *type = typeMgr->getType(llvm::StringRef(name));
+        if (!type) {
+            internalError(loc,
+                          "resolved " + context + " `" + name +
+                              "` is missing from the current type table",
+                          "Rebuild declarations before reusing this resolved module.");
+        }
+        return type;
+    }
+
     Function *requireDeclaredFunction(const location &loc) {
         if (!resolved.hasDeclaredFunction()) {
             internalError(loc,
@@ -559,6 +572,131 @@ class FunctionAnalyzer {
         auto *expr = requireExpr(node, expectedType);
         rejectNonCallMethodSelector(typeMgr, expr);
         return expr;
+    }
+
+    static bool isNamedCallArgNode(const AstNode *node) {
+        return dynamic_cast<const AstNamedCallArg *>(node) != nullptr;
+    }
+
+    static std::string formatAvailableNames(const std::vector<std::string> &names,
+                                            const std::string &noun) {
+        if (names.empty()) {
+            return "No " + noun + " names are available here.";
+        }
+        std::ostringstream out;
+        out << "Available " << noun << " names are ";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << "`" << names[i] << "`";
+        }
+        out << ".";
+        return out.str();
+    }
+
+    std::vector<AstNode *> collectOrderedCallArgs(
+        const std::vector<AstNode *> *rawArgs,
+        const std::vector<std::string> &orderedNames,
+        const location &callLoc, const std::string &targetLabel,
+        const std::string &nameKind, bool allowNamedArgs) {
+        std::vector<AstNode *> ordered;
+        if (!rawArgs || rawArgs->empty()) {
+            return ordered;
+        }
+
+        bool hasNamedArgs = false;
+        for (auto *arg : *rawArgs) {
+            if (isNamedCallArgNode(arg)) {
+                hasNamedArgs = true;
+            }
+        }
+
+        if (!hasNamedArgs) {
+            ordered = *rawArgs;
+            return ordered;
+        }
+
+        if (!allowNamedArgs) {
+            error(callLoc,
+                  "named arguments are not supported for " + targetLabel,
+                  "Use positional arguments for this call target.");
+        }
+
+        std::unordered_map<std::string, std::size_t> indexByName;
+        indexByName.reserve(orderedNames.size());
+        for (std::size_t i = 0; i < orderedNames.size(); ++i) {
+            indexByName.emplace(orderedNames[i], i);
+        }
+
+        ordered.resize(orderedNames.size(), nullptr);
+        std::size_t positionalCount = 0;
+        bool seenNamedArg = false;
+        for (auto *arg : *rawArgs) {
+            if (!isNamedCallArgNode(arg)) {
+                if (seenNamedArg) {
+                    error(arg ? arg->loc : callLoc,
+                          "positional arguments must come before named arguments",
+                          "Write calls like `name(a, b, x=..., y=...)`, not `name(x=..., a)`.");
+                }
+                if (positionalCount >= ordered.size()) {
+                    error(callLoc,
+                          "call argument count mismatch: expected at most " +
+                              std::to_string(orderedNames.size()) + ", got " +
+                              std::to_string(rawArgs->size()));
+                }
+                ordered[positionalCount++] = arg;
+                continue;
+            }
+
+            seenNamedArg = true;
+            auto *namedArg = dynamic_cast<AstNamedCallArg *>(arg);
+            auto found = indexByName.find(toStdString(namedArg->name));
+            if (found == indexByName.end()) {
+                error(namedArg->loc,
+                      "unknown " + nameKind + " `" + toStdString(namedArg->name) +
+                          "` for " + targetLabel,
+                      formatAvailableNames(orderedNames, nameKind));
+            }
+            if (ordered[found->second] != nullptr) {
+                error(namedArg->loc,
+                      "duplicate " + nameKind + " `" + toStdString(namedArg->name) +
+                          "` for " + targetLabel,
+                      "Each " + nameKind + " can only be specified once.");
+            }
+            ordered[found->second] = namedArg->value;
+        }
+
+        for (std::size_t i = 0; i < ordered.size(); ++i) {
+            if (!ordered[i]) {
+                error(callLoc,
+                      "missing " + nameKind + " `" + orderedNames[i] + "` for " +
+                          targetLabel,
+                      formatAvailableNames(orderedNames, nameKind));
+            }
+        }
+
+        return ordered;
+    }
+
+    std::vector<std::pair<std::string, TypeClass *>> orderedStructMembers(
+        StructType *structType, const location &loc) {
+        std::vector<std::pair<std::string, TypeClass *>> members(
+            structType ? structType->getMembers().size() : 0);
+        if (!structType) {
+            return members;
+        }
+        for (const auto &entry : structType->getMembers()) {
+            const auto index = static_cast<std::size_t>(entry.second.second);
+            if (index >= members.size()) {
+                internalError(loc,
+                              "struct member index is out of range for `" +
+                                  describeResolvedType(structType) + "`",
+                              "This looks like a type layout bug.");
+            }
+            members[index] = {entry.first().str(), entry.second.first};
+        }
+        return members;
     }
 
     bool isAddressable(HIRExpr *expr) {
@@ -658,8 +796,8 @@ class FunctionAnalyzer {
         if (auto *tuple = node->as<AstTupleLiteral>()) {
             return analyzeTupleLiteral(tuple, expectedType);
         }
-        if (auto *arrayInit = node->as<AstArrayInit>()) {
-            return analyzeArrayInit(arrayInit, expectedType);
+        if (auto *braceInit = node->as<AstBraceInit>()) {
+            return analyzeBraceInit(braceInit, expectedType);
         }
         if (auto *selector = node->as<AstSelector>()) {
             return analyzeSelector(selector);
@@ -731,35 +869,60 @@ class FunctionAnalyzer {
         return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
     }
 
-    bool isZeroArrayInit(const AstArrayInit *node) {
-        if (!node || !node->items) {
+    bool isZeroBraceInitShape(const AstBraceInit *node, ArrayType *arrayType) {
+        if (!node || !node->items || !arrayType) {
             return false;
         }
-        for (auto *item : *node->items) {
-            auto *nested = dynamic_cast<AstArrayInit *>(item);
-            if (!nested || !isZeroArrayInit(nested)) {
-                return false;
-            }
+        if (node->items->empty()) {
+            return true;
         }
-        return true;
+
+        auto *nestedArrayType = arrayType->getElementType()
+            ? arrayType->getElementType()->as<ArrayType>()
+            : nullptr;
+        if (!nestedArrayType || node->items->size() != 1) {
+            return false;
+        }
+
+        auto *braceItem = dynamic_cast<AstBraceInitItem *>(node->items->front());
+        if (!braceItem) {
+            return false;
+        }
+        auto *nested = dynamic_cast<AstBraceInit *>(braceItem->value);
+        if (!nested) {
+            return false;
+        }
+        return isZeroBraceInitShape(nested, nestedArrayType);
     }
 
-    HIRExpr *analyzeArrayInit(AstArrayInit *node, TypeClass *expectedType) {
+    HIRExpr *analyzeBraceInit(AstBraceInit *node, TypeClass *expectedType) {
+        if (!expectedType) {
+            error(node->loc,
+                  "brace initializer needs an explicit target type",
+                  "Use it in a typed variable declaration like `var matrix i32[4][5] = {{}}`, or pass it to a call target that already expects an array type.");
+        }
+        if (auto *structType = expectedType->as<StructType>()) {
+            error(node->loc,
+                  "brace initialization currently applies to arrays only",
+                  "For structs, call the type directly like `" +
+                      describeResolvedType(structType) +
+                      "(...)` using positional or named arguments. Brace initialization remains array-only.");
+        }
         auto *arrayType = expectedType ? expectedType->as<ArrayType>() : nullptr;
         if (!arrayType) {
             error(node->loc,
-                  "array initializers need an explicit array target type",
-                  "Write a declaration like `var matrix i32[4][5] = {{}}` so the initializer knows the array layout.");
+                  "brace initializer currently supports arrays only when the target type is already known",
+                  "Write a declaration like `var matrix i32[4][5] = {{}}`, or call a struct type like `Vec2(x=1, y=2)` for struct construction.");
         }
         if (!arrayType->hasStaticLayout()) {
             error(node->loc,
                   "array initializers currently require fixed explicit dimensions",
                   "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
         }
-        if (!isZeroArrayInit(node)) {
+        if (!isZeroBraceInitShape(node, arrayType)) {
             error(node->loc,
-                  "array initializers currently only support zero-initialization placeholders",
-                  "Use `{}` or nested empty braces like `{{}}` for now. Explicit element lists will be added later.");
+                  "array zero-initialization placeholder doesn't match the array shape",
+                  "Use `{}` for whole-array zeroing, or one nested empty brace group per nested array layer such as `{{}}` for `i32[4][5]`. Explicit element lists will be added in the next step.");
         }
         return makeHIR<HIRArrayInit>(arrayType, node->loc);
     }
@@ -777,6 +940,11 @@ class FunctionAnalyzer {
             auto *obj = requireGlobalObject(binding->globalName(), node->loc,
                                             "global identifier");
             return makeHIR<HIRValue>(obj, node->loc);
+        }
+        if (binding->kind() == ResolvedValueRef::Kind::GlobalType) {
+            auto *type =
+                requireTypeByName(binding->globalName(), node->loc, "type identifier");
+            return makeHIR<HIRValue>(new TypeObject(type), node->loc);
         }
 
         return makeHIR<HIRValue>(
@@ -920,9 +1088,20 @@ class FunctionAnalyzer {
             rejectMethodSelectorStorage(typeMgr, init, node);
             type = init->getType();
             if (!type) {
+                auto *value = dynamic_cast<HIRValue *>(init);
+                auto *object = value ? value->getValue() : nullptr;
+                if (object && object->as<ModuleObject>()) {
+                    error(node->loc,
+                          "module namespaces can't be stored as runtime values",
+                          "Access a concrete member like `file.func(...)` instead.");
+                }
+                if (object && object->as<TypeObject>()) {
+                    error(node->loc,
+                          "type names can't be stored as runtime values",
+                          "Call the type like `Vec2(...)`, or use it in a type annotation.");
+                }
                 error(node->loc,
-                      "module namespaces can't be stored as runtime values",
-                      "Access a concrete member like `file.func(...)` instead.");
+                      "this expression doesn't produce a storable runtime value");
             }
             rejectBareFunctionStorage(type, node);
         } else {
@@ -989,6 +1168,13 @@ class FunctionAnalyzer {
         if (auto *parentValue = dynamic_cast<HIRValue *>(parent)) {
             if (auto *moduleObject = parentValue->getValue()->as<ModuleObject>()) {
                 auto fieldName = toStdString(node->field->text);
+                const auto *typeName = moduleObject->unit()
+                    ? moduleObject->unit()->findLocalType(fieldName)
+                    : nullptr;
+                if (typeName) {
+                    auto *type = requireTypeByName(*typeName, node->loc, "module type");
+                    return makeHIR<HIRValue>(new TypeObject(type), node->loc);
+                }
                 const auto *functionName = moduleObject->unit()
                     ? moduleObject->unit()->findLocalFunction(fieldName)
                     : nullptr;
@@ -998,7 +1184,7 @@ class FunctionAnalyzer {
                         : std::string("<module>");
                     error(node->loc,
                           "unknown module member `" + moduleName + "." + fieldName + "`",
-                          "Only imported top-level functions are available through `file.xxx`.");
+                          "Only directly imported top-level functions and types are available through `file.xxx`.");
                 }
                 auto *func = requireGlobalFunction(*functionName, node->loc,
                                                   "module function");
@@ -1067,40 +1253,112 @@ class FunctionAnalyzer {
         }
 
         auto *callee = requireExpr(node->value);
-        const auto actualArgCount = node->args ? node->args->size() : 0;
-        std::vector<HIRExpr *> args;
-        args.reserve(actualArgCount);
+        if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
+            if (auto *typeObject = calleeValue->getValue()->as<TypeObject>()) {
+                auto *structType = typeObject->declaredType()
+                    ? typeObject->declaredType()->as<StructType>()
+                    : nullptr;
+                if (!structType) {
+                    error(node->loc,
+                          "type constructor calls currently support struct types only",
+                          "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
+                }
+
+                auto members = orderedStructMembers(structType, node->loc);
+                std::vector<std::string> fieldNames;
+                fieldNames.reserve(members.size());
+                for (const auto &member : members) {
+                    fieldNames.push_back(member.first);
+                }
+                auto orderedArgs = collectOrderedCallArgs(
+                    node->args, fieldNames, node->loc,
+                    "type constructor `" + describeResolvedType(structType) + "`",
+                    "field", true);
+                if (orderedArgs.size() != members.size()) {
+                    error(node->loc,
+                          "constructor argument count mismatch for `" +
+                              describeResolvedType(structType) + "`: expected " +
+                              std::to_string(members.size()) + ", got " +
+                              std::to_string(orderedArgs.size()));
+                }
+
+                std::vector<HIRExpr *> fields;
+                fields.reserve(orderedArgs.size());
+                for (size_t i = 0; i < orderedArgs.size(); ++i) {
+                    auto *expectedFieldType = members[i].second;
+                    auto *fieldExpr =
+                        requireNonCallExpr(orderedArgs[i], expectedFieldType);
+                    fieldExpr = coerceNumericExpr(fieldExpr, expectedFieldType,
+                                                 orderedArgs[i]->loc, false);
+                    requireCompatibleTypes(
+                        orderedArgs[i]->loc, expectedFieldType, fieldExpr->getType(),
+                        "constructor field type mismatch for `" + members[i].first + "`");
+                    fields.push_back(fieldExpr);
+                }
+                return makeHIR<HIRStructLiteral>(std::move(fields), structType,
+                                                 node->loc);
+            }
+        }
 
         FuncType *funcType = nullptr;
         size_t argOffset = 0;
+        const std::vector<std::string> *paramNames = nullptr;
         if (auto *selector = dynamic_cast<HIRSelector *>(callee);
             selector && selector->getType() == nullptr) {
             auto *structType = selector->getParent()->getType()->as<StructType>();
             if (!structType) {
                 error("selector call parent must be a struct value");
             }
+            auto *methodFunc =
+                typeMgr->getMethodFunction(structType,
+                                           llvm::StringRef(selector->getFieldName()));
             funcType =
-                structType->getMethodType(llvm::StringRef(selector->getFieldName()));
+                methodFunc ? methodFunc->getType()->as<FuncType>()
+                           : structType->getMethodType(
+                                 llvm::StringRef(selector->getFieldName()));
             if (!funcType) {
                 error("unknown struct method");
+            }
+            if (methodFunc && !methodFunc->paramNames().empty()) {
+                paramNames = &methodFunc->paramNames();
+            } else if (const auto *methodParamNames =
+                           structType->getMethodParamNames(
+                               llvm::StringRef(selector->getFieldName()));
+                       methodParamNames && !methodParamNames->empty()) {
+                paramNames = methodParamNames;
             }
             argOffset = getMethodCallArgOffset(selector, funcType);
         } else if (auto *func = getDirectFunctionCallee(callee)) {
             funcType = func->getType()->as<FuncType>();
+            if (!func->paramNames().empty()) {
+                paramNames = &func->paramNames();
+            }
         } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
             funcType = pointerTarget;
         } else if (auto *arrayType = callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
+            if (node->args) {
+                for (auto *arg : *node->args) {
+                    if (isNamedCallArgNode(arg)) {
+                        error(node->loc,
+                              "array indexing does not support named arguments",
+                              "Use positional indices like `a(1, 2)` or `a(1)(2)`.");
+                    }
+                }
+            }
             if (!arrayType->hasStaticLayout()) {
                 error(node->loc,
                       "array indexing requires fixed explicit dimensions",
                       "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
             }
+            const auto actualArgCount = node->args ? node->args->size() : 0;
             if (actualArgCount != arrayType->indexArity()) {
                 error(node->loc,
                       "array index arity mismatch: expected " +
                           std::to_string(arrayType->indexArity()) + ", got " +
                           std::to_string(actualArgCount));
             }
+            std::vector<HIRExpr *> args;
+            args.reserve(actualArgCount);
             if (node->args) {
                 for (size_t i = 0; i < node->args->size(); ++i) {
                     auto *arg = requireNonCallExpr(node->args->at(i), i32Ty);
@@ -1117,19 +1375,40 @@ class FunctionAnalyzer {
             error("callee must be a function, function pointer, or method selector");
         }
 
+        std::vector<AstNode *> orderedArgs;
+        if (node->args && !node->args->empty()) {
+            if (paramNames && !paramNames->empty()) {
+                orderedArgs = collectOrderedCallArgs(
+                    node->args, *paramNames, node->loc, "function call",
+                    "parameter", true);
+            } else {
+                for (auto *arg : *node->args) {
+                    if (isNamedCallArgNode(arg)) {
+                        error(node->loc,
+                              "named arguments are not supported for this call target",
+                              "Named arguments currently require a directly declared function or struct type with parameter metadata.");
+                    }
+                }
+                orderedArgs = *node->args;
+            }
+        }
+
+        const auto actualArgCount = orderedArgs.size();
+        std::vector<HIRExpr *> args;
+        args.reserve(actualArgCount);
         const auto &paramTypes = funcType->getArgTypes();
         if (actualArgCount + argOffset != paramTypes.size()) {
             error("call argument count mismatch: expected " +
                   std::to_string(paramTypes.size() - argOffset) + ", got " +
                   std::to_string(actualArgCount));
         }
-        if (node->args) {
-            for (size_t i = 0; i < node->args->size(); ++i) {
+        if (!orderedArgs.empty()) {
+            for (size_t i = 0; i < orderedArgs.size(); ++i) {
                 auto *expectedType = paramTypes[i + argOffset];
-                auto *arg = requireNonCallExpr(node->args->at(i), expectedType);
-                arg = coerceNumericExpr(arg, expectedType, node->args->at(i)->loc,
+                auto *arg = requireNonCallExpr(orderedArgs[i], expectedType);
+                arg = coerceNumericExpr(arg, expectedType, orderedArgs[i]->loc,
                                         false);
-                requireCompatibleTypes(node->args->at(i)->loc, expectedType,
+                requireCompatibleTypes(orderedArgs[i]->loc, expectedType,
                                        arg->getType(),
                                        "call argument type mismatch at index " +
                                            std::to_string(i));

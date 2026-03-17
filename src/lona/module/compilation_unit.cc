@@ -77,11 +77,13 @@ void
 hashParamSignature(std::uint64_t &seed, AstNode *node) {
     if (auto *decl = dynamic_cast<AstVarDecl *>(node)) {
         hashText(seed, "param");
+        hashText(seed, toStdString(decl->field));
         hashTypeNode(seed, decl->typeNode);
         return;
     }
     if (auto *def = dynamic_cast<AstVarDef *>(node)) {
         hashText(seed, "param");
+        hashText(seed, toStdString(def->getName()));
         hashTypeNode(seed, def->getTypeNode());
         return;
     }

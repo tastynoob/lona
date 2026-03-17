@@ -1,5 +1,10 @@
 // Syntax-closure sample: float, tuple, fixed arrays, and builtin operators.
 
+struct Pair {
+    left i32
+    right i32
+}
+
 def blend(a f32, b f32) f32 {
     var sum f32 = a + b
     var diff f32 = a - b
@@ -36,10 +41,11 @@ def main() i32 {
     sample = blend(sample, 1.0)
     var sample_bits u8[4] = sample.tobits()
     sample = sample_bits.tof32()
+    var pair_value = Pair(right = 5, left = 3)
     var pair <i32, bool> = pack(11, sample >= 2.0)
     var kept <i32, bool> = keep(pair)
     kept._1 = kept._1 + 1
-    var score i32 = use_matrix(11)
+    var score i32 = use_matrix(pair_value.left + pair_value.right)
     if kept._2 && ((sample >= 2.0) || (score < 0)) {
         ret score + kept._1
     }

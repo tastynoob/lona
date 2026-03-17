@@ -213,12 +213,35 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
-class AstArrayInit : public AstNode {
+class AstBraceInitItem : public AstNode {
+public:
+    AstNode *const value;
+
+    explicit AstBraceInitItem(AstNode *value)
+        : AstNode(value ? value->loc : location()), value(value) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstBraceInit : public AstNode {
 public:
     std::vector<AstNode *> *const items;
 
-    AstArrayInit(const location &loc, std::vector<AstNode *> *items)
+    AstBraceInit(const location &loc, std::vector<AstNode *> *items)
         : AstNode(loc), items(items) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstNamedCallArg : public AstNode {
+public:
+    string const name;
+    AstNode *const value;
+
+    AstNamedCallArg(AstToken &nameToken, AstNode *value)
+        : AstNode(nameToken.loc), name(nameToken.text), value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;

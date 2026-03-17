@@ -49,6 +49,7 @@ public:
     enum class Kind {
         LocalBinding,
         GlobalObject,
+        GlobalType,
     };
 
 private:
@@ -67,6 +68,13 @@ public:
     static ResolvedValueRef global(std::string name) {
         ResolvedValueRef ref;
         ref.kind_ = Kind::GlobalObject;
+        ref.globalName_ = std::move(name);
+        return ref;
+    }
+
+    static ResolvedValueRef globalType(std::string name) {
+        ResolvedValueRef ref;
+        ref.kind_ = Kind::GlobalType;
         ref.globalName_ = std::move(name);
         return ref;
     }

@@ -85,7 +85,7 @@
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_statlist struct_stat stat_list stat
 %type <node> stat_compound stat_if stat_for stat_ret stat_expr
-%type <node> field_call tuple_literal array_init legacy_cast_expr
+%type <node> field_call tuple_literal brace_init brace_init_item call_arg named_call_arg legacy_cast_expr
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren single_value field_selector func_pointer_expr
 %type <typeNode> type_selector
@@ -93,8 +93,9 @@
 
 %type <typeNode> single_type ptr_type array_type base_type func_head type_name tuple_type
 
-%type <seq> expr_seq var_decl_seq array_init_seq
+%type <seq> expr_seq var_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
+%type <counter> opt_newlines
 
 %start pragram
 
@@ -250,11 +251,11 @@ struct_stat
 var_def
     : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
     | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
-    | VAR var_decl '=' array_init { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
+    | VAR var_decl '=' brace_init { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
     | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
-    | VAR FIELD '=' array_init { $$ = new AstVarDef(*$2, $4); }
+    | VAR FIELD '=' brace_init { $$ = new AstVarDef(*$2, $4); }
     | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
-    | FIELD ':' '=' array_init { $$ = new AstVarDef(*$1, $4); }
+    | FIELD ':' '=' brace_init { $$ = new AstVarDef(*$1, $4); }
     ;
 
 /* expression */
@@ -395,32 +396,87 @@ tuple_literal
     }
     ;
 
-array_init
+brace_init
     : '{' '}' {
-        $$ = new AstArrayInit(@$, new std::vector<AstNode *>);
+        $$ = new AstBraceInit(@$, new std::vector<AstNode *>);
     }
-    | '{' array_init_seq '}' {
-        $$ = new AstArrayInit(@$, $2);
+    | '{' NEWLINE opt_newlines '}' {
+        $$ = new AstBraceInit(@$, new std::vector<AstNode *>);
+    }
+    | '{' brace_inline_body '}' {
+        $$ = new AstBraceInit(@$, $2);
+    }
+    | '{' NEWLINE brace_line_body '}' {
+        $$ = new AstBraceInit(@$, $3);
     }
     ;
 
-array_init_seq
+brace_inline_body
+    : brace_init_item {
+        $$ = new std::vector<AstNode *>;
+        $$->emplace_back($1);
+    }
+    | brace_inline_body ',' opt_newlines brace_init_item {
+        $$ = $1;
+        $$->emplace_back($4);
+    }
+    ;
+
+brace_init_item
     : expr {
+        $$ = new AstBraceInitItem($1);
+    }
+    | brace_init {
+        $$ = new AstBraceInitItem($1);
+    }
+    ;
+
+call_arg
+    : expr { $$ = $1; }
+    | brace_init { $$ = $1; }
+    | named_call_arg { $$ = $1; }
+    ;
+
+named_call_arg
+    : FIELD '=' expr {
+        $$ = new AstNamedCallArg(*$1, $3);
+    }
+    | FIELD '=' brace_init {
+        $$ = new AstNamedCallArg(*$1, $3);
+    }
+    ;
+
+call_arg_seq
+    : call_arg {
         $$ = new std::vector<AstNode *>;
         $$->emplace_back($1);
     }
-    | array_init {
+    | call_arg_seq ',' opt_newlines call_arg {
+        $$ = $1;
+        $$->emplace_back($4);
+    }
+    ;
+
+brace_line_body
+    : opt_newlines brace_line_entry_seq {
+        $$ = $2;
+    }
+    ;
+
+brace_line_entry_seq
+    : brace_init_item NEWLINE opt_newlines {
         $$ = new std::vector<AstNode *>;
         $$->emplace_back($1);
     }
-    | array_init_seq ',' expr {
+    | brace_line_entry_seq brace_init_item NEWLINE opt_newlines {
         $$ = $1;
-        $$->emplace_back($3);
+        $$->emplace_back($2);
     }
-    | array_init_seq ',' array_init {
-        $$ = $1;
-        $$->emplace_back($3);
-    }
+    ;
+
+opt_newlines
+    : /* empty */ { $$ = 0; }
+    | opt_newlines NEWLINE { $$ = 0; }
     ;
 
 func_pointer_expr
@@ -430,7 +486,7 @@ func_pointer_expr
 
 field_call
     : single_value '(' ')' { $$ = new AstFieldCall($1); }
-    | single_value '(' expr_seq ')' { $$ = new AstFieldCall($1, $3); }
+    | single_value '(' call_arg_seq ')' { $$ = new AstFieldCall($1, $3); }
     ;
 
 variable

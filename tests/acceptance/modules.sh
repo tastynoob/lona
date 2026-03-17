@@ -25,6 +25,10 @@ large_struct_return_in="$(new_tmp_file large-struct-return)"
 large_struct_return_out="$(new_tmp_file large-struct-return-out)"
 grammar_subset_in="$(new_tmp_file grammar-subset)"
 grammar_subset_out="$(new_tmp_file grammar-subset-out)"
+import_named_method_dir="$(new_tmp_dir import-named-method)"
+import_named_method_dep_in="$import_named_method_dir/dep.lo"
+import_named_method_main_in="$import_named_method_dir/main.lo"
+import_named_method_out="$(new_tmp_file import-named-method-out)"
 
 cat >"$method_self_in" <<'EOF'
 struct Counter {
@@ -84,6 +88,28 @@ printf 'import math\n\ndef main() i32 {\n    var p math.Point\n    p.x = math.in
 "$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_type_out"
 grep -q '^%math.Point = type { i32 }' "$import_type_out"
 grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
+
+cat >"$import_named_method_dep_in" <<'EOF'
+struct Vec2 {
+    x i32
+    y i32
+
+    def add(dx i32, dy i32) i32 {
+        ret self.x + self.y + dx + dy
+    }
+}
+EOF
+cat >"$import_named_method_main_in" <<'EOF'
+import dep
+
+def main() i32 {
+    var v = dep.Vec2(x = 1, y = 2)
+    ret v.add(dy = 4, dx = 3)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$import_named_method_main_in" >"$import_named_method_out"
+grep -q '^define i32 @dep.Vec2.add(%dep.Vec2 ' "$import_named_method_out"
+grep -q 'call i32 @dep.Vec2.add(' "$import_named_method_out"
 
 printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"
 printf 'import leaf\n\ndef call_leaf(v i32) i32 {\n    ret leaf.inc(v)\n}\n' >"$import_mid_in"

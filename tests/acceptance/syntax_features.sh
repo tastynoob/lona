@@ -53,19 +53,46 @@ array_value_init_in="$(new_tmp_file array-value-init)"
 array_value_init_out="$(new_tmp_file array-value-init-out)"
 array_bad_dim_in="$(new_tmp_file array-bad-dim)"
 array_bad_dim_out="$(new_tmp_file array-bad-dim-out)"
+array_bad_zero_shape_in="$(new_tmp_file array-bad-zero-shape)"
+array_bad_zero_shape_out="$(new_tmp_file array-bad-zero-shape-out)"
+struct_init_in="$(new_tmp_file struct-init)"
+struct_init_out="$(new_tmp_file struct-init-out)"
+named_call_bad_in="$(new_tmp_file named-call-bad)"
+named_call_bad_out="$(new_tmp_file named-call-bad-out)"
+named_call_mix_in="$(new_tmp_file named-call-mix)"
+named_call_mix_out="$(new_tmp_file named-call-mix-out)"
+named_call_order_in="$(new_tmp_file named-call-order)"
+named_call_order_out="$(new_tmp_file named-call-order-out)"
+ctor_unknown_field_in="$(new_tmp_file ctor-unknown-field)"
+ctor_unknown_field_out="$(new_tmp_file ctor-unknown-field-out)"
 
 cat >"$milestone_json_in" <<'EOF'
+struct Complex {
+    real i32
+    img i32
+}
+
+def mix(x i32, y i32) i32 {
+    ret x + y
+}
+
 def show() {
     var pair <i32, bool> = (1, true)
-    var matrix i32[4][5] = {{}}
-    ret
+    var matrix i32[4][5] = {1, 2, 3, 4}
+    var c = Complex(real = 1, img = 2)
+    var p = math.Point(x = 1)
+    ret mix(y = c.img, x = c.real)
 }
 EOF
 "$BIN" "$milestone_json_in" >"$milestone_json_out"
 grep -Fq '"declaredType": "<i32, bool>"' "$milestone_json_out"
 grep -Fq '"type": "TupleLiteral"' "$milestone_json_out"
 grep -Fq '"declaredType": "i32[4][5]"' "$milestone_json_out"
-grep -Fq '"type": "ArrayInit"' "$milestone_json_out"
+grep -Fq '"type": "BraceInit"' "$milestone_json_out"
+grep -Fq '"type": "FieldCall"' "$milestone_json_out"
+grep -Fq '"type": "NamedCallArg"' "$milestone_json_out"
+grep -Fq '"kind": "positional"' "$milestone_json_out"
+grep -Fq '"name": "math"' "$milestone_json_out"
 
 cat >"$legacy_cast_in" <<'EOF'
 def bad() i32 {
@@ -336,7 +363,8 @@ def bad() i32 {
 }
 EOF
 expect_emit_ir_failure "$array_value_init_in" "$array_value_init_out" 'expected explicit array value initializer program to fail'
-grep -Fq 'array initializers currently only support zero-initialization placeholders' "$array_value_init_out"
+grep -Fq "array zero-initialization placeholder doesn't match the array shape" "$array_value_init_out"
+grep -Fq 'Explicit element lists will be added in the next step.' "$array_value_init_out"
 
 cat >"$array_bad_dim_in" <<'EOF'
 def bad() i32 {
@@ -346,3 +374,83 @@ def bad() i32 {
 EOF
 expect_emit_ir_failure "$array_bad_dim_in" "$array_bad_dim_out" 'expected invalid array dimension program to fail'
 grep -Fq 'fixed-dimension arrays require positive integer literal sizes' "$array_bad_dim_out"
+
+cat >"$array_bad_zero_shape_in" <<'EOF'
+def bad() i32 {
+    var a i32[1] = {{}}
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_bad_zero_shape_in" "$array_bad_zero_shape_out" 'expected mismatched zero-shape array initializer program to fail'
+grep -Fq "array zero-initialization placeholder doesn't match the array shape" "$array_bad_zero_shape_out"
+
+cat >"$struct_init_in" <<'EOF'
+struct Complex {
+    real i32
+    img i32
+}
+
+def fold(real i32, img i32) i32 {
+    ret real + img
+}
+
+def main() i32 {
+    var c = Complex(img = 2, real = 1)
+    ret fold(img = c.img, real = c.real)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$struct_init_in" >"$struct_init_out"
+grep -Fq 'store %' "$struct_init_out"
+grep -Fq 'Complex { i32 1, i32 2 }' "$struct_init_out"
+grep -Fq 'call i32 @fold(i32' "$struct_init_out"
+
+cat >"$named_call_bad_in" <<'EOF'
+def mix(x i32, y i32) i32 {
+    ret x + y
+}
+
+def bad() i32 {
+    ret mix(x = 1)
+}
+EOF
+expect_emit_ir_failure "$named_call_bad_in" "$named_call_bad_out" 'expected missing named argument program to fail'
+grep -Fq 'missing parameter `y` for function call' "$named_call_bad_out"
+
+cat >"$named_call_mix_in" <<'EOF'
+def mix(x i32, y i32) i32 {
+    ret x + y
+}
+
+def main() i32 {
+    ret mix(1, y = 2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$named_call_mix_in" >"$named_call_mix_out"
+grep -Fq 'call i32 @mix(i32 1, i32 2)' "$named_call_mix_out"
+
+cat >"$named_call_order_in" <<'EOF'
+def mix(x i32, y i32) i32 {
+    ret x + y
+}
+
+def bad() i32 {
+    ret mix(x = 1, 2)
+}
+EOF
+expect_emit_ir_failure "$named_call_order_in" "$named_call_order_out" 'expected out-of-order positional/named argument program to fail'
+grep -Fq 'positional arguments must come before named arguments' "$named_call_order_out"
+
+cat >"$ctor_unknown_field_in" <<'EOF'
+struct Complex {
+    real i32
+    img i32
+}
+
+def bad() i32 {
+    var c = Complex(real = 1, phase = 2)
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$ctor_unknown_field_in" "$ctor_unknown_field_out" 'expected unknown constructor field program to fail'
+grep -Fq 'unknown field `phase` for type constructor `' "$ctor_unknown_field_out"
+grep -Fq 'Complex' "$ctor_unknown_field_out"

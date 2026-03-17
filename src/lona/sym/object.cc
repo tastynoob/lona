@@ -168,10 +168,6 @@ TupleVar::getField(Scope *scope, std::string name) {
 Object *
 StructVar::getField(Scope *scope, std::string name) {
     auto &builder = scope->builder;
-    if (isRegVal()) {
-        throw "struct field access on register value is not supported";
-    }
-
     auto *structType = type->as<StructType>();
     assert(structType);
     auto *member = structType->getMember(
@@ -181,6 +177,14 @@ StructVar::getField(Scope *scope, std::string name) {
     }
 
     auto *fieldType = member->first;
+    if (isRegVal()) {
+        auto *aggregate = get(scope);
+        auto *field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
+        field->bindllvmValue(
+            builder.CreateExtractValue(aggregate, {static_cast<unsigned>(member->second)}));
+        return field;
+    }
+
     auto *field = fieldType->newObj(Object::VARIABLE);
     field->setllvmValue(builder.CreateStructGEP(scope->getLLVMType(type), val,
                                                 member->second));
@@ -212,6 +216,16 @@ ModuleObject::get(Scope *scope) {
 void
 ModuleObject::set(Scope *scope, Object *src) {
     throw "module namespace is read-only";
+}
+
+llvm::Value *
+TypeObject::get(Scope *scope) {
+    throw "type name is not a runtime value";
+}
+
+void
+TypeObject::set(Scope *scope, Object *src) {
+    throw "type name is read-only";
 }
 
 Object *

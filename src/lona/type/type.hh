@@ -101,6 +101,7 @@ public:
 private:
     llvm::StringMap<ValueTy> members;
     llvm::StringMap<FuncType *> methodTypes;
+    llvm::StringMap<std::vector<std::string>> methodParamNames;
 
     bool opaque = false;
 public:
@@ -120,8 +121,10 @@ public:
         opaque = false;
     }
 
-    void addMethodType(llvm::StringRef name, FuncType *funcType) {
+    void addMethodType(llvm::StringRef name, FuncType *funcType,
+                       std::vector<std::string> paramNames = {}) {
         methodTypes[name] = funcType;
+        methodParamNames[name] = std::move(paramNames);
     }
 
     ValueTy *getMember(llvm::StringRef name) {
@@ -138,6 +141,14 @@ public:
             return nullptr;
         }
         return it->second;
+    }
+
+    const std::vector<std::string> *getMethodParamNames(llvm::StringRef name) const {
+        auto it = methodParamNames.find(name);
+        if (it == methodParamNames.end()) {
+            return nullptr;
+        }
+        return &it->second;
     }
 
     const llvm::StringMap<ValueTy> &getMembers() const { return members; }
