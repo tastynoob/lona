@@ -130,6 +130,26 @@ validateTypeNodeLayout(TypeNode *node) {
     }
 }
 
+std::string
+describeTupleFieldHelp(TupleType *tupleType) {
+    if (!tupleType || tupleType->getItemTypes().empty()) {
+        return "Tuple fields are named `_1`, `_2`, ... in declaration order.";
+    }
+
+    std::string hint = "Tuple fields are named ";
+    const auto &itemTypes = tupleType->getItemTypes();
+    for (size_t i = 0; i < itemTypes.size(); ++i) {
+        if (i != 0) {
+            hint += ", ";
+        }
+        hint += "`";
+        hint += TupleType::buildFieldName(i);
+        hint += "`";
+    }
+    hint += " in declaration order.";
+    return hint;
+}
+
 FuncType *
 getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     if (!selector || selector->getType() != nullptr) {
@@ -901,12 +921,23 @@ class FunctionAnalyzer {
                 return makeHIR<HIRValue>(func, node->loc);
             }
         }
+        auto fieldName = toStdString(node->field->text);
+        auto *tupleType = parent->getType() ? parent->getType()->as<TupleType>() : nullptr;
+        if (tupleType) {
+            TupleType::ValueTy member;
+            if (!tupleType->getMember(llvm::StringRef(fieldName), member)) {
+                error(node->loc,
+                      "unknown tuple field `" + fieldName + "`",
+                      describeTupleFieldHelp(tupleType));
+            }
+            return makeHIR<HIRSelector>(parent, fieldName, member.first, node->loc);
+        }
         auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
         if (!structType) {
-            error(node->loc, "member access expects a struct value on the left side");
+            error(node->loc,
+                  "member access expects a struct or tuple value on the left side");
         }
 
-        auto fieldName = toStdString(node->field->text);
         auto *member = structType->getMember(llvm::StringRef(fieldName));
         if (member) {
             return makeHIR<HIRSelector>(parent, fieldName, member->first, node->loc);

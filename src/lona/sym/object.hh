@@ -105,6 +105,14 @@ public:
     llvm::Value *get(Scope *scope) override { return val; }
 };
 
+class TupleVar : public Object {
+public:
+    TupleVar(TypeClass *type, uint32_t specifiers = EMPTY)
+        : Object(type, specifiers) {}
+
+    Object *getField(Scope *scope, std::string name);
+};
+
 class StructVar : public Object {
 public:
     StructVar(TypeClass *type, uint32_t specifiers = EMPTY)

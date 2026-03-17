@@ -178,6 +178,10 @@ def tuple_keep_{case_id}(pair <i32, bool>) <i32, bool> {{
             [
                 f"    var pair_{case_id} <i32, bool> = tuple_make_{case_id}(score)",
                 f"    var kept_{case_id} <i32, bool> = tuple_keep_{case_id}(pair_{case_id})",
+                f"    kept_{case_id}._1 = kept_{case_id}._1 + {rng.randint(1, 4)}",
+                f"    if kept_{case_id}._2 {{",
+                f"        score = score + kept_{case_id}._1",
+                f"    }}",
             ]
         )
         expected_ir.extend([f"@tuple_make_{case_id}", f"@tuple_keep_{case_id}"])

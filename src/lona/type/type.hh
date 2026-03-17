@@ -154,6 +154,8 @@ class TupleType : public TypeClass {
     std::vector<TypeClass *> itemTypes;
 
 public:
+    using ValueTy = std::pair<TypeClass *, int>;
+
     static string buildName(const std::vector<TypeClass *> &itemTypes) {
         std::string name = "<";
         for (size_t i = 0; i < itemTypes.size(); ++i) {
@@ -171,6 +173,10 @@ public:
         return string(name.c_str());
     }
 
+    static std::string buildFieldName(size_t index) {
+        return "_" + std::to_string(index + 1);
+    }
+
     explicit TupleType(std::vector<TypeClass *> itemTypes)
         : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {
         typeSize = 0;
@@ -182,8 +188,10 @@ public:
     }
 
     const std::vector<TypeClass *> &getItemTypes() const { return itemTypes; }
+    bool getMember(llvm::StringRef name, ValueTy &member) const;
 
     llvm::Type *buildLLVMType(TypeTable &types) override;
+    ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override;
 };
 
 class FuncType : public TypeClass {

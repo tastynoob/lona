@@ -21,6 +21,10 @@ tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
 tuple_flow_in="$(new_tmp_file tuple-flow)"
 tuple_flow_out="$(new_tmp_file tuple-flow-out)"
+tuple_field_in="$(new_tmp_file tuple-field)"
+tuple_field_out="$(new_tmp_file tuple-field-out)"
+tuple_field_bad_in="$(new_tmp_file tuple-field-bad)"
+tuple_field_bad_out="$(new_tmp_file tuple-field-bad-out)"
 tuple_no_context_in="$(new_tmp_file tuple-no-context)"
 tuple_no_context_out="$(new_tmp_file tuple-no-context-out)"
 array_init_in="$(new_tmp_file array-init)"
@@ -136,6 +140,35 @@ EOF
 "$BIN" --emit-ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
 grep -q '^define { i32, i1 } @echo' "$tuple_flow_out"
 grep -q 'call { i32, i1 } @echo' "$tuple_flow_out"
+
+cat >"$tuple_field_in" <<'EOF'
+def echo(pair <i32, bool>) <i32, bool> {
+    ret pair
+}
+
+def main() i32 {
+    var pair <i32, bool> = (1, true)
+    pair._1 = 7
+    if echo(pair)._2 {
+        ret echo(pair)._1
+    }
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$tuple_field_in" >"$tuple_field_out"
+grep -Fq 'extractvalue { i32, i1 }' "$tuple_field_out"
+grep -Fq 'getelementptr inbounds { i32, i1 }' "$tuple_field_out"
+grep -Fq 'store i32 7' "$tuple_field_out"
+
+cat >"$tuple_field_bad_in" <<'EOF'
+def main() i32 {
+    var pair <i32, bool> = (1, true)
+    ret pair._3
+}
+EOF
+expect_emit_ir_failure "$tuple_field_bad_in" "$tuple_field_bad_out" 'expected invalid tuple field program to fail'
+grep -Fq 'unknown tuple field `_3`' "$tuple_field_bad_out"
+grep -Fq 'Tuple fields are named `_1`, `_2` in declaration order.' "$tuple_field_bad_out"
 
 cat >"$tuple_no_context_in" <<'EOF'
 def bad() i32 {

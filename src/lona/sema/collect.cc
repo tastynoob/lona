@@ -1160,13 +1160,19 @@ class FunctionCompiler {
             setLocation(selector);
             auto *parent = compileExpr(selector->getParent());
             auto fieldName = selector->getFieldName();
+            if (auto *tupleParent = parent->as<TupleVar>()) {
+                if (selector->getType() == nullptr) {
+                    error("tuple selector is missing its value type");
+                }
+                return tupleParent->getField(scope, fieldName);
+            }
             if (auto *structParent = parent->as<StructVar>()) {
                 if (selector->getType() == nullptr) {
                     error(kMethodSelectorDirectCallError);
                 }
                 return structParent->getField(scope, fieldName);
             }
-            error("selector parent must be a struct value");
+            error("selector parent must be a struct or tuple value");
         }
         if (auto *call = dynamic_cast<HIRCall *>(expr)) {
             setLocation(call);

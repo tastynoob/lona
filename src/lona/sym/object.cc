@@ -139,6 +139,33 @@ ConstVar::get(Scope *scope) {
 }
 
 Object *
+TupleVar::getField(Scope *scope, std::string name) {
+    auto &builder = scope->builder;
+    auto *tupleType = type->as<TupleType>();
+    assert(tupleType);
+
+    TupleType::ValueTy member;
+    if (!tupleType->getMember(llvm::StringRef(name.c_str(), name.size()), member)) {
+        throw "unknown tuple field";
+    }
+
+    auto *fieldType = member.first;
+    auto fieldIndex = static_cast<unsigned>(member.second);
+    if (isRegVal()) {
+        auto *aggregate = get(scope);
+        auto *field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
+        field->bindllvmValue(
+            builder.CreateExtractValue(aggregate, {fieldIndex}));
+        return field;
+    }
+
+    auto *field = fieldType->newObj(Object::VARIABLE);
+    field->setllvmValue(builder.CreateStructGEP(scope->getLLVMType(type), val,
+                                                fieldIndex));
+    return field;
+}
+
+Object *
 StructVar::getField(Scope *scope, std::string name) {
     auto &builder = scope->builder;
     if (isRegVal()) {

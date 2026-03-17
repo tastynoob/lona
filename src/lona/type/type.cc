@@ -2,6 +2,22 @@
 
 namespace lona {
 
+bool
+TupleType::getMember(llvm::StringRef name, ValueTy &member) const {
+    if (!name.consume_front("_") || name.empty()) {
+        return false;
+    }
+
+    unsigned index = 0;
+    if (name.getAsInteger(10, index) || index == 0 ||
+        index > itemTypes.size()) {
+        return false;
+    }
+
+    member = {itemTypes[index - 1], static_cast<int>(index - 1)};
+    return true;
+}
+
 llvm::Type *
 BaseType::buildLLVMType(TypeTable& types) {
     switch (type) {
@@ -42,6 +58,11 @@ TupleType::buildLLVMType(TypeTable &types) {
         memberTypes.push_back(types.getLLVMType(itemType));
     }
     return llvm::StructType::get(types.getContext(), memberTypes, false);
+}
+
+ObjectPtr
+TupleType::newObj(uint32_t specifiers) {
+    return new TupleVar(this, specifiers);
 }
 
 llvm::Type *

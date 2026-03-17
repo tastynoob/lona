@@ -35,9 +35,10 @@ def main() i32 {
     var sample f32 = blend(3.0, 1.0)
     var pair <i32, bool> = pack(11, sample >= 2.0)
     var kept <i32, bool> = keep(pair)
+    kept._1 = kept._1 + 1
     var score i32 = use_matrix(11)
-    if (sample >= 2.0) || (score < 0) {
-        ret score
+    if kept._2 && ((sample >= 2.0) || (score < 0)) {
+        ret score + kept._1
     }
     kept = pair
     ret 0
