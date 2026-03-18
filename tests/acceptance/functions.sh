@@ -15,6 +15,10 @@ func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
 func_ptr_uninit_out="$(new_tmp_file func-ptr-uninit-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
+func_name_conflict_in="$(new_tmp_file func-name-conflict)"
+func_name_conflict_out="$(new_tmp_file func-name-conflict-out)"
+struct_name_conflict_in="$(new_tmp_file struct-name-conflict)"
+struct_name_conflict_out="$(new_tmp_file struct-name-conflict-out)"
 func_param_bad_in="$(new_tmp_file func-param-bad)"
 func_param_bad_out="$(new_tmp_file func-param-bad-out)"
 func_local_bad_in="$(new_tmp_file func-local-bad)"
@@ -122,6 +126,32 @@ EOF
 expect_emit_ir_failure "$func_array_uninit_in" "$func_array_uninit_out" 'expected uninitialized function array variable program to fail'
 grep -Fq 'unsized array syntax is not implemented yet: () i32[]' "$func_array_uninit_out"
 
+cat >"$func_name_conflict_in" <<'EOF'
+struct Counter {
+    value i32
+}
+
+def Counter(value i32) i32 {
+    ret value
+}
+EOF
+expect_emit_ir_failure "$func_name_conflict_in" "$func_name_conflict_out" 'expected top-level function name conflict with struct to fail'
+grep -Fq 'top-level function `Counter` conflicts with struct `Counter`' "$func_name_conflict_out"
+grep -Fq 'Type names reserve constructor syntax like `Counter(...)`.' "$func_name_conflict_out"
+
+cat >"$struct_name_conflict_in" <<'EOF'
+def Counter(value i32) i32 {
+    ret value
+}
+
+struct Counter {
+    value i32
+}
+EOF
+expect_emit_ir_failure "$struct_name_conflict_in" "$struct_name_conflict_out" 'expected struct name conflict with top-level function to fail'
+grep -Fq 'struct `Counter` conflicts with top-level function `Counter`' "$struct_name_conflict_out"
+grep -Fq 'Type names reserve constructor syntax like `Counter(...)`.' "$struct_name_conflict_out"
+
 cat >"$func_param_bad_in" <<'EOF'
 def bad_callback(cb () i32) i32 {
     ret 0
@@ -181,13 +211,6 @@ struct Complex {
     }
 }
 
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
-}
-
 def bad_method_local() i32 {
     var c = Complex(1, 2)
     var cb = c.add
@@ -210,13 +233,6 @@ struct Complex {
     }
 }
 
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
-}
-
 var sample = Complex(1, 2)
 var cb = sample.add
 EOF
@@ -234,13 +250,6 @@ struct Complex {
         out.imag = self.imag + a.imag
         ret out
     }
-}
-
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
 }
 
 def bad_method_return() Complex {
@@ -262,13 +271,6 @@ struct Complex {
         out.imag = self.imag + a.imag
         ret out
     }
-}
-
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
 }
 
 def take(v Complex) Complex {
@@ -296,13 +298,6 @@ struct Complex {
     }
 }
 
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
-}
-
 def bad_method_expr() i32 {
     var c = Complex(1, 2)
     c.add
@@ -323,13 +318,6 @@ struct Complex {
         out.imag = self.imag + a.imag
         ret out
     }
-}
-
-def Complex(a i32, b i32) Complex {
-    var out Complex
-    out.real = a
-    out.imag = b
-    ret out
 }
 
 var sample = Complex(1, 2)

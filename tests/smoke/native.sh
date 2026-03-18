@@ -16,11 +16,15 @@ top_level_program="$WORKDIR/top_level.lo"
 ref_local_program="$WORKDIR/ref_local_address.lo"
 ref_param_program="$WORKDIR/ref_param_address.lo"
 array_ptr_program="$WORKDIR/array_pointer.lo"
+method_self_program="$WORKDIR/method_self.lo"
+method_temp_program="$WORKDIR/method_temp.lo"
 main_exe="$WORKDIR/return_42"
 top_level_exe="$WORKDIR/top_level"
 ref_local_exe="$WORKDIR/ref_local_address"
 ref_param_exe="$WORKDIR/ref_param_address"
 array_ptr_exe="$WORKDIR/array_pointer"
+method_self_exe="$WORKDIR/method_self"
+method_temp_exe="$WORKDIR/method_temp"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -65,11 +69,46 @@ def main() i32 {
 }
 EOF
 
+cat >"$method_self_program" <<'EOF'
+struct Counter {
+    value i32
+
+    def bump(step i32) i32 {
+        self.value = self.value + step
+        ret self.value
+    }
+}
+
+def main() i32 {
+    var c Counter
+    c.value = 2
+    c.bump(3)
+    ret c.value
+}
+EOF
+
+cat >"$method_temp_program" <<'EOF'
+struct Counter {
+    value i32
+
+    def bump(step i32) i32 {
+        self.value = self.value + step
+        ret self.value
+    }
+}
+
+def main() i32 {
+    ret Counter(1).bump(2)
+}
+EOF
+
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"
 bash "$BUILD_NATIVE" "$top_level_program" "$top_level_exe"
 bash "$BUILD_NATIVE" "$ref_local_program" "$ref_local_exe"
 bash "$BUILD_NATIVE" "$ref_param_program" "$ref_param_exe"
 bash "$BUILD_NATIVE" "$array_ptr_program" "$array_ptr_exe"
+bash "$BUILD_NATIVE" "$method_self_program" "$method_self_exe"
+bash "$BUILD_NATIVE" "$method_temp_program" "$method_temp_exe"
 
 set +e
 "$main_exe"
@@ -82,6 +121,10 @@ ref_local_status=$?
 ref_param_status=$?
 "$array_ptr_exe"
 array_ptr_status=$?
+"$method_self_exe"
+method_self_status=$?
+"$method_temp_exe"
+method_temp_status=$?
 set -e
 
 if [ "$main_status" -ne 42 ]; then
@@ -106,6 +149,16 @@ fi
 
 if [ "$array_ptr_status" -ne 13 ]; then
     echo "expected array pointer program to exit with 13, got $array_ptr_status" >&2
+    exit 1
+fi
+
+if [ "$method_self_status" -ne 5 ]; then
+    echo "expected method self mutation program to exit with 5, got $method_self_status" >&2
+    exit 1
+fi
+
+if [ "$method_temp_status" -ne 3 ]; then
+    echo "expected temporary receiver method program to exit with 3, got $method_temp_status" >&2
     exit 1
 fi
 

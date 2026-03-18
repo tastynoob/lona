@@ -1512,7 +1512,7 @@ class FunctionAnalyzer {
                     : nullptr;
                 if (!structType) {
                     error(node->loc,
-                          "type constructor calls currently support struct types only",
+                          "constructor calls currently support struct types only",
                           "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
                 }
 
@@ -1524,7 +1524,7 @@ class FunctionAnalyzer {
                 }
                 auto orderedArgs = collectOrderedCallArgs(
                     node->args, fieldNames, node->loc,
-                    "type constructor `" + describeResolvedType(structType) + "`",
+                    "constructor `" + describeResolvedType(structType) + "`",
                     "field", true);
                 if (orderedArgs.size() != members.size()) {
                     error(node->loc,
@@ -1540,8 +1540,8 @@ class FunctionAnalyzer {
                     if (orderedArgs[i].bindingKind == BindingKind::Ref) {
                         error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
                                                     : node->loc,
-                              "type constructor fields do not accept `ref` arguments",
-                              "Struct construction copies field values. Remove `ref` from this argument.");
+                              "constructor arguments do not accept `ref`",
+                              "Constructors copy field values. Remove `ref` from this argument.");
                     }
                     auto *expectedFieldType = members[i].second;
                     auto *fieldExpr =

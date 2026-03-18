@@ -531,13 +531,6 @@ struct Point {
     y i32
 }
 
-def Point(x i32, y i32) Point {
-    var out Point
-    out.x = x
-    out.y = y
-    ret out
-}
-
 def main() i32 {
     var p Point* = &Point(1, 2)
     ret 0
@@ -614,5 +607,5 @@ def bad() i32 {
 }
 EOF
 expect_emit_ir_failure "$ctor_unknown_field_in" "$ctor_unknown_field_out" 'expected unknown constructor field program to fail'
-grep -Fq 'unknown field `phase` for type constructor `' "$ctor_unknown_field_out"
+grep -Fq 'unknown field `phase` for constructor `' "$ctor_unknown_field_out"
 grep -Fq 'Complex' "$ctor_unknown_field_out"

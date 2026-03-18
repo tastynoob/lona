@@ -133,12 +133,6 @@ struct Counter {
     }
 }
 
-def Counter(v i32) Counter {
-    var out Counter
-    out.value = v
-    ret out
-}
-
 def main() i32 {
     ret Counter(1).bump()
 }

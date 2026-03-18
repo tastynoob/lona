@@ -37,6 +37,50 @@ toStdString(const string &value) {
     return std::string(value.tochara(), value.size());
 }
 
+[[noreturn]] void
+error(const std::string &message);
+
+[[noreturn]] void
+error(const location &loc, const std::string &message,
+      const std::string &hint);
+
+enum class TopLevelDeclKind {
+    StructType,
+    Function,
+};
+
+const char *
+topLevelDeclKindName(TopLevelDeclKind kind) {
+    switch (kind) {
+    case TopLevelDeclKind::StructType:
+        return "struct";
+    case TopLevelDeclKind::Function:
+        return "top-level function";
+    }
+    return "top-level declaration";
+}
+
+void
+recordTopLevelDeclName(
+    std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>> &seen,
+    const std::string &name, TopLevelDeclKind kind, const location &loc) {
+    auto found = seen.find(name);
+    if (found != seen.end()) {
+        if (found->second.first != kind) {
+            error(loc,
+                  std::string(topLevelDeclKindName(kind)) + " `" + name +
+                      "` conflicts with " +
+                      topLevelDeclKindName(found->second.first) + " `" + name +
+                      "`",
+                  "Type names reserve constructor syntax like `" + name +
+                      "(...)`. Rename the function, for example `make" + name +
+                      "`, or choose a different type name.");
+        }
+        return;
+    }
+    seen.emplace(name, std::make_pair(kind, loc));
+}
+
 std::vector<std::string>
 extractParamNames(AstFuncDecl *node) {
     std::vector<std::string> names;
@@ -359,6 +403,16 @@ declareStructType(TypeTable *typeMgr, AstStructDecl *node,
                   bool exportNamespace = false) {
     auto resolvedName = resolveTopLevelName(unit, node->name, exportNamespace);
     if (unit) {
+        if (unit->findLocalFunction(toStdString(node->name)) != nullptr) {
+            error(node->loc,
+                  "struct `" + toStdString(node->name) +
+                      "` conflicts with top-level function `" +
+                      toStdString(node->name) + "`",
+                  "Type names reserve constructor syntax like `" +
+                      toStdString(node->name) +
+                      "(...)`. Rename the function, for example `make" +
+                      toStdString(node->name) + "`.");
+        }
         unit->bindLocalType(toStdString(node->name), resolvedName);
     }
 
@@ -389,6 +443,16 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
     } else {
         if (unit) {
+            if (unit->findLocalType(toStdString(func_name)) != nullptr) {
+                error(node->loc,
+                      "top-level function `" + toStdString(func_name) +
+                          "` conflicts with struct `" +
+                          toStdString(func_name) + "`",
+                      "Type names reserve constructor syntax like `" +
+                          toStdString(func_name) +
+                          "(...)`. Rename the function, for example `make" +
+                          toStdString(func_name) + "`.");
+            }
             unit->bindLocalFunction(toStdString(func_name), resolvedFunctionName);
         }
         if (auto *existing = scope.getObj(llvm::StringRef(resolvedFunctionName))) {
@@ -554,6 +618,8 @@ class TypeCollector : public AstVisitorAny {
 
     std::list<AstStructDecl *> structDecls;
     std::list<AstFuncDecl *> funcDecls;
+    std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
+        topLevelDecls;
 
     using AstVisitorAny::visit;
 
@@ -565,8 +631,14 @@ class TypeCollector : public AstVisitorAny {
     Object *visit(AstStatList *node) override {
         for (auto *it : node->body) {
             if (it->is<AstStructDecl>()) {
+                auto *decl = it->as<AstStructDecl>();
+                recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
+                                       TopLevelDeclKind::StructType, decl->loc);
                 structDecls.push_back(it->as<AstStructDecl>());
             } else if (it->is<AstFuncDecl>()) {
+                auto *decl = it->as<AstFuncDecl>();
+                recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
+                                       TopLevelDeclKind::Function, decl->loc);
                 funcDecls.push_back(it->as<AstFuncDecl>());
             }
         }
@@ -733,6 +805,8 @@ class InterfaceCollector {
     ModuleInterface *interface_;
     std::vector<AstStructDecl *> structDecls_;
     std::vector<AstFuncDecl *> funcDecls_;
+    std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
+        topLevelDecls_;
 
     TypeClass *resolveType(TypeNode *node) {
         if (!node) {
@@ -823,8 +897,14 @@ class InterfaceCollector {
         }
         for (auto *stmt : body->getBody()) {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
+                recordTopLevelDeclName(topLevelDecls_, toStdString(structDecl->name),
+                                       TopLevelDeclKind::StructType,
+                                       structDecl->loc);
                 structDecls_.push_back(structDecl);
             } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
+                recordTopLevelDeclName(topLevelDecls_, toStdString(funcDecl->name),
+                                       TopLevelDeclKind::Function,
+                                       funcDecl->loc);
                 funcDecls_.push_back(funcDecl);
             }
         }

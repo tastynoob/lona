@@ -16,13 +16,6 @@ struct Complex {
     }
 }
 
-def Complex(a i32, b i32) Complex {
-    var t Complex
-    t.real = a
-    t.imag = b
-    ret t
-}
-
 def fibo(a i32) i32 {
     var b = 1
     if a < 2 {
