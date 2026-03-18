@@ -21,6 +21,19 @@ arrayIndexArity(const std::vector<AstNode *> &dimensions) {
 }
 
 bool
+hasUnsizedArrayDimensions(const std::vector<AstNode *> &dimensions) {
+    if (dimensions.empty()) {
+        return true;
+    }
+    for (auto *dimension : dimensions) {
+        if (dimension == nullptr) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
 tryExtractArrayDimension(const AstNode *node, std::int64_t &value) {
     auto *constant = node ? dynamic_cast<const AstConst *>(node) : nullptr;
     if (!constant || constant->getType() != AstConst::Type::INT32) {

@@ -1,5 +1,6 @@
 #include "compilation_unit.hh"
 #include "lona/ast/array_dim.hh"
+#include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
 #include "lona/type/type.hh"
 #include <cassert>
@@ -45,6 +46,63 @@ combineHash(std::uint64_t seed, std::uint64_t value) {
 std::string
 toStdString(const string &value) {
     return {value.tochara(), value.size()};
+}
+
+[[noreturn]] void
+errorInvalidArrayDimension(const location &loc) {
+    throw DiagnosticError(
+        DiagnosticError::Category::Semantic, loc,
+        "fixed-dimension arrays require positive integer literal sizes",
+        "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
+}
+
+[[noreturn]] void
+errorUnsupportedUnsizedArray(const location &loc, const TypeNode *node) {
+    throw DiagnosticError(
+        DiagnosticError::Category::Semantic, loc,
+        "unsized array syntax is not implemented yet: " +
+            describeTypeNode(node, "<unknown type>"),
+        "Use fixed explicit dimensions like `i32[4]` or an explicit pointer type like `i32*`. `T[]` remains reserved syntax and has no stable ABI yet.");
+}
+
+void
+validateTypeNodeLayout(const TypeNode *node) {
+    if (!node) {
+        return;
+    }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        validateTypeNodeLayout(param->type);
+        return;
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
+        validateTypeNodeLayout(array->base);
+        if (hasUnsizedArrayDimensions(array->dim)) {
+            errorUnsupportedUnsizedArray(array->loc, array);
+        }
+        for (auto *dimension : array->dim) {
+            std::int64_t value = 0;
+            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
+                errorInvalidArrayDimension(dimension ? dimension->loc : array->loc);
+            }
+        }
+        return;
+    }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
+        for (auto *item : tuple->items) {
+            validateTypeNodeLayout(item);
+        }
+        return;
+    }
+    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
+        for (auto *arg : func->args) {
+            validateTypeNodeLayout(arg);
+        }
+        validateTypeNodeLayout(func->ret);
+    }
 }
 
 void
@@ -217,6 +275,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     if (!typeTable || !node) {
         return nullptr;
     }
+
+    validateTypeNodeLayout(node);
 
     if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
         return resolveTypeNode(typeTable, unit, param->type);

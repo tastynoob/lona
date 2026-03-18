@@ -55,6 +55,12 @@ array_mixed_in="$(new_tmp_file array-mixed)"
 array_mixed_out="$(new_tmp_file array-mixed-out)"
 array_value_init_in="$(new_tmp_file array-value-init)"
 array_value_init_out="$(new_tmp_file array-value-init-out)"
+array_ptr_in="$(new_tmp_file array-ptr)"
+array_ptr_out="$(new_tmp_file array-ptr-out)"
+array_decay_bad_in="$(new_tmp_file array-decay-bad)"
+array_decay_bad_out="$(new_tmp_file array-decay-bad-out)"
+array_unsized_bad_in="$(new_tmp_file array-unsized-bad)"
+array_unsized_bad_out="$(new_tmp_file array-unsized-bad-out)"
 array_overflow_in="$(new_tmp_file array-overflow)"
 array_overflow_out="$(new_tmp_file array-overflow-out)"
 array_bad_dim_in="$(new_tmp_file array-bad-dim)"
@@ -63,6 +69,14 @@ array_bad_shape_in="$(new_tmp_file array-bad-shape)"
 array_bad_shape_out="$(new_tmp_file array-bad-shape-out)"
 array_bad_depth_in="$(new_tmp_file array-bad-depth)"
 array_bad_depth_out="$(new_tmp_file array-bad-depth-out)"
+address_field_in="$(new_tmp_file address-field)"
+address_field_out="$(new_tmp_file address-field-out)"
+address_array_elem_in="$(new_tmp_file address-array-elem)"
+address_array_elem_out="$(new_tmp_file address-array-elem-out)"
+address_expr_bad_in="$(new_tmp_file address-expr-bad)"
+address_expr_bad_out="$(new_tmp_file address-expr-bad-out)"
+address_temp_bad_in="$(new_tmp_file address-temp-bad)"
+address_temp_bad_out="$(new_tmp_file address-temp-bad-out)"
 struct_init_in="$(new_tmp_file struct-init)"
 struct_init_out="$(new_tmp_file struct-init-out)"
 named_call_bad_in="$(new_tmp_file named-call-bad)"
@@ -400,6 +414,42 @@ EOF
 "$BIN" --emit-ir --verify-ir "$array_value_init_in" >"$array_value_init_out"
 grep -Fq 'store [4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_value_init_out"
 
+cat >"$array_ptr_in" <<'EOF'
+def main() i32 {
+    var row i32[4] = {1, 2, 3, 4}
+    var p i32[4]* = &row
+    (*p)(2) = 9
+    ret row(2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_ptr_in" >"$array_ptr_out"
+grep -Fq 'alloca [4 x i32]' "$array_ptr_out"
+grep -Fq 'alloca ptr' "$array_ptr_out"
+grep -Fq 'store ptr %1, ptr %2' "$array_ptr_out"
+grep -Fq 'getelementptr inbounds [4 x i32], ptr %3, i32 0, i32 2' "$array_ptr_out"
+grep -Fq 'store i32 9' "$array_ptr_out"
+
+cat >"$array_decay_bad_in" <<'EOF'
+def take(p i32[4]*) i32 {
+    ret (*p)(0)
+}
+
+def main() i32 {
+    var row i32[4] = {1, 2, 3, 4}
+    ret take(row)
+}
+EOF
+expect_emit_ir_failure "$array_decay_bad_in" "$array_decay_bad_out" 'expected implicit array-to-pointer decay program to fail'
+grep -Fq 'call argument type mismatch at index 0: expected i32[4]*, got i32[4]' "$array_decay_bad_out"
+
+cat >"$array_unsized_bad_in" <<'EOF'
+def take(row i32[]) i32 {
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_unsized_bad_in" "$array_unsized_bad_out" 'expected unsized array program to fail'
+grep -Fq 'unsized array syntax is not implemented yet: i32[]' "$array_unsized_bad_out"
+
 cat >"$array_bad_dim_in" <<'EOF'
 def bad() i32 {
     var matrix i32[0][5] = {}
@@ -435,6 +485,66 @@ def bad() i32 {
 EOF
 expect_emit_ir_failure "$array_bad_depth_in" "$array_bad_depth_out" 'expected too-deep array initializer program to fail'
 grep -Fq 'array initializer nesting is deeper than the array shape' "$array_bad_depth_out"
+
+cat >"$address_field_in" <<'EOF'
+struct Counter {
+    value i32
+}
+
+def main() i32 {
+    var counter Counter
+    counter.value = 5
+    var p i32* = &counter.value
+    *p = 8
+    ret counter.value
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$address_field_in" >"$address_field_out"
+grep -Eq 'getelementptr inbounds %.*Counter, ptr %.*, i32 0, i32 0' "$address_field_out"
+grep -Fq 'store i32 8' "$address_field_out"
+
+cat >"$address_array_elem_in" <<'EOF'
+def main() i32 {
+    var row i32[4] = {}
+    var p i32* = &row(1)
+    *p = 6
+    ret row(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$address_array_elem_in" >"$address_array_elem_out"
+grep -Fq 'getelementptr inbounds [4 x i32]' "$address_array_elem_out"
+grep -Fq 'store i32 6' "$address_array_elem_out"
+
+cat >"$address_expr_bad_in" <<'EOF'
+def main() i32 {
+    var x i32 = 1
+    var p i32* = &(x + 1)
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$address_expr_bad_in" "$address_expr_bad_out" 'expected address-of on non-addressable expression program to fail'
+grep -Fq 'address-of expects an addressable value' "$address_expr_bad_out"
+
+cat >"$address_temp_bad_in" <<'EOF'
+struct Point {
+    x i32
+    y i32
+}
+
+def Point(x i32, y i32) Point {
+    var out Point
+    out.x = x
+    out.y = y
+    ret out
+}
+
+def main() i32 {
+    var p Point* = &Point(1, 2)
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$address_temp_bad_in" "$address_temp_bad_out" 'expected address-of on temporary program to fail'
+grep -Fq 'address-of expects an addressable value' "$address_temp_bad_out"
 
 cat >"$struct_init_in" <<'EOF'
 struct Complex {

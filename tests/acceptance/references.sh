@@ -13,6 +13,8 @@ ref_param_missing_ref_bad_in="$(new_tmp_file ref-param-missing-ref-bad)"
 ref_param_missing_ref_bad_out="$(new_tmp_file ref-param-missing-ref-bad-out)"
 ref_param_rvalue_bad_in="$(new_tmp_file ref-param-rvalue-bad)"
 ref_param_rvalue_bad_out="$(new_tmp_file ref-param-rvalue-bad-out)"
+ref_param_addr_in="$(new_tmp_file ref-param-addr)"
+ref_param_addr_out="$(new_tmp_file ref-param-addr-out)"
 ref_local_type_bad_in="$(new_tmp_file ref-local-type-bad)"
 ref_local_type_bad_out="$(new_tmp_file ref-local-type-bad-out)"
 ref_method_temp_in="$(new_tmp_file ref-method-temp)"
@@ -89,6 +91,27 @@ def main() i32 {
 EOF
 expect_emit_ir_failure "$ref_param_rvalue_bad_in" "$ref_param_rvalue_bad_out" 'expected ref parameter call with rvalue argument to fail'
 grep -q 'reference parameter at index 0 expects an addressable value' "$ref_param_rvalue_bad_out"
+
+cat >"$ref_param_addr_in" <<'EOF'
+def poke(ref x i32) i32 {
+    var p i32* = &x
+    *p = 9
+    ret x
+}
+
+def main() i32 {
+    var x i32 = 1
+    ret poke(ref x)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ref_param_addr_in" >"$ref_param_addr_out"
+poke_body="$(sed -n '/^define i32 @poke(/,/^}/p' "$ref_param_addr_out")"
+echo "$poke_body" | grep -q '^define i32 @poke(ptr %0)'
+if [ "$(echo "$poke_body" | grep -c 'alloca i32')" -ne 1 ]; then
+    echo 'expected ref parameter address-of to reuse the incoming pointee slot without allocating a wrapper i32 slot' >&2
+    exit 1
+fi
+echo "$poke_body" | grep -Eq 'store ptr %0, ptr %'
 
 cat >"$ref_local_type_bad_in" <<'EOF'
 def main() i32 {

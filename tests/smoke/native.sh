@@ -13,8 +13,14 @@ trap cleanup EXIT
 
 main_program="$WORKDIR/return_42.lo"
 top_level_program="$WORKDIR/top_level.lo"
+ref_local_program="$WORKDIR/ref_local_address.lo"
+ref_param_program="$WORKDIR/ref_param_address.lo"
+array_ptr_program="$WORKDIR/array_pointer.lo"
 main_exe="$WORKDIR/return_42"
 top_level_exe="$WORKDIR/top_level"
+ref_local_exe="$WORKDIR/ref_local_address"
+ref_param_exe="$WORKDIR/ref_param_address"
+array_ptr_exe="$WORKDIR/array_pointer"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -27,14 +33,55 @@ var x = 1
 x = x + 1
 EOF
 
+cat >"$ref_local_program" <<'EOF'
+def main() i32 {
+    var x i32 = 1
+    ref alias i32 = x
+    var p i32* = &alias
+    *p = 11
+    ret x
+}
+EOF
+
+cat >"$ref_param_program" <<'EOF'
+def poke(ref x i32) i32 {
+    var p i32* = &x
+    *p = 9
+    ret x
+}
+
+def main() i32 {
+    var x i32 = 1
+    ret poke(ref x)
+}
+EOF
+
+cat >"$array_ptr_program" <<'EOF'
+def main() i32 {
+    var row i32[4] = {1, 2, 3, 4}
+    var p i32[4]* = &row
+    (*p)(2) = 13
+    ret row(2)
+}
+EOF
+
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"
 bash "$BUILD_NATIVE" "$top_level_program" "$top_level_exe"
+bash "$BUILD_NATIVE" "$ref_local_program" "$ref_local_exe"
+bash "$BUILD_NATIVE" "$ref_param_program" "$ref_param_exe"
+bash "$BUILD_NATIVE" "$array_ptr_program" "$array_ptr_exe"
 
 set +e
 "$main_exe"
 main_status=$?
 "$top_level_exe"
 top_level_status=$?
+"$ref_local_exe"
+ref_local_status=$?
+"$ref_param_exe"
+ref_param_status=$?
+"$array_ptr_exe"
+array_ptr_status=$?
 set -e
 
 if [ "$main_status" -ne 42 ]; then
@@ -44,6 +91,21 @@ fi
 
 if [ "$top_level_status" -ne 0 ]; then
     echo "expected top-level native program to exit with 0, got $top_level_status" >&2
+    exit 1
+fi
+
+if [ "$ref_local_status" -ne 11 ]; then
+    echo "expected local ref address-of program to exit with 11, got $ref_local_status" >&2
+    exit 1
+fi
+
+if [ "$ref_param_status" -ne 9 ]; then
+    echo "expected ref parameter address-of program to exit with 9, got $ref_param_status" >&2
+    exit 1
+fi
+
+if [ "$array_ptr_status" -ne 13 ]; then
+    echo "expected array pointer program to exit with 13, got $array_ptr_status" >&2
     exit 1
 fi
 

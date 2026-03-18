@@ -1,4 +1,5 @@
 #include "type.hh"
+#include <stdexcept>
 
 namespace lona {
 
@@ -101,7 +102,8 @@ ArrayType::buildLLVMType(TypeTable &types) {
     bool ok = false;
     auto extents = staticDimensions(&ok);
     if (!ok || extents.empty()) {
-        return llvm::PointerType::getUnqual(types.getLLVMType(elementType));
+        throw std::runtime_error(
+            "array LLVM lowering requires fixed explicit dimensions");
     }
 
     llvm::Type *llvmType = types.getLLVMType(elementType);

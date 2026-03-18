@@ -120,7 +120,7 @@ def bad_table() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_array_uninit_in" "$func_array_uninit_out" 'expected uninitialized function array variable program to fail'
-grep -Fq 'function-related variable type for `table` requires initializer: () i32[]' "$func_array_uninit_out"
+grep -Fq 'unsized array syntax is not implemented yet: () i32[]' "$func_array_uninit_out"
 
 cat >"$func_param_bad_in" <<'EOF'
 def bad_callback(cb () i32) i32 {

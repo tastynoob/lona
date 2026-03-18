@@ -100,6 +100,14 @@ errorInvalidArrayDimension(const location &loc) {
           "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
 }
 
+[[noreturn]] void
+errorUnsupportedUnsizedArray(const location &loc, TypeNode *node) {
+    error(loc,
+          "unsized array syntax is not implemented yet: " +
+              describeTypeNode(node, "<unknown type>"),
+          "Use fixed explicit dimensions like `i32[4]` or an explicit pointer type like `i32*`. `T[]` remains reserved syntax and has no stable ABI yet.");
+}
+
 void
 validateTypeNodeLayout(TypeNode *node) {
     if (!node) {
@@ -115,13 +123,13 @@ validateTypeNodeLayout(TypeNode *node) {
     }
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
         validateTypeNodeLayout(array->base);
+        if (hasUnsizedArrayDimensions(array->dim)) {
+            errorUnsupportedUnsizedArray(array->loc, array);
+        }
         for (auto *dimension : array->dim) {
-            if (dimension == nullptr) {
-                continue;
-            }
             std::int64_t value = 0;
             if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
-                errorInvalidArrayDimension(dimension->loc);
+                errorInvalidArrayDimension(dimension ? dimension->loc : array->loc);
             }
         }
         return;
@@ -1273,6 +1281,9 @@ class FunctionAnalyzer {
     }
 
     HIRNode *analyzeVarDef(AstVarDef *node) {
+        if (auto *typeNode = node ? node->getTypeNode() : nullptr) {
+            validateTypeNodeLayout(typeNode);
+        }
         rejectUninitializedFunctionDerivedStorage(node);
         const bool isRefBinding = node->isRefBinding();
 
