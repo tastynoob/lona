@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lona/ast/astnode.hh"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -69,7 +70,8 @@ public:
                                     std::vector<AstNode *> dimensions = {});
     TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                      TypeClass *retType);
+                                      TypeClass *retType,
+                                      std::vector<BindingKind> argBindingKinds = {});
     const TypeDecl *findType(const std::string &localName) const;
     const FunctionDecl *findFunction(const std::string &localName) const;
     const std::unordered_map<std::string, TypeDecl> &types() const { return localTypes_; }

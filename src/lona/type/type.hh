@@ -207,19 +207,33 @@ public:
 
 class FuncType : public TypeClass {
     std::vector<TypeClass *> argTypes;
+    std::vector<BindingKind> argBindingKinds;
     TypeClass * retType = nullptr;
     bool hasSROA = false;
 public:
     bool SROA() const { return hasSROA; }
     auto& getArgTypes() const { return argTypes; }
+    const auto &getArgBindingKinds() const { return argBindingKinds; }
+    BindingKind getArgBindingKind(std::size_t index) const {
+        if (index >= argBindingKinds.size()) {
+            return BindingKind::Value;
+        }
+        return argBindingKinds[index];
+    }
     TypeClass *getRetType() const { return retType; }
 
     FuncType(std::vector<TypeClass *> &&args,
-             TypeClass *retType, string full_name)
+             TypeClass *retType, string full_name,
+             std::vector<BindingKind> argBindingKinds = {})
         : TypeClass(full_name),
           argTypes(args),
+          argBindingKinds(std::move(argBindingKinds)),
           retType(retType),
           hasSROA(retType && retType->shouldReturnByPointer()) {
+        if (this->argBindingKinds.empty()) {
+            this->argBindingKinds.resize(argTypes.size(), BindingKind::Value);
+        }
+        assert(this->argBindingKinds.size() == argTypes.size());
         // if hasSroa, the first arg is the return value
     }
 
@@ -458,24 +472,33 @@ public:
     }
 
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                      TypeClass *retType) {
+                                      TypeClass *retType,
+                                      std::vector<BindingKind> argBindingKinds = {}) {
         string funcTypeName = "f";
         if (retType) {
             funcTypeName += "_";
             funcTypeName += retType->full_name;
         }
+        if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
+            return nullptr;
+        }
         for (auto *argType : argTypes) {
             if (!argType) {
                 return nullptr;
             }
+        }
+        for (std::size_t i = 0; i < argTypes.size(); ++i) {
             funcTypeName += ".";
-            funcTypeName += argType->full_name;
+            if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
+                funcTypeName += "&";
+            }
+            funcTypeName += argTypes[i]->full_name;
         }
         if (auto *existing = getType(funcTypeName)) {
             return existing->as<FuncType>();
         }
         auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
-                                      funcTypeName);
+                                      funcTypeName, std::move(argBindingKinds));
         funcType->typeSize = 0;
         addType(funcTypeName, funcType);
         return funcType;
@@ -574,7 +597,8 @@ public:
                 addType(type->full_name, type);
                 return type;
             }
-            return getOrCreateFunctionType(argTypes, retType);
+            return getOrCreateFunctionType(argTypes, retType,
+                                           func->getArgBindingKinds());
         }
         return type;
     }
@@ -593,6 +617,10 @@ public:
     TypeClass *getType(TypeNode *node) {
         if (!node) {
             return nullptr;
+        }
+
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+            return getType(param->type);
         }
 
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
@@ -630,15 +658,19 @@ public:
 
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
+            std::vector<BindingKind> argBindingKinds;
             auto *retType = getType(func->ret);
+            argBindingKinds.reserve(func->args.size());
             for (auto *arg : func->args) {
-                auto *argType = getType(arg);
+                argBindingKinds.push_back(funcParamBindingKind(arg));
+                auto *argType = getType(unwrapFuncParamType(arg));
                 if (!argType) {
                     return nullptr;
                 }
                 argTypes.push_back(argType);
             }
-            return getOrCreateFunctionType(argTypes, retType);
+            return getOrCreateFunctionType(argTypes, retType,
+                                           std::move(argBindingKinds));
         }
 
         return nullptr;

@@ -17,6 +17,14 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
     if (node == nullptr) {
         return std::string(nullDescription);
     }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        std::string name;
+        if (param->bindingKind == BindingKind::Ref) {
+            name += "ref ";
+        }
+        name += describeTypeNode(param->type, nullDescription);
+        return name;
+    }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         return toStdString(base->name);
     }

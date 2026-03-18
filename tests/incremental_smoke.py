@@ -225,6 +225,57 @@ def run_named_method_interface_hash_case(rng: random.Random, runner: SessionRunn
     )
 
 
+def ref_signature_dependency_text(use_ref: bool) -> str:
+    binding = "ref v i32" if use_ref else "v i32"
+    body = (
+        "    v = v + 1\n"
+        "    ret v\n"
+        if use_ref
+        else "    ret v + 1\n"
+    )
+    return (
+        f"def set7({binding}) i32 {{\n"
+        f"{body}"
+        "}\n"
+    )
+
+
+def ref_signature_program_text(module_name: str, use_ref: bool) -> str:
+    call_arg = "ref x" if use_ref else "x"
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        "    var x i32 = 1\n"
+        f"    ret {module_name}.set7({call_arg})\n"
+        "}\n"
+    )
+
+
+def run_ref_signature_interface_hash_case(rng: random.Random, runner: SessionRunner,
+                                          root: Path) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+
+    write_file(dep_path, ref_signature_dependency_text(False))
+    write_file(app_path, ref_signature_program_text("dep", False))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, ref_signature_dependency_text(True))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        "reference parameter `v` must be passed with `ref`",
+    )
+
+    write_file(app_path, ref_signature_program_text("dep", True))
+    result = runner.compile(app_path)
+    expect_compile_ok(result, compiled=1, reused=1)
+    expect("call i32 @dep.set7(ptr " in result["stdout"],
+           "expected ref signature change to force recompilation of the caller")
+
+
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     case_count = 3
     for index in range(case_count):
@@ -262,6 +313,12 @@ def main() -> int:
                 "named-method-interface-hash-invalidation",
                 lambda: run_named_method_interface_hash_case(
                     rng, runner, root / "named_method_interface"
+                ),
+            )
+            suite.add(
+                "ref-signature-interface-hash-invalidation",
+                lambda: run_ref_signature_interface_hash_case(
+                    rng, runner, root / "ref_signature_interface"
                 ),
             )
             suite.add(

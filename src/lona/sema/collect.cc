@@ -54,6 +54,23 @@ extractParamNames(AstFuncDecl *node) {
     return names;
 }
 
+std::vector<BindingKind>
+extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false) {
+    std::vector<BindingKind> kinds;
+    if (withImplicitSelf) {
+        kinds.push_back(BindingKind::Ref);
+    }
+    if (!node || !node->args) {
+        return kinds;
+    }
+    kinds.reserve(kinds.size() + node->args->size());
+    for (auto *arg : *node->args) {
+        auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+        kinds.push_back(varDecl ? varDecl->bindingKind : BindingKind::Value);
+    }
+    return kinds;
+}
+
 [[noreturn]] void
 error(const std::string &message) {
     throw DiagnosticError(DiagnosticError::Category::Semantic, message);
@@ -387,6 +404,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     std::vector<TypeClass *> loargs;
+    auto loargKinds = extractParamBindingKinds(node, methodParent != nullptr);
     TypeClass *loretType = nullptr;
     if (node->retType) {
         loretType = resolveTypeNode(typeMgr, unit, node->retType);
@@ -431,7 +449,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
     }
 
-    auto *lofuncType = typeMgr->getOrCreateFunctionType(loargs, loretType);
+    auto *lofuncType = typeMgr->getOrCreateFunctionType(loargs, loretType,
+                                                        std::move(loargKinds));
     if (methodParent && !methodParent->getMethodType(
             llvm::StringRef(func_name.tochara(), func_name.size()))) {
         methodParent->addMethodType(
@@ -647,6 +666,10 @@ validateTypeNodeLayout(TypeNode *node) {
     if (!node) {
         return;
     }
+    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+        validateTypeNodeLayout(param->type);
+        return;
+    }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         validateTypeNodeLayout(pointer->base);
         return;
@@ -707,6 +730,9 @@ class InterfaceCollector {
         if (!node) {
             return nullptr;
         }
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+            return resolveType(param->type);
+        }
         validateTypeNodeLayout(node);
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = toStdString(base->name);
@@ -763,16 +789,20 @@ class InterfaceCollector {
         }
         if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
+            std::vector<BindingKind> argBindingKinds;
             argTypes.reserve(func->args.size());
+            argBindingKinds.reserve(func->args.size());
             for (auto *arg : func->args) {
-                auto *argType = resolveType(arg);
+                argBindingKinds.push_back(funcParamBindingKind(arg));
+                auto *argType = resolveType(unwrapFuncParamType(arg));
                 if (!argType) {
                     return nullptr;
                 }
                 argTypes.push_back(argType);
             }
             auto *retType = resolveType(func->ret);
-            return interface_->getOrCreateFunctionType(argTypes, retType);
+            return interface_->getOrCreateFunctionType(
+                argTypes, retType, std::move(argBindingKinds));
         }
         return nullptr;
     }
@@ -843,6 +873,7 @@ class InterfaceCollector {
 
     FuncType *buildFunctionType(AstFuncDecl *node, StructType *methodParent) {
         std::vector<TypeClass *> argTypes;
+        auto argBindingKinds = extractParamBindingKinds(node, methodParent != nullptr);
         if (methodParent) {
             argTypes.push_back(methodParent);
         }
@@ -888,7 +919,8 @@ class InterfaceCollector {
                 node->loc);
         }
 
-        return interface_->getOrCreateFunctionType(argTypes, retType);
+        return interface_->getOrCreateFunctionType(argTypes, retType,
+                                                   std::move(argBindingKinds));
     }
 
     void declareFunctions() {
@@ -1112,6 +1144,20 @@ class FunctionCompiler {
     Object *materializeBinding(Object *obj, Object *initVal = nullptr) {
         if (!obj) {
             error("missing binding object");
+        }
+        if (obj->isRefAlias()) {
+            if (initVal == nullptr) {
+                error("reference binding requires an addressable source");
+            }
+            if (!initVal->isVariable() || initVal->isRegVal() ||
+                !initVal->getllvmValue()) {
+                error("reference binding expects an addressable source");
+            }
+            if (obj->getType() != initVal->getType()) {
+                error("reference binding type mismatch during lowering");
+            }
+            obj->setllvmValue(initVal->getllvmValue());
+            return obj;
         }
         obj->createllvmValue(scope);
         if (initVal != nullptr) {
@@ -1349,6 +1395,12 @@ class FunctionCompiler {
                 }
                 funcType = callee->getType()->as<FuncType>();
                 calleeValue = callee->getllvmValue();
+                if (funcType && !funcType->getArgTypes().empty() &&
+                    funcType->getArgBindingKind(0) == BindingKind::Ref &&
+                    (!parent->isVariable() || parent->isRegVal() ||
+                     !parent->getllvmValue())) {
+                    parent = materializeLocal(parent->getType(), parent);
+                }
                 args.push_back(parent);
             } else if (auto *callee = getDirectFunctionCallee(call->getCallee())) {
                 funcType = callee->getType()->as<FuncType>();
@@ -2002,10 +2054,11 @@ public:
         unsigned debugArgIndex = 1;
         if (hirFunc->hasSelfBinding()) {
             auto &binding = hirFunc->getSelfBinding();
-            auto *selfObj = materializeBinding(binding.object);
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
-            scope->builder.CreateStore(&*argIt, selfObj->getllvmValue());
+            auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
+            incomingSelf->setllvmValue(&*argIt);
+            auto *selfObj = materializeBinding(binding.object, incomingSelf);
             scope->addObj(llvm::StringRef(binding.name), selfObj);
             emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
                              selfObj->getType(), binding.loc, debugArgIndex);
@@ -2019,10 +2072,17 @@ public:
             error("function argument number mismatch");
         }
         for (const auto &binding : hirFunc->getParams()) {
-            auto *argObj = materializeBinding(binding.object);
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
-            scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
+            Object *argObj = nullptr;
+            if (binding.object->isRefAlias()) {
+                auto *incomingArg = binding.object->getType()->newObj(Object::VARIABLE);
+                incomingArg->setllvmValue(&*argIt);
+                argObj = materializeBinding(binding.object, incomingArg);
+            } else {
+                argObj = materializeBinding(binding.object);
+                scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
+            }
             scope->addObj(llvm::StringRef(binding.name), argObj);
             emitDebugDeclare(debug, scope, debugSubprogram, argObj, binding.name,
                              argObj->getType(), binding.loc, debugArgIndex);

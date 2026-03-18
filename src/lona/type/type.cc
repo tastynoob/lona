@@ -79,7 +79,13 @@ FuncType::buildLLVMType(TypeTable &types) {
             ? types.getLLVMType(retType)
             : llvm::Type::getVoidTy(types.getContext());
     }
-    for (auto *argType : argTypes) {
+    for (std::size_t i = 0; i < argTypes.size(); ++i) {
+        auto *argType = argTypes[i];
+        if (getArgBindingKind(i) == BindingKind::Ref) {
+            llvmArgTypes.push_back(
+                types.getLLVMType(types.createPointerType(argType)));
+            continue;
+        }
         llvmArgTypes.push_back(types.getLLVMType(argType));
     }
     return llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);

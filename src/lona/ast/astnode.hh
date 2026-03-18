@@ -35,6 +35,16 @@ const int pointerType_pointer = 1;
 const int pointerType_autoArray = 2;
 const int pointerType_fixedArray = 3;
 
+enum class BindingKind {
+    Value,
+    Ref,
+};
+
+inline const char *
+bindingKindKeyword(BindingKind kind) {
+    return kind == BindingKind::Ref ? "ref" : "var";
+}
+
 struct TypeNode {
     location const loc;
     explicit TypeNode(const location &loc = location()) : loc(loc) {}
@@ -81,6 +91,33 @@ struct FuncTypeNode : public TypeNode {
                  const location &loc = location())
         : TypeNode(loc), args(std::move(args)), ret(ret) {}
 };
+
+struct FuncParamTypeNode : public TypeNode {
+    BindingKind bindingKind = BindingKind::Value;
+    TypeNode *type = nullptr;
+
+    FuncParamTypeNode(BindingKind bindingKind, TypeNode *type,
+                      const location &loc = location())
+        : TypeNode(loc), bindingKind(bindingKind), type(type) {}
+};
+
+inline BindingKind
+funcParamBindingKind(const TypeNode *node) {
+    auto *param = dynamic_cast<const FuncParamTypeNode *>(node);
+    return param ? param->bindingKind : BindingKind::Value;
+}
+
+inline TypeNode *
+unwrapFuncParamType(TypeNode *node) {
+    auto *param = dynamic_cast<FuncParamTypeNode *>(node);
+    return param ? param->type : node;
+}
+
+inline const TypeNode *
+unwrapFuncParamType(const TypeNode *node) {
+    auto *param = dynamic_cast<const FuncParamTypeNode *>(node);
+    return param ? param->type : node;
+}
 
 extern FuncTypeNode* findFuncTypeNode(TypeNode* node);
 extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
@@ -202,6 +239,17 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstRefExpr : public AstNode {
+public:
+    AstNode *const expr;
+
+    explicit AstRefExpr(const location &loc, AstNode *expr)
+        : AstNode(loc), expr(expr) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstTupleLiteral : public AstNode {
 public:
     std::vector<AstNode *> *const items;
@@ -272,11 +320,12 @@ public:
 
 class AstVarDecl : public AstNode {
 public:
+    BindingKind const bindingKind;
     string const field;
     TypeNode *const typeNode;
     AstNode *const right;
 
-    AstVarDecl(AstToken &field, TypeNode *typeNode,
+    AstVarDecl(BindingKind bindingKind, AstToken &field, TypeNode *typeNode,
                AstNode *right = nullptr);
     void toJson(Json &root) override;
 
@@ -284,20 +333,25 @@ public:
 };
 
 class AstVarDef : public AstNode {
+    BindingKind const bindingKind;
     string const field;
     TypeNode *const typeNode;
     AstNode *const initVal;
 public:
     AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr)
-        : AstNode(vardecl->loc), field(vardecl->field), typeNode(vardecl->typeNode),
+        : AstNode(vardecl->loc), bindingKind(vardecl->bindingKind),
+          field(vardecl->field), typeNode(vardecl->typeNode),
           initVal(initVal) {}
 
     AstVarDef(AstToken &field,
                AstNode *initVal = nullptr)
-        : AstNode(field.loc), field(field.text), typeNode(nullptr), initVal(initVal) {}
+        : AstNode(field.loc), bindingKind(BindingKind::Value), field(field.text),
+          typeNode(nullptr), initVal(initVal) {}
 
 
     auto& getName() const { return field; }
+    BindingKind getBindingKind() const { return bindingKind; }
+    bool isRefBinding() const { return bindingKind == BindingKind::Ref; }
     TypeNode *getTypeNode() const { return typeNode; }
     AstNode *getInitVal() const { return initVal; }
 

@@ -35,6 +35,7 @@ static std::string describeLexeme(const char *text, int length) {
 (true) { loc->columns(yyleng); return token::TRUE; }
 (false) { loc->columns(yyleng); return token::FALSE; }
 (var) { loc->columns(yyleng); return token::VAR; }
+(ref) { loc->columns(yyleng); return token::REF; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
 (import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }

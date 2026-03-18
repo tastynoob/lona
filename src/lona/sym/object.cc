@@ -247,6 +247,17 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     // check args type
     if (argTypes.size() == args.size())
         for (int i = 0; i < args.size(); i++) {
+            if (funcType->getArgBindingKind(i) == BindingKind::Ref) {
+                if (argTypes[i] != args[i]->getType()) {
+                    throw "Call reference argument type mismatch";
+                }
+                if (!args[i]->isVariable() || args[i]->isRegVal() ||
+                    !args[i]->getllvmValue()) {
+                    throw "Call reference argument must be addressable";
+                }
+                llvmargs.push_back(args[i]->getllvmValue());
+                continue;
+            }
             if (!isByteCopyCompatible(argTypes[i], args[i]->getType())) {
                 throw "Call argument type mismatch";
             }

@@ -11,6 +11,9 @@ findFuncTypeNode(TypeNode *node) {
     if (node == nullptr) {
         return nullptr;
     }
+    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+        return findFuncTypeNode(param->type);
+    }
     if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
         return func;
     }
@@ -63,6 +66,7 @@ DEF_ACCEPT(AstFuncRef)
 DEF_ACCEPT(AstAssign)
 DEF_ACCEPT(AstBinOper)
 DEF_ACCEPT(AstUnaryOper)
+DEF_ACCEPT(AstRefExpr)
 DEF_ACCEPT(AstTupleLiteral)
 DEF_ACCEPT(AstBraceInitItem)
 DEF_ACCEPT(AstBraceInit)
@@ -122,8 +126,10 @@ AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
     : AstNode(expr ? expr->loc : location()), op(op), expr(expr) {}
 
-AstVarDecl::AstVarDecl(AstToken &field, TypeNode *typeNode, AstNode *right)
+AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
+                       TypeNode *typeNode, AstNode *right)
     : AstNode(field.loc),
+      bindingKind(bindingKind),
       field(field.text),
       typeNode(typeNode),
       right(right) {}

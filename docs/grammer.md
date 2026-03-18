@@ -170,6 +170,7 @@ var-def           ::= "var" var-decl
 说明：
 
 - 当前 array init 先收口为“初始化语法”，而不是任意位置都可用的裸表达式。
+- 变量初始化和后续 `=` / `op=` 赋值当前都按值语义处理；除显式指针外，不会因为赋值自动建立别名。
 
 ### 3.5 表达式
 
@@ -234,7 +235,7 @@ legacy-cast-expr  ::= BuiltinType IDENT
 tuple-literal     ::= "(" expr "," expr-seq ")"
 
 func-pointer-ref  ::= IDENT "&<" ">"
-                    | IDENT "&<" type-name-seq ">"
+                    | IDENT "&<" func-param-type-seq ">"
 
 single-value      ::= variable
                     | CONST
@@ -253,6 +254,12 @@ variable          ::= IDENT
 
 field-selector    ::= single-value "." IDENT
 
+func-param-type   ::= type-name
+                    | "ref" type-name
+
+func-param-type-seq ::= func-param-type
+                      | func-param-type-seq "," func-param-type
+
 expr-seq          ::= expr
                     | expr-seq "," expr
 
@@ -260,10 +267,12 @@ call-arg-seq      ::= call-arg
                     | call-arg-seq "," NL* call-arg
 
 call-arg          ::= expr
+                    | "ref" expr
                     | brace-init
                     | named-call-arg
 
 named-call-arg    ::= IDENT "=" expr
+                    | "ref" IDENT "=" expr
                     | IDENT "=" brace-init
 
 brace-init        ::= "{ }"
@@ -296,6 +305,7 @@ brace-init-item   ::= expr
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
 - 当前 `aaa.bbb(...)` 除了结构体方法，也可以命中“成员函数注入”入口；内建数值转换 `aaa.tof32()` / `aaa.toi32()` 和位模式视图 `aaa.tobits()` 都走这条路径，但后端会直接 lower 成高效 cast / byte-copy，不生成真实函数调用。
 - 普通函数调用和类型构造调用共用同一套参数语法；`Vec2(x=1, y=2)` 与 `mix(x=1, y=2)` 在 parser 层没有分成两套节点。
+- 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；隐式 `ref self` 方法接收者不要求在调用点额外写这个标记。
 - 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
 - 元组成员访问沿用 `field-selector` 规则，字段名按 `_1`、`_2`、`_3` 这种自动生成名称访问。
@@ -305,6 +315,8 @@ brace-init-item   ::= expr
 - 结构体类型名可以直接作为构造调用目标，例如 `var c = Complex(real = 1, img = 2)`。
 - 命名实参与位置实参可以混排，但顺序必须与 Python 类似：先位置、后命名。
 - 数组初始化按容器层级递归匹配；例如 `i32[4][5]` 适合写成 `{{1}, {2}}`，缺失元素会自动补零。
+- 当前语言没有单独的“引用”类型；结构体、tuple、固定维数组等仍默认按值参与赋值与传递，但现在支持 `ref a T = x` 局部别名绑定、`def f(ref x T)` 引用参数，以及隐式 `ref self` 方法接收者。
+- 普通 `ref` 形参要求调用点同步写出 `ref` 标记；方法调用里的 `self` 仍保持接收者风格语法，不额外暴露 `ref`。
 
 ### 3.6 类型语法
 
@@ -349,6 +361,7 @@ type-name-seq     ::= type-name
 - 函数类型必须写成“参数头 + 返回类型”，例如 `(i32, bool) i32`。
 - 函数取指针不在类型层完成，而是通过表达式 `foo&<i32, bool>` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法，但它们在语义上表示不同的容器组合方式。
+- `base-type "[]"` 这种未定长数组写法当前只保留为语法占位；已实现的数组语义只覆盖显式固定维度的数组类型。
 
 ## 4. 运算符优先级与结合性
 
@@ -382,6 +395,7 @@ type-name-seq     ::= type-name
 ### 5.1 仍保留为占位的能力
 
 - array dimension inference
+- 未定长数组语义 (`T[]`)
 - string runtime semantics
 
 这些路径当前不会再落入模糊的 generic unsupported，而是给出明确的面向用户的占位诊断。

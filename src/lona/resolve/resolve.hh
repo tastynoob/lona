@@ -21,16 +21,23 @@ public:
 
 private:
     Kind kind_;
+    BindingKind bindingKind_ = BindingKind::Value;
     std::string name_;
     const AstNode *node_ = nullptr;
     location loc_;
 
 public:
-    ResolvedLocalBinding(Kind kind, std::string name, const AstNode *node,
-                         const location &loc)
-        : kind_(kind), name_(std::move(name)), node_(node), loc_(loc) {}
+    ResolvedLocalBinding(Kind kind, BindingKind bindingKind, std::string name,
+                         const AstNode *node, const location &loc)
+        : kind_(kind),
+          bindingKind_(bindingKind),
+          name_(std::move(name)),
+          node_(node),
+          loc_(loc) {}
 
     Kind kind() const { return kind_; }
+    BindingKind bindingKind() const { return bindingKind_; }
+    bool isRefBinding() const { return bindingKind_ == BindingKind::Ref; }
     const std::string &name() const { return name_; }
     const AstNode *node() const { return node_; }
     const location &loc() const { return loc_; }
@@ -151,6 +158,7 @@ class ResolvedModule {
 
 public:
     const ResolvedLocalBinding *createLocalBinding(ResolvedLocalBinding::Kind kind,
+                                                   BindingKind bindingKind,
                                                    std::string name,
                                                    const AstNode *node,
                                                    const location &loc);

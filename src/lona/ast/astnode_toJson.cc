@@ -80,6 +80,15 @@ AstUnaryOper::toJson(Json &root) {
 }
 
 void
+AstRefExpr::toJson(Json &root) {
+    root["type"] = "RefExpr";
+    root["expr"] = Json::object();
+    if (expr) {
+        expr->toJson(root["expr"]);
+    }
+}
+
+void
 AstTupleLiteral::toJson(Json &root) {
     root["type"] = "TupleLiteral";
     root["items"] = Json::array();
@@ -144,6 +153,7 @@ AstImport::toJson(Json &root) {
 void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
+    root["bindingKind"] = bindingKindKeyword(this->bindingKind);
     root["field"] = this->field.tochara();
     if (typeNode) {
         root["declaredType"] = describeTypeNode(typeNode);
@@ -157,6 +167,7 @@ AstVarDecl::toJson(Json &root) {
 void
 AstVarDef::toJson(Json &root) {
     root["type"] = "VarDef";
+    root["bindingKind"] = bindingKindKeyword(this->bindingKind);
     root["field"] = this->field.tochara();
     if (this->typeNode != nullptr) {
         root["declaredType"] = describeTypeNode(this->typeNode);

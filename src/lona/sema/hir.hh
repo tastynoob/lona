@@ -20,6 +20,7 @@ class CompilationUnit;
 
 struct HIRBinding {
     std::string name;
+    BindingKind bindingKind = BindingKind::Value;
     ObjectPtr object = nullptr;
     location loc;
 };

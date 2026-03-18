@@ -13,6 +13,10 @@
 - [vardef.md](vardef.md): 变量定义与初始化规则。
 - [controlflow.md](controlflow.md): `if`、`for`、`ret` 等控制流。
 
+## 语言设计与约束
+
+- [pointer_reference.md](pointer_reference.md): 指针 / 引用 / 值语义的设计收口；当前已实现 `ref` 局部绑定、`ref` 参数和隐式 `ref self`。
+
 ## 编译器与工程结构
 
 - [compiler_architecture.md](compiler_architecture.md): 当前编译器架构、核心数据结构和编译流程。

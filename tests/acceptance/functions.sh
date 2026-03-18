@@ -5,6 +5,10 @@ source "$(dirname "$0")/lib.sh"
 
 func_ptr_in="$(new_tmp_file func-ptr)"
 func_ptr_out="$(new_tmp_file func-ptr-out)"
+func_ptr_ref_in="$(new_tmp_file func-ptr-ref)"
+func_ptr_ref_out="$(new_tmp_file func-ptr-ref-out)"
+func_ptr_ref_bad_in="$(new_tmp_file func-ptr-ref-bad)"
+func_ptr_ref_bad_out="$(new_tmp_file func-ptr-ref-bad-out)"
 func_ptr_bad_in="$(new_tmp_file func-ptr-bad)"
 func_ptr_bad_out="$(new_tmp_file func-ptr-bad-out)"
 func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
@@ -54,6 +58,38 @@ EOF
 grep -q '^define i32 @foo' "$func_ptr_out"
 grep -q '^define i32 @hold' "$func_ptr_out"
 grep -q 'store ptr @foo' "$func_ptr_out"
+
+cat >"$func_ptr_ref_in" <<'EOF'
+def set7(ref v i32) i32 {
+    v = 7
+    ret v
+}
+
+def hold() i32 {
+    var cb (ref i32)* i32 = set7&<ref i32>
+    var x i32 = 1
+    ret cb(ref x)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_ref_in" >"$func_ptr_ref_out"
+grep -q '^define i32 @set7(ptr ' "$func_ptr_ref_out"
+grep -q 'store ptr @set7' "$func_ptr_ref_out"
+grep -Eq 'call i32 %.*\(ptr ' "$func_ptr_ref_out"
+
+cat >"$func_ptr_ref_bad_in" <<'EOF'
+def set7(ref v i32) i32 {
+    v = 7
+    ret v
+}
+
+def hold() i32 {
+    var cb = set7&<i32>
+    var x i32 = 1
+    ret cb(ref x)
+}
+EOF
+expect_emit_ir_failure "$func_ptr_ref_bad_in" "$func_ptr_ref_bad_out" 'expected mismatched ref function pointer reference program to fail'
+grep -q 'function reference parameter type mismatch at index 0 for `set7`: expected ref i32, got i32' "$func_ptr_ref_bad_out"
 
 cat >"$func_ptr_bad_in" <<'EOF'
 def foo(v i32) i32 {

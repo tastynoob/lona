@@ -77,12 +77,14 @@ void
 hashParamSignature(std::uint64_t &seed, AstNode *node) {
     if (auto *decl = dynamic_cast<AstVarDecl *>(node)) {
         hashText(seed, "param");
+        hashText(seed, bindingKindKeyword(decl->bindingKind));
         hashText(seed, toStdString(decl->field));
         hashTypeNode(seed, decl->typeNode);
         return;
     }
     if (auto *def = dynamic_cast<AstVarDef *>(node)) {
         hashText(seed, "param");
+        hashText(seed, bindingKindKeyword(def->getBindingKind()));
         hashText(seed, toStdString(def->getName()));
         hashTypeNode(seed, def->getTypeNode());
         return;
@@ -160,6 +162,12 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashText(seed, "void");
         return;
     }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        hashText(seed, "func-param");
+        hashText(seed, bindingKindKeyword(param->bindingKind));
+        hashTypeNode(seed, param->type);
+        return;
+    }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         hashText(seed, "base");
         hashText(seed, toStdString(base->name));
@@ -208,6 +216,10 @@ TypeClass *
 resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node) {
     if (!typeTable || !node) {
         return nullptr;
+    }
+
+    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+        return resolveTypeNode(typeTable, unit, param->type);
     }
 
     if (auto *cached = unit.findResolvedType(node)) {
@@ -269,16 +281,20 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
 
     if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
         std::vector<TypeClass *> argTypes;
+        std::vector<BindingKind> argBindingKinds;
         argTypes.reserve(func->args.size());
+        argBindingKinds.reserve(func->args.size());
         for (auto *arg : func->args) {
-            auto *argType = resolveTypeNode(typeTable, unit, arg);
+            argBindingKinds.push_back(funcParamBindingKind(arg));
+            auto *argType = resolveTypeNode(typeTable, unit, unwrapFuncParamType(arg));
             if (!argType) {
                 return nullptr;
             }
             argTypes.push_back(argType);
         }
         auto *retType = resolveTypeNode(typeTable, unit, func->ret);
-        resolved = typeTable->getOrCreateFunctionType(argTypes, retType);
+        resolved = typeTable->getOrCreateFunctionType(
+            argTypes, retType, std::move(argBindingKinds));
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }

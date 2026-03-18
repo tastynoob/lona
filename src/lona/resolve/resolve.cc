@@ -63,6 +63,7 @@ class FunctionResolver {
             }
             auto *binding = module_.createLocalBinding(
                 ResolvedLocalBinding::Kind::Variable,
+                varDef->getBindingKind(),
                 toStdString(varDef->getName()), varDef, varDef->loc);
             declareBinding(binding, varDef->loc,
                            "duplicate variable definition for `" +
@@ -186,6 +187,10 @@ class FunctionResolver {
             resolveExpr(unary->expr);
             return;
         }
+        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
+            resolveExpr(refExpr->expr);
+            return;
+        }
         if (auto *tuple = dynamic_cast<const AstTupleLiteral *>(node)) {
             if (tuple->items) {
                 for (auto *item : *tuple->items) {
@@ -277,7 +282,7 @@ class ModuleResolver {
             topLevelEntry, guaranteedReturn);
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
-                ResolvedLocalBinding::Kind::Self, "self", decl, loc));
+                ResolvedLocalBinding::Kind::Self, BindingKind::Ref, "self", decl, loc));
         }
         if (decl && decl->args) {
             for (auto *arg : *decl->args) {
@@ -289,6 +294,7 @@ class ModuleResolver {
                 }
                 resolved->addParam(module_->createLocalBinding(
                     ResolvedLocalBinding::Kind::Parameter,
+                    varDecl->bindingKind,
                     toStdString(varDecl->field), varDecl, varDecl->loc));
             }
         }
@@ -415,10 +421,12 @@ ResolvedFunction::field(const AstField *node) const {
 
 const ResolvedLocalBinding *
 ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
+                                   BindingKind bindingKind,
                                    std::string name, const AstNode *node,
                                    const location &loc) {
     localBindings_.push_back(
-        std::make_unique<ResolvedLocalBinding>(kind, std::move(name), node, loc));
+        std::make_unique<ResolvedLocalBinding>(kind, bindingKind,
+                                               std::move(name), node, loc));
     return localBindings_.back().get();
 }
 

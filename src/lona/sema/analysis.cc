@@ -55,6 +55,9 @@ describeResolvedFuncType(FuncType *type, size_t argOffset = 0) {
         if (i != argOffset) {
             name += ", ";
         }
+        if (type->getArgBindingKind(i) == BindingKind::Ref) {
+            name += "ref ";
+        }
         name += describeResolvedType(argTypes[i]);
     }
     name += ")";
@@ -100,6 +103,10 @@ errorInvalidArrayDimension(const location &loc) {
 void
 validateTypeNodeLayout(TypeNode *node) {
     if (!node) {
+        return;
+    }
+    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+        validateTypeNodeLayout(param->type);
         return;
     }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
@@ -593,8 +600,57 @@ class FunctionAnalyzer {
         return expr;
     }
 
-    static bool isNamedCallArgNode(const AstNode *node) {
-        return dynamic_cast<const AstNamedCallArg *>(node) != nullptr;
+    struct CallArgSpec {
+        AstNode *syntax = nullptr;
+        AstNode *value = nullptr;
+        BindingKind bindingKind = BindingKind::Value;
+        std::optional<std::string> name;
+    };
+
+    CallArgSpec normalizeCallArg(AstNode *node, const location &callLoc) {
+        if (!node) {
+            error(callLoc, "call argument is missing");
+        }
+
+        CallArgSpec spec;
+        spec.syntax = node;
+        AstNode *value = node;
+        if (auto *namedArg = dynamic_cast<AstNamedCallArg *>(node)) {
+            spec.name = toStdString(namedArg->name);
+            value = namedArg->value;
+        }
+        if (auto *refExpr = dynamic_cast<AstRefExpr *>(value)) {
+            spec.bindingKind = BindingKind::Ref;
+            value = refExpr->expr;
+        }
+        if (!value) {
+            error(node->loc,
+                  "call argument is missing its value",
+                  "Write arguments like `f(x)`, `f(name=x)`, or `f(ref x)`.");
+        }
+        spec.value = value;
+        return spec;
+    }
+
+    static bool isNamedCallArg(const CallArgSpec &arg) {
+        return arg.name.has_value();
+    }
+
+    static std::string describeCallParameter(const std::vector<std::string> *paramNames,
+                                             std::size_t index) {
+        if (paramNames && index < paramNames->size() && !paramNames->at(index).empty()) {
+            return "parameter `" + paramNames->at(index) + "`";
+        }
+        return "parameter at index " + std::to_string(index);
+    }
+
+    static std::string explicitRefCallHint(const std::vector<std::string> *paramNames,
+                                           std::size_t index) {
+        if (paramNames && index < paramNames->size() && !paramNames->at(index).empty()) {
+            return "Pass it as `ref " + paramNames->at(index) +
+                   " = value` for named calls, or `ref value` positionally.";
+        }
+        return "Pass it as `ref value`.";
     }
 
     static std::string formatAvailableNames(const std::vector<std::string> &names,
@@ -614,26 +670,29 @@ class FunctionAnalyzer {
         return out.str();
     }
 
-    std::vector<AstNode *> collectOrderedCallArgs(
+    std::vector<CallArgSpec> collectOrderedCallArgs(
         const std::vector<AstNode *> *rawArgs,
         const std::vector<std::string> &orderedNames,
         const location &callLoc, const std::string &targetLabel,
         const std::string &nameKind, bool allowNamedArgs) {
-        std::vector<AstNode *> ordered;
+        std::vector<CallArgSpec> normalized;
         if (!rawArgs || rawArgs->empty()) {
-            return ordered;
+            return normalized;
+        }
+        normalized.reserve(rawArgs->size());
+        for (auto *arg : *rawArgs) {
+            normalized.push_back(normalizeCallArg(arg, callLoc));
         }
 
         bool hasNamedArgs = false;
-        for (auto *arg : *rawArgs) {
-            if (isNamedCallArgNode(arg)) {
+        for (const auto &arg : normalized) {
+            if (isNamedCallArg(arg)) {
                 hasNamedArgs = true;
             }
         }
 
         if (!hasNamedArgs) {
-            ordered = *rawArgs;
-            return ordered;
+            return normalized;
         }
 
         if (!allowNamedArgs) {
@@ -648,13 +707,13 @@ class FunctionAnalyzer {
             indexByName.emplace(orderedNames[i], i);
         }
 
-        ordered.resize(orderedNames.size(), nullptr);
+        std::vector<CallArgSpec> ordered(orderedNames.size());
         std::size_t positionalCount = 0;
         bool seenNamedArg = false;
-        for (auto *arg : *rawArgs) {
-            if (!isNamedCallArgNode(arg)) {
+        for (const auto &arg : normalized) {
+            if (!isNamedCallArg(arg)) {
                 if (seenNamedArg) {
-                    error(arg ? arg->loc : callLoc,
+                    error(arg.syntax ? arg.syntax->loc : callLoc,
                           "positional arguments must come before named arguments",
                           "Write calls like `name(a, b, x=..., y=...)`, not `name(x=..., a)`.");
                 }
@@ -669,25 +728,24 @@ class FunctionAnalyzer {
             }
 
             seenNamedArg = true;
-            auto *namedArg = dynamic_cast<AstNamedCallArg *>(arg);
-            auto found = indexByName.find(toStdString(namedArg->name));
+            auto found = indexByName.find(*arg.name);
             if (found == indexByName.end()) {
-                error(namedArg->loc,
-                      "unknown " + nameKind + " `" + toStdString(namedArg->name) +
+                error(arg.syntax ? arg.syntax->loc : callLoc,
+                      "unknown " + nameKind + " `" + *arg.name +
                           "` for " + targetLabel,
                       formatAvailableNames(orderedNames, nameKind));
             }
-            if (ordered[found->second] != nullptr) {
-                error(namedArg->loc,
-                      "duplicate " + nameKind + " `" + toStdString(namedArg->name) +
+            if (ordered[found->second].value != nullptr) {
+                error(arg.syntax ? arg.syntax->loc : callLoc,
+                      "duplicate " + nameKind + " `" + *arg.name +
                           "` for " + targetLabel,
                       "Each " + nameKind + " can only be specified once.");
             }
-            ordered[found->second] = namedArg->value;
+            ordered[found->second] = arg;
         }
 
         for (std::size_t i = 0; i < ordered.size(); ++i) {
-            if (!ordered[i]) {
+            if (!ordered[i].value) {
                 error(callLoc,
                       "missing " + nameKind + " `" + orderedNames[i] + "` for " +
                           targetLabel,
@@ -811,6 +869,11 @@ class FunctionAnalyzer {
         }
         if (auto *unary = node->as<AstUnaryOper>()) {
             return analyzeUnaryOper(unary, expectedType);
+        }
+        if (auto *refExpr = node->as<AstRefExpr>()) {
+            error(refExpr->loc,
+                  "`ref` is only valid as a call argument marker",
+                  "Use it in calls like `f(ref x)` or `f(ref name = x)`.");
         }
         if (auto *tuple = node->as<AstTupleLiteral>()) {
             return analyzeTupleLiteral(tuple, expectedType);
@@ -1118,17 +1181,25 @@ class FunctionAnalyzer {
         }
 
         for (size_t i = 0; i < actualArgCount; ++i) {
+            auto actualBindingKind = funcParamBindingKind(node->argTypes->at(i));
             auto *actualType = requireType(
-                node->argTypes->at(i),
+                unwrapFuncParamType(node->argTypes->at(i)),
                 "unknown function reference parameter type at index " +
                     std::to_string(i) + " for `" + toStdString(node->name) +
                     "`: " + describeTypeNode(node->argTypes->at(i)));
             auto *expectedType = expectedArgTypes[i];
-            if (actualType != expectedType) {
+            auto expectedBindingKind = funcType->getArgBindingKind(i);
+            if (actualBindingKind != expectedBindingKind || actualType != expectedType) {
+                auto expectedDescription =
+                    (expectedBindingKind == BindingKind::Ref ? "ref " : "") +
+                    describeResolvedType(expectedType);
+                auto actualDescription =
+                    (actualBindingKind == BindingKind::Ref ? "ref " : "") +
+                    describeResolvedType(actualType);
                 error("function reference parameter type mismatch at index " +
                       std::to_string(i) + " for `" + toStdString(node->name) +
-                      "`: expected " + describeResolvedType(expectedType) +
-                      ", got " + describeResolvedType(actualType));
+                      "`: expected " + expectedDescription + ", got " +
+                      actualDescription);
             }
         }
 
@@ -1203,24 +1274,55 @@ class FunctionAnalyzer {
 
     HIRNode *analyzeVarDef(AstVarDef *node) {
         rejectUninitializedFunctionDerivedStorage(node);
+        const bool isRefBinding = node->isRefBinding();
 
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
             type = requireType(typeNode, "unknown variable type");
             rejectBareFunctionStorage(type, node);
+        } else if (isRefBinding) {
+            error(node->loc,
+                  "reference binding `" + toStdString(node->getName()) +
+                      "` requires an explicit type annotation",
+                  "Write `ref name Type = value` so the alias target type is explicit.");
         }
 
         HIRExpr *init = nullptr;
         if (node->withInitVal()) {
-            init = requireExpr(node->getInitVal(), type);
+            init = isRefBinding
+                ? requireNonCallExpr(node->getInitVal(), type)
+                : requireExpr(node->getInitVal(), type);
+        }
+
+        if (isRefBinding && !init) {
+            error(node->loc,
+                  "reference binding `" + toStdString(node->getName()) +
+                      "` requires an initializer",
+                  "Bind it to an addressable value like `ref a i32 = x`.");
         }
 
         if (type) {
             if (init) {
-                init = coerceNumericExpr(init, type, node->loc, false);
-                requireCompatibleTypes(node->loc, type, init->getType(),
-                                       "initializer type mismatch for `" +
-                                           toStdString(node->getName()) + "`");
+                if (isRefBinding) {
+                    if (!isAddressable(init)) {
+                        error(node->getInitVal() ? node->getInitVal()->loc : node->loc,
+                              "reference binding expects an addressable value",
+                              "Bind references to variables, struct fields, dereferenced pointers, or array indexing expressions.");
+                    }
+                    if (type != init->getType()) {
+                        error(node->loc,
+                              "reference binding type mismatch for `" +
+                                  toStdString(node->getName()) + "`: expected " +
+                                  describeResolvedType(type) + ", got " +
+                                  describeResolvedType(init->getType()),
+                              "References bind aliases directly, so the referenced value must have the exact declared type.");
+                    }
+                } else {
+                    init = coerceNumericExpr(init, type, node->loc, false);
+                    requireCompatibleTypes(node->loc, type, init->getType(),
+                                           "initializer type mismatch for `" +
+                                               toStdString(node->getName()) + "`");
+                }
             }
         } else if (init) {
             rejectMethodSelectorStorage(typeMgr, init, node);
@@ -1256,7 +1358,8 @@ class FunctionAnalyzer {
                               toStdString(node->getName()) + "`",
                           "Run name resolution before HIR lowering.");
         }
-        auto *obj = type->newObj(Object::VARIABLE);
+        auto *obj = type->newObj(Object::VARIABLE |
+                                 (isRefBinding ? Object::REF_ALIAS : Object::EMPTY));
         bindObject(binding, obj);
         return makeHIR<HIRVarDef>(binding->name(), obj, init, node->loc);
     }
@@ -1423,13 +1526,19 @@ class FunctionAnalyzer {
                 std::vector<HIRExpr *> fields;
                 fields.reserve(orderedArgs.size());
                 for (size_t i = 0; i < orderedArgs.size(); ++i) {
+                    if (orderedArgs[i].bindingKind == BindingKind::Ref) {
+                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
+                                                    : node->loc,
+                              "type constructor fields do not accept `ref` arguments",
+                              "Struct construction copies field values. Remove `ref` from this argument.");
+                    }
                     auto *expectedFieldType = members[i].second;
                     auto *fieldExpr =
-                        requireNonCallExpr(orderedArgs[i], expectedFieldType);
+                        requireNonCallExpr(orderedArgs[i].value, expectedFieldType);
                     fieldExpr = coerceNumericExpr(fieldExpr, expectedFieldType,
-                                                 orderedArgs[i]->loc, false);
+                                                 orderedArgs[i].value->loc, false);
                     requireCompatibleTypes(
-                        orderedArgs[i]->loc, expectedFieldType, fieldExpr->getType(),
+                        orderedArgs[i].value->loc, expectedFieldType, fieldExpr->getType(),
                         "constructor field type mismatch for `" + members[i].first + "`");
                     fields.push_back(fieldExpr);
                 }
@@ -1474,21 +1583,14 @@ class FunctionAnalyzer {
         } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
             funcType = pointerTarget;
         } else if (auto *arrayType = callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
-            if (node->args) {
-                for (auto *arg : *node->args) {
-                    if (isNamedCallArgNode(arg)) {
-                        error(node->loc,
-                              "array indexing does not support named arguments",
-                              "Use positional indices like `a(1, 2)` or `a(1)(2)`.");
-                    }
-                }
-            }
+            auto orderedArgs = collectOrderedCallArgs(
+                node->args, {}, node->loc, "array indexing", "index", false);
             if (!arrayType->hasStaticLayout()) {
                 error(node->loc,
                       "array indexing requires fixed explicit dimensions",
                       "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
             }
-            const auto actualArgCount = node->args ? node->args->size() : 0;
+            const auto actualArgCount = orderedArgs.size();
             if (actualArgCount != arrayType->indexArity()) {
                 error(node->loc,
                       "array index arity mismatch: expected " +
@@ -1497,15 +1599,19 @@ class FunctionAnalyzer {
             }
             std::vector<HIRExpr *> args;
             args.reserve(actualArgCount);
-            if (node->args) {
-                for (size_t i = 0; i < node->args->size(); ++i) {
-                    auto *arg = requireNonCallExpr(node->args->at(i), i32Ty);
-                    arg = coerceNumericExpr(arg, i32Ty, node->args->at(i)->loc, false);
-                    requireCompatibleTypes(node->args->at(i)->loc, i32Ty, arg->getType(),
+            for (size_t i = 0; i < orderedArgs.size(); ++i) {
+                if (orderedArgs[i].bindingKind == BindingKind::Ref) {
+                    error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
+                                                : node->loc,
+                          "array indexing does not accept `ref` arguments",
+                          "Use positional indices like `a(i, j)` without `ref`.");
+                }
+                auto *arg = requireNonCallExpr(orderedArgs[i].value, i32Ty);
+                arg = coerceNumericExpr(arg, i32Ty, orderedArgs[i].value->loc, false);
+                requireCompatibleTypes(orderedArgs[i].value->loc, i32Ty, arg->getType(),
                                            "array index type mismatch at index " +
                                                std::to_string(i));
-                    args.push_back(arg);
-                }
+                args.push_back(arg);
             }
             return makeHIR<HIRIndex>(callee, std::move(args),
                                      arrayType->getElementType(), node->loc);
@@ -1513,21 +1619,16 @@ class FunctionAnalyzer {
             error("callee must be a function, function pointer, or method selector");
         }
 
-        std::vector<AstNode *> orderedArgs;
+        std::vector<CallArgSpec> orderedArgs;
         if (node->args && !node->args->empty()) {
             if (paramNames && !paramNames->empty()) {
                 orderedArgs = collectOrderedCallArgs(
                     node->args, *paramNames, node->loc, "function call",
                     "parameter", true);
             } else {
-                for (auto *arg : *node->args) {
-                    if (isNamedCallArgNode(arg)) {
-                        error(node->loc,
-                              "named arguments are not supported for this call target",
-                              "Named arguments currently require a directly declared function or struct type with parameter metadata.");
-                    }
-                }
-                orderedArgs = *node->args;
+                orderedArgs = collectOrderedCallArgs(
+                    node->args, {}, node->loc, "this call target",
+                    "parameter", false);
             }
         }
 
@@ -1543,22 +1644,69 @@ class FunctionAnalyzer {
         if (!orderedArgs.empty()) {
             for (size_t i = 0; i < orderedArgs.size(); ++i) {
                 auto *expectedType = paramTypes[i + argOffset];
-                auto *arg = requireNonCallExpr(orderedArgs[i], expectedType);
-                arg = coerceNumericExpr(arg, expectedType, orderedArgs[i]->loc,
-                                        false);
-                requireCompatibleTypes(orderedArgs[i]->loc, expectedType,
-                                       arg->getType(),
-                                       "call argument type mismatch at index " +
-                                           std::to_string(i));
-                args.push_back(arg);
+                auto bindingKind = funcType->getArgBindingKind(i + argOffset);
+                if (bindingKind == BindingKind::Ref) {
+                    if (orderedArgs[i].bindingKind != BindingKind::Ref) {
+                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
+                                                    : node->loc,
+                              "reference " +
+                                  describeCallParameter(paramNames, i) +
+                                  " must be passed with `ref`",
+                              explicitRefCallHint(paramNames, i));
+                    }
+                    auto *arg =
+                        requireNonCallExpr(orderedArgs[i].value, expectedType);
+                    if (!isAddressable(arg)) {
+                        error(orderedArgs[i].value->loc,
+                              "reference parameter at index " + std::to_string(i) +
+                                  " expects an addressable value",
+                              "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
+                    }
+                    if (expectedType != arg->getType()) {
+                        error(orderedArgs[i].value->loc,
+                              "reference argument type mismatch at index " +
+                                  std::to_string(i) + ": expected " +
+                                  describeResolvedType(expectedType) + ", got " +
+                                  describeResolvedType(arg->getType()),
+                              "Reference arguments bind aliases directly, so the argument type must match exactly.");
+                    }
+                    args.push_back(arg);
+                } else {
+                    if (orderedArgs[i].bindingKind == BindingKind::Ref) {
+                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
+                                                    : node->loc,
+                              "value " + describeCallParameter(paramNames, i) +
+                                  " cannot be passed with `ref`",
+                              "Remove `ref` and pass the value directly.");
+                    }
+                    auto *arg =
+                        requireNonCallExpr(orderedArgs[i].value, expectedType);
+                    arg = coerceNumericExpr(arg, expectedType,
+                                            orderedArgs[i].value->loc, false);
+                    requireCompatibleTypes(orderedArgs[i].value->loc, expectedType,
+                                           arg->getType(),
+                                           "call argument type mismatch at index " +
+                                               std::to_string(i));
+                    args.push_back(arg);
+                }
             }
         }
         for (size_t i = 0; i < args.size(); ++i) {
             auto *expectedType = paramTypes[i + argOffset];
             auto *actualType = args[i]->getType();
-            requireCompatibleTypes(node->loc, expectedType, actualType,
-                                   "call argument type mismatch at index " +
-                                       std::to_string(i));
+            if (funcType->getArgBindingKind(i + argOffset) == BindingKind::Ref) {
+                if (expectedType != actualType) {
+                    error(node->loc,
+                          "reference argument type mismatch at index " +
+                              std::to_string(i) + ": expected " +
+                              describeResolvedType(expectedType) + ", got " +
+                              describeResolvedType(actualType));
+                }
+            } else {
+                requireCompatibleTypes(node->loc, expectedType, actualType,
+                                       "call argument type mismatch at index " +
+                                           std::to_string(i));
+            }
         }
 
         auto *retType = funcType ? funcType->getRetType() : nullptr;
@@ -1602,10 +1750,11 @@ public:
             }
             auto *methodParent = requireStructTypeByName(
                 resolved.methodParentTypeName(), resolved.loc(), "method parent type");
-            auto *selfObj = methodParent->newObj(Object::VARIABLE);
+            auto *selfObj = methodParent->newObj(Object::VARIABLE | Object::REF_ALIAS);
             bindObject(resolved.selfBinding(), selfObj);
             hirFunc->setSelfBinding(
-                {resolved.selfBinding()->name(), selfObj, resolved.selfBinding()->loc()});
+                {resolved.selfBinding()->name(), resolved.selfBinding()->bindingKind(),
+                 selfObj, resolved.selfBinding()->loc()});
         }
 
         for (auto *paramBinding : resolved.params()) {
@@ -1618,9 +1767,13 @@ public:
             auto *type = requireType(
                 decl->typeNode,
                 "unknown function argument type for `" + paramBinding->name() + "`");
-            auto *argObj = type->newObj(Object::VARIABLE);
+            auto *argObj = type->newObj(Object::VARIABLE |
+                                        (paramBinding->isRefBinding()
+                                             ? Object::REF_ALIAS
+                                             : Object::EMPTY));
             bindObject(paramBinding, argObj);
-            hirFunc->addParam({paramBinding->name(), argObj, paramBinding->loc()});
+            hirFunc->addParam({paramBinding->name(), paramBinding->bindingKind(),
+                               argObj, paramBinding->loc()});
         }
 
         hirFunc->setBody(analyzeBlock(const_cast<AstNode *>(resolved.body())));

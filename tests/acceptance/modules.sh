@@ -108,7 +108,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$import_named_method_main_in" >"$import_named_method_out"
-grep -q '^define i32 @dep.Vec2.add(%dep.Vec2 ' "$import_named_method_out"
+grep -q '^define i32 @dep.Vec2.add(ptr ' "$import_named_method_out"
 grep -q 'call i32 @dep.Vec2.add(' "$import_named_method_out"
 
 printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"

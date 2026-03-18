@@ -57,6 +57,11 @@ tuple_type
     }
     ;
 
+func_param_type
+    : type_name { $$ = $1; }
+    | REF type_name { $$ = new FuncParamTypeNode(BindingKind::Ref, $2, @$); }
+    ;
+
 ptr_type
     : base_type '*' { $$ = new PointerTypeNode($1, 1, @$); }
     ;
@@ -84,7 +89,7 @@ base_type
 
 func_head
     : '(' ')' { $$ = new FuncTypeNode({}, nullptr, @$); }
-    | '(' type_name_seq ')' { $$ = new FuncTypeNode(*$2, nullptr, @$); delete $2; }
+    | '(' func_param_type_seq ')' { $$ = new FuncTypeNode(*$2, nullptr, @$); delete $2; }
     | func_head '*' { $$ = new PointerTypeNode($1, 1, @$); }
     | func_head '[' ']' { $$ = new ArrayTypeNode($1, {}, @$); }
     | func_head '[' expr_seq ']' {

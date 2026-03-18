@@ -51,6 +51,7 @@
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
 %token LOGIC_LE "<=" LOGIC_GE ">=" SHIFT_LEFT "<<" SHIFT_RIGHT ">>"
 %token VAR "var"
+%token REF "ref"
 %token TRUE "true" FALSE "false"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
@@ -89,12 +90,13 @@
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren single_value field_selector func_pointer_expr
 %type <typeNode> type_selector
-%type <node> var_decl var_def
+%type <node> var_decl param_decl var_def
 
-%type <typeNode> single_type ptr_type array_type base_type func_head type_name tuple_type
+%type <typeNode> single_type ptr_type array_type base_type func_head type_name tuple_type func_param_type
 
-%type <seq> expr_seq var_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
+%type <seq> expr_seq var_decl_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
+%type <type_seq> func_param_type_seq
 %type <counter> opt_newlines
 
 %start pragram
@@ -209,12 +211,17 @@ stat_ret
 func_decl
     : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
     | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
-    | DEF FIELD '(' var_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
-    | DEF FIELD '(' var_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
+    | DEF FIELD '(' param_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
+    | DEF FIELD '(' param_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
     ;
 
 var_decl
-    : FIELD type_name { $$ = new AstVarDecl(*$1, $2); }
+    : FIELD type_name { $$ = new AstVarDecl(BindingKind::Value, *$1, $2); }
+    ;
+
+param_decl
+    : FIELD type_name { $$ = new AstVarDecl(BindingKind::Value, *$1, $2); }
+    | REF FIELD type_name { $$ = new AstVarDecl(BindingKind::Ref, *$2, $3); }
     ;
 
 /* struct decl */
@@ -252,6 +259,12 @@ var_def
     : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
     | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
     | VAR var_decl '=' brace_init { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
+    | REF FIELD type_name '=' expr {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $5);
+    }
+    | REF FIELD type_name '=' brace_init {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $5);
+    }
     | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
     | VAR FIELD '=' brace_init { $$ = new AstVarDef(*$2, $4); }
     | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
@@ -434,12 +447,16 @@ brace_init_item
 call_arg
     : expr { $$ = $1; }
     | brace_init { $$ = $1; }
+    | REF expr { $$ = new AstRefExpr(@$, $2); }
     | named_call_arg { $$ = $1; }
     ;
 
 named_call_arg
     : FIELD '=' expr {
         $$ = new AstNamedCallArg(*$1, $3);
+    }
+    | REF FIELD '=' expr {
+        $$ = new AstNamedCallArg(*$2, new AstRefExpr(@$, $4));
     }
     | FIELD '=' brace_init {
         $$ = new AstNamedCallArg(*$1, $3);
@@ -481,7 +498,7 @@ opt_newlines
 
 func_pointer_expr
     : FIELD FUNC_PTR_OPEN '>' { $$ = new AstFuncRef(*$1, new std::vector<TypeNode*>); }
-    | FIELD FUNC_PTR_OPEN type_name_seq '>' { $$ = new AstFuncRef(*$1, $3); }
+    | FIELD FUNC_PTR_OPEN func_param_type_seq '>' { $$ = new AstFuncRef(*$1, $3); }
     ;
 
 field_call

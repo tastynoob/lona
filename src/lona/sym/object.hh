@@ -31,6 +31,7 @@ public:
         VARIABLE = 1 << 0,
         REG_VAL = 1 << 1,  // only for base type and small struct
         READONLY = 1 << 2,
+        REF_ALIAS = 1 << 3,
     };
 
     Object(TypeClass* type, uint32_t specifiers = EMPTY)
@@ -66,6 +67,7 @@ public:
     bool isVariable() { return specifiers & VARIABLE; }
     bool isRegVal() { return specifiers & REG_VAL; }
     bool isReadOnly() { return specifiers & READONLY; }
+    bool isRefAlias() { return specifiers & REF_ALIAS; }
 
     
 

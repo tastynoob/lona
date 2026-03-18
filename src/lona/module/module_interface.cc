@@ -134,17 +134,27 @@ ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes)
 
 FuncType *
 ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                         TypeClass *retType) {
+                                         TypeClass *retType,
+                                         std::vector<BindingKind> argBindingKinds) {
     std::string funcTypeName = "f";
     if (retType) {
         funcTypeName += "_";
         funcTypeName.append(retType->full_name.tochara(), retType->full_name.size());
     }
+    if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
+        return nullptr;
+    }
     for (auto *argType : argTypes) {
         if (!argType) {
             return nullptr;
         }
+    }
+    for (std::size_t i = 0; i < argTypes.size(); ++i) {
         funcTypeName += ".";
+        if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
+            funcTypeName += "&";
+        }
+        auto *argType = argTypes[i];
         funcTypeName.append(argType->full_name.tochara(), argType->full_name.size());
     }
 
@@ -154,7 +164,8 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
     }
 
     auto type = std::make_unique<FuncType>(std::vector<TypeClass *>(argTypes),
-                                           retType, string(funcTypeName.c_str()));
+                                           retType, string(funcTypeName.c_str()),
+                                           std::move(argBindingKinds));
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[funcTypeName] = typePtr;
