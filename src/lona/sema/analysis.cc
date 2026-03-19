@@ -74,6 +74,25 @@ describeResolvedType(TypeClass *type) {
         return "<unknown type>";
     }
     if (auto *pointer = type->as<PointerType>()) {
+        if (auto *func = pointer->getPointeeType()->as<FuncType>()) {
+            std::string name = "(";
+            const auto &argTypes = func->getArgTypes();
+            for (size_t i = 0; i < argTypes.size(); ++i) {
+                if (i != 0) {
+                    name += ", ";
+                }
+                if (func->getArgBindingKind(i) == BindingKind::Ref) {
+                    name += "ref ";
+                }
+                name += describeResolvedType(argTypes[i]);
+            }
+            name += ")*";
+            if (func->getRetType() != nullptr) {
+                name += " ";
+                name += describeResolvedType(func->getRetType());
+            }
+            return name;
+        }
         return describeResolvedType(pointer->getPointeeType()) + "*";
     }
     if (auto *array = type->as<ArrayType>()) {
@@ -140,11 +159,12 @@ validateTypeNodeLayout(TypeNode *node) {
         }
         return;
     }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
         for (auto *arg : func->args) {
             validateTypeNodeLayout(arg);
         }
         validateTypeNodeLayout(func->ret);
+        return;
     }
 }
 
@@ -296,11 +316,6 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
     }
     bool hasBareFunctionStorage = type && type->as<FuncType>();
     if (!hasBareFunctionStorage) {
-        auto *typeNode = node->getTypeNode();
-        hasBareFunctionStorage =
-            typeNode != nullptr && dynamic_cast<FuncTypeNode *>(typeNode) != nullptr;
-    }
-    if (!hasBareFunctionStorage) {
         return;
     }
     error(node->loc,
@@ -317,18 +332,18 @@ rejectUninitializedFunctionDerivedStorage(AstVarDef *node) {
     }
 
     auto *typeNode = node->getTypeNode();
-    if (!typeNode || dynamic_cast<FuncTypeNode *>(typeNode) != nullptr) {
+    if (!typeNode) {
         return;
     }
-    if (findFuncTypeNode(typeNode) == nullptr) {
+    if (findFuncPtrTypeNode(typeNode) == nullptr) {
         return;
     }
 
     error(node->loc,
-          "function-related variable type for `" +
+          "function pointer variable type for `" +
               toStdString(node->getName()) + "` requires initializer: " +
               describeTypeNode(typeNode),
-          "Initialize function pointers and function-related arrays at the point of definition.");
+          "Initialize function pointers at the point of definition.");
 }
 
 TypeTable *

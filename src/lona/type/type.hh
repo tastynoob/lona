@@ -244,8 +244,36 @@ class PointerType : public TypeClass {
     TypeClass *pointeeType;
 
 public:
+    static string buildName(TypeClass *pointeeType) {
+        if (auto *func = pointeeType ? pointeeType->as<FuncType>() : nullptr) {
+            std::string name = "(";
+            const auto &argTypes = func->getArgTypes();
+            for (size_t i = 0; i < argTypes.size(); ++i) {
+                if (i != 0) {
+                    name += ", ";
+                }
+                if (func->getArgBindingKind(i) == BindingKind::Ref) {
+                    name += "ref ";
+                }
+                if (argTypes[i]) {
+                    name.append(argTypes[i]->full_name.tochara(),
+                                argTypes[i]->full_name.size());
+                } else {
+                    name += "<unknown>";
+                }
+            }
+            name += ")*";
+            if (auto *retType = func->getRetType()) {
+                name += " ";
+                name.append(retType->full_name.tochara(), retType->full_name.size());
+            }
+            return string(name.c_str());
+        }
+        return pointeeType ? pointeeType->full_name + "*" : string("<unknown>*");
+    }
+
     PointerType(TypeClass *pointeeType)
-        : TypeClass(pointeeType->full_name + "*"),
+        : TypeClass(buildName(pointeeType)),
           pointeeType(pointeeType) {
         typeSize = sizeof(void *);
     }
@@ -439,7 +467,7 @@ public:
     }
 
     PointerType *createPointerType(TypeClass *pointeeType) {
-        auto pointerName = pointeeType->full_name + "*";
+        auto pointerName = PointerType::buildName(pointeeType);
         if (auto *type = getType(pointerName)) {
             return type->as<PointerType>();
         }
@@ -656,7 +684,7 @@ public:
             return getOrCreateTupleType(itemTypes);
         }
 
-        if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
             std::vector<BindingKind> argBindingKinds;
             auto *retType = getType(func->ret);
@@ -669,8 +697,9 @@ public:
                 }
                 argTypes.push_back(argType);
             }
-            return getOrCreateFunctionType(argTypes, retType,
-                                           std::move(argBindingKinds));
+            auto *funcType = getOrCreateFunctionType(argTypes, retType,
+                                                     std::move(argBindingKinds));
+            return funcType ? createPointerType(funcType) : nullptr;
         }
 
         return nullptr;

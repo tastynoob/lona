@@ -51,7 +51,7 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
         name += ">";
         return name;
     }
-    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
         std::string name = "(";
         for (size_t i = 0; i < func->args.size(); ++i) {
             if (i != 0) {
@@ -59,7 +59,7 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
             }
             name += describeTypeNode(func->args[i], nullDescription);
         }
-        name += ")";
+        name += ")*";
         if (func->ret) {
             name += " ";
             name += describeTypeNode(func->ret, nullDescription);

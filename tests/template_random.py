@@ -246,12 +246,6 @@ struct Counter{case_id} {{
         ret self.value + step
     }}
 }}
-
-def Counter{case_id}(v i32) Counter{case_id} {{
-    var out Counter{case_id}
-    out.value = v
-    ret out
-}}
 """
         )
         main_body.extend(

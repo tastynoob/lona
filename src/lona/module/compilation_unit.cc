@@ -97,11 +97,12 @@ validateTypeNodeLayout(const TypeNode *node) {
         }
         return;
     }
-    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
         for (auto *arg : func->args) {
             validateTypeNodeLayout(arg);
         }
         validateTypeNodeLayout(func->ret);
+        return;
     }
 }
 
@@ -251,8 +252,8 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         }
         return;
     }
-    if (auto *func = dynamic_cast<const FuncTypeNode *>(node)) {
-        hashText(seed, "func-type");
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
+        hashText(seed, "func-ptr-type");
         seed = combineHash(seed, func->args.size());
         for (auto *arg : func->args) {
             hashTypeNode(seed, arg);
@@ -339,7 +340,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         return resolved;
     }
 
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
         std::vector<TypeClass *> argTypes;
         std::vector<BindingKind> argBindingKinds;
         argTypes.reserve(func->args.size());
@@ -353,8 +354,9 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
             argTypes.push_back(argType);
         }
         auto *retType = resolveTypeNode(typeTable, unit, func->ret);
-        resolved = typeTable->getOrCreateFunctionType(
+        auto *funcType = typeTable->getOrCreateFunctionType(
             argTypes, retType, std::move(argBindingKinds));
+        resolved = funcType ? typeTable->createPointerType(funcType) : nullptr;
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }

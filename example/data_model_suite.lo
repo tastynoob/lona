@@ -41,13 +41,6 @@ struct Vec2 {
     }
 }
 
-def Vec2(x i32, y i32) Vec2 {
-    var out Vec2
-    out.x = x
-    out.y = y
-    ret out
-}
-
 struct Rational {
     num i32
     den i32
@@ -66,13 +59,6 @@ struct Rational {
         out.den = self.den * other.den
         ret out.normalize()
     }
-}
-
-def Rational(num i32, den i32) Rational {
-    var out Rational
-    out.num = num
-    out.den = den
-    ret out
 }
 
 var pointer_result = increment_twice(40)

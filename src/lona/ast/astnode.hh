@@ -83,12 +83,12 @@ struct TupleTypeNode : public TypeNode {
         : TypeNode(loc), items(std::move(items)) {}
 };
 
-struct FuncTypeNode : public TypeNode {
+struct FuncPtrTypeNode : public TypeNode {
     std::vector<TypeNode*> args;
     TypeNode* ret = nullptr;
 
-    FuncTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr,
-                 const location &loc = location())
+    FuncPtrTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr,
+                    const location &loc = location())
         : TypeNode(loc), args(std::move(args)), ret(ret) {}
 };
 
@@ -119,7 +119,7 @@ unwrapFuncParamType(const TypeNode *node) {
     return param ? param->type : node;
 }
 
-extern FuncTypeNode* findFuncTypeNode(TypeNode* node);
+extern FuncPtrTypeNode* findFuncPtrTypeNode(TypeNode* node);
 extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
 
 class AstNode {

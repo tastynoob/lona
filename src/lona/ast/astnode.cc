@@ -6,22 +6,22 @@
 
 namespace lona {
 
-FuncTypeNode*
-findFuncTypeNode(TypeNode *node) {
+FuncPtrTypeNode*
+findFuncPtrTypeNode(TypeNode *node) {
     if (node == nullptr) {
         return nullptr;
     }
     if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-        return findFuncTypeNode(param->type);
+        return findFuncPtrTypeNode(param->type);
     }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
         return func;
     }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        return findFuncTypeNode(pointer->base);
+        return findFuncPtrTypeNode(pointer->base);
     }
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        return findFuncTypeNode(array->base);
+        return findFuncPtrTypeNode(array->base);
     }
     return nullptr;
 }

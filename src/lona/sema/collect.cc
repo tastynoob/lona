@@ -773,11 +773,12 @@ validateTypeNodeLayout(TypeNode *node) {
         }
         return;
     }
-    if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
         for (auto *arg : func->args) {
             validateTypeNodeLayout(arg);
         }
         validateTypeNodeLayout(func->ret);
+        return;
     }
 }
 
@@ -869,7 +870,7 @@ class InterfaceCollector {
             }
             return interface_->getOrCreateTupleType(itemTypes);
         }
-        if (auto *func = dynamic_cast<FuncTypeNode *>(node)) {
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
             std::vector<TypeClass *> argTypes;
             std::vector<BindingKind> argBindingKinds;
             argTypes.reserve(func->args.size());
@@ -883,8 +884,10 @@ class InterfaceCollector {
                 argTypes.push_back(argType);
             }
             auto *retType = resolveType(func->ret);
-            return interface_->getOrCreateFunctionType(
+            auto *funcType = interface_->getOrCreateFunctionType(
                 argTypes, retType, std::move(argBindingKinds));
+            return funcType ? interface_->getOrCreatePointerType(funcType)
+                            : nullptr;
         }
         return nullptr;
     }

@@ -5,6 +5,8 @@ source "$(dirname "$0")/lib.sh"
 
 func_ptr_in="$(new_tmp_file func-ptr)"
 func_ptr_out="$(new_tmp_file func-ptr-out)"
+func_ptr_void_in="$(new_tmp_file func-ptr-void)"
+func_ptr_void_out="$(new_tmp_file func-ptr-void-out)"
 func_ptr_ref_in="$(new_tmp_file func-ptr-ref)"
 func_ptr_ref_out="$(new_tmp_file func-ptr-ref-out)"
 func_ptr_ref_bad_in="$(new_tmp_file func-ptr-ref-bad)"
@@ -63,6 +65,20 @@ grep -q '^define i32 @foo' "$func_ptr_out"
 grep -q '^define i32 @hold' "$func_ptr_out"
 grep -q 'store ptr @foo' "$func_ptr_out"
 
+cat >"$func_ptr_void_in" <<'EOF'
+def ping() {}
+
+def hold() i32 {
+    var cb ()* = ping&<>
+    cb()
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_void_in" >"$func_ptr_void_out"
+grep -q '^define void @ping' "$func_ptr_void_out"
+grep -q 'store ptr @ping' "$func_ptr_void_out"
+grep -Eq 'call void %.*\(\)' "$func_ptr_void_out"
+
 cat >"$func_ptr_ref_in" <<'EOF'
 def set7(ref v i32) i32 {
     v = 7
@@ -115,7 +131,7 @@ def bad_holder() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_ptr_uninit_in" "$func_ptr_uninit_out" 'expected uninitialized function pointer variable program to fail'
-grep -q 'function-related variable type for `cb` requires initializer: (i32) i32*' "$func_ptr_uninit_out"
+grep -Fq 'function pointer variable type for `cb` requires initializer: (i32)* i32' "$func_ptr_uninit_out"
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {
@@ -124,7 +140,8 @@ def bad_table() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_array_uninit_in" "$func_array_uninit_out" 'expected uninitialized function array variable program to fail'
-grep -Fq 'unsized array syntax is not implemented yet: () i32[]' "$func_array_uninit_out"
+grep -Fq 'bare function signatures are not allowed in type positions.' "$func_array_uninit_out"
+grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_array_uninit_out"
 
 cat >"$func_name_conflict_in" <<'EOF'
 struct Counter {
@@ -158,7 +175,8 @@ def bad_callback(cb () i32) i32 {
 }
 EOF
 expect_emit_ir_failure "$func_param_bad_in" "$func_param_bad_out" 'expected bare function parameter program to fail'
-grep -q 'unsupported bare function parameter type for `cb` in `bad_callback`: () i32' "$func_param_bad_out"
+grep -Fq 'bare function signatures are not allowed in type positions.' "$func_param_bad_out"
+grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_param_bad_out"
 
 cat >"$func_local_bad_in" <<'EOF'
 def bad_local() i32 {
@@ -167,13 +185,15 @@ def bad_local() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_local_bad_in" "$func_local_bad_out" 'expected bare function local variable program to fail'
-grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_local_bad_out"
+grep -Fq 'bare function signatures are not allowed in type positions.' "$func_local_bad_out"
+grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_local_bad_out"
 
 cat >"$func_top_bad_in" <<'EOF'
 var cb () i32
 EOF
 expect_emit_ir_failure "$func_top_bad_in" "$func_top_bad_out" 'expected bare function top-level variable program to fail'
-grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_top_bad_out"
+grep -Fq 'bare function signatures are not allowed in type positions.' "$func_top_bad_out"
+grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_top_bad_out"
 
 cat >"$func_inferred_local_bad_in" <<'EOF'
 def foo() i32 {

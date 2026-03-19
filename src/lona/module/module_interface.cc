@@ -83,8 +83,8 @@ ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
         return nullptr;
     }
 
-    auto pointerName = std::string(pointeeType->full_name.tochara(),
-                                   pointeeType->full_name.size()) + "*";
+    auto pointerTypeName = PointerType::buildName(pointeeType);
+    auto pointerName = std::string(pointerTypeName.tochara(), pointerTypeName.size());
     auto found = derivedTypes_.find(pointerName);
     if (found != derivedTypes_.end()) {
         return found->second->as<PointerType>();
