@@ -1,6 +1,6 @@
 # 名字查找一致性问题
 
-本文档记录 `lona` 当前在“本地名字查找”和“imported 模块名字查找”上的历史性工程问题、已经采取的语义收口，以及预计的根本解决方案。
+本文档记录 `lona` 在“本地名字查找”和“imported 模块名字查找”上的历史性工程问题、已经采取的语义收口、当前已经落地的统一模型，以及剩余的重构边界。
 
 ## 1. 背景
 
@@ -77,7 +77,45 @@ dep.Counter(1)
 
 但这仍然只是语言层止血，不是软件工程上的最终解。
 
-## 5. 预计的根本解决方案
+## 5. 当前实现进度
+
+这一轮重构之后，下面这些点已经落地：
+
+- `CompilationUnit` 与 `ModuleInterface` 已经提供统一的顶层查询入口：
+  - `lookupTopLevelName(...)`
+  - `lookupModuleMember(...)`
+- 当前模块顶层名字与 imported 模块成员名字，已经复用同一类查询结果，只在“查找空间”上区分，不再切换一套完全不同的搜索顺序。
+- resolve 阶段对简单标识符和显式函数取指针，已经统一落成轻量 `ResolvedEntityRef`，不再分别保存“全局对象名 / 全局类型名 / 其它裸字符串”。
+- sema / HIR lowering 阶段已经引入：
+  - `EntityRef`
+  - `LookupResult`
+  - `CallResolution`
+- `obj.xxx` / `mod.xxx` / `Type.xxx` / injected member 的 selector 分流，已经先收敛到 `resolveDot(...)`。
+- `func(...)` / `funcPtr(...)` / `Type(...)` / `module(...)` 的括号应用分流，已经先收敛到 `resolveCall(...)`。
+- `module(...)` 现在有稳定的 targeted diagnostic。
+- imported 模块别名遮蔽、本地/模块限定构造路径、`ref` 签名变化等路径，已经有 acceptance 和 incremental smoke 回归覆盖。
+
+换句话说，这个问题已经不再只是“计划中的根治方向”；核心主路径已经接入统一查询和统一分派模型。
+
+## 6. 剩余边界
+
+当前实现仍然保留下面这些工程边界：
+
+- 词法作用域与顶层名字空间仍然是两层结构：
+  - 局部变量 / 参数 / `self` / `ref` 绑定仍走词法作用域
+  - 顶层类型 / 顶层函数 / imported 模块别名仍走模块级查询
+- `EntityRef` / `LookupResult` / `CallResolution` 已经进入 sema 主路径，但还不是一个完全贯穿所有 resolve 结果的单一公共表示。
+- `Type.xxx` 这类静态类型成员仍未实现；当前只统一了诊断和查找路径。
+- 构造函数重载仍未实现；当前的构造入口仍然是“类型名 + 默认构造语义”。
+- 文档里提到的“统一成员查找协议”已经有主干实现，但还没有进一步抽成独立、显式命名的 `TopLevelNamespace` 类。
+
+因此，当前状态更准确地说是：
+
+- 查找策略已经统一
+- 操作分派主路径已经统一
+- 但数据结构层面仍然保留一部分历史分层
+
+## 7. 预计的后续方向
 
 根本解决方案应该是：
 
@@ -85,7 +123,7 @@ dep.Counter(1)
 
 建议的方向如下。
 
-### 5.1 统一顶层名字查找接口
+### 7.1 统一顶层名字查找接口
 
 增加一套统一接口，抽象“某个作用域中的顶层名字查询”，而不是分别写：
 
@@ -107,7 +145,7 @@ lookupTopLevelName(scope, qualifier?, name) -> LookupResult
 
 而返回值应统一描述解析结果，而不是让不同调用点自己猜。
 
-### 5.2 统一返回值模型
+### 7.2 统一返回值模型
 
 查找结果至少应区分：
 
@@ -124,7 +162,7 @@ lookupTopLevelName(scope, qualifier?, name) -> LookupResult
 
 因此比起简单的 `findType()` / `findFunction()`，更合适的是返回一个统一的 `LookupResult`。
 
-### 5.3 `Call` 在 HIR 前先保持为 call-like
+### 7.3 `Call` 在 HIR 前先保持为 call-like
 
 AST 和 resolve 阶段不必过早把 `Name(...)` 写死成“函数调用”或“构造调用”。
 
@@ -141,7 +179,7 @@ AST 和 resolve 阶段不必过早把 `Name(...)` 写死成“函数调用”或
 
 这样 `Type(...)` 和 `foo(...)` 共用语法，但不会共用含糊不清的语义分支。
 
-### 5.4 imported 模块必须复用同一套查找逻辑
+### 7.4 imported 模块必须复用同一套查找逻辑
 
 这是这次问题里最关键的工程要求：
 
@@ -158,7 +196,7 @@ lookupTopLevelName(currentModule, depModule, "Counter")
 
 应该走同一个实现，只是查找空间不同。
 
-### 5.5 构造函数重载应挂在类型下面
+### 7.5 构造函数重载应挂在类型下面
 
 未来如果支持构造函数重载，建议继续沿用这个模型：
 
@@ -179,7 +217,7 @@ lookupTopLevelName(currentModule, depModule, "Counter")
 - 普通函数命名空间保持干净
 - 名字查找接口也更容易统一
 
-## 6. 建议的重构顺序
+## 8. 建议的重构顺序
 
 建议按下面顺序推进。
 
@@ -190,7 +228,7 @@ lookupTopLevelName(currentModule, depModule, "Counter")
 5. 在 HIR lowering 里再把 call-like 分流成普通调用、构造调用等不同节点。
 6. 最后再考虑显式构造函数重载。
 
-## 7. 需要长期保持的约束
+## 9. 需要长期保持的约束
 
 即使后续做完这轮重构，也应继续保持下面这些约束：
 
@@ -199,7 +237,7 @@ lookupTopLevelName(currentModule, depModule, "Counter")
 - 类型名与普通顶层函数名不能共享同一条 `Type(...)` 调用入口
 - 构造调用与普通函数调用虽然语法相似，但语义模型必须清晰分层
 
-## 8. 总结
+## 10. 总结
 
 这次问题表面上看是“`Counter(...)` 到底是函数还是构造”的语义冲突。
 
@@ -210,4 +248,4 @@ lookupTopLevelName(currentModule, depModule, "Counter")
 
 没有复用同一套接口。
 
-当前已经先用“类型名独占构造入口”把语言表面收住；长期则需要把顶层名字查找统一建模，才能从根上消除这类不一致。
+当前已经不只是“用类型名独占构造入口止血”，而是已经把统一查询和统一操作分派的主路径接进来了；后续工作主要是继续收缩历史残留分层，而不是重新设计一套新语义。

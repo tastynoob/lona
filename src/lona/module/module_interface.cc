@@ -190,6 +190,22 @@ ModuleInterface::findFunction(const std::string &localName) const {
     return &found->second;
 }
 
+ModuleInterface::TopLevelLookup
+ModuleInterface::lookupTopLevelName(const std::string &localName) const {
+    TopLevelLookup lookup;
+    if (const auto *typeDecl = findType(localName)) {
+        lookup.kind = TopLevelLookupKind::Type;
+        lookup.typeDecl = typeDecl;
+        return lookup;
+    }
+    if (const auto *functionDecl = findFunction(localName)) {
+        lookup.kind = TopLevelLookupKind::Function;
+        lookup.functionDecl = functionDecl;
+        return lookup;
+    }
+    return lookup;
+}
+
 std::uint64_t
 hashModuleSource(const std::string &content) {
     return std::hash<std::string>{}(content);

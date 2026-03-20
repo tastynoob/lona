@@ -41,6 +41,14 @@ class FunctionResolver {
     void declareBinding(const ResolvedLocalBinding *binding, const location &loc,
                         const std::string &duplicateMessage,
                         const std::string &duplicateHint) {
+        if (unit_ && unit_->importsModule(binding->name())) {
+            error(loc,
+                  "local binding `" + binding->name() +
+                      "` conflicts with imported module alias `" +
+                      binding->name() + "`",
+                  "Rename the local binding so `" + binding->name() +
+                      ".xxx` continues to refer to the imported module.");
+        }
         auto inserted = locals_.emplace(binding->name(), binding);
         if (!inserted.second) {
             error(loc, duplicateMessage, duplicateHint);
@@ -107,20 +115,27 @@ class FunctionResolver {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             auto local = locals_.find(toStdString(field->name));
             if (local != locals_.end()) {
-                resolved_.bindField(field, ResolvedValueRef::local(local->second));
+                resolved_.bindField(field, ResolvedEntityRef::local(local->second));
                 return;
             }
 
             if (unit_) {
-                if (const auto *functionName =
-                        unit_->findLocalFunction(toStdString(field->name))) {
-                    resolved_.bindField(field, ResolvedValueRef::global(*functionName));
+                auto lookup = unit_->lookupTopLevelName(toStdString(field->name));
+                if (lookup.isFunction()) {
+                    resolved_.bindField(field,
+                                        ResolvedEntityRef::globalValue(
+                                            lookup.resolvedName));
                     return;
                 }
-                if (const auto *typeName =
-                        unit_->findLocalType(toStdString(field->name))) {
+                if (lookup.isType()) {
                     resolved_.bindField(field,
-                                        ResolvedValueRef::globalType(*typeName));
+                                        ResolvedEntityRef::type(lookup.resolvedName));
+                    return;
+                }
+                if (lookup.isModule()) {
+                    resolved_.bindField(field,
+                                        ResolvedEntityRef::module(
+                                            lookup.resolvedName));
                     return;
                 }
             }
@@ -133,7 +148,7 @@ class FunctionResolver {
                     : nullptr;
                 if (globalType) {
                     resolved_.bindField(field,
-                                        ResolvedValueRef::globalType(
+                                        ResolvedEntityRef::type(
                                             toStdString(globalType->full_name)));
                     return;
                 }
@@ -151,14 +166,16 @@ class FunctionResolver {
                           toStdString(field->name) + ".xxx`.");
             }
             resolved_.bindField(field,
-                                ResolvedValueRef::global(toStdString(field->name)));
+                                ResolvedEntityRef::globalValue(
+                                    toStdString(field->name)));
             return;
         }
         if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
             if (unit_) {
-                if (const auto *functionName =
-                        unit_->findLocalFunction(toStdString(funcRef->name))) {
-                    resolved_.bindFunctionRef(funcRef, *functionName);
+                auto lookup = unit_->lookupTopLevelName(toStdString(funcRef->name));
+                if (lookup.isFunction()) {
+                    resolved_.bindFunctionRef(
+                        funcRef, ResolvedEntityRef::globalValue(lookup.resolvedName));
                     return;
                 }
             }
@@ -170,7 +187,8 @@ class FunctionResolver {
                           toStdString(funcRef->name) + "`",
                       "Check the function name and make sure it is declared at top level.");
             }
-            resolved_.bindFunctionRef(funcRef, toStdString(funcRef->name));
+            resolved_.bindFunctionRef(
+                funcRef, ResolvedEntityRef::globalValue(toStdString(funcRef->name)));
             return;
         }
         if (auto *assign = dynamic_cast<const AstAssign *>(node)) {
@@ -310,9 +328,9 @@ class ModuleResolver {
                 llvm::StringRef(node->name.tochara(), node->name.size()));
         } else {
             if (unit_) {
-                if (const auto *functionName =
-                        unit_->findLocalFunction(toStdString(node->name))) {
-                    resolvedFunctionName = *functionName;
+                auto lookup = unit_->lookupTopLevelName(toStdString(node->name));
+                if (lookup.isFunction()) {
+                    resolvedFunctionName = lookup.resolvedName;
                 }
             }
             auto *obj = global_->getObj(llvm::StringRef(resolvedFunctionName));
@@ -335,8 +353,9 @@ class ModuleResolver {
     void resolveStruct(AstStructDecl *node) {
         auto resolvedStructName = toStdString(node->name);
         if (unit_) {
-            if (const auto *typeName = unit_->findLocalType(resolvedStructName)) {
-                resolvedStructName = *typeName;
+            auto lookup = unit_->lookupTopLevelName(resolvedStructName);
+            if (lookup.isType()) {
+                resolvedStructName = lookup.resolvedName;
             }
         }
         auto *type = typeMgr_->getType(llvm::StringRef(resolvedStructName));
@@ -410,7 +429,7 @@ ResolvedFunction::variable(const AstVarDef *node) const {
     return found->second;
 }
 
-const ResolvedValueRef *
+const ResolvedEntityRef *
 ResolvedFunction::field(const AstField *node) const {
     auto found = fields_.find(node);
     if (found == fields_.end()) {
@@ -443,7 +462,7 @@ ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
     return functions_.back().get();
 }
 
-const std::string *
+const ResolvedEntityRef *
 ResolvedFunction::functionRef(const AstFuncRef *node) const {
     auto found = functionRefs_.find(node);
     if (found == functionRefs_.end()) {

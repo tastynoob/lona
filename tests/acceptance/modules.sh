@@ -9,11 +9,17 @@ method_self_mutate_in="$(new_tmp_file method-self-mutate)"
 method_self_mutate_out="$(new_tmp_file method-self-mutate-out)"
 top_level_mix_in="$(new_tmp_file top-level-mix)"
 top_level_mix_out="$(new_tmp_file top-level-mix-out)"
+field_method_chain_in="$(new_tmp_file field-method-chain)"
+field_method_chain_out="$(new_tmp_file field-method-chain-out)"
 import_dir="$(new_tmp_dir import)"
 import_dep_in="$import_dir/math.lo"
 import_main_in="$import_dir/main.lo"
 import_main_out="$(new_tmp_file import-main-out)"
 import_type_out="$(new_tmp_file import-type-out)"
+import_chain_out="$(new_tmp_file import-chain-out)"
+import_module_call_bad_out="$(new_tmp_file import-module-call-bad-out)"
+import_local_shadow_out="$(new_tmp_file import-local-shadow-out)"
+import_top_level_shadow_out="$(new_tmp_file import-top-level-shadow-out)"
 import_mid_in="$import_dir/mid.lo"
 import_leaf_in="$import_dir/leaf.lo"
 import_transitive_main_in="$import_dir/transitive-main.lo"
@@ -92,6 +98,28 @@ EOF
 grep -q '\.main"()' "$top_level_mix_out"
 grep -q '@inc' "$top_level_mix_out"
 
+cat >"$field_method_chain_in" <<'EOF'
+struct Counter {
+    value i32
+
+    def read() i32 {
+        ret self.value
+    }
+}
+
+struct Wrapper {
+    counter Counter
+}
+
+def main() i32 {
+    var w = Wrapper(counter = Counter(value = 4))
+    ret w.counter.read()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$field_method_chain_in" >"$field_method_chain_out"
+grep -Eq '@.*Counter\.read' "$field_method_chain_out"
+grep -Eq 'call i32 @.*Counter\.read\(ptr ' "$field_method_chain_out"
+
 cat >"$import_dep_in" <<'EOF'
 def inc(v i32) i32 {
     ret v + 1
@@ -103,6 +131,10 @@ def helper(v i32) i32 {
 
 struct Point {
     x i32
+}
+
+struct Box {
+    point Point
 }
 EOF
 printf 'import math\n\ndef main() i32 {\n    ret math.helper(4)\n}\n' >"$import_main_in"
@@ -119,6 +151,41 @@ printf 'import math\n\ndef main() i32 {\n    var p math.Point\n    p.x = math.in
 "$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_type_out"
 grep -q '^%math.Point = type { i32 }' "$import_type_out"
 grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
+
+printf 'import math\n\ndef main() i32 {\n    ret math.Box(point = math.Point(x = 4)).point.x\n}\n' >"$import_main_in"
+"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_chain_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def main() i32 {
+    ret math(4)
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_module_call_bad_out" 'expected direct module call program to fail'
+grep -Fq 'module `math` does not support call syntax' "$import_module_call_bad_out"
+grep -Fq 'Call a concrete member like `math.func(...)` or `math.Type(...)` instead.' "$import_module_call_bad_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def main() i32 {
+    var math i32 = 1
+    ret math
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_local_shadow_out" 'expected local binding/import alias conflict to fail'
+grep -Fq 'local binding `math` conflicts with imported module alias `math`' "$import_local_shadow_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def math() i32 {
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_top_level_shadow_out" 'expected top-level function/import alias conflict to fail'
+grep -Fq 'top-level function `math` conflicts with imported module alias `math`' "$import_top_level_shadow_out"
 
 cat >"$import_named_method_dep_in" <<'EOF'
 struct Vec2 {

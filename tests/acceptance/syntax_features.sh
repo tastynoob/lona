@@ -11,6 +11,8 @@ float_in="$(new_tmp_file float)"
 float_out="$(new_tmp_file float-out)"
 numeric_convert_in="$(new_tmp_file numeric-convert)"
 numeric_convert_out="$(new_tmp_file numeric-convert-out)"
+numeric_convert_chain_in="$(new_tmp_file numeric-convert-chain)"
+numeric_convert_chain_out="$(new_tmp_file numeric-convert-chain-out)"
 tobits_in="$(new_tmp_file tobits)"
 tobits_out="$(new_tmp_file tobits-out)"
 tobits_infer_in="$(new_tmp_file tobits-infer)"
@@ -79,6 +81,8 @@ address_temp_bad_in="$(new_tmp_file address-temp-bad)"
 address_temp_bad_out="$(new_tmp_file address-temp-bad-out)"
 struct_init_in="$(new_tmp_file struct-init)"
 struct_init_out="$(new_tmp_file struct-init-out)"
+ctor_ref_bad_in="$(new_tmp_file ctor-ref-bad)"
+ctor_ref_bad_out="$(new_tmp_file ctor-ref-bad-out)"
 named_call_bad_in="$(new_tmp_file named-call-bad)"
 named_call_bad_out="$(new_tmp_file named-call-bad-out)"
 named_call_mix_in="$(new_tmp_file named-call-mix)"
@@ -155,6 +159,16 @@ EOF
 grep -q 'fptosi double' "$numeric_convert_out"
 grep -q 'sitofp i32' "$numeric_convert_out"
 grep -q 'fpext float' "$numeric_convert_out"
+
+cat >"$numeric_convert_chain_in" <<'EOF'
+def chain(v f64) i32 {
+    ret v.toi32().tof32().toi32()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$numeric_convert_chain_in" >"$numeric_convert_chain_out"
+grep -q 'fptosi double' "$numeric_convert_chain_out"
+grep -q 'sitofp i32' "$numeric_convert_chain_out"
+grep -q 'fptosi float' "$numeric_convert_chain_out"
 
 cat >"$tobits_in" <<'EOF'
 def main() i32 {
@@ -558,6 +572,22 @@ EOF
 grep -Fq 'store %' "$struct_init_out"
 grep -Fq 'Complex { i32 1, i32 2 }' "$struct_init_out"
 grep -Fq 'call i32 @fold(i32' "$struct_init_out"
+
+cat >"$ctor_ref_bad_in" <<'EOF'
+struct Complex {
+    real i32
+    img i32
+}
+
+def bad() i32 {
+    var x i32 = 1
+    var c = Complex(ref real = x, img = 2)
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$ctor_ref_bad_in" "$ctor_ref_bad_out" 'expected ref constructor argument program to fail'
+grep -Fq 'constructor arguments do not accept `ref`' "$ctor_ref_bad_out"
+grep -Fq 'Constructors copy field values. Remove `ref` from this argument.' "$ctor_ref_bad_out"
 
 cat >"$named_call_bad_in" <<'EOF'
 def mix(x i32, y i32) i32 {

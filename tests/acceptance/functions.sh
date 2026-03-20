@@ -21,6 +21,8 @@ func_name_conflict_in="$(new_tmp_file func-name-conflict)"
 func_name_conflict_out="$(new_tmp_file func-name-conflict-out)"
 struct_name_conflict_in="$(new_tmp_file struct-name-conflict)"
 struct_name_conflict_out="$(new_tmp_file struct-name-conflict-out)"
+type_member_bad_in="$(new_tmp_file type-member-bad)"
+type_member_bad_out="$(new_tmp_file type-member-bad-out)"
 func_param_bad_in="$(new_tmp_file func-param-bad)"
 func_param_bad_out="$(new_tmp_file func-param-bad-out)"
 func_local_bad_in="$(new_tmp_file func-local-bad)"
@@ -168,6 +170,19 @@ EOF
 expect_emit_ir_failure "$struct_name_conflict_in" "$struct_name_conflict_out" 'expected struct name conflict with top-level function to fail'
 grep -Fq 'struct `Counter` conflicts with top-level function `Counter`' "$struct_name_conflict_out"
 grep -Fq 'Type names reserve constructor syntax like `Counter(...)`.' "$struct_name_conflict_out"
+
+cat >"$type_member_bad_in" <<'EOF'
+struct Counter {
+    value i32
+}
+
+def main() i32 {
+    ret Counter.zero()
+}
+EOF
+expect_emit_ir_failure "$type_member_bad_in" "$type_member_bad_out" 'expected static type member program to fail'
+grep -Fq 'unknown type member `Counter.zero`' "$type_member_bad_out"
+grep -Fq 'Static type members are not implemented yet.' "$type_member_bad_out"
 
 cat >"$func_param_bad_in" <<'EOF'
 def bad_callback(cb () i32) i32 {

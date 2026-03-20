@@ -112,6 +112,25 @@ describeStorageType(TypeClass *type, AstVarDef *node) {
     return describeResolvedType(type);
 }
 
+std::string
+describeMemberOwnerSyntax(const AstNode *node) {
+    if (!node) {
+        return "";
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        return toStdString(field->name);
+    }
+    if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
+        auto parent = describeMemberOwnerSyntax(selector->parent);
+        auto fieldName = toStdString(selector->field->text);
+        if (parent.empty()) {
+            return fieldName;
+        }
+        return parent + "." + fieldName;
+    }
+    return "";
+}
+
 [[noreturn]] void
 errorInvalidArrayDimension(const location &loc) {
     error(loc,
@@ -539,6 +558,310 @@ class FunctionAnalyzer {
         return type;
     }
 
+    EntityRef classifyEntity(HIRExpr *expr) {
+        if (!expr) {
+            return EntityRef::invalid();
+        }
+        if (auto *valueExpr = dynamic_cast<HIRValue *>(expr)) {
+            auto *value = valueExpr->getValue();
+            if (!value) {
+                return EntityRef::invalid();
+            }
+            if (auto *moduleObject = value->as<ModuleObject>()) {
+                return EntityRef::module(moduleObject->unit());
+            }
+            if (auto *typeObject = value->as<TypeObject>()) {
+                return EntityRef::type(typeObject->declaredType());
+            }
+            return EntityRef::object(value);
+        }
+        if (auto *type = expr->getType()) {
+            return EntityRef::typedValue(type);
+        }
+        return EntityRef::invalid();
+    }
+
+    LookupResult resolveDot(HIRExpr *parent, const std::string &fieldName,
+                            const location &loc) {
+        auto result = classifyEntity(parent).dot(fieldName);
+
+        if (auto *moduleUnit = result.owner.asModule()) {
+            auto lookup = moduleUnit->lookupModuleMember(fieldName);
+            if (lookup.isType()) {
+                result.kind = LookupResultKind::ModuleMemberType;
+                result.resultEntity =
+                    EntityRef::type(requireTypeByName(lookup.resolvedName, loc,
+                                                     "module type"));
+                return result;
+            }
+            if (lookup.isFunction()) {
+                result.kind = LookupResultKind::ModuleMemberFunction;
+                result.resultEntity =
+                    EntityRef::object(requireGlobalFunction(lookup.resolvedName, loc,
+                                                            "module function"));
+                return result;
+            }
+            result.kind = LookupResultKind::NotFound;
+            return result;
+        }
+
+        if (auto binding = resolveInjectedMemberBinding(typeMgr, parent, fieldName)) {
+            result.kind = LookupResultKind::InjectedMember;
+            result.resultEntity = EntityRef::typedValue(binding->resultType);
+            return result;
+        }
+
+        auto *valueType = result.owner.valueType();
+        auto *tupleType = valueType ? valueType->as<TupleType>() : nullptr;
+        if (tupleType) {
+            TupleType::ValueTy member;
+            if (tupleType->getMember(llvm::StringRef(fieldName), member)) {
+                result.kind = LookupResultKind::ValueField;
+                result.resultEntity = EntityRef::typedValue(member.first);
+                return result;
+            }
+            result.kind = LookupResultKind::NotFound;
+            return result;
+        }
+
+        auto *structType = valueType ? valueType->as<StructType>() : nullptr;
+        if (structType) {
+            if (auto *member = structType->getMember(llvm::StringRef(fieldName))) {
+                result.kind = LookupResultKind::ValueField;
+                result.resultEntity = EntityRef::typedValue(member->first);
+                return result;
+            }
+            if (auto *methodType = structType->getMethodType(llvm::StringRef(fieldName))) {
+                result.kind = LookupResultKind::Method;
+                result.resultEntity = EntityRef::typedValue(methodType);
+                return result;
+            }
+            result.kind = LookupResultKind::NotFound;
+            return result;
+        }
+
+        result.kind = LookupResultKind::NotFound;
+        return result;
+    }
+
+    HIRExpr *materializeDotExpr(HIRExpr *parent, const std::string &fieldName,
+                                const LookupResult &lookup, const location &loc,
+                                bool allowInjectedMember = false) {
+        switch (lookup.kind) {
+            case LookupResultKind::ModuleMemberType:
+                return makeHIR<HIRValue>(new TypeObject(lookup.resultEntity.asType()), loc);
+            case LookupResultKind::ModuleMemberFunction:
+                return makeHIR<HIRValue>(lookup.resultEntity.asObject(), loc);
+            case LookupResultKind::ValueField:
+                return makeHIR<HIRSelector>(parent, fieldName,
+                                            lookup.resultEntity.valueType(), loc);
+            case LookupResultKind::Method:
+                return makeHIR<HIRSelector>(parent, fieldName, nullptr, loc);
+            case LookupResultKind::InjectedMember:
+                if (allowInjectedMember) {
+                    return nullptr;
+                }
+                error(loc,
+                      "injected member `" + fieldName +
+                          "` can only be used as a direct call callee",
+                      describeInjectedMemberHelp(parent->getType(), fieldName));
+            default:
+                return nullptr;
+        }
+    }
+
+    [[noreturn]] void diagnoseDotFailure(HIRExpr *parent, const std::string &fieldName,
+                                         const location &loc,
+                                         const LookupResult &lookup,
+                                         const std::string &ownerLabel = std::string()) {
+        if (lookup.owner.asModule()) {
+            auto moduleName = ownerLabel.empty()
+                ? lookup.owner.asModule()->moduleName()
+                : ownerLabel;
+            error(loc,
+                  "unknown module member `" + moduleName + "." + fieldName + "`",
+                  "Only directly imported top-level functions and types are available through `file.xxx`.");
+        }
+
+        if (lookup.owner.asType()) {
+            auto typeName = ownerLabel.empty()
+                ? describeResolvedType(lookup.owner.asType())
+                : ownerLabel;
+            error(loc,
+                  "unknown type member `" + typeName + "." + fieldName + "`",
+                  "Static type members are not implemented yet.");
+        }
+
+        auto *tupleType = parent->getType() ? parent->getType()->as<TupleType>() : nullptr;
+        if (tupleType) {
+            error(loc, "unknown tuple field `" + fieldName + "`",
+                  describeTupleFieldHelp(tupleType));
+        }
+
+        auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
+        if (structType) {
+            error(loc, "unknown struct field `" + fieldName + "`",
+                  "Check the field name, or use a direct method call like `obj.method(...)`.");
+        }
+
+        error(loc,
+              "member access expects a struct, tuple, module, or type value on the left side");
+    }
+
+    HIRExpr *materializeResolvedEntity(const ResolvedEntityRef *binding,
+                                       const location &loc,
+                                       const std::string &name) {
+        if (!binding || !binding->valid()) {
+            internalError(loc,
+                          "missing resolved identifier binding for `" + name + "`",
+                          "Run name resolution before HIR lowering.");
+        }
+
+        switch (binding->kind()) {
+            case ResolvedEntityRef::Kind::LocalBinding:
+                return makeHIR<HIRValue>(
+                    requireBoundObject(binding->localBinding(), loc), loc);
+            case ResolvedEntityRef::Kind::GlobalValue: {
+                auto *obj = requireGlobalObject(binding->resolvedName(), loc,
+                                                "global identifier");
+                return makeHIR<HIRValue>(obj, loc);
+            }
+            case ResolvedEntityRef::Kind::Type: {
+                auto *type =
+                    requireTypeByName(binding->resolvedName(), loc, "type identifier");
+                return makeHIR<HIRValue>(new TypeObject(type), loc);
+            }
+            case ResolvedEntityRef::Kind::Module: {
+                auto *obj = requireGlobalObject(binding->resolvedName(), loc,
+                                                "module identifier");
+                auto *moduleObject = obj ? obj->as<ModuleObject>() : nullptr;
+                if (!moduleObject) {
+                    internalError(loc,
+                                  "resolved module `" + binding->resolvedName() +
+                                      "` is missing from the global namespace",
+                                  "Rebuild declarations before HIR lowering.");
+                }
+                return makeHIR<HIRValue>(moduleObject, loc);
+            }
+            case ResolvedEntityRef::Kind::Invalid:
+                break;
+        }
+        internalError(loc,
+                      "unsupported resolved entity kind for `" + name + "`",
+                      "This looks like a compiler pipeline bug.");
+    }
+
+    CallResolution resolveCall(HIRExpr *callee, CallArgList callArgs,
+                               const location &loc) {
+        auto resolution = classifyEntity(callee).applyCall(std::move(callArgs));
+
+        if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
+            if (auto *typeObject = calleeValue->getValue()->as<TypeObject>()) {
+                auto *declaredType = typeObject->declaredType();
+                auto *structType = declaredType ? declaredType->as<StructType>() : nullptr;
+                if (structType) {
+                    resolution.kind = CallResolutionKind::ConstructorCall;
+                    resolution.resultEntity = EntityRef::typedValue(structType);
+                    return resolution;
+                }
+                resolution.kind = CallResolutionKind::NotCallable;
+                resolution.callee = EntityRef::type(declaredType);
+                return resolution;
+            }
+        }
+
+        if (auto *selector = dynamic_cast<HIRSelector *>(callee);
+            selector && selector->getType() == nullptr) {
+            auto *structType = selector->getParent()
+                ? selector->getParent()->getType()->as<StructType>()
+                : nullptr;
+            if (!structType) {
+                internalError(loc, "selector call parent must be a struct value");
+            }
+            auto *methodFunc =
+                typeMgr->getMethodFunction(structType,
+                                           llvm::StringRef(selector->getFieldName()));
+            auto *funcType =
+                methodFunc ? methodFunc->getType()->as<FuncType>()
+                           : structType->getMethodType(
+                                 llvm::StringRef(selector->getFieldName()));
+            if (!funcType) {
+                internalError(loc, "unknown struct method");
+            }
+            resolution.kind = CallResolutionKind::FunctionCall;
+            resolution.callType = funcType;
+            resolution.paramNames =
+                methodFunc && !methodFunc->paramNames().empty()
+                ? &methodFunc->paramNames()
+                : structType->getMethodParamNames(
+                      llvm::StringRef(selector->getFieldName()));
+            resolution.argOffset = getMethodCallArgOffset(selector, funcType);
+            if (auto *retType = funcType->getRetType()) {
+                resolution.resultEntity = EntityRef::typedValue(retType);
+            }
+            return resolution;
+        }
+
+        if (auto *func = getDirectFunctionCallee(callee)) {
+            auto *funcType = func->getType()->as<FuncType>();
+            resolution.kind = CallResolutionKind::FunctionCall;
+            resolution.callType = funcType;
+            resolution.paramNames =
+                func && !func->paramNames().empty() ? &func->paramNames() : nullptr;
+            if (funcType && funcType->getRetType()) {
+                resolution.resultEntity =
+                    EntityRef::typedValue(funcType->getRetType());
+            }
+            return resolution;
+        }
+
+        if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
+            resolution.kind = CallResolutionKind::FunctionPointerCall;
+            resolution.callType = pointerTarget;
+            if (pointerTarget->getRetType()) {
+                resolution.resultEntity =
+                    EntityRef::typedValue(pointerTarget->getRetType());
+            }
+            return resolution;
+        }
+
+        if (auto *arrayType =
+                callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
+            resolution.kind = CallResolutionKind::ArrayIndex;
+            resolution.resultEntity =
+                EntityRef::typedValue(arrayType->getElementType());
+            return resolution;
+        }
+
+        resolution.kind = CallResolutionKind::NotCallable;
+        return resolution;
+    }
+
+    [[noreturn]] void diagnoseCallFailure(HIRExpr *callee, const location &loc,
+                                          const CallResolution &resolution) {
+        if (auto *moduleUnit = resolution.callee.asModule()) {
+            error(loc,
+                  "module `" + moduleUnit->moduleName() +
+                      "` does not support call syntax",
+                  "Call a concrete member like `" + moduleUnit->moduleName() +
+                      ".func(...)` or `" + moduleUnit->moduleName() +
+                      ".Type(...)` instead.");
+        }
+
+        if (auto *type = resolution.callee.asType()) {
+            if (!type->as<StructType>()) {
+                error(loc,
+                      "constructor calls currently support struct types only",
+                      "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
+            }
+        }
+
+        (void)callee;
+        error(loc,
+              "this expression does not support call syntax",
+              "Only functions, function pointers, struct constructors, and arrays support `(...)` here.");
+    }
+
     Function *requireDeclaredFunction(const location &loc) {
         if (!resolved.hasDeclaredFunction()) {
             internalError(loc,
@@ -623,13 +946,6 @@ class FunctionAnalyzer {
         return expr;
     }
 
-    struct CallArgSpec {
-        AstNode *syntax = nullptr;
-        AstNode *value = nullptr;
-        BindingKind bindingKind = BindingKind::Value;
-        std::optional<std::string> name;
-    };
-
     CallArgSpec normalizeCallArg(AstNode *node, const location &callLoc) {
         if (!node) {
             error(callLoc, "call argument is missing");
@@ -637,6 +953,7 @@ class FunctionAnalyzer {
 
         CallArgSpec spec;
         spec.syntax = node;
+        spec.loc = node->loc;
         AstNode *value = node;
         if (auto *namedArg = dynamic_cast<AstNamedCallArg *>(node)) {
             spec.name = toStdString(namedArg->name);
@@ -653,6 +970,19 @@ class FunctionAnalyzer {
         }
         spec.value = value;
         return spec;
+    }
+
+    CallArgList normalizeCallArgs(const std::vector<AstNode *> *rawArgs,
+                                  const location &callLoc) {
+        CallArgList normalized;
+        if (!rawArgs || rawArgs->empty()) {
+            return normalized;
+        }
+        normalized.reserve(rawArgs->size());
+        for (auto *arg : *rawArgs) {
+            normalized.push_back(normalizeCallArg(arg, callLoc));
+        }
+        return normalized;
     }
 
     static bool isNamedCallArg(const CallArgSpec &arg) {
@@ -693,18 +1023,14 @@ class FunctionAnalyzer {
         return out.str();
     }
 
-    std::vector<CallArgSpec> collectOrderedCallArgs(
-        const std::vector<AstNode *> *rawArgs,
+    CallArgList collectOrderedCallArgs(
+        const CallArgList &normalizedArgs,
         const std::vector<std::string> &orderedNames,
         const location &callLoc, const std::string &targetLabel,
         const std::string &nameKind, bool allowNamedArgs) {
-        std::vector<CallArgSpec> normalized;
-        if (!rawArgs || rawArgs->empty()) {
+        CallArgList normalized = normalizedArgs;
+        if (normalized.empty()) {
             return normalized;
-        }
-        normalized.reserve(rawArgs->size());
-        for (auto *arg : *rawArgs) {
-            normalized.push_back(normalizeCallArg(arg, callLoc));
         }
 
         bool hasNamedArgs = false;
@@ -730,7 +1056,7 @@ class FunctionAnalyzer {
             indexByName.emplace(orderedNames[i], i);
         }
 
-        std::vector<CallArgSpec> ordered(orderedNames.size());
+        CallArgList ordered(orderedNames.size());
         std::size_t positionalCount = 0;
         bool seenNamedArg = false;
         for (const auto &arg : normalized) {
@@ -744,7 +1070,7 @@ class FunctionAnalyzer {
                     error(callLoc,
                           "call argument count mismatch: expected at most " +
                               std::to_string(orderedNames.size()) + ", got " +
-                              std::to_string(rawArgs->size()));
+                              std::to_string(normalized.size()));
                 }
                 ordered[positionalCount++] = arg;
                 continue;
@@ -1153,38 +1479,19 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeField(AstField *node) {
         auto *binding = resolved.field(node);
-        if (!binding) {
-            internalError(node->loc,
-                          "missing resolved identifier binding for `" +
-                              toStdString(node->name) + "`",
-                          "Run name resolution before HIR lowering.");
-        }
-
-        if (binding->kind() == ResolvedValueRef::Kind::GlobalObject) {
-            auto *obj = requireGlobalObject(binding->globalName(), node->loc,
-                                            "global identifier");
-            return makeHIR<HIRValue>(obj, node->loc);
-        }
-        if (binding->kind() == ResolvedValueRef::Kind::GlobalType) {
-            auto *type =
-                requireTypeByName(binding->globalName(), node->loc, "type identifier");
-            return makeHIR<HIRValue>(new TypeObject(type), node->loc);
-        }
-
-        return makeHIR<HIRValue>(
-            requireBoundObject(binding->localBinding(), node->loc), node->loc);
+        return materializeResolvedEntity(binding, node->loc, toStdString(node->name));
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
-        auto *functionName = resolved.functionRef(node);
-        if (!functionName) {
+        auto *binding = resolved.functionRef(node);
+        if (!binding || !binding->valid()) {
             internalError(node->loc,
                           "missing resolved function reference for `" +
                               toStdString(node->name) + "`",
                           "Run name resolution before HIR lowering.");
         }
 
-        auto *func = requireGlobalFunction(*functionName, node->loc,
+        auto *func = requireGlobalFunction(binding->resolvedName(), node->loc,
                                            "function reference");
         auto *funcType = func->getType() ? func->getType()->as<FuncType>() : nullptr;
         if (!funcType) {
@@ -1432,71 +1739,25 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeSelector(AstSelector *node) {
         auto *parent = requireExpr(node->parent);
-        if (auto *parentValue = dynamic_cast<HIRValue *>(parent)) {
-            if (auto *moduleObject = parentValue->getValue()->as<ModuleObject>()) {
-                auto fieldName = toStdString(node->field->text);
-                const auto *typeName = moduleObject->unit()
-                    ? moduleObject->unit()->findLocalType(fieldName)
-                    : nullptr;
-                if (typeName) {
-                    auto *type = requireTypeByName(*typeName, node->loc, "module type");
-                    return makeHIR<HIRValue>(new TypeObject(type), node->loc);
-                }
-                const auto *functionName = moduleObject->unit()
-                    ? moduleObject->unit()->findLocalFunction(fieldName)
-                    : nullptr;
-                if (!functionName) {
-                    auto moduleName = moduleObject->unit()
-                        ? moduleObject->unit()->moduleName()
-                        : std::string("<module>");
-                    error(node->loc,
-                          "unknown module member `" + moduleName + "." + fieldName + "`",
-                          "Only directly imported top-level functions and types are available through `file.xxx`.");
-                }
-                auto *func = requireGlobalFunction(*functionName, node->loc,
-                                                  "module function");
-                return makeHIR<HIRValue>(func, node->loc);
-            }
-        }
         auto fieldName = toStdString(node->field->text);
-        if (resolveInjectedMemberBinding(typeMgr, parent, fieldName)) {
-            error(node->loc,
-                  "injected member `" + fieldName +
-                      "` can only be used as a direct call callee",
-                  describeInjectedMemberHelp(parent->getType(), fieldName));
+        auto lookup = resolveDot(parent, fieldName, node->loc);
+        if (auto *expr = materializeDotExpr(parent, fieldName, lookup, node->loc)) {
+            return expr;
         }
-        auto *tupleType = parent->getType() ? parent->getType()->as<TupleType>() : nullptr;
-        if (tupleType) {
-            TupleType::ValueTy member;
-            if (!tupleType->getMember(llvm::StringRef(fieldName), member)) {
-                error(node->loc,
-                      "unknown tuple field `" + fieldName + "`",
-                      describeTupleFieldHelp(tupleType));
-            }
-            return makeHIR<HIRSelector>(parent, fieldName, member.first, node->loc);
-        }
-        auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
-        if (!structType) {
-            error(node->loc,
-                  "member access expects a struct or tuple value on the left side");
-        }
-
-        auto *member = structType->getMember(llvm::StringRef(fieldName));
-        if (member) {
-            return makeHIR<HIRSelector>(parent, fieldName, member->first, node->loc);
-        }
-        if (structType->getMethodType(llvm::StringRef(fieldName))) {
-            return makeHIR<HIRSelector>(parent, fieldName, nullptr, node->loc);
-        }
-        error(node->loc, "unknown struct field `" + fieldName + "`",
-              "Check the field name, or use a direct method call like `obj.method(...)`.");
+        diagnoseDotFailure(parent, fieldName, node->loc, lookup,
+                           describeMemberOwnerSyntax(node->parent));
     }
 
     HIRExpr *analyzeCall(AstFieldCall *node, TypeClass *expectedType = nullptr) {
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        HIRExpr *callee = nullptr;
         if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
             auto *receiver = requireExpr(selectorNode->parent);
             auto fieldName = toStdString(selectorNode->field->text);
-            if (auto binding = resolveInjectedMemberBinding(typeMgr, receiver, fieldName)) {
+            auto lookup = resolveDot(receiver, fieldName, node->loc);
+            if (lookup.kind == LookupResultKind::InjectedMember) {
+                auto binding = resolveInjectedMemberBinding(typeMgr, receiver, fieldName);
+                assert(binding.has_value());
                 if (binding->kind == InjectedMemberKind::NumericConversion) {
                     if (node->args && !node->args->empty()) {
                         error(node->loc,
@@ -1517,18 +1778,29 @@ class FunctionAnalyzer {
                     return coerceBitCopyExpr(receiver, binding->resultType, node->loc);
                 }
             }
+            if (auto *resolvedCallee =
+                    materializeDotExpr(receiver, fieldName, lookup, selectorNode->loc,
+                                       true)) {
+                callee = resolvedCallee;
+            } else {
+                diagnoseDotFailure(receiver, fieldName, selectorNode->loc, lookup,
+                                   describeMemberOwnerSyntax(selectorNode->parent));
+            }
         }
 
-        auto *callee = requireExpr(node->value);
-        if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
-            if (auto *typeObject = calleeValue->getValue()->as<TypeObject>()) {
-                auto *structType = typeObject->declaredType()
-                    ? typeObject->declaredType()->as<StructType>()
+        if (!callee) {
+            callee = requireExpr(node->value);
+        }
+        auto resolution = resolveCall(callee, std::move(normalizedArgs), node->loc);
+        switch (resolution.kind) {
+            case CallResolutionKind::ConstructorCall: {
+                auto *structType = resolution.callee.asType()
+                    ? resolution.callee.asType()->as<StructType>()
                     : nullptr;
                 if (!structType) {
-                    error(node->loc,
-                          "constructor calls currently support struct types only",
-                          "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
+                    internalError(node->loc,
+                                  "constructor resolution is missing its struct type",
+                                  "This looks like a compiler pipeline bug.");
                 }
 
                 auto members = orderedStructMembers(structType, node->loc);
@@ -1538,7 +1810,7 @@ class FunctionAnalyzer {
                     fieldNames.push_back(member.first);
                 }
                 auto orderedArgs = collectOrderedCallArgs(
-                    node->args, fieldNames, node->loc,
+                    resolution.args, fieldNames, node->loc,
                     "constructor `" + describeResolvedType(structType) + "`",
                     "field", true);
                 if (orderedArgs.size() != members.size()) {
@@ -1564,179 +1836,180 @@ class FunctionAnalyzer {
                     fieldExpr = coerceNumericExpr(fieldExpr, expectedFieldType,
                                                  orderedArgs[i].value->loc, false);
                     requireCompatibleTypes(
-                        orderedArgs[i].value->loc, expectedFieldType, fieldExpr->getType(),
-                        "constructor field type mismatch for `" + members[i].first + "`");
+                        orderedArgs[i].value->loc, expectedFieldType,
+                        fieldExpr->getType(),
+                        "constructor field type mismatch for `" +
+                            members[i].first + "`");
                     fields.push_back(fieldExpr);
                 }
                 return makeHIR<HIRStructLiteral>(std::move(fields), structType,
                                                  node->loc);
             }
-        }
-
-        FuncType *funcType = nullptr;
-        size_t argOffset = 0;
-        const std::vector<std::string> *paramNames = nullptr;
-        if (auto *selector = dynamic_cast<HIRSelector *>(callee);
-            selector && selector->getType() == nullptr) {
-            auto *structType = selector->getParent()->getType()->as<StructType>();
-            if (!structType) {
-                error("selector call parent must be a struct value");
-            }
-            auto *methodFunc =
-                typeMgr->getMethodFunction(structType,
-                                           llvm::StringRef(selector->getFieldName()));
-            funcType =
-                methodFunc ? methodFunc->getType()->as<FuncType>()
-                           : structType->getMethodType(
-                                 llvm::StringRef(selector->getFieldName()));
-            if (!funcType) {
-                error("unknown struct method");
-            }
-            if (methodFunc && !methodFunc->paramNames().empty()) {
-                paramNames = &methodFunc->paramNames();
-            } else if (const auto *methodParamNames =
-                           structType->getMethodParamNames(
-                               llvm::StringRef(selector->getFieldName()));
-                       methodParamNames && !methodParamNames->empty()) {
-                paramNames = methodParamNames;
-            }
-            argOffset = getMethodCallArgOffset(selector, funcType);
-        } else if (auto *func = getDirectFunctionCallee(callee)) {
-            funcType = func->getType()->as<FuncType>();
-            if (!func->paramNames().empty()) {
-                paramNames = &func->paramNames();
-            }
-        } else if (auto *pointerTarget = getFunctionPointerTarget(callee->getType())) {
-            funcType = pointerTarget;
-        } else if (auto *arrayType = callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
-            auto orderedArgs = collectOrderedCallArgs(
-                node->args, {}, node->loc, "array indexing", "index", false);
-            if (!arrayType->hasStaticLayout()) {
-                error(node->loc,
-                      "array indexing requires fixed explicit dimensions",
-                      "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
-            }
-            const auto actualArgCount = orderedArgs.size();
-            if (actualArgCount != arrayType->indexArity()) {
-                error(node->loc,
-                      "array index arity mismatch: expected " +
-                          std::to_string(arrayType->indexArity()) + ", got " +
-                          std::to_string(actualArgCount));
-            }
-            std::vector<HIRExpr *> args;
-            args.reserve(actualArgCount);
-            for (size_t i = 0; i < orderedArgs.size(); ++i) {
-                if (orderedArgs[i].bindingKind == BindingKind::Ref) {
-                    error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
-                                                : node->loc,
-                          "array indexing does not accept `ref` arguments",
-                          "Use positional indices like `a(i, j)` without `ref`.");
+            case CallResolutionKind::ArrayIndex: {
+                auto *arrayType =
+                    callee->getType() ? callee->getType()->as<ArrayType>() : nullptr;
+                if (!arrayType) {
+                    internalError(node->loc,
+                                  "array index resolution is missing its array type",
+                                  "This looks like a compiler pipeline bug.");
                 }
-                auto *arg = requireNonCallExpr(orderedArgs[i].value, i32Ty);
-                arg = coerceNumericExpr(arg, i32Ty, orderedArgs[i].value->loc, false);
-                requireCompatibleTypes(orderedArgs[i].value->loc, i32Ty, arg->getType(),
-                                           "array index type mismatch at index " +
-                                               std::to_string(i));
-                args.push_back(arg);
-            }
-            return makeHIR<HIRIndex>(callee, std::move(args),
-                                     arrayType->getElementType(), node->loc);
-        } else {
-            error("callee must be a function, function pointer, or method selector");
-        }
-
-        std::vector<CallArgSpec> orderedArgs;
-        if (node->args && !node->args->empty()) {
-            if (paramNames && !paramNames->empty()) {
-                orderedArgs = collectOrderedCallArgs(
-                    node->args, *paramNames, node->loc, "function call",
-                    "parameter", true);
-            } else {
-                orderedArgs = collectOrderedCallArgs(
-                    node->args, {}, node->loc, "this call target",
-                    "parameter", false);
-            }
-        }
-
-        const auto actualArgCount = orderedArgs.size();
-        std::vector<HIRExpr *> args;
-        args.reserve(actualArgCount);
-        const auto &paramTypes = funcType->getArgTypes();
-        if (actualArgCount + argOffset != paramTypes.size()) {
-            error("call argument count mismatch: expected " +
-                  std::to_string(paramTypes.size() - argOffset) + ", got " +
-                  std::to_string(actualArgCount));
-        }
-        if (!orderedArgs.empty()) {
-            for (size_t i = 0; i < orderedArgs.size(); ++i) {
-                auto *expectedType = paramTypes[i + argOffset];
-                auto bindingKind = funcType->getArgBindingKind(i + argOffset);
-                if (bindingKind == BindingKind::Ref) {
-                    if (orderedArgs[i].bindingKind != BindingKind::Ref) {
-                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
-                                                    : node->loc,
-                              "reference " +
-                                  describeCallParameter(paramNames, i) +
-                                  " must be passed with `ref`",
-                              explicitRefCallHint(paramNames, i));
-                    }
-                    auto *arg =
-                        requireNonCallExpr(orderedArgs[i].value, expectedType);
-                    if (!isAddressable(arg)) {
-                        error(orderedArgs[i].value->loc,
-                              "reference parameter at index " + std::to_string(i) +
-                                  " expects an addressable value",
-                              "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
-                    }
-                    if (expectedType != arg->getType()) {
-                        error(orderedArgs[i].value->loc,
-                              "reference argument type mismatch at index " +
-                                  std::to_string(i) + ": expected " +
-                                  describeResolvedType(expectedType) + ", got " +
-                                  describeResolvedType(arg->getType()),
-                              "Reference arguments bind aliases directly, so the argument type must match exactly.");
-                    }
-                    args.push_back(arg);
-                } else {
+                auto orderedArgs = collectOrderedCallArgs(
+                    resolution.args, {}, node->loc, "array indexing", "index", false);
+                if (!arrayType->hasStaticLayout()) {
+                    error(node->loc,
+                          "array indexing requires fixed explicit dimensions",
+                          "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+                }
+                const auto actualArgCount = orderedArgs.size();
+                if (actualArgCount != arrayType->indexArity()) {
+                    error(node->loc,
+                          "array index arity mismatch: expected " +
+                              std::to_string(arrayType->indexArity()) + ", got " +
+                              std::to_string(actualArgCount));
+                }
+                std::vector<HIRExpr *> args;
+                args.reserve(actualArgCount);
+                for (size_t i = 0; i < orderedArgs.size(); ++i) {
                     if (orderedArgs[i].bindingKind == BindingKind::Ref) {
                         error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
                                                     : node->loc,
-                              "value " + describeCallParameter(paramNames, i) +
-                                  " cannot be passed with `ref`",
-                              "Remove `ref` and pass the value directly.");
+                              "array indexing does not accept `ref` arguments",
+                              "Use positional indices like `a(i, j)` without `ref`.");
                     }
-                    auto *arg =
-                        requireNonCallExpr(orderedArgs[i].value, expectedType);
-                    arg = coerceNumericExpr(arg, expectedType,
-                                            orderedArgs[i].value->loc, false);
-                    requireCompatibleTypes(orderedArgs[i].value->loc, expectedType,
-                                           arg->getType(),
-                                           "call argument type mismatch at index " +
-                                               std::to_string(i));
+                    auto *arg = requireNonCallExpr(orderedArgs[i].value, i32Ty);
+                    arg = coerceNumericExpr(arg, i32Ty, orderedArgs[i].value->loc,
+                                            false);
+                    requireCompatibleTypes(
+                        orderedArgs[i].value->loc, i32Ty, arg->getType(),
+                        "array index type mismatch at index " + std::to_string(i));
                     args.push_back(arg);
                 }
+                return makeHIR<HIRIndex>(callee, std::move(args),
+                                         arrayType->getElementType(), node->loc);
             }
-        }
-        for (size_t i = 0; i < args.size(); ++i) {
-            auto *expectedType = paramTypes[i + argOffset];
-            auto *actualType = args[i]->getType();
-            if (funcType->getArgBindingKind(i + argOffset) == BindingKind::Ref) {
-                if (expectedType != actualType) {
-                    error(node->loc,
-                          "reference argument type mismatch at index " +
-                              std::to_string(i) + ": expected " +
-                              describeResolvedType(expectedType) + ", got " +
-                              describeResolvedType(actualType));
+            case CallResolutionKind::FunctionCall:
+            case CallResolutionKind::FunctionPointerCall: {
+                auto *funcType = resolution.callType;
+                if (!funcType) {
+                    internalError(node->loc,
+                                  "call resolution is missing its function type",
+                                  "This looks like a compiler pipeline bug.");
                 }
-            } else {
-                requireCompatibleTypes(node->loc, expectedType, actualType,
-                                       "call argument type mismatch at index " +
-                                           std::to_string(i));
-            }
-        }
 
-        auto *retType = funcType ? funcType->getRetType() : nullptr;
-        return makeHIR<HIRCall>(callee, std::move(args), retType, node->loc);
+                CallArgList orderedArgs;
+                if (!resolution.args.empty()) {
+                    if (resolution.paramNames && !resolution.paramNames->empty()) {
+                        orderedArgs = collectOrderedCallArgs(
+                            resolution.args, *resolution.paramNames, node->loc,
+                            "function call", "parameter", true);
+                    } else {
+                        orderedArgs = collectOrderedCallArgs(
+                            resolution.args, {}, node->loc, "this call target",
+                            "parameter", false);
+                    }
+                }
+
+                const auto actualArgCount = orderedArgs.size();
+                std::vector<HIRExpr *> args;
+                args.reserve(actualArgCount);
+                const auto &paramTypes = funcType->getArgTypes();
+                if (actualArgCount + resolution.argOffset != paramTypes.size()) {
+                    error("call argument count mismatch: expected " +
+                          std::to_string(paramTypes.size() - resolution.argOffset) +
+                          ", got " + std::to_string(actualArgCount));
+                }
+                if (!orderedArgs.empty()) {
+                    for (size_t i = 0; i < orderedArgs.size(); ++i) {
+                        auto *expectedType = paramTypes[i + resolution.argOffset];
+                        auto bindingKind =
+                            funcType->getArgBindingKind(i + resolution.argOffset);
+                        if (bindingKind == BindingKind::Ref) {
+                            if (orderedArgs[i].bindingKind != BindingKind::Ref) {
+                                error(orderedArgs[i].syntax
+                                          ? orderedArgs[i].syntax->loc
+                                          : node->loc,
+                                      "reference " +
+                                          describeCallParameter(resolution.paramNames,
+                                                                i) +
+                                          " must be passed with `ref`",
+                                      explicitRefCallHint(resolution.paramNames, i));
+                            }
+                            auto *arg =
+                                requireNonCallExpr(orderedArgs[i].value, expectedType);
+                            if (!isAddressable(arg)) {
+                                error(orderedArgs[i].value->loc,
+                                      "reference parameter at index " +
+                                          std::to_string(i) +
+                                          " expects an addressable value",
+                                      "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
+                            }
+                            if (expectedType != arg->getType()) {
+                                error(orderedArgs[i].value->loc,
+                                      "reference argument type mismatch at index " +
+                                          std::to_string(i) + ": expected " +
+                                          describeResolvedType(expectedType) +
+                                          ", got " +
+                                          describeResolvedType(arg->getType()),
+                                      "Reference arguments bind aliases directly, so the argument type must match exactly.");
+                            }
+                            args.push_back(arg);
+                        } else {
+                            if (orderedArgs[i].bindingKind == BindingKind::Ref) {
+                                error(orderedArgs[i].syntax
+                                          ? orderedArgs[i].syntax->loc
+                                          : node->loc,
+                                      "value " +
+                                          describeCallParameter(resolution.paramNames,
+                                                                i) +
+                                          " cannot be passed with `ref`",
+                                      "Remove `ref` and pass the value directly.");
+                            }
+                            auto *arg =
+                                requireNonCallExpr(orderedArgs[i].value, expectedType);
+                            arg = coerceNumericExpr(arg, expectedType,
+                                                    orderedArgs[i].value->loc,
+                                                    false);
+                            requireCompatibleTypes(
+                                orderedArgs[i].value->loc, expectedType,
+                                arg->getType(),
+                                "call argument type mismatch at index " +
+                                    std::to_string(i));
+                            args.push_back(arg);
+                        }
+                    }
+                }
+                for (size_t i = 0; i < args.size(); ++i) {
+                    auto *expectedType = paramTypes[i + resolution.argOffset];
+                    auto *actualType = args[i]->getType();
+                    if (funcType->getArgBindingKind(i + resolution.argOffset) ==
+                        BindingKind::Ref) {
+                        if (expectedType != actualType) {
+                            error(node->loc,
+                                  "reference argument type mismatch at index " +
+                                      std::to_string(i) + ": expected " +
+                                      describeResolvedType(expectedType) +
+                                      ", got " +
+                                      describeResolvedType(actualType));
+                        }
+                    } else {
+                        requireCompatibleTypes(
+                            node->loc, expectedType, actualType,
+                            "call argument type mismatch at index " +
+                                std::to_string(i));
+                    }
+                }
+
+                auto *retType = funcType->getRetType();
+                return makeHIR<HIRCall>(callee, std::move(args), retType,
+                                         node->loc);
+            }
+            case CallResolutionKind::NotCallable:
+                diagnoseCallFailure(callee, node->loc, resolution);
+            default:
+                internalError(node->loc,
+                              "call resolution produced an unsupported result kind",
+                              "This looks like a compiler pipeline bug.");
+        }
     }
 
 public:

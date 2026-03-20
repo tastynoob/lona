@@ -23,11 +23,31 @@ enum class CompilationUnitStage {
 
 class CompilationUnit {
 public:
+    enum class TopLevelLookupKind {
+        NotFound,
+        Module,
+        Type,
+        Function,
+    };
+
     struct ImportedModule {
         std::string path;
         std::string moduleKey;
         std::string moduleName;
         const ModuleInterface *interface = nullptr;
+    };
+
+    struct TopLevelLookup {
+        TopLevelLookupKind kind = TopLevelLookupKind::NotFound;
+        const ImportedModule *importedModule = nullptr;
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        const ModuleInterface::FunctionDecl *functionDecl = nullptr;
+        std::string resolvedName;
+
+        bool found() const { return kind != TopLevelLookupKind::NotFound; }
+        bool isModule() const { return kind == TopLevelLookupKind::Module; }
+        bool isType() const { return kind == TopLevelLookupKind::Type; }
+        bool isFunction() const { return kind == TopLevelLookupKind::Function; }
     };
 
 private:
@@ -87,6 +107,10 @@ public:
     bool bindLocalFunction(std::string localName, std::string resolvedName);
     const std::string *findLocalType(const std::string &localName) const;
     const std::string *findLocalFunction(const std::string &localName) const;
+    TopLevelLookup lookupTopLevelName(const std::string &name) const;
+    TopLevelLookup lookupModuleMember(const std::string &name) const;
+    TopLevelLookup lookupTopLevelName(const ImportedModule &moduleNamespace,
+                                      const std::string &name) const;
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();

@@ -403,6 +403,14 @@ declareStructType(TypeTable *typeMgr, AstStructDecl *node,
                   bool exportNamespace = false) {
     auto resolvedName = resolveTopLevelName(unit, node->name, exportNamespace);
     if (unit) {
+        if (unit->importsModule(toStdString(node->name))) {
+            error(node->loc,
+                  "struct `" + toStdString(node->name) +
+                      "` conflicts with imported module alias `" +
+                      toStdString(node->name) + "`",
+                  "Rename the struct so `" + toStdString(node->name) +
+                      ".xxx` continues to refer to the imported module.");
+        }
         if (unit->findLocalFunction(toStdString(node->name)) != nullptr) {
             error(node->loc,
                   "struct `" + toStdString(node->name) +
@@ -443,6 +451,14 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
     } else {
         if (unit) {
+            if (unit->importsModule(toStdString(func_name))) {
+                error(node->loc,
+                      "top-level function `" + toStdString(func_name) +
+                          "` conflicts with imported module alias `" +
+                          toStdString(func_name) + "`",
+                      "Rename the function so `" + toStdString(func_name) +
+                          ".xxx` continues to refer to the imported module.");
+            }
             if (unit->findLocalType(toStdString(func_name)) != nullptr) {
                 error(node->loc,
                       "top-level function `" + toStdString(func_name) +
@@ -829,8 +845,9 @@ class InterfaceCollector {
                         llvm::StringRef(rawName.c_str(), rawName.size()))) {
                     return builtin;
                 }
-                if (const auto *typeDecl = interface_->findType(rawName)) {
-                    return typeDecl->type;
+                auto lookup = interface_->lookupTopLevelName(rawName);
+                if (lookup.isType() && lookup.typeDecl) {
+                    return lookup.typeDecl->type;
                 }
                 return nullptr;
             }
@@ -841,8 +858,8 @@ class InterfaceCollector {
             if (!imported || !imported->interface) {
                 return nullptr;
             }
-            auto *importedDecl = imported->interface->findType(typeName);
-            return importedDecl ? importedDecl->type : nullptr;
+            auto lookup = imported->interface->lookupTopLevelName(typeName);
+            return lookup.isType() && lookup.typeDecl ? lookup.typeDecl->type : nullptr;
         }
         if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
             auto *baseType = resolveType(pointer->base);
@@ -1103,6 +1120,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
         if (!type) {
             error("failed to materialize imported type `" + entry.first + "`");
         }
+        if (unit.importsModule(entry.first)) {
+            error("top-level type `" + entry.first +
+                  "` conflicts with imported module alias `" + entry.first + "`");
+        }
         unit.bindLocalType(entry.first, toStdString(type->full_name));
     }
 
@@ -1111,6 +1132,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
         if (!funcType) {
             error("failed to materialize imported function signature `" + entry.first +
                   "`");
+        }
+        if (unit.importsModule(entry.first)) {
+            error("top-level function `" + entry.first +
+                  "` conflicts with imported module alias `" + entry.first + "`");
         }
         auto runtimeName = exportNamespace ? entry.second.exportedName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);

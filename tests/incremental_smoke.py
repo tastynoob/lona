@@ -251,6 +251,24 @@ def ref_signature_program_text(module_name: str, use_ref: bool) -> str:
     )
 
 
+def constructor_dependency_text(field_name: str) -> str:
+    return (
+        "struct Point {\n"
+        f"    {field_name} i32\n"
+        "}\n"
+    )
+
+
+def constructor_program_text(module_name: str, field_name: str) -> str:
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        f"    var p = {module_name}.Point({field_name} = 1)\n"
+        f"    ret p.{field_name}\n"
+        "}\n"
+    )
+
+
 def run_ref_signature_interface_hash_case(rng: random.Random, runner: SessionRunner,
                                           root: Path) -> None:
     dep_path = root / "dep.lo"
@@ -274,6 +292,31 @@ def run_ref_signature_interface_hash_case(rng: random.Random, runner: SessionRun
     expect_compile_ok(result, compiled=1, reused=1)
     expect("call i32 @dep.set7(ptr " in result["stdout"],
            "expected ref signature change to force recompilation of the caller")
+
+
+def run_imported_constructor_interface_hash_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    first_field = f"x_{rng.randint(10, 99)}"
+    second_field = f"y_{rng.randint(10, 99)}"
+
+    write_file(dep_path, constructor_dependency_text(first_field))
+    write_file(app_path, constructor_program_text("dep", first_field))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, constructor_dependency_text(second_field))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        f"unknown field `{first_field}` for constructor `dep.Point`",
+    )
+
+    write_file(app_path, constructor_program_text("dep", second_field))
+    expect_compile_ok(runner.compile(app_path), compiled=1, reused=1)
 
 
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
@@ -319,6 +362,12 @@ def main() -> int:
                 "ref-signature-interface-hash-invalidation",
                 lambda: run_ref_signature_interface_hash_case(
                     rng, runner, root / "ref_signature_interface"
+                ),
+            )
+            suite.add(
+                "imported-constructor-interface-hash-invalidation",
+                lambda: run_imported_constructor_interface_hash_case(
+                    rng, runner, root / "imported_constructor_interface"
                 ),
             )
             suite.add(

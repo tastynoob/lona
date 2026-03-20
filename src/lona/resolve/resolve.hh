@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
+#include "lona/sema/entity.hh"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -51,44 +52,56 @@ public:
     }
 };
 
-class ResolvedValueRef {
+class ResolvedEntityRef {
 public:
     enum class Kind {
+        Invalid,
         LocalBinding,
-        GlobalObject,
-        GlobalType,
+        GlobalValue,
+        Type,
+        Module,
     };
 
 private:
-    Kind kind_ = Kind::GlobalObject;
+    Kind kind_ = Kind::Invalid;
     const ResolvedLocalBinding *localBinding_ = nullptr;
-    std::string globalName_;
+    std::string resolvedName_;
 
 public:
-    static ResolvedValueRef local(const ResolvedLocalBinding *binding) {
-        ResolvedValueRef ref;
+    static ResolvedEntityRef invalid() { return ResolvedEntityRef(); }
+
+    static ResolvedEntityRef local(const ResolvedLocalBinding *binding) {
+        ResolvedEntityRef ref;
         ref.kind_ = Kind::LocalBinding;
         ref.localBinding_ = binding;
         return ref;
     }
 
-    static ResolvedValueRef global(std::string name) {
-        ResolvedValueRef ref;
-        ref.kind_ = Kind::GlobalObject;
-        ref.globalName_ = std::move(name);
+    static ResolvedEntityRef globalValue(std::string name) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::GlobalValue;
+        ref.resolvedName_ = std::move(name);
         return ref;
     }
 
-    static ResolvedValueRef globalType(std::string name) {
-        ResolvedValueRef ref;
-        ref.kind_ = Kind::GlobalType;
-        ref.globalName_ = std::move(name);
+    static ResolvedEntityRef type(std::string name) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::Type;
+        ref.resolvedName_ = std::move(name);
+        return ref;
+    }
+
+    static ResolvedEntityRef module(std::string name) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::Module;
+        ref.resolvedName_ = std::move(name);
         return ref;
     }
 
     Kind kind() const { return kind_; }
+    bool valid() const { return kind_ != Kind::Invalid; }
     const ResolvedLocalBinding *localBinding() const { return localBinding_; }
-    const std::string &globalName() const { return globalName_; }
+    const std::string &resolvedName() const { return resolvedName_; }
 };
 
 class ResolvedFunction {
@@ -103,8 +116,8 @@ class ResolvedFunction {
     std::vector<const ResolvedLocalBinding *> params_;
     const ResolvedLocalBinding *selfBinding_ = nullptr;
     std::unordered_map<const AstVarDef *, const ResolvedLocalBinding *> variables_;
-    std::unordered_map<const AstField *, ResolvedValueRef> fields_;
-    std::unordered_map<const AstFuncRef *, std::string> functionRefs_;
+    std::unordered_map<const AstField *, ResolvedEntityRef> fields_;
+    std::unordered_map<const AstFuncRef *, ResolvedEntityRef> functionRefs_;
 
 public:
     ResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
@@ -141,15 +154,15 @@ public:
     }
     const ResolvedLocalBinding *variable(const AstVarDef *node) const;
 
-    void bindField(const AstField *node, ResolvedValueRef binding) {
+    void bindField(const AstField *node, ResolvedEntityRef binding) {
         fields_[node] = binding;
     }
-    const ResolvedValueRef *field(const AstField *node) const;
+    const ResolvedEntityRef *field(const AstField *node) const;
 
-    void bindFunctionRef(const AstFuncRef *node, std::string functionName) {
-        functionRefs_[node] = std::move(functionName);
+    void bindFunctionRef(const AstFuncRef *node, ResolvedEntityRef binding) {
+        functionRefs_[node] = std::move(binding);
     }
-    const std::string *functionRef(const AstFuncRef *node) const;
+    const ResolvedEntityRef *functionRef(const AstFuncRef *node) const;
 };
 
 class ResolvedModule {

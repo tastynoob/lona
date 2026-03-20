@@ -19,6 +19,12 @@ class AstNode;
 
 class ModuleInterface {
 public:
+    enum class TopLevelLookupKind {
+        NotFound,
+        Type,
+        Function,
+    };
+
     struct TypeDecl {
         std::string localName;
         std::string exportedName;
@@ -30,6 +36,16 @@ public:
         std::string exportedName;
         FuncType *type = nullptr;
         std::vector<std::string> paramNames;
+    };
+
+    struct TopLevelLookup {
+        TopLevelLookupKind kind = TopLevelLookupKind::NotFound;
+        const TypeDecl *typeDecl = nullptr;
+        const FunctionDecl *functionDecl = nullptr;
+
+        bool found() const { return kind != TopLevelLookupKind::NotFound; }
+        bool isType() const { return kind == TopLevelLookupKind::Type; }
+        bool isFunction() const { return kind == TopLevelLookupKind::Function; }
     };
 
 private:
@@ -74,6 +90,7 @@ public:
                                       std::vector<BindingKind> argBindingKinds = {});
     const TypeDecl *findType(const std::string &localName) const;
     const FunctionDecl *findFunction(const std::string &localName) const;
+    TopLevelLookup lookupTopLevelName(const std::string &localName) const;
     const std::unordered_map<std::string, TypeDecl> &types() const { return localTypes_; }
     const std::unordered_map<std::string, FunctionDecl> &functions() const {
         return localFunctions_;

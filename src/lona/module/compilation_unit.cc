@@ -292,14 +292,25 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         auto rawName = std::string(base->name.tochara(), base->name.size());
         auto separator = rawName.find('.');
         if (separator == std::string::npos) {
-            if (const auto *resolved = unit.findLocalType(rawName)) {
-                auto *type = typeTable->getType(llvm::StringRef(*resolved));
+            auto lookup = unit.lookupTopLevelName(rawName);
+            if (lookup.isType()) {
+                auto *type = typeTable->getType(llvm::StringRef(lookup.resolvedName));
                 unit.cacheResolvedType(node, type);
                 return type;
             }
-        } else if (unit.importsModule(rawName.substr(0, separator)) == false) {
-            unit.cacheResolvedType(node, nullptr);
-            return nullptr;
+        } else {
+            auto moduleName = rawName.substr(0, separator);
+            auto memberName = rawName.substr(separator + 1);
+            const auto *imported = unit.findImportedModule(moduleName);
+            if (!imported) {
+                unit.cacheResolvedType(node, nullptr);
+                return nullptr;
+            }
+            auto lookup = unit.lookupTopLevelName(*imported, memberName);
+            if (!lookup.isType()) {
+                unit.cacheResolvedType(node, nullptr);
+                return nullptr;
+            }
         }
         resolved = typeTable->getType(base->name);
         unit.cacheResolvedType(node, resolved);
@@ -490,6 +501,89 @@ CompilationUnit::findImportedModule(const std::string &alias) const {
 bool
 CompilationUnit::importsModule(const std::string &alias) const {
     return findImportedModule(alias) != nullptr;
+}
+
+CompilationUnit::TopLevelLookup
+CompilationUnit::lookupTopLevelName(const std::string &name) const {
+    TopLevelLookup lookup;
+
+    if (const auto *typeName = findLocalType(name)) {
+        lookup.kind = TopLevelLookupKind::Type;
+        lookup.resolvedName = *typeName;
+        if (moduleInterface_) {
+            lookup.typeDecl = moduleInterface_->findType(name);
+        }
+        return lookup;
+    }
+
+    if (const auto *functionName = findLocalFunction(name)) {
+        lookup.kind = TopLevelLookupKind::Function;
+        lookup.resolvedName = *functionName;
+        if (moduleInterface_) {
+            lookup.functionDecl = moduleInterface_->findFunction(name);
+        }
+        return lookup;
+    }
+
+    if (const auto *imported = findImportedModule(name)) {
+        lookup.kind = TopLevelLookupKind::Module;
+        lookup.importedModule = imported;
+        lookup.resolvedName = imported->moduleName;
+        return lookup;
+    }
+
+    return lookup;
+}
+
+CompilationUnit::TopLevelLookup
+CompilationUnit::lookupModuleMember(const std::string &name) const {
+    TopLevelLookup lookup;
+    if (!moduleInterface_) {
+        return lookup;
+    }
+
+    auto member = moduleInterface_->lookupTopLevelName(name);
+    if (member.isType()) {
+        lookup.kind = TopLevelLookupKind::Type;
+        lookup.typeDecl = member.typeDecl;
+        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : std::string();
+        return lookup;
+    }
+    if (member.isFunction()) {
+        lookup.kind = TopLevelLookupKind::Function;
+        lookup.functionDecl = member.functionDecl;
+        lookup.resolvedName =
+            member.functionDecl ? member.functionDecl->exportedName : std::string();
+        return lookup;
+    }
+    return lookup;
+}
+
+CompilationUnit::TopLevelLookup
+CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
+                                    const std::string &name) const {
+    TopLevelLookup lookup;
+    if (!moduleNamespace.interface) {
+        return lookup;
+    }
+
+    auto member = moduleNamespace.interface->lookupTopLevelName(name);
+    if (member.isType()) {
+        lookup.kind = TopLevelLookupKind::Type;
+        lookup.importedModule = &moduleNamespace;
+        lookup.typeDecl = member.typeDecl;
+        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : std::string();
+        return lookup;
+    }
+    if (member.isFunction()) {
+        lookup.kind = TopLevelLookupKind::Function;
+        lookup.importedModule = &moduleNamespace;
+        lookup.functionDecl = member.functionDecl;
+        lookup.resolvedName =
+            member.functionDecl ? member.functionDecl->exportedName : std::string();
+        return lookup;
+    }
+    return lookup;
 }
 
 void
