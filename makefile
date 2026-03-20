@@ -55,7 +55,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke example_smoke incremental_smoke native_smoke hosted_smoke template_random ai_test install uninstall
+.PHONY: clean format default frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -72,6 +72,9 @@ test: acceptance bench_smoke example_smoke incremental_smoke template_random hos
 
 bench_smoke: $(target)
 	bash $(ROOT)/tests/smoke/benchmark.sh
+
+perf: $(target)
+	$(PYTHON) $(ROOT)/tests/perf/profile_large_case.py --compiler $(target)
 
 example_smoke: $(target)
 	bash $(ROOT)/tests/smoke/examples.sh

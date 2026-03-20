@@ -21,6 +21,13 @@
 - [smoke/native.sh](smoke/native.sh): `lac-native` freestanding 路线 smoke。
 - [template_random.py](template_random.py): 模板随机拼接测试；生成支持的语法组合并验证 LLVM IR 和 clang object 编译。
 
+## Perf
+
+- [perf/generate_large_case.py](perf/generate_large_case.py): 生成固定的 10w 行 perf 样例。
+- [perf/profile_large_case.py](perf/profile_large_case.py): 生成固定大样例，跑 `perf record`，然后直接打开 `perf report`。
+- [perf/large_case_manifest.json](perf/large_case_manifest.json): 大样例的固定版本、行数和哈希。
+- [perf/README.md](perf/README.md): perf 样例覆盖范围、入口和使用方式。
+
 ## Incremental
 
 - [incremental_smoke.py](incremental_smoke.py): 同一 `CompilerSession` 内的增量编译测试。
