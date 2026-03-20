@@ -6,6 +6,7 @@
 #include "../sym/object.hh"
 #include <cassert>
 #include <cstddef>
+#include <algorithm>
 #include <functional>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
 #include <llvm-18/llvm/ADT/StringMap.h>
@@ -153,6 +154,17 @@ public:
 
     const llvm::StringMap<ValueTy> &getMembers() const { return members; }
     const llvm::StringMap<FuncType *> &getMethodTypes() const { return methodTypes; }
+    std::vector<ValueTy> getMembersInOrder() const {
+        std::vector<ValueTy> ordered(members.size(), {nullptr, -1});
+        for (const auto &member : members) {
+            auto index = static_cast<size_t>(member.second.second);
+            if (index >= ordered.size()) {
+                continue;
+            }
+            ordered[index] = member.second;
+        }
+        return ordered;
+    }
 
     llvm::Type *buildLLVMType(TypeTable& types) override;
 
@@ -409,9 +421,10 @@ public:
                 auto *llvmStruct = llvm::cast<llvm::StructType>(found->second);
                 if (!structType->isOpaque() && llvmStruct->isOpaque()) {
                     std::vector<llvm::Type *> memberTypes;
-                    memberTypes.reserve(structType->getMembers().size());
-                    for (const auto &member : structType->getMembers()) {
-                        memberTypes.push_back(getLLVMType(member.second.first));
+                    auto orderedMembers = structType->getMembersInOrder();
+                    memberTypes.reserve(orderedMembers.size());
+                    for (const auto &member : orderedMembers) {
+                        memberTypes.push_back(getLLVMType(member.first));
                     }
                     llvmStruct->setBody(memberTypes);
                 }
@@ -425,9 +438,10 @@ public:
             llvmTypes_[type] = llvmStruct;
             if (!structType->isOpaque() && llvmStruct->isOpaque()) {
                 std::vector<llvm::Type *> memberTypes;
-                memberTypes.reserve(structType->getMembers().size());
-                for (const auto &member : structType->getMembers()) {
-                    memberTypes.push_back(getLLVMType(member.second.first));
+                auto orderedMembers = structType->getMembersInOrder();
+                memberTypes.reserve(orderedMembers.size());
+                for (const auto &member : orderedMembers) {
+                    memberTypes.push_back(getLLVMType(member.first));
                 }
                 llvmStruct->setBody(memberTypes);
             }

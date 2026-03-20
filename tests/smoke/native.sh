@@ -18,6 +18,7 @@ ref_param_program="$WORKDIR/ref_param_address.lo"
 array_ptr_program="$WORKDIR/array_pointer.lo"
 method_self_program="$WORKDIR/method_self.lo"
 method_temp_program="$WORKDIR/method_temp.lo"
+struct_fields_program="$WORKDIR/struct_fields.lo"
 main_exe="$WORKDIR/return_42"
 top_level_exe="$WORKDIR/top_level"
 ref_local_exe="$WORKDIR/ref_local_address"
@@ -25,6 +26,7 @@ ref_param_exe="$WORKDIR/ref_param_address"
 array_ptr_exe="$WORKDIR/array_pointer"
 method_self_exe="$WORKDIR/method_self"
 method_temp_exe="$WORKDIR/method_temp"
+struct_fields_exe="$WORKDIR/struct_fields"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -102,6 +104,33 @@ def main() i32 {
 }
 EOF
 
+cat >"$struct_fields_program" <<'EOF'
+def inc(v i32) i32 {
+    ret v + 1
+}
+
+struct Mixed {
+    flag bool
+    ratio f32
+    bits u8[4]
+    pair <i32, bool>
+    ptr i32*
+    cb (i32)* i32
+}
+
+def main() i32 {
+    var x i32 = 41
+    var raw u8[4] = 1.tof32().tobits()
+    var pair <i32, bool> = (1, true)
+    var mixed = Mixed(flag = true, ratio = 1.tof32(), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
+    if mixed.flag && mixed.pair._2 && (mixed.ratio >= 1.tof32()) {
+        mixed.bits(0) = 1
+        ret mixed.cb(*mixed.ptr) + mixed.bits(0) + mixed.pair._1
+    }
+    ret 0
+}
+EOF
+
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"
 bash "$BUILD_NATIVE" "$top_level_program" "$top_level_exe"
 bash "$BUILD_NATIVE" "$ref_local_program" "$ref_local_exe"
@@ -109,6 +138,7 @@ bash "$BUILD_NATIVE" "$ref_param_program" "$ref_param_exe"
 bash "$BUILD_NATIVE" "$array_ptr_program" "$array_ptr_exe"
 bash "$BUILD_NATIVE" "$method_self_program" "$method_self_exe"
 bash "$BUILD_NATIVE" "$method_temp_program" "$method_temp_exe"
+bash "$BUILD_NATIVE" "$struct_fields_program" "$struct_fields_exe"
 
 set +e
 "$main_exe"
@@ -125,6 +155,8 @@ array_ptr_status=$?
 method_self_status=$?
 "$method_temp_exe"
 method_temp_status=$?
+"$struct_fields_exe"
+struct_fields_status=$?
 set -e
 
 if [ "$main_status" -ne 42 ]; then
@@ -159,6 +191,11 @@ fi
 
 if [ "$method_temp_status" -ne 3 ]; then
     echo "expected temporary receiver method program to exit with 3, got $method_temp_status" >&2
+    exit 1
+fi
+
+if [ "$struct_fields_status" -ne 44 ]; then
+    echo "expected heterogeneous struct fields program to exit with 44, got $struct_fields_status" >&2
     exit 1
 fi
 

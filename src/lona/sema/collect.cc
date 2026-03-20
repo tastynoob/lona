@@ -584,6 +584,11 @@ class StructVisitor : public AstVisitorAny {
 
     Object *visit(AstVarDecl *node) override {
         auto &name = node->field;
+        if (node->bindingKind == BindingKind::Ref) {
+            error(node->loc, "struct fields cannot use `ref` binding for `" +
+                                 toStdString(name) + "`",
+                  "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
+        }
         auto *type = resolveTypeNode(typeMgr, unit, node->typeNode);
         if (!type) {
             error(node->loc, "unknown struct field type for `" +
@@ -955,6 +960,12 @@ class InterfaceCollector {
                     auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
                     if (!varDecl) {
                         continue;
+                    }
+                    if (varDecl->bindingKind == BindingKind::Ref) {
+                        error(varDecl->loc,
+                              "struct fields cannot use `ref` binding for `" +
+                                  toStdString(varDecl->field) + "`",
+                              "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
                     }
                     auto *fieldType = resolveType(varDecl->typeNode);
                     if (!fieldType) {

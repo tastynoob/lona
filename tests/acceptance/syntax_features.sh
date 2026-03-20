@@ -91,6 +91,10 @@ named_call_order_in="$(new_tmp_file named-call-order)"
 named_call_order_out="$(new_tmp_file named-call-order-out)"
 ctor_unknown_field_in="$(new_tmp_file ctor-unknown-field)"
 ctor_unknown_field_out="$(new_tmp_file ctor-unknown-field-out)"
+struct_field_types_in="$(new_tmp_file struct-field-types)"
+struct_field_types_out="$(new_tmp_file struct-field-types-out)"
+struct_ref_field_bad_in="$(new_tmp_file struct-ref-field-bad)"
+struct_ref_field_bad_out="$(new_tmp_file struct-ref-field-bad-out)"
 
 cat >"$milestone_json_in" <<'EOF'
 struct Complex {
@@ -639,3 +643,44 @@ EOF
 expect_emit_ir_failure "$ctor_unknown_field_in" "$ctor_unknown_field_out" 'expected unknown constructor field program to fail'
 grep -Fq 'unknown field `phase` for constructor `' "$ctor_unknown_field_out"
 grep -Fq 'Complex' "$ctor_unknown_field_out"
+
+cat >"$struct_field_types_in" <<'EOF'
+def inc(v i32) i32 {
+    ret v + 1
+}
+
+struct Mixed {
+    flag bool
+    ratio f32
+    bits u8[4]
+    pair <i32, bool>
+    ptr i32*
+    cb (i32)* i32
+}
+
+def main() i32 {
+    var x i32 = 41
+    var raw u8[4] = 1.tof32().tobits()
+    var pair <i32, bool> = (1, true)
+    var mixed = Mixed(flag = true, ratio = 1.tof32(), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
+    if mixed.flag && mixed.pair._2 && (mixed.ratio >= 1.tof32()) {
+        mixed.bits(0) = 1
+        ret mixed.cb(*mixed.ptr) + mixed.bits(0) + mixed.pair._1
+    }
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$struct_field_types_in" >"$struct_field_types_out"
+grep -Eq 'type \{ i1, float, \[4 x i8\], \{ i32, i1 \}, ptr, ptr \}' "$struct_field_types_out"
+grep -Eq 'call i32 %.*\(i32 %.*\)' "$struct_field_types_out"
+grep -Eq 'getelementptr inbounds .* i32 0, i32 4' "$struct_field_types_out"
+grep -Eq 'getelementptr inbounds .* i32 0, i32 5' "$struct_field_types_out"
+
+cat >"$struct_ref_field_bad_in" <<'EOF'
+struct Bad {
+    ref slot i32
+}
+EOF
+expect_emit_ir_failure "$struct_ref_field_bad_in" "$struct_ref_field_bad_out" 'expected ref struct field program to fail'
+grep -Fq 'unexpected ref' "$struct_ref_field_bad_out"
+grep -Fq "expected identifier, def, newline, '}'" "$struct_ref_field_bad_out"
