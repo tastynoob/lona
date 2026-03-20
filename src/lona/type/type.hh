@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
 #include <llvm-18/llvm/ADT/StringMap.h>
@@ -30,6 +31,10 @@ class TupleType;
 class TypeTable;
 class Function;
 
+const llvm::DataLayout &defaultTargetDataLayout();
+const std::string &defaultTargetTriple();
+void configureModuleTargetLayout(llvm::Module &module);
+
 static const int RVO_THRESHOLD = 16;
 
 class TypeClass {
@@ -47,13 +52,6 @@ public:
 
     bool equal(TypeClass *t) { return this == t; }
 
-    bool shouldReturnByPointer() {
-        if (as<StructType>()) {
-            return typeSize > RVO_THRESHOLD;
-        }
-        return false;
-    }
-
     virtual llvm::Type* buildLLVMType(TypeTable& types) = 0;
 
     virtual ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) {
@@ -65,31 +63,7 @@ class BaseType : public TypeClass {
 public:
     enum Type { U8, I8, U16, I16, U32, I32, U64, I64, F32, F64, BOOL } type;
     BaseType(Type type, string full_name)
-        : TypeClass(full_name), type(type) {
-        switch (type) {
-        case U8:
-        case I8:
-            typeSize = 1;
-            break;
-        case U16:
-        case I16:
-            typeSize = 2;
-            break;
-        case U32:
-        case I32:
-        case F32:
-            typeSize = 4;
-            break;
-        case U64:
-        case I64:
-        case F64:
-            typeSize = 8;
-            break;
-        case BOOL:
-            typeSize = 1;
-            break;
-        }
-    }
+        : TypeClass(full_name), type(type) {}
 
     llvm::Type* buildLLVMType(TypeTable& types) override;
 };
@@ -116,9 +90,8 @@ public:
 
     bool isOpaque() const { return opaque; }
 
-    void complete(const llvm::StringMap<ValueTy> &newMembers, int size) {
+    void complete(const llvm::StringMap<ValueTy> &newMembers) {
         members = newMembers;
-        typeSize = size;
         opaque = false;
     }
 
@@ -201,14 +174,7 @@ public:
     }
 
     explicit TupleType(std::vector<TypeClass *> itemTypes)
-        : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {
-        typeSize = 0;
-        for (auto *itemType : this->itemTypes) {
-            if (itemType) {
-                typeSize += itemType->typeSize;
-            }
-        }
-    }
+        : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {}
 
     const std::vector<TypeClass *> &getItemTypes() const { return itemTypes; }
     bool getMember(llvm::StringRef name, ValueTy &member) const;
@@ -221,9 +187,7 @@ class FuncType : public TypeClass {
     std::vector<TypeClass *> argTypes;
     std::vector<BindingKind> argBindingKinds;
     TypeClass * retType = nullptr;
-    bool hasSROA = false;
 public:
-    bool SROA() const { return hasSROA; }
     auto& getArgTypes() const { return argTypes; }
     const auto &getArgBindingKinds() const { return argBindingKinds; }
     BindingKind getArgBindingKind(std::size_t index) const {
@@ -240,8 +204,7 @@ public:
         : TypeClass(full_name),
           argTypes(args),
           argBindingKinds(std::move(argBindingKinds)),
-          retType(retType),
-          hasSROA(retType && retType->shouldReturnByPointer()) {
+          retType(retType) {
         if (this->argBindingKinds.empty()) {
             this->argBindingKinds.resize(argTypes.size(), BindingKind::Value);
         }
@@ -286,9 +249,7 @@ public:
 
     PointerType(TypeClass *pointeeType)
         : TypeClass(buildName(pointeeType)),
-          pointeeType(pointeeType) {
-        typeSize = sizeof(void *);
-    }
+          pointeeType(pointeeType) {}
     TypeClass *getPointeeType() { return pointeeType; }
 
     llvm::Type *buildLLVMType(TypeTable& types) override;
@@ -309,9 +270,7 @@ public:
     ArrayType(TypeClass *elementType, std::vector<AstNode *> dimensions = {})
         : TypeClass(buildName(elementType, dimensions)),
           elementType(elementType),
-          dimensions(std::move(dimensions)) {
-        typeSize = computeStaticSize();
-    }
+          dimensions(std::move(dimensions)) {}
 
     TypeClass *getElementType() { return elementType; }
     const std::vector<AstNode *> &getDimensions() const { return dimensions; }
@@ -347,19 +306,6 @@ public:
         auto values = staticDimensions(&ok);
         return ok && !values.empty();
     }
-    int computeStaticSize() const {
-        bool ok = false;
-        auto values = staticDimensions(&ok);
-        if (!ok || values.empty() || !elementType) {
-            return static_cast<int>(sizeof(void *));
-        }
-        std::int64_t total = elementType->typeSize;
-        for (auto value : values) {
-            total *= value;
-        }
-        return total > 0 ? static_cast<int>(total) : static_cast<int>(sizeof(void *));
-    }
-
     llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
@@ -400,8 +346,6 @@ class TypeTable {
         }
     };
     std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash> methodFunctions_;
-
-    
 
 public:
     TypeTable(llvm::Module& module)
@@ -454,6 +398,26 @@ public:
     }
     llvm::FunctionType *getLLVMFunctionType(FuncType *type) {
         return llvm::cast<llvm::FunctionType>(getLLVMType(type));
+    }
+    std::uint64_t getTypeAllocSize(TypeClass *type) {
+        if (!type || type->as<FuncType>()) {
+            return 0;
+        }
+        if (type->typeSize > 0) {
+            return static_cast<std::uint64_t>(type->typeSize);
+        }
+        auto *llvmType = getLLVMType(type);
+        if (auto *llvmStruct = llvm::dyn_cast<llvm::StructType>(llvmType)) {
+            if (llvmStruct->isOpaque()) {
+                type->typeSize = 0;
+                return 0;
+            }
+        }
+        type->typeSize = static_cast<int>(module.getDataLayout().getTypeAllocSize(llvmType));
+        return static_cast<std::uint64_t>(type->typeSize);
+    }
+    bool shouldReturnByPointer(TypeClass *type) {
+        return type && type->as<StructType>() && getTypeAllocSize(type) > RVO_THRESHOLD;
     }
 
     bool addType(llvm::StringRef name, TypeClass *type) {
@@ -541,7 +505,6 @@ public:
         }
         auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
                                       funcTypeName, std::move(argBindingKinds));
-        funcType->typeSize = 0;
         addType(funcTypeName, funcType);
         return funcType;
     }

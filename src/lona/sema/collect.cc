@@ -143,14 +143,16 @@ sourceColumn(const location &loc) {
 
 struct DebugInfoContext {
     llvm::Module &module;
+    TypeTable &typeTable;
     llvm::DIBuilder builder;
     llvm::DICompileUnit *compileUnit = nullptr;
     llvm::DIFile *primaryFile = nullptr;
     std::unordered_map<std::string, llvm::DIFile *> files;
     std::unordered_map<TypeClass *, llvm::DIType *> types;
 
-    explicit DebugInfoContext(llvm::Module &module, const std::string &sourcePath)
-        : module(module), builder(module) {
+    explicit DebugInfoContext(llvm::Module &module, TypeTable &types,
+                              const std::string &sourcePath)
+        : module(module), typeTable(types), builder(module) {
         module.addModuleFlag(llvm::Module::Warning, "Debug Info Version",
                              llvm::DEBUG_METADATA_VERSION);
         module.addModuleFlag(llvm::Module::Warning, "Dwarf Version", 5);
@@ -228,17 +230,18 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
             break;
         }
         diType = debug.builder.createBasicType(
-            toStdString(type->full_name), static_cast<uint64_t>(type->typeSize) * 8,
+            toStdString(type->full_name),
+            debug.typeTable.getTypeAllocSize(type) * 8,
             encoding);
     } else if (auto *pointer = type->as<PointerType>()) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, pointer->getPointeeType()),
-            static_cast<uint64_t>(type->typeSize) * 8, 0, std::nullopt,
+            debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
             toStdString(type->full_name));
     } else if (auto *array = type->as<ArrayType>()) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, array->getElementType()),
-            static_cast<uint64_t>(type->typeSize) * 8, 0, std::nullopt,
+            debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
             toStdString(type->full_name));
     } else if (auto *func = type->as<FuncType>()) {
         std::vector<llvm::Metadata *> elements;
@@ -252,7 +255,7 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
     } else if (type->as<StructType>()) {
         diType = debug.builder.createStructType(
             debug.primaryFile, toStdString(type->full_name), debug.primaryFile, 1,
-            static_cast<uint64_t>(type->typeSize) * 8, 0,
+            debug.typeTable.getTypeAllocSize(type) * 8, 0,
             llvm::DINode::FlagZero, nullptr,
             debug.builder.getOrCreateArray({}));
     } else {
@@ -569,8 +572,8 @@ class StructVisitor : public AstVisitorAny {
     CompilationUnit *unit;
     bool exportNamespace;
 
-    std::vector<llvm::Type *> llvmmembers;
     llvm::StringMap<StructType::ValueTy> members;
+    int nextMemberIndex = 0;
 
     using AstVisitorAny::visit;
 
@@ -601,9 +604,8 @@ class StructVisitor : public AstVisitorAny {
                 toStdString(name) + "`",
             node->loc);
 
-        llvmmembers.push_back(typeMgr->getLLVMType(type));
         members.insert({llvm::StringRef(name.tochara(), name.size()),
-                        {type, static_cast<int>(llvmmembers.size() - 1)}});
+                        {type, nextMemberIndex++}});
 
         return nullptr;
     }
@@ -622,12 +624,7 @@ public:
 
         this->visit(node->body);
 
-        lostructTy->complete(members, 0);
-        auto *llvmStruct =
-            llvm::cast<llvm::StructType>(typeMgr->getLLVMType(lostructTy));
-        auto typesize =
-            typeMgr->getModule().getDataLayout().getTypeSizeInBits(llvmStruct) / 8;
-        lostructTy->complete(members, typesize);
+        lostructTy->complete(members);
     }
 };
 
@@ -803,25 +800,6 @@ validateTypeNodeLayout(TypeNode *node) {
     }
 }
 
-std::uint32_t
-computeSemanticStructSize(StructType *structType) {
-    if (!structType || structType->isOpaque()) {
-        return 0;
-    }
-
-    llvm::LLVMContext context;
-    llvm::Module module("interface-size", context);
-    llvm::IRBuilder<> builder(context);
-    GlobalScope scope(builder, module);
-    TypeTable types(module);
-    scope.setTypeTable(&types);
-    initBuildinType(&scope);
-    types.internType(structType);
-    auto *llvmStruct = llvm::cast<llvm::StructType>(types.getLLVMType(structType));
-    return static_cast<std::uint32_t>(
-        module.getDataLayout().getTypeSizeInBits(llvmStruct) / 8);
-}
-
 class InterfaceCollector {
     CompilationUnit &unit_;
     ModuleInterface *interface_;
@@ -985,8 +963,7 @@ class InterfaceCollector {
                 }
             }
 
-            structType->complete(members, 0);
-            structType->complete(members, computeSemanticStructSize(structType));
+            structType->complete(members);
         }
     }
 
@@ -1763,8 +1740,8 @@ class FunctionCompiler {
 
         llvm::Value *result = nullptr;
         if (isIntegerType(sourceType) && isIntegerType(targetType)) {
-            auto sourceBits = static_cast<unsigned>(sourceType->typeSize * 8);
-            auto targetBits = static_cast<unsigned>(targetType->typeSize * 8);
+            auto sourceBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(targetType) * 8);
             if (sourceBits == targetBits) {
                 result = value;
             } else if (sourceBits < targetBits) {
@@ -1775,8 +1752,8 @@ class FunctionCompiler {
                 result = scope->builder.CreateTrunc(value, scope->getLLVMType(targetType));
             }
         } else if (isFloatType(sourceType) && isFloatType(targetType)) {
-            auto sourceBits = static_cast<unsigned>(sourceType->typeSize * 8);
-            auto targetBits = static_cast<unsigned>(targetType->typeSize * 8);
+            auto sourceBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(targetType) * 8);
             if (sourceBits == targetBits) {
                 result = value;
             } else if (sourceBits < targetBits) {
@@ -1812,7 +1789,15 @@ class FunctionCompiler {
             return makeReadonlyValue(targetType, sourceValue);
         }
 
-        auto targetBitsWidth = static_cast<unsigned>(targetType->typeSize * 8);
+        auto bitWidthFor = [this](TypeClass *type) -> unsigned {
+            auto byteSize = scope->types()->getTypeAllocSize(type);
+            if (byteSize == 0) {
+                error("bit-copy cast requires a concrete data layout size");
+            }
+            return static_cast<unsigned>(byteSize * 8);
+        };
+
+        auto targetBitsWidth = bitWidthFor(targetType);
         auto *targetBitsType =
             llvm::IntegerType::get(scope->builder.getContext(), targetBitsWidth);
 
@@ -1825,7 +1810,7 @@ class FunctionCompiler {
         llvm::Value *bits = nullptr;
         unsigned bitsWidth = 0;
         if (sourceValue->getType()->isIntegerTy()) {
-            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            bitsWidth = bitWidthFor(sourceType);
             auto *sourceBitsType =
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = sourceValue;
@@ -1833,19 +1818,22 @@ class FunctionCompiler {
                 bits = scope->builder.CreateTruncOrBitCast(bits, sourceBitsType);
             }
         } else if (sourceValue->getType()->isFloatingPointTy()) {
-            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            bitsWidth = bitWidthFor(sourceType);
             auto *sourceBitsType =
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = scope->builder.CreateBitCast(sourceValue, sourceBitsType);
         } else if (sourceValue->getType()->isPointerTy()) {
-            bitsWidth = static_cast<unsigned>(sourceType->typeSize * 8);
+            bitsWidth = bitWidthFor(sourceType);
             auto *sourceBitsType =
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = scope->builder.CreatePtrToInt(sourceValue, sourceBitsType);
         } else if (isBitsArray(sourceType)) {
             auto dims = sourceType->as<ArrayType>()->staticDimensions();
             const auto relevantBytes =
-                std::max<std::int64_t>(1, std::min<std::int64_t>(dims[0], targetType->typeSize));
+                std::max<std::int64_t>(1, std::min<std::int64_t>(
+                                              dims[0],
+                                              static_cast<std::int64_t>(
+                                                  scope->types()->getTypeAllocSize(targetType))));
             bitsWidth = static_cast<unsigned>(relevantBytes * 8);
             auto *sourceBitsType =
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
@@ -2136,7 +2124,7 @@ public:
         if (!funcType) {
             error("invalid function type");
         }
-        returnByPointer = funcType->SROA();
+        returnByPointer = typeMgr->shouldReturnByPointer(funcType->getRetType());
 
         if (hirFunc->hasSelfBinding()) {
             scope->structTy = hirFunc->getSelfBinding().object->getType()->as<StructType>();
@@ -2276,7 +2264,7 @@ emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo,
     std::unique_ptr<DebugInfoContext> debug;
     if (emitDebugInfo) {
         debug = std::make_unique<DebugInfoContext>(
-            globalScope->module,
+            globalScope->module, *globalScope->types(),
             primarySourcePath.empty() ? globalScope->module.getName().str()
                                       : primarySourcePath);
     }

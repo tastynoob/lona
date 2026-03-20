@@ -24,8 +24,9 @@ reinterpretValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
         return value;
     }
 
+    auto sourceBitWidth = static_cast<unsigned>(scope->types()->getTypeAllocSize(srcType) * 8);
     auto *bitsType = llvm::IntegerType::get(scope->builder.getContext(),
-                                            static_cast<unsigned>(srcType->typeSize * 8));
+                                            sourceBitWidth);
     llvm::Value *bits = value;
     if (value->getType()->isPointerTy()) {
         bits = scope->builder.CreatePtrToInt(value, bitsType);
@@ -202,9 +203,10 @@ StructVar::set(Scope *scope, Object *src) {
         builder.CreateStore(src->get(scope), val);
     } else {
         auto struct_src = dynamic_cast<StructVar *>(src);
-        llvm::ConstantInt::get(builder.getInt32Ty(), type->typeSize);
+        auto typeSize = scope->types()->getTypeAllocSize(type);
+        llvm::ConstantInt::get(builder.getInt32Ty(), typeSize);
         builder.CreateMemCpy(val, llvm::MaybeAlign(8), struct_src->val,
-                             llvm::MaybeAlign(8), type->typeSize);
+                             llvm::MaybeAlign(8), typeSize);
     }
 }
 
@@ -238,7 +240,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
 
-    if (retType && retType->shouldReturnByPointer()) {
+    if (retType && scope->types()->shouldReturnByPointer(retType)) {
         retval = retType->newObj(Object::VARIABLE);
         retval->createllvmValue(scope);
         llvmargs.push_back(retval->getllvmValue());
@@ -269,7 +271,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
 
     auto *ret = builder.CreateCall(llvmFuncType, calleeValue, llvmargs);
 
-    if (retType && retType->shouldReturnByPointer()) {
+    if (retType && scope->types()->shouldReturnByPointer(retType)) {
         return retval;
     } else if (retType) {
         auto obj = retType->newObj(Object::REG_VAL);

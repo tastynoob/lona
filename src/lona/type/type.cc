@@ -1,7 +1,82 @@
 #include "type.hh"
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/Host.h>
+#include <mutex>
 #include <stdexcept>
 
 namespace lona {
+
+namespace {
+
+struct NativeTargetLayout {
+    std::string triple;
+    std::unique_ptr<llvm::TargetMachine> machine;
+    llvm::DataLayout dataLayout;
+
+    NativeTargetLayout()
+        : triple(llvm::sys::getDefaultTargetTriple()),
+          dataLayout("") {
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
+
+        std::string error;
+        auto *target = llvm::TargetRegistry::lookupTarget(triple, error);
+        if (!target) {
+            throw std::runtime_error("failed to resolve native LLVM target: " +
+                                     error);
+        }
+
+        llvm::TargetOptions options;
+        machine.reset(target->createTargetMachine(triple, "generic", "",
+                                                  options, std::nullopt));
+        if (!machine) {
+            throw std::runtime_error(
+                "failed to create native LLVM target machine");
+        }
+        dataLayout = machine->createDataLayout();
+    }
+};
+
+NativeTargetLayout &
+nativeTargetLayout() {
+    static std::once_flag once;
+    static std::unique_ptr<NativeTargetLayout> layout;
+    static std::string initError;
+    std::call_once(once, [] {
+        try {
+            layout = std::make_unique<NativeTargetLayout>();
+        } catch (const std::exception &ex) {
+            initError = ex.what();
+        }
+    });
+    if (!layout) {
+        throw std::runtime_error(initError.empty()
+                                     ? "failed to initialize LLVM target layout"
+                                     : initError);
+    }
+    return *layout;
+}
+
+}  // namespace
+
+const llvm::DataLayout &
+defaultTargetDataLayout() {
+    return nativeTargetLayout().dataLayout;
+}
+
+const std::string &
+defaultTargetTriple() {
+    return nativeTargetLayout().triple;
+}
+
+void
+configureModuleTargetLayout(llvm::Module &module) {
+    module.setTargetTriple(defaultTargetTriple());
+    module.setDataLayout(defaultTargetDataLayout());
+}
 
 bool
 TupleType::getMember(llvm::StringRef name, ValueTy &member) const {
@@ -68,6 +143,7 @@ TupleType::newObj(uint32_t specifiers) {
 
 llvm::Type *
 FuncType::buildLLVMType(TypeTable &types) {
+    auto hasSROA = types.shouldReturnByPointer(retType);
     std::vector<llvm::Type *> llvmArgTypes;
     llvmArgTypes.reserve(argTypes.size() + (hasSROA ? 1 : 0));
     llvm::Type *llvmRetType = nullptr;

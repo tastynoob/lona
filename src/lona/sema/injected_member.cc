@@ -195,7 +195,8 @@ resolveInjectedMember(TypeTable *typeTable, TypeClass *receiverType,
         if (!isNumericType(receiverType)) {
             return std::nullopt;
         }
-        auto *arrayType = getOrCreateBitsArrayType(typeTable, receiverType->typeSize);
+        auto byteCount = static_cast<std::int64_t>(typeTable->getTypeAllocSize(receiverType));
+        auto *arrayType = getOrCreateBitsArrayType(typeTable, std::max<std::int64_t>(1, byteCount));
         return InjectedMemberBinding{InjectedMemberKind::BitCopy, "tobits",
                                      receiverType, arrayType};
     }

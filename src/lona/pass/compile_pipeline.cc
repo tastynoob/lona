@@ -11,6 +11,7 @@ IRBuildState::IRBuildState(const CompilationUnit &unit)
       builder(context),
       global(builder, module),
       types(module) {
+    configureModuleTargetLayout(module);
     global.setTypeTable(&types);
 }
 
