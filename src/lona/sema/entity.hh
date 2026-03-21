@@ -8,7 +8,6 @@
 
 namespace lona {
 
-class CompilationUnit;
 class Object;
 class TypeClass;
 class FuncType;
@@ -19,7 +18,6 @@ enum class EntityKind {
     LocalBinding,
     Object,
     TypedValue,
-    Module,
     Type,
     ConstructorSet,
 };
@@ -44,8 +42,6 @@ enum class LookupResultKind {
     Ambiguous,
     ValueField,
     Method,
-    ModuleMemberFunction,
-    ModuleMemberType,
     TypeMember,
     ConstructorSet,
     InjectedMember,
@@ -69,7 +65,6 @@ class EntityRef {
     EntityKind kind_ = EntityKind::Invalid;
     const ResolvedLocalBinding *localBinding_ = nullptr;
     Object *object_ = nullptr;
-    const CompilationUnit *module_ = nullptr;
     TypeClass *type_ = nullptr;
 
     explicit EntityRef(EntityKind kind) : kind_(kind) {}
@@ -97,12 +92,6 @@ public:
         return ref;
     }
 
-    static EntityRef module(const CompilationUnit *module) {
-        EntityRef ref(EntityKind::Module);
-        ref.module_ = module;
-        return ref;
-    }
-
     static EntityRef type(TypeClass *type) {
         EntityRef ref(EntityKind::Type);
         ref.type_ = type;
@@ -123,7 +112,6 @@ public:
 
     const ResolvedLocalBinding *asLocalBinding() const { return localBinding_; }
     Object *asObject() const { return object_; }
-    const CompilationUnit *asModule() const { return module_; }
     TypeClass *asType() const {
         if (kind_ == EntityKind::Type || kind_ == EntityKind::ConstructorSet) {
             return type_;

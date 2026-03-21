@@ -22,6 +22,7 @@
 - [compiler_architecture.md](compiler_architecture.md): 当前编译器架构、核心数据结构和编译流程。
 - [compiler_pipeline.md](compiler_pipeline.md): compile pipeline 和阶段职责。
 - [name_lookup_consistency.md](name_lookup_consistency.md): 本地 / imported 模块名字查找不一致问题、当前已落地的统一查询 / 分派模型，以及剩余重构边界。
+- [module_member_resolution.md](module_member_resolution.md): `module.xxx` 已前移到 `resolve` 阶段消解后的边界说明、bare module 的剩余约束，以及 selector 主路径的约束。
 - [target_modes.md](target_modes.md): `native` / `managed` 目标模式边界。
 
 ## 构建与运行

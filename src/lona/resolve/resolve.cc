@@ -30,6 +30,12 @@ error(const location &loc, const std::string &message,
     throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
 }
 
+[[noreturn]] void
+internalError(const location &loc, const std::string &message,
+              const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Internal, loc, message, hint);
+}
+
 class FunctionResolver {
     GlobalScope *global_;
     TypeTable *typeMgr_;
@@ -53,6 +59,53 @@ class FunctionResolver {
         if (!inserted.second) {
             error(loc, duplicateMessage, duplicateHint);
         }
+    }
+
+    const ResolvedEntityRef *
+    resolvedExpr(const AstNode *node) const {
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            return resolved_.field(field);
+        }
+        if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
+            return resolved_.selector(selector);
+        }
+        return nullptr;
+    }
+
+    void
+    resolveSelector(const AstSelector *node) {
+        if (!unit_ || !node) {
+            return;
+        }
+
+        auto *parentBinding = resolvedExpr(node->parent);
+        if (!parentBinding || parentBinding->kind() != ResolvedEntityRef::Kind::Module) {
+            return;
+        }
+
+        const auto *moduleNamespace = unit_->findImportedModule(parentBinding->resolvedName());
+        if (!moduleNamespace) {
+            internalError(
+                node->loc,
+                "resolved module selector parent is missing from the imported-module table",
+                "This looks like a compiler name-resolution bug.");
+        }
+
+        auto memberName = toStdString(node->field->text);
+        auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
+        if (lookup.isFunction()) {
+            resolved_.bindSelector(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
+            return;
+        }
+        if (lookup.isType()) {
+            resolved_.bindSelector(node, ResolvedEntityRef::type(lookup.resolvedName));
+            return;
+        }
+
+        error(node->loc,
+              "unknown module member `" + parentBinding->resolvedName() + "." +
+                  memberName + "`",
+              "Only directly imported top-level functions and types are available through `file.xxx`.");
     }
 
     void resolveStmt(const AstNode *node) {
@@ -239,6 +292,7 @@ class FunctionResolver {
         }
         if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
             resolveExpr(selector->parent);
+            resolveSelector(selector);
             return;
         }
         if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
@@ -460,6 +514,15 @@ ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
         topLevelEntry,
         guaranteedReturn));
     return functions_.back().get();
+}
+
+const ResolvedEntityRef *
+ResolvedFunction::selector(const AstSelector *node) const {
+    auto found = selectors_.find(node);
+    if (found == selectors_.end()) {
+        return nullptr;
+    }
+    return &found->second;
 }
 
 const ResolvedEntityRef *

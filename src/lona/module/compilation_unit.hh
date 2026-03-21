@@ -108,7 +108,6 @@ public:
     const std::string *findLocalType(const std::string &localName) const;
     const std::string *findLocalFunction(const std::string &localName) const;
     TopLevelLookup lookupTopLevelName(const std::string &name) const;
-    TopLevelLookup lookupModuleMember(const std::string &name) const;
     TopLevelLookup lookupTopLevelName(const ImportedModule &moduleNamespace,
                                       const std::string &name) const;
     TypeClass *findResolvedType(TypeNode *node) const;

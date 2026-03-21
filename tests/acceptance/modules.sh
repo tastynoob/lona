@@ -18,6 +18,9 @@ import_main_out="$(new_tmp_file import-main-out)"
 import_type_out="$(new_tmp_file import-type-out)"
 import_chain_out="$(new_tmp_file import-chain-out)"
 import_module_call_bad_out="$(new_tmp_file import-module-call-bad-out)"
+import_unknown_member_out="$(new_tmp_file import-unknown-member-out)"
+import_namespace_value_bad_out="$(new_tmp_file import-namespace-value-bad-out)"
+import_function_value_bad_out="$(new_tmp_file import-function-value-bad-out)"
 import_local_shadow_out="$(new_tmp_file import-local-shadow-out)"
 import_top_level_shadow_out="$(new_tmp_file import-top-level-shadow-out)"
 import_mid_in="$import_dir/mid.lo"
@@ -165,6 +168,38 @@ EOF
 expect_emit_ir_failure "$import_main_in" "$import_module_call_bad_out" 'expected direct module call program to fail'
 grep -Fq 'module `math` does not support call syntax' "$import_module_call_bad_out"
 grep -Fq 'Call a concrete member like `math.func(...)` or `math.Type(...)` instead.' "$import_module_call_bad_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def main() i32 {
+    ret math.missing(4)
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_unknown_member_out" 'expected unknown module member program to fail'
+grep -Fq 'unknown module member `math.missing`' "$import_unknown_member_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def main() i32 {
+    var ns = math
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_namespace_value_bad_out" 'expected bare module namespace value program to fail'
+grep -Fq "module namespaces can't be used as runtime values" "$import_namespace_value_bad_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+def main() i32 {
+    var cb = math.inc
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_function_value_bad_out" 'expected imported bare function local variable program to fail'
+grep -Fq 'unsupported bare function variable type for `cb`: (i32) i32' "$import_function_value_bad_out"
 
 cat >"$import_main_in" <<'EOF'
 import math

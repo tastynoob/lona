@@ -536,9 +536,6 @@ class FunctionAnalyzer {
             if (!value) {
                 return EntityRef::invalid();
             }
-            if (auto *moduleObject = value->as<ModuleObject>()) {
-                return EntityRef::module(moduleObject->unit());
-            }
             if (auto *typeObject = value->as<TypeObject>()) {
                 return EntityRef::type(typeObject->declaredType());
             }
@@ -570,33 +567,6 @@ class FunctionAnalyzer {
         owner.tupleType = owner.valueType ? owner.valueType->as<TupleType>() : nullptr;
         owner.structType = owner.valueType ? owner.valueType->as<StructType>() : nullptr;
         return owner;
-    }
-
-    LookupResult lookupModuleMember(const MemberLookupOwner &owner,
-                                    const std::string &fieldName,
-                                    const location &loc) {
-        auto result = owner.entity.dot(fieldName);
-        if (auto *moduleUnit = owner.entity.asModule()) {
-            auto lookup = moduleUnit->lookupModuleMember(fieldName);
-            if (lookup.isType()) {
-                result.kind = LookupResultKind::ModuleMemberType;
-                result.resultEntity =
-                    EntityRef::type(requireTypeByName(lookup.resolvedName, loc,
-                                                     "module type"));
-                return result;
-            }
-            if (lookup.isFunction()) {
-                result.kind = LookupResultKind::ModuleMemberFunction;
-                result.resultEntity =
-                    EntityRef::object(requireGlobalFunction(lookup.resolvedName, loc,
-                                                            "module function"));
-                return result;
-            }
-            result.kind = LookupResultKind::NotFound;
-            return result;
-        }
-        result.kind = LookupResultKind::NotFound;
-        return result;
     }
 
     LookupResult lookupValueMember(const MemberLookupOwner &owner,
@@ -637,10 +607,7 @@ class FunctionAnalyzer {
                               const location &loc) {
         MemberLookup lookup;
         lookup.owner = classifyMemberOwner(parent);
-        if (lookup.owner.entity.asModule()) {
-            lookup.result = lookupModuleMember(lookup.owner, fieldName, loc);
-            return lookup;
-        }
+        (void)loc;
 
         if (auto binding = resolveInjectedMemberBinding(typeMgr, lookup.owner.valueType,
                                                         fieldName)) {
@@ -660,11 +627,6 @@ class FunctionAnalyzer {
                                    const location &loc,
                                    bool allowInjectedMember = false) {
         switch (lookup.result.kind) {
-            case LookupResultKind::ModuleMemberType:
-                return makeHIR<HIRValue>(
-                    new TypeObject(lookup.result.resultEntity.asType()), loc);
-            case LookupResultKind::ModuleMemberFunction:
-                return makeHIR<HIRValue>(lookup.result.resultEntity.asObject(), loc);
             case LookupResultKind::ValueField:
                 return makeHIR<HIRSelector>(parent, fieldName,
                                             lookup.result.resultEntity.valueType(), loc);
@@ -687,15 +649,6 @@ class FunctionAnalyzer {
     [[noreturn]] void diagnoseMemberLookupFailure(
         const MemberLookup &lookup, const std::string &fieldName,
         const location &loc, const std::string &ownerLabel = std::string()) {
-        if (lookup.owner.entity.asModule()) {
-            auto moduleName = ownerLabel.empty()
-                ? lookup.owner.entity.asModule()->moduleName()
-                : ownerLabel;
-            error(loc,
-                  "unknown module member `" + moduleName + "." + fieldName + "`",
-                  "Only directly imported top-level functions and types are available through `file.xxx`.");
-        }
-
         if (lookup.owner.entity.asType()) {
             auto typeName = ownerLabel.empty()
                 ? describeResolvedType(lookup.owner.entity.asType())
@@ -716,7 +669,23 @@ class FunctionAnalyzer {
         }
 
         error(loc,
-              "member access expects a struct, tuple, module, or type value on the left side");
+              "member access expects a struct, tuple, or type value on the left side");
+    }
+
+    [[noreturn]] void diagnoseModuleNamespaceValueUse(const std::string &moduleName,
+                                                      const location &loc) {
+        error(loc,
+              "module namespaces can't be used as runtime values",
+              "Access a concrete member like `" + moduleName +
+                  ".func(...)` or `" + moduleName + ".Type(...)` instead.");
+    }
+
+    [[noreturn]] void diagnoseModuleNamespaceCall(const std::string &moduleName,
+                                                  const location &loc) {
+        error(loc,
+              "module `" + moduleName + "` does not support call syntax",
+              "Call a concrete member like `" + moduleName + ".func(...)` or `" +
+                  moduleName + ".Type(...)` instead.");
     }
 
     HIRExpr *materializeResolvedEntity(const ResolvedEntityRef *binding,
@@ -741,18 +710,6 @@ class FunctionAnalyzer {
                 auto *type =
                     requireTypeByName(binding->resolvedName(), loc, "type identifier");
                 return makeHIR<HIRValue>(new TypeObject(type), loc);
-            }
-            case ResolvedEntityRef::Kind::Module: {
-                auto *obj = requireGlobalObject(binding->resolvedName(), loc,
-                                                "module identifier");
-                auto *moduleObject = obj ? obj->as<ModuleObject>() : nullptr;
-                if (!moduleObject) {
-                    internalError(loc,
-                                  "resolved module `" + binding->resolvedName() +
-                                      "` is missing from the global namespace",
-                                  "Rebuild declarations before HIR lowering.");
-                }
-                return makeHIR<HIRValue>(moduleObject, loc);
             }
             case ResolvedEntityRef::Kind::Invalid:
                 break;
@@ -850,15 +807,6 @@ class FunctionAnalyzer {
 
     [[noreturn]] void diagnoseCallFailure(HIRExpr *callee, const location &loc,
                                           const CallResolution &resolution) {
-        if (auto *moduleUnit = resolution.callee.asModule()) {
-            error(loc,
-                  "module `" + moduleUnit->moduleName() +
-                      "` does not support call syntax",
-                  "Call a concrete member like `" + moduleUnit->moduleName() +
-                      ".func(...)` or `" + moduleUnit->moduleName() +
-                      ".Type(...)` instead.");
-        }
-
         if (auto *type = resolution.callee.asType()) {
             if (!type->as<StructType>()) {
                 error(loc,
@@ -1719,7 +1667,18 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeField(AstField *node) {
         auto *binding = resolved.field(node);
+        if (binding && binding->kind() == ResolvedEntityRef::Kind::Module) {
+            diagnoseModuleNamespaceValueUse(toStdString(node->name), node->loc);
+        }
         return materializeResolvedEntity(binding, node->loc, toStdString(node->name));
+    }
+
+    HIRExpr *analyzeResolvedSelector(AstSelector *node) {
+        auto *binding = resolved.selector(node);
+        if (!binding || !binding->valid()) {
+            return nullptr;
+        }
+        return materializeResolvedEntity(binding, node->loc, describeMemberOwnerSyntax(node));
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
@@ -1906,11 +1865,6 @@ class FunctionAnalyzer {
             if (!type) {
                 auto *value = dynamic_cast<HIRValue *>(init);
                 auto *object = value ? value->getValue() : nullptr;
-                if (object && object->as<ModuleObject>()) {
-                    error(node->loc,
-                          "module namespaces can't be stored as runtime values",
-                          "Access a concrete member like `file.func(...)` instead.");
-                }
                 if (object && object->as<TypeObject>()) {
                     error(node->loc,
                           "type names can't be stored as runtime values",
@@ -1981,6 +1935,10 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeSelector(AstSelector *node) {
+        if (auto *resolvedSelector = analyzeResolvedSelector(node)) {
+            return resolvedSelector;
+        }
+
         auto *parent = requireExpr(node->parent);
         auto fieldName = toStdString(node->field->text);
         auto lookup = lookupMember(parent, fieldName, node->loc);
@@ -1994,42 +1952,55 @@ class FunctionAnalyzer {
     HIRExpr *analyzeCall(AstFieldCall *node, TypeClass *expectedType = nullptr) {
         auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
         HIRExpr *callee = nullptr;
-        if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
-            auto *receiver = requireExpr(selectorNode->parent);
-            auto fieldName = toStdString(selectorNode->field->text);
-            auto lookup = lookupMember(receiver, fieldName, node->loc);
-            if (lookup.result.kind == LookupResultKind::InjectedMember) {
-                assert(lookup.injectedMember.has_value());
-                if (lookup.injectedMember->kind == InjectedMemberKind::NumericConversion) {
-                    if (node->args && !node->args->empty()) {
-                        error(node->loc,
-                              "numeric conversion member `" + fieldName +
-                                  "` does not take arguments",
-                              "Call it as `<expr>." + fieldName + "()`.");
-                    }
-                    return coerceNumericExpr(receiver, lookup.injectedMember->resultType,
-                                             node->loc,
-                                             true);
-                }
-                if (lookup.injectedMember->kind == InjectedMemberKind::BitCopy) {
-                    if (node->args && !node->args->empty()) {
-                        error(node->loc,
-                              "raw bit-copy member `" + fieldName +
-                                  "` does not take arguments",
-                              "Call it as `<expr>." + fieldName + "()`.");
-                    }
-                    return coerceBitCopyExpr(receiver, lookup.injectedMember->resultType,
-                                             node->loc);
-                }
+        if (auto *fieldNode = node->value ? node->value->as<AstField>() : nullptr) {
+            auto *binding = resolved.field(fieldNode);
+            if (binding && binding->kind() == ResolvedEntityRef::Kind::Module) {
+                diagnoseModuleNamespaceCall(toStdString(fieldNode->name), node->loc);
             }
-            if (auto *resolvedCallee =
-                    materializeMemberExpr(receiver, fieldName, lookup,
-                                          selectorNode->loc, true)) {
-                callee = resolvedCallee;
+        }
+        if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
+            if (auto *resolvedSelector = analyzeResolvedSelector(selectorNode)) {
+                callee = resolvedSelector;
             } else {
-                diagnoseMemberLookupFailure(
-                    lookup, fieldName, selectorNode->loc,
-                    describeMemberOwnerSyntax(selectorNode->parent));
+                auto *receiver = requireExpr(selectorNode->parent);
+                auto fieldName = toStdString(selectorNode->field->text);
+                auto lookup = lookupMember(receiver, fieldName, node->loc);
+                if (lookup.result.kind == LookupResultKind::InjectedMember) {
+                    assert(lookup.injectedMember.has_value());
+                    if (lookup.injectedMember->kind ==
+                        InjectedMemberKind::NumericConversion) {
+                        if (node->args && !node->args->empty()) {
+                            error(node->loc,
+                                  "numeric conversion member `" + fieldName +
+                                      "` does not take arguments",
+                                  "Call it as `<expr>." + fieldName + "()`.");
+                        }
+                        return coerceNumericExpr(receiver,
+                                                 lookup.injectedMember->resultType,
+                                                 node->loc,
+                                                 true);
+                    }
+                    if (lookup.injectedMember->kind == InjectedMemberKind::BitCopy) {
+                        if (node->args && !node->args->empty()) {
+                            error(node->loc,
+                                  "raw bit-copy member `" + fieldName +
+                                      "` does not take arguments",
+                                  "Call it as `<expr>." + fieldName + "()`.");
+                        }
+                        return coerceBitCopyExpr(receiver,
+                                                 lookup.injectedMember->resultType,
+                                                 node->loc);
+                    }
+                }
+                if (auto *resolvedCallee =
+                        materializeMemberExpr(receiver, fieldName, lookup,
+                                              selectorNode->loc, true)) {
+                    callee = resolvedCallee;
+                } else {
+                    diagnoseMemberLookupFailure(
+                        lookup, fieldName, selectorNode->loc,
+                        describeMemberOwnerSyntax(selectorNode->parent));
+                }
             }
         }
 

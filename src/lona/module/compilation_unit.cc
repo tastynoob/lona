@@ -536,30 +536,6 @@ CompilationUnit::lookupTopLevelName(const std::string &name) const {
 }
 
 CompilationUnit::TopLevelLookup
-CompilationUnit::lookupModuleMember(const std::string &name) const {
-    TopLevelLookup lookup;
-    if (!moduleInterface_) {
-        return lookup;
-    }
-
-    auto member = moduleInterface_->lookupTopLevelName(name);
-    if (member.isType()) {
-        lookup.kind = TopLevelLookupKind::Type;
-        lookup.typeDecl = member.typeDecl;
-        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : std::string();
-        return lookup;
-    }
-    if (member.isFunction()) {
-        lookup.kind = TopLevelLookupKind::Function;
-        lookup.functionDecl = member.functionDecl;
-        lookup.resolvedName =
-            member.functionDecl ? member.functionDecl->exportedName : std::string();
-        return lookup;
-    }
-    return lookup;
-}
-
-CompilationUnit::TopLevelLookup
 CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
                                     const std::string &name) const {
     TopLevelLookup lookup;
