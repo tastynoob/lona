@@ -242,6 +242,16 @@ public:
     HIRExpr *getExpr() const { return expr; }
 };
 
+class HIRBreak : public HIRNode {
+public:
+    explicit HIRBreak(const location &loc = location()) : HIRNode(loc) {}
+};
+
+class HIRContinue : public HIRNode {
+public:
+    explicit HIRContinue(const location &loc = location()) : HIRNode(loc) {}
+};
+
 class HIRBlock : public HIRNode {
     std::vector<HIRNode *> body;
 
@@ -290,13 +300,17 @@ public:
 class HIRFor : public HIRNode {
     HIRExpr *cond;
     HIRBlock *body;
+    HIRBlock *elseBlock = nullptr;
 
 public:
-    HIRFor(HIRExpr *cond, HIRBlock *body, const location &loc = location())
-        : HIRNode(loc), cond(cond), body(body) {}
+    HIRFor(HIRExpr *cond, HIRBlock *body, HIRBlock *elseBlock = nullptr,
+           const location &loc = location())
+        : HIRNode(loc), cond(cond), body(body), elseBlock(elseBlock) {}
 
     HIRExpr *getCondition() const { return cond; }
     HIRBlock *getBody() const { return body; }
+    HIRBlock *getElseBlock() const { return elseBlock; }
+    bool hasElseBlock() const { return elseBlock != nullptr; }
 };
 
 class HIRFunc : public HIRNode {

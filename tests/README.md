@@ -6,6 +6,7 @@
 
 - [acceptance/run.sh](acceptance/run.sh): acceptance 总入口。
 - [acceptance/frontend.sh](acceptance/frontend.sh): AST/JSON、基础 IR、debug IR、基本语义。
+- [acceptance/controlflow.sh](acceptance/controlflow.sh): `for` / `for ... else` / `break` / `continue` 的 JSON、诊断和运行语义。
 - [acceptance/functions.sh](acceptance/functions.sh): 函数指针、裸函数类型限制、方法选择器、调用检查。
 - [acceptance/diagnostics.sh](acceptance/diagnostics.sh): 语法和语义错误诊断。
 - [acceptance/modules.sh](acceptance/modules.sh): 模块导入、结构体返回、顶层执行。

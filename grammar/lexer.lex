@@ -21,6 +21,23 @@ static std::string describeLexeme(const char *text, int length) {
     }
     return std::string(text, text + length);
 }
+
+static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *text,
+                               int length) {
+    int line_num = 0;
+    int space_num = 0;
+    for (int i = 0; i < length; i++) {
+        if (text[i] == '\n') {
+            line_num++;
+            space_num = 0;
+        }
+        if (text[i] == ' ') {
+            space_num++;
+        }
+    }
+    loc->lines(line_num);
+    loc->columns(space_num);
+}
 %}
 
 %option yyclass="lona::Scanner"
@@ -40,6 +57,8 @@ static std::string describeLexeme(const char *text, int length) {
 (def) { loc->columns(yyleng); return token::DEF; }
 (import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }
 (ret) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::RET; }
+(break) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::BREAK; }
+(continue) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::CONTINUE; }
 
 (if) { loc->columns(yyleng); return token::IF; }
 (else) { loc->columns(yyleng); return token::ELSE; }
@@ -235,20 +254,12 @@ static std::string describeLexeme(const char *text, int length) {
     return yytext[0];
 }
 
+([ ]*\n[ \t]*)/(else) {
+    advanceNewlineSpan(loc, yytext, yyleng);
+}
+
 ([ ]*\n[ \n]*) {
-    int line_num = 0;
-    int space_num = 0;
-    for (int i = 0; i < yyleng; i++) {
-        if (yytext[i] == '\n') {
-            line_num++;
-            space_num = 0;
-        }
-        if (yytext[i] == ' ') {
-            space_num++;
-        }
-    }
-    loc->lines(line_num);
-    loc->columns(space_num);
+    advanceNewlineSpan(loc, yytext, yyleng);
     return token::NEWLINE;
 }
 

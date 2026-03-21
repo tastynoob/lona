@@ -139,6 +139,10 @@ class FunctionResolver {
             }
             return;
         }
+        if (dynamic_cast<const AstBreak *>(node) ||
+            dynamic_cast<const AstContinue *>(node)) {
+            return;
+        }
         if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
             resolveExpr(ifNode->condition);
             resolveStmt(ifNode->then);
@@ -150,6 +154,9 @@ class FunctionResolver {
         if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
             resolveExpr(forNode->expr);
             resolveStmt(forNode->body);
+            if (forNode->els) {
+                resolveStmt(forNode->els);
+            }
             return;
         }
         if (node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {

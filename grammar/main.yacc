@@ -46,7 +46,7 @@
 %define parse.lac full
 %parse-param { Driver &driver }
 
-%token <token> CONST "literal" FIELD "identifier" RET "ret" TYPE "builtin type"
+%token <token> CONST "literal" FIELD "identifier" RET "ret" BREAK "break" CONTINUE "continue" TYPE "builtin type"
 %token <token> IMPORT_PATH "import path"
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
 %token LOGIC_LE "<=" LOGIC_GE ">=" SHIFT_LEFT "<<" SHIFT_RIGHT ">>"
@@ -85,7 +85,7 @@
 %type <node> pragram pragram_statlist pragram_stat
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_statlist struct_stat stat_list stat
-%type <node> stat_compound stat_if stat_for stat_ret stat_expr
+%type <node> stat_compound stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> field_call tuple_literal brace_init brace_init_item call_arg named_call_arg legacy_cast_expr
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren single_value field_selector func_pointer_expr
@@ -164,6 +164,12 @@ stat
     | stat_ret {
         $$ = $1;
     }
+    | stat_break {
+        $$ = $1;
+    }
+    | stat_continue {
+        $$ = $1;
+    }
     | stat_compound {
         $$ = $1;
     }
@@ -197,6 +203,9 @@ stat_for
     : FOR expr stat_compound {
         $$ = new AstFor($2, $3);
     }
+    | FOR expr stat_compound ELSE stat_compound {
+        $$ = new AstFor($2, $3, $5);
+    }
     ;
 
 stat_ret
@@ -205,6 +214,18 @@ stat_ret
     }
     | RET NEWLINE {
         $$ = new AstRet($1->loc, nullptr);
+    }
+    ;
+
+stat_break
+    : BREAK NEWLINE {
+        $$ = new AstBreak($1->loc);
+    }
+    ;
+
+stat_continue
+    : CONTINUE NEWLINE {
+        $$ = new AstContinue($1->loc);
     }
     ;
 

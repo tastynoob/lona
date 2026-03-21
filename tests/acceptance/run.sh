@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 for script in \
     frontend.sh \
+    controlflow.sh \
     functions.sh \
     references.sh \
     diagnostics.sh \

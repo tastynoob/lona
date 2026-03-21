@@ -1212,6 +1212,11 @@ getDirectFunctionCallee(HIRExpr *callee) {
 }
 
 class FunctionCompiler {
+    struct LoopContext {
+        llvm::BasicBlock *continueBlock = nullptr;
+        llvm::BasicBlock *breakBlock = nullptr;
+    };
+
     TypeTable *typeMgr;
     GlobalScope *global;
     FuncScope *scope;
@@ -1221,6 +1226,7 @@ class FunctionCompiler {
     bool returnByPointer = false;
     location currentLocation;
     bool hasCurrentLocation = false;
+    std::vector<LoopContext> loopStack;
 
     [[noreturn]] void error(const std::string &message) {
         if (hasCurrentLocation) {
@@ -1321,6 +1327,13 @@ class FunctionCompiler {
 
     void clearLocation() {
         clearDebugLocation(scope->builder);
+    }
+
+    const LoopContext &requireCurrentLoop() {
+        if (loopStack.empty()) {
+            error("loop control statement escaped semantic validation");
+        }
+        return loopStack.back();
     }
 
     Object *compileExpr(HIRExpr *expr) {
@@ -1616,6 +1629,16 @@ class FunctionCompiler {
             scope->setReturned();
             return retSlot;
         }
+        if (auto *breakNode = dynamic_cast<HIRBreak *>(node)) {
+            setLocation(breakNode);
+            scope->builder.CreateBr(requireCurrentLoop().breakBlock);
+            return nullptr;
+        }
+        if (auto *continueNode = dynamic_cast<HIRContinue *>(node)) {
+            setLocation(continueNode);
+            scope->builder.CreateBr(requireCurrentLoop().continueBlock);
+            return nullptr;
+        }
         if (auto *ifNode = dynamic_cast<HIRIf *>(node)) {
             setLocation(ifNode);
             auto *condObj = compileExpr(ifNode->getCondition());
@@ -1654,18 +1677,32 @@ class FunctionCompiler {
             auto *condBB = llvm::BasicBlock::Create(context, "for.cond", llvmFunc);
             auto *bodyBB = llvm::BasicBlock::Create(context, "for.body");
             auto *endBB = llvm::BasicBlock::Create(context, "for.end");
+            auto *elseBB = forNode->hasElseBlock()
+                ? llvm::BasicBlock::Create(context, "for.else")
+                : endBB;
 
             scope->builder.CreateBr(condBB);
 
             scope->builder.SetInsertPoint(condBB);
             auto *condObj = compileExpr(forNode->getCondition());
-            scope->builder.CreateCondBr(emitBoolCast(condObj), bodyBB, endBB);
+            scope->builder.CreateCondBr(emitBoolCast(condObj), bodyBB, elseBB);
 
             llvmFunc->insert(llvmFunc->end(), bodyBB);
             scope->builder.SetInsertPoint(bodyBB);
+            loopStack.push_back({condBB, endBB});
             compileBlock(forNode->getBody());
+            loopStack.pop_back();
             if (!scope->builder.GetInsertBlock()->getTerminator()) {
                 scope->builder.CreateBr(condBB);
+            }
+
+            if (forNode->hasElseBlock()) {
+                llvmFunc->insert(llvmFunc->end(), elseBB);
+                scope->builder.SetInsertPoint(elseBB);
+                compileBlock(forNode->getElseBlock());
+                if (!scope->builder.GetInsertBlock()->getTerminator()) {
+                    scope->builder.CreateBr(endBB);
+                }
             }
 
             llvmFunc->insert(llvmFunc->end(), endBB);

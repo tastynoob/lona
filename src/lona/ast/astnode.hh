@@ -20,6 +20,8 @@ namespace lona {
 class CFGChecker;
 class AstNode;
 class AstIf;
+class AstBreak;
+class AstContinue;
 class AstRet;
 class AstVisitor;
 class Object;
@@ -140,7 +142,9 @@ public:
     virtual void toJson(Json &root) {};
     virtual void toCFG(CFGChecker &checker);
 
-    bool isControlNode() { return is<AstIf>() || is<AstRet>(); }
+    bool isControlNode() {
+        return is<AstIf>() || is<AstRet>() || is<AstBreak>() || is<AstContinue>();
+    }
 
     template<typename T>
     bool is() const {
@@ -427,6 +431,32 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstBreak : public AstNode {
+public:
+    explicit AstBreak(const location &loc) : AstNode(loc) {}
+
+    void setNextNode(AstNode *node) override {
+        // break targets are wired during semantic lowering, not via CFG next links.
+    }
+
+    void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstContinue : public AstNode {
+public:
+    explicit AstContinue(const location &loc) : AstNode(loc) {}
+
+    void setNextNode(AstNode *node) override {
+        // continue targets are wired during semantic lowering, not via CFG next links.
+    }
+
+    void toJson(Json &root) override;
+    void toCFG(CFGChecker &checker) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstIf : public AstNode {
 public:
     AstNode *const condition;
@@ -459,8 +489,25 @@ class AstFor : public AstNode {
 public:
     AstNode *const expr;
     AstNode *const body;
+    AstNode *const els = nullptr;
+    bool hasElse() const { return els != nullptr; }
 
-    AstFor(AstNode *expr, AstNode *body);
+    void setNextNode(AstNode *node) override {
+        cfg_next = node->getValidCFGNode();
+        if (els) {
+            els->setNextNode(node);
+        }
+    }
+
+    AstFor(AstNode *expr, AstNode *body, AstNode *els = nullptr);
+
+    bool hasTerminator() override {
+        if (els == nullptr) {
+            return false;
+        }
+        return body->hasTerminator() && els->hasTerminator();
+    }
+
     void toJson(Json &root) override;
     void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;

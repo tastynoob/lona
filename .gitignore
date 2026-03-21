@@ -28,6 +28,7 @@ __pycache__/
 /hooks
 /objects
 /refs
-.plan
+/.plan
+test*
 draft.md
 plan.md

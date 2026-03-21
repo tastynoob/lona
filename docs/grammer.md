@@ -114,6 +114,8 @@ stat              ::= stat-expr
                     | struct-decl
                     | func-decl
                     | ret-stat
+                    | break-stat
+                    | continue-stat
                     | block
                     | if-stat
                     | for-stat
@@ -126,13 +128,24 @@ if-stat           ::= "if" expr block
                     | "if" expr block "else" block
 
 for-stat          ::= "for" expr block
+                    | "for" expr block "else" block
 
 ret-stat          ::= "ret" NL
                     | "ret" expr NL
 
+break-stat        ::= "break" NL
+
+continue-stat     ::= "continue" NL
+
 stat-expr         ::= final-expr NL
                     | var-def NL
 ```
+
+说明：
+
+- `break`、`continue` 当前只允许出现在 `for` 循环体里。
+- `for ... else ...` 的 `else` 块只在循环条件自然结束时执行；如果循环被 `break` 提前打断，则不会进入 `else`。
+- `continue` 只会跳回下一轮条件检查，不会永久屏蔽后续“自然结束后进入 `else`”这一行为。
 
 ### 3.3 结构体与函数声明
 

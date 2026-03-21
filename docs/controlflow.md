@@ -60,3 +60,46 @@ for i < 10 {
     ret
 }
 ```
+
+## 7. `break` / `continue`
+
+```lona
+for running {
+    if should_stop {
+        break
+    }
+    if should_skip {
+        continue
+    }
+}
+```
+
+- `break` 会立刻结束最近一层 `for`。
+- `continue` 会立刻回到最近一层 `for` 的下一轮条件检查。
+
+## 8. `for ... else ...`
+
+```lona
+for i < limit {
+    i = i + 1
+} else {
+    ret 1
+}
+```
+
+也可以把 `else` 写在下一行：
+
+```lona
+for i < limit {
+    i = i + 1
+}
+else {
+    ret 1
+}
+```
+
+说明：
+
+- `else` 只在循环条件自然变成假时执行。
+- 如果循环体里发生 `break`，则会直接跳过 `else`。
+- 如果循环体里使用 `continue`，只是开始下一轮检查；只要循环最终是自然结束的，`else` 仍然会执行。

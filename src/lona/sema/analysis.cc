@@ -413,6 +413,7 @@ class FunctionAnalyzer {
     HIRModule *ownerModule;
     HIRFunc *hirFunc;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
+    int loopDepth = 0;
 
     [[noreturn]] void error(const location &loc, const std::string &message,
                             const std::string &hint = std::string()) {
@@ -1353,6 +1354,12 @@ class FunctionAnalyzer {
         if (auto *ret = node->as<AstRet>()) {
             return analyzeRet(ret);
         }
+        if (auto *breakNode = node->as<AstBreak>()) {
+            return analyzeBreak(breakNode);
+        }
+        if (auto *continueNode = node->as<AstContinue>()) {
+            return analyzeContinue(continueNode);
+        }
         if (auto *ifNode = node->as<AstIf>()) {
             return analyzeIf(ifNode);
         }
@@ -1911,6 +1918,20 @@ class FunctionAnalyzer {
         return makeHIR<HIRRet>(expr, node->loc);
     }
 
+    HIRNode *analyzeBreak(AstBreak *node) {
+        if (loopDepth <= 0) {
+            error(node->loc, "`break` can only appear inside `for` loops");
+        }
+        return makeHIR<HIRBreak>(node->loc);
+    }
+
+    HIRNode *analyzeContinue(AstContinue *node) {
+        if (loopDepth <= 0) {
+            error(node->loc, "`continue` can only appear inside `for` loops");
+        }
+        return makeHIR<HIRContinue>(node->loc);
+    }
+
     HIRNode *analyzeIf(AstIf *node) {
         auto *cond = requireNonCallExpr(node->condition);
         if (!isTruthyScalarType(cond->getType())) {
@@ -1930,8 +1951,11 @@ class FunctionAnalyzer {
                   "for condition expects a scalar truthy value",
                   "Use `bool`, numeric values, or pointers in loop conditions.");
         }
+        ++loopDepth;
         auto *body = analyzeBlock(node->body);
-        return makeHIR<HIRFor>(cond, body, node->loc);
+        --loopDepth;
+        auto *elseBlock = node->hasElse() ? analyzeBlock(node->els) : nullptr;
+        return makeHIR<HIRFor>(cond, body, elseBlock, node->loc);
     }
 
     HIRExpr *analyzeSelector(AstSelector *node) {

@@ -219,6 +219,16 @@ AstRet::toJson(Json &root) {
 }
 
 void
+AstBreak::toJson(Json &root) {
+    root["type"] = "Break";
+}
+
+void
+AstContinue::toJson(Json &root) {
+    root["type"] = "Continue";
+}
+
+void
 AstIf::toJson(Json &root) {
     root["type"] = "If";
     root["cond"] = Json::object();
@@ -238,6 +248,10 @@ AstFor::toJson(Json &root) {
     this->expr->toJson(root["cond"]);
     root["body"] = Json::object();
     this->body->toJson(root["body"]);
+    if (this->els != nullptr) {
+        root["else"] = Json::object();
+        this->els->toJson(root["else"]);
+    }
 }
 
 void

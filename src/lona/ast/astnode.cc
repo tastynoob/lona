@@ -77,6 +77,8 @@ DEF_ACCEPT(AstVarDecl)
 DEF_ACCEPT(AstVarDef)
 DEF_ACCEPT(AstFuncDecl)
 DEF_ACCEPT(AstRet)
+DEF_ACCEPT(AstBreak)
+DEF_ACCEPT(AstContinue)
 DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstFieldCall)
@@ -154,8 +156,8 @@ AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : AstNode(condition ? condition->loc : location()),
       condition(condition), then(then), els(els) {}
 
-AstFor::AstFor(AstNode *expr, AstNode *body)
-    : AstNode(expr ? expr->loc : location()), expr(expr), body(body) {
+AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
+    : AstNode(expr ? expr->loc : location()), expr(expr), body(body), els(els) {
     body->setNextNode(this);
 }
 
