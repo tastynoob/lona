@@ -1466,13 +1466,13 @@ class FunctionCompiler {
             auto *parent = compileExpr(selector->getParent());
             auto fieldName = selector->getFieldName();
             if (auto *tupleParent = parent->as<TupleVar>()) {
-                if (selector->getType() == nullptr) {
-                    error("tuple selector is missing its value type");
+                if (!selector->isValueFieldSelector()) {
+                    error("tuple selectors do not support method calls");
                 }
                 return tupleParent->getField(scope, fieldName);
             }
             if (auto *structParent = parent->as<StructVar>()) {
-                if (selector->getType() == nullptr) {
+                if (selector->isMethodSelector()) {
                     error(kMethodSelectorDirectCallError);
                 }
                 return structParent->getField(scope, fieldName);
@@ -1486,7 +1486,7 @@ class FunctionCompiler {
             FuncType *funcType = nullptr;
 
             if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee());
-                selector && selector->getType() == nullptr) {
+                selector && selector->isMethodSelector()) {
                 auto *parent = compileExpr(selector->getParent());
                 auto *structType = parent->getType()->as<StructType>();
                 if (!structType) {

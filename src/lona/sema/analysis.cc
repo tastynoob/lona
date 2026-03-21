@@ -241,7 +241,7 @@ describeInjectedMemberHelp(TypeClass *receiverType, const std::string &memberNam
 
 FuncType *
 getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
-    if (!selector || selector->getType() != nullptr) {
+    if (!selector || !selector->isMethodSelector()) {
         return nullptr;
     }
 
@@ -319,13 +319,20 @@ rejectNonCallMethodSelector(TypeTable *typeMgr, HIRExpr *expr) {
 }
 
 std::optional<InjectedMemberBinding>
-resolveInjectedMemberBinding(TypeTable *typeMgr, HIRExpr *receiver,
+resolveInjectedMemberBinding(TypeTable *typeMgr, TypeClass *receiverType,
                              const std::string &memberName) {
-    if (!typeMgr || !receiver) {
+    if (!typeMgr || !receiverType) {
         return std::nullopt;
     }
-    return resolveInjectedMember(typeMgr, receiver->getType(),
-                                 llvm::StringRef(memberName));
+    return resolveInjectedMember(typeMgr, receiverType, llvm::StringRef(memberName));
+}
+
+std::optional<InjectedMemberBinding>
+resolveInjectedMemberBinding(TypeTable *typeMgr, HIRExpr *receiver,
+                             const std::string &memberName) {
+    return resolveInjectedMemberBinding(typeMgr,
+                                        receiver ? receiver->getType() : nullptr,
+                                        memberName);
 }
 
 void
@@ -406,49 +413,10 @@ class FunctionAnalyzer {
     HIRModule *ownerModule;
     HIRFunc *hirFunc;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
-    location currentLocation;
-    bool hasCurrentLocation = false;
-
-    class ScopedLocation {
-        FunctionAnalyzer &owner;
-        location savedLocation;
-        bool savedHasLocation = false;
-
-    public:
-        ScopedLocation(FunctionAnalyzer &owner, const location &loc)
-            : owner(owner),
-              savedLocation(owner.currentLocation),
-              savedHasLocation(owner.hasCurrentLocation) {
-            owner.currentLocation = loc;
-            owner.hasCurrentLocation = true;
-        }
-
-        ~ScopedLocation() {
-            owner.currentLocation = savedLocation;
-            owner.hasCurrentLocation = savedHasLocation;
-        }
-    };
-
-    [[noreturn]] void error(const std::string &message,
-                            const std::string &hint = std::string()) {
-        if (hasCurrentLocation) {
-            lona::error(currentLocation, message, hint);
-        }
-        lona::error(message);
-    }
 
     [[noreturn]] void error(const location &loc, const std::string &message,
                             const std::string &hint = std::string()) {
         lona::error(loc, message, hint);
-    }
-
-    [[noreturn]] void internalError(const std::string &message,
-                                    const std::string &hint = std::string()) {
-        if (hasCurrentLocation) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  currentLocation, message, hint);
-        }
-        throw DiagnosticError(DiagnosticError::Category::Internal, message, hint);
     }
 
     [[noreturn]] void internalError(const location &loc, const std::string &message,
@@ -456,14 +424,15 @@ class FunctionAnalyzer {
         throw DiagnosticError(DiagnosticError::Category::Internal, loc, message, hint);
     }
 
-    TypeClass *requireType(TypeNode *node, const std::string &context) {
+    TypeClass *requireType(TypeNode *node, const location &loc,
+                           const std::string &context) {
         validateTypeNodeLayout(node);
         if (isReservedInitialListTypeNode(node)) {
             errorReservedInitialListType(node->loc);
         }
         auto *type = unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
         if (!type) {
-            error(currentLocation, context);
+            error(loc, context);
         }
         return type;
     }
@@ -581,11 +550,33 @@ class FunctionAnalyzer {
         return EntityRef::invalid();
     }
 
-    LookupResult resolveDot(HIRExpr *parent, const std::string &fieldName,
-                            const location &loc) {
-        auto result = classifyEntity(parent).dot(fieldName);
+    struct MemberLookupOwner {
+        EntityRef entity;
+        TypeClass *valueType = nullptr;
+        TupleType *tupleType = nullptr;
+        StructType *structType = nullptr;
+    };
 
-        if (auto *moduleUnit = result.owner.asModule()) {
+    struct MemberLookup {
+        MemberLookupOwner owner;
+        LookupResult result;
+        std::optional<InjectedMemberBinding> injectedMember;
+    };
+
+    MemberLookupOwner classifyMemberOwner(HIRExpr *parent) {
+        MemberLookupOwner owner;
+        owner.entity = classifyEntity(parent);
+        owner.valueType = owner.entity.valueType();
+        owner.tupleType = owner.valueType ? owner.valueType->as<TupleType>() : nullptr;
+        owner.structType = owner.valueType ? owner.valueType->as<StructType>() : nullptr;
+        return owner;
+    }
+
+    LookupResult lookupModuleMember(const MemberLookupOwner &owner,
+                                    const std::string &fieldName,
+                                    const location &loc) {
+        auto result = owner.entity.dot(fieldName);
+        if (auto *moduleUnit = owner.entity.asModule()) {
             auto lookup = moduleUnit->lookupModuleMember(fieldName);
             if (lookup.isType()) {
                 result.kind = LookupResultKind::ModuleMemberType;
@@ -604,18 +595,16 @@ class FunctionAnalyzer {
             result.kind = LookupResultKind::NotFound;
             return result;
         }
+        result.kind = LookupResultKind::NotFound;
+        return result;
+    }
 
-        if (auto binding = resolveInjectedMemberBinding(typeMgr, parent, fieldName)) {
-            result.kind = LookupResultKind::InjectedMember;
-            result.resultEntity = EntityRef::typedValue(binding->resultType);
-            return result;
-        }
-
-        auto *valueType = result.owner.valueType();
-        auto *tupleType = valueType ? valueType->as<TupleType>() : nullptr;
-        if (tupleType) {
+    LookupResult lookupValueMember(const MemberLookupOwner &owner,
+                                   const std::string &fieldName) {
+        auto result = owner.entity.dot(fieldName);
+        if (owner.tupleType) {
             TupleType::ValueTy member;
-            if (tupleType->getMember(llvm::StringRef(fieldName), member)) {
+            if (owner.tupleType->getMember(llvm::StringRef(fieldName), member)) {
                 result.kind = LookupResultKind::ValueField;
                 result.resultEntity = EntityRef::typedValue(member.first);
                 return result;
@@ -624,14 +613,14 @@ class FunctionAnalyzer {
             return result;
         }
 
-        auto *structType = valueType ? valueType->as<StructType>() : nullptr;
-        if (structType) {
-            if (auto *member = structType->getMember(llvm::StringRef(fieldName))) {
+        if (owner.structType) {
+            if (auto *member = owner.structType->getMember(llvm::StringRef(fieldName))) {
                 result.kind = LookupResultKind::ValueField;
                 result.resultEntity = EntityRef::typedValue(member->first);
                 return result;
             }
-            if (auto *methodType = structType->getMethodType(llvm::StringRef(fieldName))) {
+            if (auto *methodType =
+                    owner.structType->getMethodType(llvm::StringRef(fieldName))) {
                 result.kind = LookupResultKind::Method;
                 result.resultEntity = EntityRef::typedValue(methodType);
                 return result;
@@ -644,19 +633,44 @@ class FunctionAnalyzer {
         return result;
     }
 
-    HIRExpr *materializeDotExpr(HIRExpr *parent, const std::string &fieldName,
-                                const LookupResult &lookup, const location &loc,
-                                bool allowInjectedMember = false) {
-        switch (lookup.kind) {
+    MemberLookup lookupMember(HIRExpr *parent, const std::string &fieldName,
+                              const location &loc) {
+        MemberLookup lookup;
+        lookup.owner = classifyMemberOwner(parent);
+        if (lookup.owner.entity.asModule()) {
+            lookup.result = lookupModuleMember(lookup.owner, fieldName, loc);
+            return lookup;
+        }
+
+        if (auto binding = resolveInjectedMemberBinding(typeMgr, lookup.owner.valueType,
+                                                        fieldName)) {
+            lookup.result = lookup.owner.entity.dot(fieldName);
+            lookup.result.kind = LookupResultKind::InjectedMember;
+            lookup.result.resultEntity = EntityRef::typedValue(binding->resultType);
+            lookup.injectedMember = binding;
+            return lookup;
+        }
+
+        lookup.result = lookupValueMember(lookup.owner, fieldName);
+        return lookup;
+    }
+
+    HIRExpr *materializeMemberExpr(HIRExpr *parent, const std::string &fieldName,
+                                   const MemberLookup &lookup,
+                                   const location &loc,
+                                   bool allowInjectedMember = false) {
+        switch (lookup.result.kind) {
             case LookupResultKind::ModuleMemberType:
-                return makeHIR<HIRValue>(new TypeObject(lookup.resultEntity.asType()), loc);
+                return makeHIR<HIRValue>(
+                    new TypeObject(lookup.result.resultEntity.asType()), loc);
             case LookupResultKind::ModuleMemberFunction:
-                return makeHIR<HIRValue>(lookup.resultEntity.asObject(), loc);
+                return makeHIR<HIRValue>(lookup.result.resultEntity.asObject(), loc);
             case LookupResultKind::ValueField:
                 return makeHIR<HIRSelector>(parent, fieldName,
-                                            lookup.resultEntity.valueType(), loc);
+                                            lookup.result.resultEntity.valueType(), loc);
             case LookupResultKind::Method:
-                return makeHIR<HIRSelector>(parent, fieldName, nullptr, loc);
+                return makeHIR<HIRSelector>(parent, fieldName, nullptr, loc,
+                                            HIRSelectorKind::Method);
             case LookupResultKind::InjectedMember:
                 if (allowInjectedMember) {
                     return nullptr;
@@ -670,36 +684,33 @@ class FunctionAnalyzer {
         }
     }
 
-    [[noreturn]] void diagnoseDotFailure(HIRExpr *parent, const std::string &fieldName,
-                                         const location &loc,
-                                         const LookupResult &lookup,
-                                         const std::string &ownerLabel = std::string()) {
-        if (lookup.owner.asModule()) {
+    [[noreturn]] void diagnoseMemberLookupFailure(
+        const MemberLookup &lookup, const std::string &fieldName,
+        const location &loc, const std::string &ownerLabel = std::string()) {
+        if (lookup.owner.entity.asModule()) {
             auto moduleName = ownerLabel.empty()
-                ? lookup.owner.asModule()->moduleName()
+                ? lookup.owner.entity.asModule()->moduleName()
                 : ownerLabel;
             error(loc,
                   "unknown module member `" + moduleName + "." + fieldName + "`",
                   "Only directly imported top-level functions and types are available through `file.xxx`.");
         }
 
-        if (lookup.owner.asType()) {
+        if (lookup.owner.entity.asType()) {
             auto typeName = ownerLabel.empty()
-                ? describeResolvedType(lookup.owner.asType())
+                ? describeResolvedType(lookup.owner.entity.asType())
                 : ownerLabel;
             error(loc,
                   "unknown type member `" + typeName + "." + fieldName + "`",
                   "Static type members are not implemented yet.");
         }
 
-        auto *tupleType = parent->getType() ? parent->getType()->as<TupleType>() : nullptr;
-        if (tupleType) {
+        if (lookup.owner.tupleType) {
             error(loc, "unknown tuple field `" + fieldName + "`",
-                  describeTupleFieldHelp(tupleType));
+                  describeTupleFieldHelp(lookup.owner.tupleType));
         }
 
-        auto *structType = parent->getType() ? parent->getType()->as<StructType>() : nullptr;
-        if (structType) {
+        if (lookup.owner.structType) {
             error(loc, "unknown struct field `" + fieldName + "`",
                   "Check the field name, or use a direct method call like `obj.method(...)`.");
         }
@@ -771,7 +782,7 @@ class FunctionAnalyzer {
         }
 
         if (auto *selector = dynamic_cast<HIRSelector *>(callee);
-            selector && selector->getType() == nullptr) {
+            selector && selector->isMethodSelector()) {
             auto *structType = selector->getParent()
                 ? selector->getParent()->getType()->as<StructType>()
                 : nullptr;
@@ -890,8 +901,7 @@ class FunctionAnalyzer {
     HIRExpr *requireExpr(AstNode *node, TypeClass *expectedType = nullptr) {
         auto *expr = analyzeExpr(node, expectedType);
         if (!expr) {
-            error(node ? node->loc : currentLocation,
-                  "expression did not produce a value");
+            error(node ? node->loc : location(), "expression did not produce a value");
         }
         return expr;
     }
@@ -989,23 +999,6 @@ class FunctionAnalyzer {
         return arg.name.has_value();
     }
 
-    static std::string describeCallParameter(const std::vector<std::string> *paramNames,
-                                             std::size_t index) {
-        if (paramNames && index < paramNames->size() && !paramNames->at(index).empty()) {
-            return "parameter `" + paramNames->at(index) + "`";
-        }
-        return "parameter at index " + std::to_string(index);
-    }
-
-    static std::string explicitRefCallHint(const std::vector<std::string> *paramNames,
-                                           std::size_t index) {
-        if (paramNames && index < paramNames->size() && !paramNames->at(index).empty()) {
-            return "Pass it as `ref " + paramNames->at(index) +
-                   " = value` for named calls, or `ref value` positionally.";
-        }
-        return "Pass it as `ref value`.";
-    }
-
     static std::string formatAvailableNames(const std::vector<std::string> &names,
                                             const std::string &noun) {
         if (names.empty()) {
@@ -1023,11 +1016,173 @@ class FunctionAnalyzer {
         return out.str();
     }
 
+    enum class FormalCallArgKind {
+        ConstructorField,
+        FunctionParameter,
+        ArrayIndex,
+    };
+
+    struct FormalCallArg {
+        const std::string *name = nullptr;
+        TypeClass *type = nullptr;
+        BindingKind bindingKind = BindingKind::Value;
+        FormalCallArgKind kind = FormalCallArgKind::FunctionParameter;
+        std::size_t index = 0;
+    };
+
+    enum class CallBindingTargetKind {
+        Constructor,
+        FunctionCall,
+        ArrayIndex,
+    };
+
+    struct CallBindingOptions {
+        location callLoc;
+        CallBindingTargetKind targetKind = CallBindingTargetKind::FunctionCall;
+        TypeClass *targetType = nullptr;
+        bool allowNamedArgs = false;
+    };
+
+    struct BoundCallArg {
+        CallArgSpec spec;
+        HIRExpr *expr = nullptr;
+        TypeClass *expectedType = nullptr;
+        BindingKind bindingKind = BindingKind::Value;
+        std::size_t index = 0;
+    };
+
+    static const std::string *
+    formalCallArgName(const FormalCallArg &formal) {
+        return formal.name;
+    }
+
+    static std::string
+    describeFormalCallArg(const FormalCallArg &formal) {
+        switch (formal.kind) {
+            case FormalCallArgKind::ConstructorField:
+                return "field `" + (formal.name ? *formal.name : std::string()) + "`";
+            case FormalCallArgKind::FunctionParameter:
+                if (formal.name && !formal.name->empty()) {
+                    return "parameter `" + *formal.name + "`";
+                }
+                return "parameter at index " + std::to_string(formal.index);
+            case FormalCallArgKind::ArrayIndex:
+                return "index at position " + std::to_string(formal.index);
+        }
+        return "parameter";
+    }
+
+    static std::string
+    formalCallArgTypeMismatchContext(const FormalCallArg &formal) {
+        switch (formal.kind) {
+            case FormalCallArgKind::ConstructorField:
+                return "constructor field type mismatch for `" +
+                       (formal.name ? *formal.name : std::string()) + "`";
+            case FormalCallArgKind::FunctionParameter:
+                return "call argument type mismatch at index " +
+                       std::to_string(formal.index);
+            case FormalCallArgKind::ArrayIndex:
+                return "array index type mismatch at index " +
+                       std::to_string(formal.index);
+        }
+        return "call argument type mismatch";
+    }
+
+    static std::string
+    formalCallArgMissingRefHint(const FormalCallArg &formal) {
+        if (formal.kind == FormalCallArgKind::FunctionParameter &&
+            formal.name && !formal.name->empty()) {
+            return "Pass it as `ref " + *formal.name +
+                   " = value` for named calls, or `ref value` positionally.";
+        }
+        return "Pass it as `ref value`.";
+    }
+
+    std::string
+    describeCallTarget(const CallBindingOptions &options) {
+        switch (options.targetKind) {
+            case CallBindingTargetKind::Constructor:
+                return "constructor `" +
+                       describeResolvedType(options.targetType) + "`";
+            case CallBindingTargetKind::FunctionCall:
+                return options.allowNamedArgs ? "function call"
+                                              : "this call target";
+            case CallBindingTargetKind::ArrayIndex:
+                return "array indexing";
+        }
+        return "this call target";
+    }
+
+    static const char *
+    callBindingNameKind(const CallBindingOptions &options) {
+        switch (options.targetKind) {
+            case CallBindingTargetKind::Constructor:
+                return "field";
+            case CallBindingTargetKind::FunctionCall:
+                return "parameter";
+            case CallBindingTargetKind::ArrayIndex:
+                return "index";
+        }
+        return "parameter";
+    }
+
+    std::string
+    callBindingCountMismatchLabel(const CallBindingOptions &options) {
+        switch (options.targetKind) {
+            case CallBindingTargetKind::Constructor:
+                return "constructor argument count mismatch for `" +
+                       describeResolvedType(options.targetType) + "`";
+            case CallBindingTargetKind::FunctionCall:
+                return "call argument count mismatch";
+            case CallBindingTargetKind::ArrayIndex:
+                return "array index arity mismatch";
+        }
+        return "call argument count mismatch";
+    }
+
+    std::string
+    disallowRefMessage(const FormalCallArg &formal,
+                       const CallBindingOptions &options) {
+        switch (options.targetKind) {
+            case CallBindingTargetKind::Constructor:
+                return "constructor arguments do not accept `ref`";
+            case CallBindingTargetKind::ArrayIndex:
+                return "array indexing does not accept `ref` arguments";
+            case CallBindingTargetKind::FunctionCall:
+                return "value " + describeFormalCallArg(formal) +
+                       " cannot be passed with `ref`";
+        }
+        return "value cannot be passed with `ref`";
+    }
+
+    static const char *
+    disallowRefHint(const CallBindingOptions &options) {
+        switch (options.targetKind) {
+            case CallBindingTargetKind::Constructor:
+                return "Constructors copy field values. Remove `ref` from this argument.";
+            case CallBindingTargetKind::ArrayIndex:
+                return "Use positional indices like `a(i, j)` without `ref`.";
+            case CallBindingTargetKind::FunctionCall:
+                return "Remove `ref` and pass the value directly.";
+        }
+        return "Remove `ref` and pass the value directly.";
+    }
+
+    std::string
+    formatAvailableFormalNames(const std::vector<FormalCallArg> &formals,
+                               const CallBindingOptions &options) {
+        std::vector<std::string> names;
+        names.reserve(formals.size());
+        for (const auto &formal : formals) {
+            names.push_back(formal.name ? *formal.name : std::string());
+        }
+        return formatAvailableNames(names, callBindingNameKind(options));
+    }
+
     CallArgList collectOrderedCallArgs(
         const CallArgList &normalizedArgs,
-        const std::vector<std::string> &orderedNames,
-        const location &callLoc, const std::string &targetLabel,
-        const std::string &nameKind, bool allowNamedArgs) {
+        const std::vector<FormalCallArg> &formals,
+        const CallBindingOptions &options) {
         CallArgList normalized = normalizedArgs;
         if (normalized.empty()) {
             return normalized;
@@ -1044,32 +1199,35 @@ class FunctionAnalyzer {
             return normalized;
         }
 
-        if (!allowNamedArgs) {
-            error(callLoc,
-                  "named arguments are not supported for " + targetLabel,
+        if (!options.allowNamedArgs) {
+            error(options.callLoc,
+                  "named arguments are not supported for " +
+                      describeCallTarget(options),
                   "Use positional arguments for this call target.");
         }
 
         std::unordered_map<std::string, std::size_t> indexByName;
-        indexByName.reserve(orderedNames.size());
-        for (std::size_t i = 0; i < orderedNames.size(); ++i) {
-            indexByName.emplace(orderedNames[i], i);
+        indexByName.reserve(formals.size());
+        for (std::size_t i = 0; i < formals.size(); ++i) {
+            if (const auto *name = formalCallArgName(formals[i])) {
+                indexByName.emplace(*name, i);
+            }
         }
 
-        CallArgList ordered(orderedNames.size());
+        CallArgList ordered(formals.size());
         std::size_t positionalCount = 0;
         bool seenNamedArg = false;
         for (const auto &arg : normalized) {
             if (!isNamedCallArg(arg)) {
                 if (seenNamedArg) {
-                    error(arg.syntax ? arg.syntax->loc : callLoc,
+                    error(arg.syntax ? arg.syntax->loc : options.callLoc,
                           "positional arguments must come before named arguments",
                           "Write calls like `name(a, b, x=..., y=...)`, not `name(x=..., a)`.");
                 }
                 if (positionalCount >= ordered.size()) {
-                    error(callLoc,
+                    error(options.callLoc,
                           "call argument count mismatch: expected at most " +
-                              std::to_string(orderedNames.size()) + ", got " +
+                              std::to_string(formals.size()) + ", got " +
                               std::to_string(normalized.size()));
                 }
                 ordered[positionalCount++] = arg;
@@ -1079,30 +1237,95 @@ class FunctionAnalyzer {
             seenNamedArg = true;
             auto found = indexByName.find(*arg.name);
             if (found == indexByName.end()) {
-                error(arg.syntax ? arg.syntax->loc : callLoc,
-                      "unknown " + nameKind + " `" + *arg.name +
-                          "` for " + targetLabel,
-                      formatAvailableNames(orderedNames, nameKind));
+                error(arg.syntax ? arg.syntax->loc : options.callLoc,
+                      "unknown " + std::string(callBindingNameKind(options)) +
+                          " `" + *arg.name + "` for " +
+                          describeCallTarget(options),
+                      formatAvailableFormalNames(formals, options));
             }
             if (ordered[found->second].value != nullptr) {
-                error(arg.syntax ? arg.syntax->loc : callLoc,
-                      "duplicate " + nameKind + " `" + *arg.name +
-                          "` for " + targetLabel,
-                      "Each " + nameKind + " can only be specified once.");
+                error(arg.syntax ? arg.syntax->loc : options.callLoc,
+                      "duplicate " + std::string(callBindingNameKind(options)) +
+                          " `" + *arg.name + "` for " +
+                          describeCallTarget(options),
+                      "Each " + std::string(callBindingNameKind(options)) +
+                          " can only be specified once.");
             }
             ordered[found->second] = arg;
         }
 
         for (std::size_t i = 0; i < ordered.size(); ++i) {
             if (!ordered[i].value) {
-                error(callLoc,
-                      "missing " + nameKind + " `" + orderedNames[i] + "` for " +
-                          targetLabel,
-                      formatAvailableNames(orderedNames, nameKind));
+                auto *requiredName = formalCallArgName(formals[i]);
+                error(options.callLoc,
+                      "missing " + std::string(callBindingNameKind(options)) + " `" +
+                          (requiredName ? *requiredName : std::string()) +
+                          "` for " + describeCallTarget(options),
+                      formatAvailableFormalNames(formals, options));
             }
         }
 
         return ordered;
+    }
+
+    std::vector<BoundCallArg> bindCallArgs(
+        const CallArgList &normalizedArgs,
+        const std::vector<FormalCallArg> &formals,
+        const CallBindingOptions &options) {
+        auto orderedArgs = collectOrderedCallArgs(normalizedArgs, formals, options);
+        if (orderedArgs.size() != formals.size()) {
+            error(options.callLoc,
+                  callBindingCountMismatchLabel(options) + ": expected " +
+                      std::to_string(formals.size()) + ", got " +
+                      std::to_string(orderedArgs.size()));
+        }
+
+        std::vector<BoundCallArg> boundArgs;
+        boundArgs.reserve(orderedArgs.size());
+        for (std::size_t i = 0; i < orderedArgs.size(); ++i) {
+            const auto &spec = orderedArgs[i];
+            const auto &formal = formals[i];
+            const auto argLoc =
+                spec.value ? spec.value->loc
+                           : (spec.syntax ? spec.syntax->loc : options.callLoc);
+            if (formal.bindingKind == BindingKind::Ref) {
+                if (spec.bindingKind != BindingKind::Ref) {
+                    error(spec.syntax ? spec.syntax->loc : options.callLoc,
+                          "reference " + describeFormalCallArg(formal) +
+                              " must be passed with `ref`",
+                          formalCallArgMissingRefHint(formal));
+                }
+            } else if (spec.bindingKind == BindingKind::Ref) {
+                error(spec.syntax ? spec.syntax->loc : options.callLoc,
+                      disallowRefMessage(formal, options),
+                      disallowRefHint(options));
+            }
+
+            auto *expr = requireNonCallExpr(spec.value, formal.type);
+            if (formal.bindingKind == BindingKind::Ref) {
+                if (!isAddressable(expr)) {
+                    error(argLoc,
+                          "reference " + describeFormalCallArg(formal) +
+                              " expects an addressable value",
+                          "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
+                }
+                if (formal.type != expr->getType()) {
+                    error(argLoc,
+                          "reference " + describeFormalCallArg(formal) +
+                              " type mismatch: expected " +
+                              describeResolvedType(formal.type) + ", got " +
+                              describeResolvedType(expr->getType()),
+                          "Reference arguments bind aliases directly, so the argument type must match exactly.");
+                }
+            } else {
+                expr = coerceNumericExpr(expr, formal.type, argLoc, false);
+                requireCompatibleTypes(argLoc, formal.type, expr->getType(),
+                                       formalCallArgTypeMismatchContext(formal));
+            }
+
+            boundArgs.push_back({spec, expr, formal.type, formal.bindingKind, i});
+        }
+        return boundArgs;
     }
 
     std::vector<std::pair<std::string, TypeClass *>> orderedStructMembers(
@@ -1134,7 +1357,8 @@ class FunctionAnalyzer {
             return object && object->isVariable() && !object->isRegVal();
         }
         if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
-            return selector->getType() != nullptr && isAddressable(selector->getParent());
+            return selector->isValueFieldSelector() &&
+                   isAddressable(selector->getParent());
         }
         if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
             return unary->getOp() == '*' && unary->getType() != nullptr;
@@ -1146,7 +1370,6 @@ class FunctionAnalyzer {
     }
 
     HIRBlock *analyzeBlock(AstNode *node) {
-        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         auto *block = makeHIR<HIRBlock>(node ? node->loc : location());
         if (!node) {
             return block;
@@ -1170,7 +1393,6 @@ class FunctionAnalyzer {
     }
 
     HIRNode *analyzeStmt(AstNode *node) {
-        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         if (!node) {
             return nullptr;
         }
@@ -1197,7 +1419,6 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeExpr(AstNode *node, TypeClass *expectedType = nullptr) {
-        ScopedLocation scopedLocation(*this, node ? node->loc : location());
         if (!node) {
             return nullptr;
         }
@@ -1236,7 +1457,7 @@ class FunctionAnalyzer {
         if (auto *call = node->as<AstFieldCall>()) {
             return analyzeCall(call, expectedType);
         }
-        error("unsupported AST node in HIR analysis");
+        error(node->loc, "unsupported AST node in HIR analysis");
     }
 
     HIRExpr *analyzeConst(AstConst *node, TypeClass *expectedType = nullptr) {
@@ -1300,181 +1521,200 @@ class FunctionAnalyzer {
         return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
     }
 
-    struct InitialList;
+    class InitialListLowering {
+        FunctionAnalyzer &owner;
 
-    struct InitialListItem {
-        location loc;
-        AstNode *expr = nullptr;
-        std::unique_ptr<InitialList> nested;
-    };
+        struct InitialList;
 
-    struct InitialList {
-        location loc;
-        std::vector<InitialListItem> items;
-    };
+        struct InitialListItem {
+            location loc;
+            AstNode *expr = nullptr;
+            std::unique_ptr<InitialList> nested;
+        };
 
-    std::vector<AstNode *> consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
-        std::vector<AstNode *> remaining;
-        remaining.reserve(dims.size());
-        bool consumed = false;
-        const bool legacyPrefix = isLegacyArrayDimensionPrefix(dims);
-        for (auto *dim : dims) {
-            if (dim == nullptr) {
-                continue;
+        struct InitialList {
+            location loc;
+            std::vector<InitialListItem> items;
+        };
+
+        std::vector<AstNode *>
+        consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
+            std::vector<AstNode *> remaining;
+            remaining.reserve(dims.size());
+            bool consumed = false;
+            const bool legacyPrefix = isLegacyArrayDimensionPrefix(dims);
+            for (auto *dim : dims) {
+                if (dim == nullptr) {
+                    continue;
+                }
+                if (!consumed) {
+                    consumed = true;
+                    continue;
+                }
+                remaining.push_back(dim);
             }
-            if (!consumed) {
-                consumed = true;
-                continue;
+            if (legacyPrefix && remaining.size() > 1) {
+                remaining.insert(remaining.begin(), nullptr);
             }
-            remaining.push_back(dim);
+            return remaining;
         }
-        if (legacyPrefix && remaining.size() > 1) {
-            remaining.insert(remaining.begin(), nullptr);
-        }
-        return remaining;
-    }
 
-    TypeClass *arrayInitChildType(ArrayType *arrayType) {
-        if (!arrayType) {
-            return nullptr;
+        TypeClass *arrayInitChildType(ArrayType *arrayType) {
+            if (!arrayType) {
+                return nullptr;
+            }
+            bool ok = false;
+            auto dims = arrayType->staticDimensions(&ok);
+            if (!ok || dims.empty()) {
+                return nullptr;
+            }
+            if (dims.size() == 1) {
+                return arrayType->getElementType();
+            }
+            auto childDims = consumeArrayOuterDimension(arrayType->getDimensions());
+            return owner.typeMgr->createArrayType(arrayType->getElementType(),
+                                                  std::move(childDims));
         }
-        bool ok = false;
-        auto dims = arrayType->staticDimensions(&ok);
-        if (!ok || dims.empty()) {
-            return nullptr;
-        }
-        if (dims.size() == 1) {
-            return arrayType->getElementType();
-        }
-        auto childDims = consumeArrayOuterDimension(arrayType->getDimensions());
-        return typeMgr->createArrayType(arrayType->getElementType(), std::move(childDims));
-    }
 
-    std::unique_ptr<InitialList> buildInitialList(AstBraceInit *node) {
-        if (!node) {
-            return nullptr;
-        }
-        auto initList = std::make_unique<InitialList>();
-        initList->loc = node->loc;
-        if (!node->items || node->items->empty()) {
+        std::unique_ptr<InitialList> buildInitialList(AstBraceInit *node) {
+            if (!node) {
+                return nullptr;
+            }
+            auto initList = std::make_unique<InitialList>();
+            initList->loc = node->loc;
+            if (!node->items || node->items->empty()) {
+                return initList;
+            }
+            initList->items.reserve(node->items->size());
+            for (auto *rawItem : *node->items) {
+                auto *braceItem = dynamic_cast<AstBraceInitItem *>(rawItem);
+                if (!braceItem || !braceItem->value) {
+                    owner.error(node->loc,
+                                "array initializer contains an invalid item",
+                                "Each item must be an expression or a nested brace group.");
+                }
+                InitialListItem item;
+                item.loc = braceItem->value->loc;
+                if (auto *nested = dynamic_cast<AstBraceInit *>(braceItem->value)) {
+                    item.nested = buildInitialList(nested);
+                } else {
+                    item.expr = braceItem->value;
+                }
+                initList->items.push_back(std::move(item));
+            }
             return initList;
         }
-        initList->items.reserve(node->items->size());
-        for (auto *rawItem : *node->items) {
-            auto *braceItem = dynamic_cast<AstBraceInitItem *>(rawItem);
-            if (!braceItem || !braceItem->value) {
-                error(node->loc,
-                      "array initializer contains an invalid item",
-                      "Each item must be an expression or a nested brace group.");
+
+        HIRExpr *materializeArrayInit(const InitialList &initList,
+                                      ArrayType *arrayType,
+                                      const location &loc) {
+            if (!arrayType) {
+                owner.internalError(loc, "invalid array initializer materialization",
+                                    "This looks like a compiler pipeline bug.");
             }
-            InitialListItem item;
-            item.loc = braceItem->value->loc;
-            if (auto *nested = dynamic_cast<AstBraceInit *>(braceItem->value)) {
-                item.nested = buildInitialList(nested);
-            } else {
-                item.expr = braceItem->value;
+            if (!arrayType->hasStaticLayout()) {
+                owner.error(loc,
+                            "array initializers currently require fixed explicit dimensions",
+                            "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
             }
-            initList->items.push_back(std::move(item));
-        }
-        return initList;
-    }
 
-    HIRExpr *materializeArrayInit(const InitialList &initList, ArrayType *arrayType,
-                                  const location &loc) {
-        if (!arrayType) {
-            error("invalid array initializer materialization");
-        }
-        if (!arrayType->hasStaticLayout()) {
-            error(loc,
-                  "array initializers currently require fixed explicit dimensions",
-                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
-        }
+            bool ok = false;
+            auto dims = arrayType->staticDimensions(&ok);
+            if (!ok || dims.empty()) {
+                owner.error(loc,
+                            "array initializers currently require fixed explicit dimensions",
+                            "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+            }
+            const auto outerExtent = static_cast<std::size_t>(dims.front());
+            auto *childType = arrayInitChildType(arrayType);
+            if (!childType) {
+                owner.error(loc,
+                            "array initializer is missing its element type",
+                            "This looks like a compiler pipeline bug.");
+            }
 
-        bool ok = false;
-        auto dims = arrayType->staticDimensions(&ok);
-        if (!ok || dims.empty()) {
-            error(loc,
-                  "array initializers currently require fixed explicit dimensions",
-                  "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
-        }
-        const auto outerExtent = static_cast<std::size_t>(dims.front());
-        auto *childType = arrayInitChildType(arrayType);
-        if (!childType) {
-            error(loc,
-                  "array initializer is missing its element type",
-                  "This looks like a compiler pipeline bug.");
-        }
+            std::vector<HIRExpr *> items;
+            if (initList.items.size() > outerExtent) {
+                owner.error(loc,
+                            "array initializer has too many elements: expected at most " +
+                                std::to_string(outerExtent) + ", got " +
+                                std::to_string(initList.items.size()),
+                            "Remove extra elements or increase the array dimension.");
+            }
 
-        std::vector<HIRExpr *> items;
-        if (initList.items.size() > outerExtent) {
-            error(loc,
-                  "array initializer has too many elements: expected at most " +
-                      std::to_string(outerExtent) + ", got " +
-                      std::to_string(initList.items.size()),
-                  "Remove extra elements or increase the array dimension.");
-        }
-
-        items.reserve(initList.items.size());
-        for (std::size_t i = 0; i < initList.items.size(); ++i) {
-            const auto &item = initList.items[i];
-            if (item.nested) {
-                auto *childArrayType = childType->as<ArrayType>();
-                if (!childArrayType) {
-                    error(item.loc,
-                          "array initializer nesting is deeper than the array shape",
-                          "Remove this brace level, or make the target element type another array.");
+            items.reserve(initList.items.size());
+            for (std::size_t i = 0; i < initList.items.size(); ++i) {
+                const auto &item = initList.items[i];
+                if (item.nested) {
+                    auto *childArrayType = childType->as<ArrayType>();
+                    if (!childArrayType) {
+                        owner.error(item.loc,
+                                    "array initializer nesting is deeper than the array shape",
+                                    "Remove this brace level, or make the target element type another array.");
+                    }
+                    items.push_back(materializeArrayInit(*item.nested, childArrayType,
+                                                         item.loc));
+                    continue;
                 }
-                items.push_back(materializeArrayInit(*item.nested, childArrayType,
-                                                     item.loc));
-                continue;
+
+                if (childType->as<ArrayType>()) {
+                    owner.error(item.loc,
+                                "array initializer expects a nested brace group at index " +
+                                    std::to_string(i),
+                                "Write nested rows like `{{1, 2}, {3, 4}}` so the brace structure matches the array shape.");
+                }
+
+                auto *value = owner.requireNonCallExpr(item.expr, childType);
+                value = owner.coerceNumericExpr(value, childType, item.loc, false);
+                owner.requireCompatibleTypes(
+                    item.loc, childType, value->getType(),
+                    "array initializer element type mismatch at index " +
+                        std::to_string(i));
+                items.push_back(value);
             }
 
-            if (childType->as<ArrayType>()) {
-                error(item.loc,
-                      "array initializer expects a nested brace group at index " +
-                          std::to_string(i),
-                      "Write nested rows like `{{1, 2}, {3, 4}}` so the brace structure matches the array shape.");
+            return owner.makeHIR<HIRArrayInit>(std::move(items), arrayType, loc);
+        }
+
+        HIRExpr *materializeInitList(const InitialList &initList,
+                                     TypeClass *expectedType,
+                                     const location &loc) {
+            if (!expectedType) {
+                owner.internalError(loc, "invalid initializer-list materialization",
+                                    "This looks like a compiler pipeline bug.");
             }
-
-            auto *value = requireNonCallExpr(item.expr, childType);
-            value = coerceNumericExpr(value, childType, item.loc, false);
-            requireCompatibleTypes(item.loc, childType, value->getType(),
-                                   "array initializer element type mismatch at index " +
-                                       std::to_string(i));
-            items.push_back(value);
+            if (auto *arrayType = expectedType->as<ArrayType>()) {
+                return materializeArrayInit(initList, arrayType, loc);
+            }
+            if (auto *structType = expectedType->as<StructType>()) {
+                owner.error(loc,
+                            "brace initialization currently applies to arrays only",
+                            "For structs, call the type directly like `" +
+                                describeResolvedType(structType) +
+                                "(...)` using positional or named arguments. `initial_list` remains an internal array-initialization interface.");
+            }
+            owner.error(
+                loc,
+                "brace initializer currently supports arrays only when the target type is already known",
+                "Write a declaration like `var matrix i32[4][5] = {{1}, {2}}`, or call a struct type like `Vec2(x=1, y=2)` for struct construction.");
         }
 
-        return makeHIR<HIRArrayInit>(std::move(items), arrayType, loc);
-    }
+    public:
+        explicit InitialListLowering(FunctionAnalyzer &owner) : owner(owner) {}
 
-    HIRExpr *materializeInitList(const InitialList &initList, TypeClass *expectedType,
-                                 const location &loc) {
-        if (!expectedType) {
-            error("invalid initializer-list materialization");
+        HIRExpr *analyze(AstBraceInit *node, TypeClass *expectedType) {
+            if (!expectedType) {
+                owner.error(node->loc,
+                            "brace initializer needs an explicit target type",
+                            "Use it in a typed variable declaration like `var matrix i32[4][5] = {{}}`, or pass it to a call target that already expects an array type.");
+            }
+            auto initList = buildInitialList(node);
+            return materializeInitList(*initList, expectedType, node->loc);
         }
-        if (auto *arrayType = expectedType->as<ArrayType>()) {
-            return materializeArrayInit(initList, arrayType, loc);
-        }
-        if (auto *structType = expectedType->as<StructType>()) {
-            error(loc,
-                  "brace initialization currently applies to arrays only",
-                  "For structs, call the type directly like `" +
-                      describeResolvedType(structType) +
-                      "(...)` using positional or named arguments. `initial_list` remains an internal array-initialization interface.");
-        }
-        error(loc,
-              "brace initializer currently supports arrays only when the target type is already known",
-              "Write a declaration like `var matrix i32[4][5] = {{1}, {2}}`, or call a struct type like `Vec2(x=1, y=2)` for struct construction.");
-    }
+    };
 
     HIRExpr *analyzeBraceInit(AstBraceInit *node, TypeClass *expectedType) {
-        if (!expectedType) {
-            error(node->loc,
-                  "brace initializer needs an explicit target type",
-                  "Use it in a typed variable declaration like `var matrix i32[4][5] = {{}}`, or pass it to a call target that already expects an array type.");
-        }
-        auto initList = buildInitialList(node);
-        return materializeInitList(*initList, expectedType, node->loc);
+        return InitialListLowering(*this).analyze(node, expectedType);
     }
 
     HIRExpr *analyzeField(AstField *node) {
@@ -1504,16 +1744,18 @@ class FunctionAnalyzer {
         const auto &expectedArgTypes = funcType->getArgTypes();
         const auto actualArgCount = node->argTypes ? node->argTypes->size() : 0;
         if (expectedArgTypes.size() != actualArgCount) {
-            error("function reference parameter count mismatch for `" +
-                  toStdString(node->name) + "`: expected " +
-                  std::to_string(expectedArgTypes.size()) + ", got " +
-                  std::to_string(actualArgCount));
+            error(node->loc,
+                  "function reference parameter count mismatch for `" +
+                      toStdString(node->name) + "`: expected " +
+                      std::to_string(expectedArgTypes.size()) + ", got " +
+                      std::to_string(actualArgCount));
         }
 
         for (size_t i = 0; i < actualArgCount; ++i) {
             auto actualBindingKind = funcParamBindingKind(node->argTypes->at(i));
             auto *actualType = requireType(
                 unwrapFuncParamType(node->argTypes->at(i)),
+                node->argTypes->at(i)->loc,
                 "unknown function reference parameter type at index " +
                     std::to_string(i) + " for `" + toStdString(node->name) +
                     "`: " + describeTypeNode(node->argTypes->at(i)));
@@ -1526,10 +1768,11 @@ class FunctionAnalyzer {
                 auto actualDescription =
                     (actualBindingKind == BindingKind::Ref ? "ref " : "") +
                     describeResolvedType(actualType);
-                error("function reference parameter type mismatch at index " +
-                      std::to_string(i) + " for `" + toStdString(node->name) +
-                      "`: expected " + expectedDescription + ", got " +
-                      actualDescription);
+                error(node->argTypes->at(i)->loc,
+                      "function reference parameter type mismatch at index " +
+                          std::to_string(i) + " for `" + toStdString(node->name) +
+                          "`: expected " + expectedDescription + ", got " +
+                          actualDescription);
             }
         }
 
@@ -1611,7 +1854,7 @@ class FunctionAnalyzer {
 
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
-            type = requireType(typeNode, "unknown variable type");
+            type = requireType(typeNode, typeNode->loc, "unknown variable type");
             rejectBareFunctionStorage(type, node);
         } else if (isRefBinding) {
             error(node->loc,
@@ -1703,13 +1946,13 @@ class FunctionAnalyzer {
         if (node->expr) {
             expr = requireNonCallExpr(node->expr, retType);
             if (!retType) {
-                error("unexpected return value in void function");
+                error(node->loc, "unexpected return value in void function");
             }
             expr = coerceNumericExpr(expr, retType, node->expr->loc, false);
             requireCompatibleTypes(node->loc, retType, expr->getType(),
                                    "return type mismatch");
         } else if (retType) {
-            error("missing return value");
+            error(node->loc, "missing return value");
         }
         return makeHIR<HIRRet>(expr, node->loc);
     }
@@ -1740,12 +1983,12 @@ class FunctionAnalyzer {
     HIRExpr *analyzeSelector(AstSelector *node) {
         auto *parent = requireExpr(node->parent);
         auto fieldName = toStdString(node->field->text);
-        auto lookup = resolveDot(parent, fieldName, node->loc);
-        if (auto *expr = materializeDotExpr(parent, fieldName, lookup, node->loc)) {
+        auto lookup = lookupMember(parent, fieldName, node->loc);
+        if (auto *expr = materializeMemberExpr(parent, fieldName, lookup, node->loc)) {
             return expr;
         }
-        diagnoseDotFailure(parent, fieldName, node->loc, lookup,
-                           describeMemberOwnerSyntax(node->parent));
+        diagnoseMemberLookupFailure(lookup, fieldName, node->loc,
+                                    describeMemberOwnerSyntax(node->parent));
     }
 
     HIRExpr *analyzeCall(AstFieldCall *node, TypeClass *expectedType = nullptr) {
@@ -1754,37 +1997,39 @@ class FunctionAnalyzer {
         if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
             auto *receiver = requireExpr(selectorNode->parent);
             auto fieldName = toStdString(selectorNode->field->text);
-            auto lookup = resolveDot(receiver, fieldName, node->loc);
-            if (lookup.kind == LookupResultKind::InjectedMember) {
-                auto binding = resolveInjectedMemberBinding(typeMgr, receiver, fieldName);
-                assert(binding.has_value());
-                if (binding->kind == InjectedMemberKind::NumericConversion) {
+            auto lookup = lookupMember(receiver, fieldName, node->loc);
+            if (lookup.result.kind == LookupResultKind::InjectedMember) {
+                assert(lookup.injectedMember.has_value());
+                if (lookup.injectedMember->kind == InjectedMemberKind::NumericConversion) {
                     if (node->args && !node->args->empty()) {
                         error(node->loc,
                               "numeric conversion member `" + fieldName +
                                   "` does not take arguments",
                               "Call it as `<expr>." + fieldName + "()`.");
                     }
-                    return coerceNumericExpr(receiver, binding->resultType, node->loc,
+                    return coerceNumericExpr(receiver, lookup.injectedMember->resultType,
+                                             node->loc,
                                              true);
                 }
-                if (binding->kind == InjectedMemberKind::BitCopy) {
+                if (lookup.injectedMember->kind == InjectedMemberKind::BitCopy) {
                     if (node->args && !node->args->empty()) {
                         error(node->loc,
                               "raw bit-copy member `" + fieldName +
                                   "` does not take arguments",
                               "Call it as `<expr>." + fieldName + "()`.");
                     }
-                    return coerceBitCopyExpr(receiver, binding->resultType, node->loc);
+                    return coerceBitCopyExpr(receiver, lookup.injectedMember->resultType,
+                                             node->loc);
                 }
             }
             if (auto *resolvedCallee =
-                    materializeDotExpr(receiver, fieldName, lookup, selectorNode->loc,
-                                       true)) {
+                    materializeMemberExpr(receiver, fieldName, lookup,
+                                          selectorNode->loc, true)) {
                 callee = resolvedCallee;
             } else {
-                diagnoseDotFailure(receiver, fieldName, selectorNode->loc, lookup,
-                                   describeMemberOwnerSyntax(selectorNode->parent));
+                diagnoseMemberLookupFailure(
+                    lookup, fieldName, selectorNode->loc,
+                    describeMemberOwnerSyntax(selectorNode->parent));
             }
         }
 
@@ -1804,43 +2049,21 @@ class FunctionAnalyzer {
                 }
 
                 auto members = orderedStructMembers(structType, node->loc);
-                std::vector<std::string> fieldNames;
-                fieldNames.reserve(members.size());
-                for (const auto &member : members) {
-                    fieldNames.push_back(member.first);
+                std::vector<FormalCallArg> formals;
+                formals.reserve(members.size());
+                for (std::size_t i = 0; i < members.size(); ++i) {
+                    formals.push_back(
+                        {&members[i].first, members[i].second, BindingKind::Value,
+                         FormalCallArgKind::ConstructorField, i});
                 }
-                auto orderedArgs = collectOrderedCallArgs(
-                    resolution.args, fieldNames, node->loc,
-                    "constructor `" + describeResolvedType(structType) + "`",
-                    "field", true);
-                if (orderedArgs.size() != members.size()) {
-                    error(node->loc,
-                          "constructor argument count mismatch for `" +
-                              describeResolvedType(structType) + "`: expected " +
-                              std::to_string(members.size()) + ", got " +
-                              std::to_string(orderedArgs.size()));
-                }
+                auto boundArgs = bindCallArgs(
+                    resolution.args, formals,
+                    {node->loc, CallBindingTargetKind::Constructor, structType, true});
 
                 std::vector<HIRExpr *> fields;
-                fields.reserve(orderedArgs.size());
-                for (size_t i = 0; i < orderedArgs.size(); ++i) {
-                    if (orderedArgs[i].bindingKind == BindingKind::Ref) {
-                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
-                                                    : node->loc,
-                              "constructor arguments do not accept `ref`",
-                              "Constructors copy field values. Remove `ref` from this argument.");
-                    }
-                    auto *expectedFieldType = members[i].second;
-                    auto *fieldExpr =
-                        requireNonCallExpr(orderedArgs[i].value, expectedFieldType);
-                    fieldExpr = coerceNumericExpr(fieldExpr, expectedFieldType,
-                                                 orderedArgs[i].value->loc, false);
-                    requireCompatibleTypes(
-                        orderedArgs[i].value->loc, expectedFieldType,
-                        fieldExpr->getType(),
-                        "constructor field type mismatch for `" +
-                            members[i].first + "`");
-                    fields.push_back(fieldExpr);
+                fields.reserve(boundArgs.size());
+                for (const auto &arg : boundArgs) {
+                    fields.push_back(arg.expr);
                 }
                 return makeHIR<HIRStructLiteral>(std::move(fields), structType,
                                                  node->loc);
@@ -1853,36 +2076,26 @@ class FunctionAnalyzer {
                                   "array index resolution is missing its array type",
                                   "This looks like a compiler pipeline bug.");
                 }
-                auto orderedArgs = collectOrderedCallArgs(
-                    resolution.args, {}, node->loc, "array indexing", "index", false);
                 if (!arrayType->hasStaticLayout()) {
                     error(node->loc,
                           "array indexing requires fixed explicit dimensions",
                           "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
                 }
-                const auto actualArgCount = orderedArgs.size();
-                if (actualArgCount != arrayType->indexArity()) {
-                    error(node->loc,
-                          "array index arity mismatch: expected " +
-                              std::to_string(arrayType->indexArity()) + ", got " +
-                              std::to_string(actualArgCount));
+                std::vector<FormalCallArg> formals;
+                formals.reserve(arrayType->indexArity());
+                for (size_t i = 0; i < arrayType->indexArity(); ++i) {
+                    formals.push_back(
+                        {nullptr, i32Ty, BindingKind::Value,
+                         FormalCallArgKind::ArrayIndex, i});
                 }
+                auto boundArgs = bindCallArgs(
+                    resolution.args, formals,
+                    {node->loc, CallBindingTargetKind::ArrayIndex, nullptr, false});
+                const auto actualArgCount = boundArgs.size();
                 std::vector<HIRExpr *> args;
                 args.reserve(actualArgCount);
-                for (size_t i = 0; i < orderedArgs.size(); ++i) {
-                    if (orderedArgs[i].bindingKind == BindingKind::Ref) {
-                        error(orderedArgs[i].syntax ? orderedArgs[i].syntax->loc
-                                                    : node->loc,
-                              "array indexing does not accept `ref` arguments",
-                              "Use positional indices like `a(i, j)` without `ref`.");
-                    }
-                    auto *arg = requireNonCallExpr(orderedArgs[i].value, i32Ty);
-                    arg = coerceNumericExpr(arg, i32Ty, orderedArgs[i].value->loc,
-                                            false);
-                    requireCompatibleTypes(
-                        orderedArgs[i].value->loc, i32Ty, arg->getType(),
-                        "array index type mismatch at index " + std::to_string(i));
-                    args.push_back(arg);
+                for (const auto &arg : boundArgs) {
+                    args.push_back(arg.expr);
                 }
                 return makeHIR<HIRIndex>(callee, std::move(args),
                                          arrayType->getElementType(), node->loc);
@@ -1896,107 +2109,28 @@ class FunctionAnalyzer {
                                   "This looks like a compiler pipeline bug.");
                 }
 
-                CallArgList orderedArgs;
-                if (!resolution.args.empty()) {
-                    if (resolution.paramNames && !resolution.paramNames->empty()) {
-                        orderedArgs = collectOrderedCallArgs(
-                            resolution.args, *resolution.paramNames, node->loc,
-                            "function call", "parameter", true);
-                    } else {
-                        orderedArgs = collectOrderedCallArgs(
-                            resolution.args, {}, node->loc, "this call target",
-                            "parameter", false);
-                    }
-                }
-
-                const auto actualArgCount = orderedArgs.size();
-                std::vector<HIRExpr *> args;
-                args.reserve(actualArgCount);
                 const auto &paramTypes = funcType->getArgTypes();
-                if (actualArgCount + resolution.argOffset != paramTypes.size()) {
-                    error("call argument count mismatch: expected " +
-                          std::to_string(paramTypes.size() - resolution.argOffset) +
-                          ", got " + std::to_string(actualArgCount));
+                std::vector<FormalCallArg> formals;
+                formals.reserve(paramTypes.size() - resolution.argOffset);
+                for (size_t i = 0; i + resolution.argOffset < paramTypes.size(); ++i) {
+                    const std::string *paramName =
+                        resolution.paramNames && i < resolution.paramNames->size()
+                        ? &resolution.paramNames->at(i)
+                        : nullptr;
+                    formals.push_back(
+                        {paramName, paramTypes[i + resolution.argOffset],
+                         funcType->getArgBindingKind(i + resolution.argOffset),
+                         FormalCallArgKind::FunctionParameter, i});
                 }
-                if (!orderedArgs.empty()) {
-                    for (size_t i = 0; i < orderedArgs.size(); ++i) {
-                        auto *expectedType = paramTypes[i + resolution.argOffset];
-                        auto bindingKind =
-                            funcType->getArgBindingKind(i + resolution.argOffset);
-                        if (bindingKind == BindingKind::Ref) {
-                            if (orderedArgs[i].bindingKind != BindingKind::Ref) {
-                                error(orderedArgs[i].syntax
-                                          ? orderedArgs[i].syntax->loc
-                                          : node->loc,
-                                      "reference " +
-                                          describeCallParameter(resolution.paramNames,
-                                                                i) +
-                                          " must be passed with `ref`",
-                                      explicitRefCallHint(resolution.paramNames, i));
-                            }
-                            auto *arg =
-                                requireNonCallExpr(orderedArgs[i].value, expectedType);
-                            if (!isAddressable(arg)) {
-                                error(orderedArgs[i].value->loc,
-                                      "reference parameter at index " +
-                                          std::to_string(i) +
-                                          " expects an addressable value",
-                                      "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
-                            }
-                            if (expectedType != arg->getType()) {
-                                error(orderedArgs[i].value->loc,
-                                      "reference argument type mismatch at index " +
-                                          std::to_string(i) + ": expected " +
-                                          describeResolvedType(expectedType) +
-                                          ", got " +
-                                          describeResolvedType(arg->getType()),
-                                      "Reference arguments bind aliases directly, so the argument type must match exactly.");
-                            }
-                            args.push_back(arg);
-                        } else {
-                            if (orderedArgs[i].bindingKind == BindingKind::Ref) {
-                                error(orderedArgs[i].syntax
-                                          ? orderedArgs[i].syntax->loc
-                                          : node->loc,
-                                      "value " +
-                                          describeCallParameter(resolution.paramNames,
-                                                                i) +
-                                          " cannot be passed with `ref`",
-                                      "Remove `ref` and pass the value directly.");
-                            }
-                            auto *arg =
-                                requireNonCallExpr(orderedArgs[i].value, expectedType);
-                            arg = coerceNumericExpr(arg, expectedType,
-                                                    orderedArgs[i].value->loc,
-                                                    false);
-                            requireCompatibleTypes(
-                                orderedArgs[i].value->loc, expectedType,
-                                arg->getType(),
-                                "call argument type mismatch at index " +
-                                    std::to_string(i));
-                            args.push_back(arg);
-                        }
-                    }
-                }
-                for (size_t i = 0; i < args.size(); ++i) {
-                    auto *expectedType = paramTypes[i + resolution.argOffset];
-                    auto *actualType = args[i]->getType();
-                    if (funcType->getArgBindingKind(i + resolution.argOffset) ==
-                        BindingKind::Ref) {
-                        if (expectedType != actualType) {
-                            error(node->loc,
-                                  "reference argument type mismatch at index " +
-                                      std::to_string(i) + ": expected " +
-                                      describeResolvedType(expectedType) +
-                                      ", got " +
-                                      describeResolvedType(actualType));
-                        }
-                    } else {
-                        requireCompatibleTypes(
-                            node->loc, expectedType, actualType,
-                            "call argument type mismatch at index " +
-                                std::to_string(i));
-                    }
+                auto boundArgs = bindCallArgs(
+                    resolution.args, formals,
+                    {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
+                     resolution.paramNames && !resolution.paramNames->empty()});
+
+                std::vector<HIRExpr *> args;
+                args.reserve(boundArgs.size());
+                for (const auto &arg : boundArgs) {
+                    args.push_back(arg.expr);
                 }
 
                 auto *retType = funcType->getRetType();
@@ -2023,7 +2157,10 @@ public:
           resolved(resolved),
           operatorResolver(typeMgr),
           ownerModule(ownerModule),
-          hirFunc(nullptr) {
+          hirFunc(nullptr) {}
+
+private:
+    void prepareFunctionShell() {
         if (resolved.isTopLevelEntry()) {
             hirFunc = makeHIR<HIRFunc>(getOrCreateTopLevelEntry(global, typeMgr),
                                        getOrCreateMainType(typeMgr), resolved.loc(),
@@ -2040,7 +2177,9 @@ public:
                 llvm::cast<llvm::Function>(lofunc->getllvmValue()), funcType,
                 resolved.loc(), false, resolved.guaranteedReturn());
         }
+    }
 
+    void bindSelfIfNeeded() {
         if (resolved.hasSelfBinding()) {
             if (!resolved.isMethod()) {
                 internalError(resolved.loc(),
@@ -2055,7 +2194,9 @@ public:
                 {resolved.selfBinding()->name(), resolved.selfBinding()->bindingKind(),
                  selfObj, resolved.selfBinding()->loc()});
         }
+    }
 
+    void bindParameters() {
         for (auto *paramBinding : resolved.params()) {
             auto *decl = paramBinding ? paramBinding->parameterDecl() : nullptr;
             if (!decl) {
@@ -2065,6 +2206,7 @@ public:
             }
             auto *type = requireType(
                 decl->typeNode,
+                decl->typeNode ? decl->typeNode->loc : paramBinding->loc(),
                 "unknown function argument type for `" + paramBinding->name() + "`");
             auto *argObj = type->newObj(Object::VARIABLE |
                                         (paramBinding->isRefBinding()
@@ -2074,11 +2216,23 @@ public:
             hirFunc->addParam({paramBinding->name(), paramBinding->bindingKind(),
                                argObj, paramBinding->loc()});
         }
+    }
 
+    void analyzeBody() {
         hirFunc->setBody(analyzeBlock(const_cast<AstNode *>(resolved.body())));
     }
 
-    HIRFunc *getFunction() const { return hirFunc; }
+public:
+    HIRFunc *analyze() {
+        if (hirFunc != nullptr) {
+            return hirFunc;
+        }
+        prepareFunctionShell();
+        bindSelfIfNeeded();
+        bindParameters();
+        analyzeBody();
+        return hirFunc;
+    }
 };
 
 class ModuleAnalyzer {
@@ -2094,9 +2248,9 @@ public:
     std::unique_ptr<HIRModule>
     analyze(const ResolvedModule &resolvedModule) {
         for (const auto &resolvedFunction : resolvedModule.functions()) {
-            module->addFunction(
-                FunctionAnalyzer(typeMgr, global, module.get(), unit, *resolvedFunction)
-                    .getFunction());
+            FunctionAnalyzer analyzer(typeMgr, global, module.get(), unit,
+                                      *resolvedFunction);
+            module->addFunction(analyzer.analyze());
         }
         return std::move(module);
     }

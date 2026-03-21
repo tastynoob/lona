@@ -90,7 +90,7 @@ def main() i32 {
 }
 EOF
 expect_emit_ir_failure "$ref_param_rvalue_bad_in" "$ref_param_rvalue_bad_out" 'expected ref parameter call with rvalue argument to fail'
-grep -q 'reference parameter at index 0 expects an addressable value' "$ref_param_rvalue_bad_out"
+grep -q 'reference parameter `x` expects an addressable value' "$ref_param_rvalue_bad_out"
 
 cat >"$ref_param_addr_in" <<'EOF'
 def poke(ref x i32) i32 {

@@ -163,17 +163,32 @@ public:
     HIRExpr *getRight() const { return right; }
 };
 
+enum class HIRSelectorKind {
+    ValueField,
+    Method,
+};
+
 class HIRSelector : public HIRExpr {
     HIRExpr *parent;
     std::string fieldName;
+    HIRSelectorKind kind_;
 
 public:
     HIRSelector(HIRExpr *parent, std::string fieldName, TypeClass *type = nullptr,
-                const location &loc = location())
-        : HIRExpr(type, loc), parent(parent), fieldName(std::move(fieldName)) {}
+                const location &loc = location(),
+                HIRSelectorKind kind = HIRSelectorKind::ValueField)
+        : HIRExpr(type, loc),
+          parent(parent),
+          fieldName(std::move(fieldName)),
+          kind_(kind) {}
 
     HIRExpr *getParent() const { return parent; }
     const std::string &getFieldName() const { return fieldName; }
+    HIRSelectorKind getKind() const { return kind_; }
+    bool isValueFieldSelector() const {
+        return kind_ == HIRSelectorKind::ValueField;
+    }
+    bool isMethodSelector() const { return kind_ == HIRSelectorKind::Method; }
 };
 
 class HIRCall : public HIRExpr {
