@@ -17,7 +17,6 @@
 using Json = nlohmann::ordered_json;
 
 namespace lona {
-class CFGChecker;
 class AstNode;
 class AstIf;
 class AstBreak;
@@ -125,26 +124,14 @@ extern FuncPtrTypeNode* findFuncPtrTypeNode(TypeNode* node);
 extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
 
 class AstNode {
-protected:
-    AstNode *cfg_next = nullptr;
-
 public:
     location const loc;
     AstNode() {}
     AstNode(const location &loc) : loc(loc) {}
 
-    virtual void setNextNode(AstNode *node) {
-        cfg_next = node->getValidCFGNode();
-    }
-    virtual AstNode *getValidCFGNode() { return this; }
     virtual Object *accept(AstVisitor &visitor) = 0;
     virtual bool hasTerminator() { return false; }
     virtual void toJson(Json &root) {};
-    virtual void toCFG(CFGChecker &checker);
-
-    bool isControlNode() {
-        return is<AstIf>() || is<AstRet>() || is<AstBreak>() || is<AstContinue>();
-    }
 
     template<typename T>
     bool is() const {
@@ -371,14 +358,6 @@ public:
     bool isEmpty() const { return body.empty(); }
     void push(AstNode *node);
     std::list<AstNode *> &getBody() { return body; }
-    void setNextNode(AstNode *node) override {
-        if (!body.empty()) {
-            body.back()->setNextNode(node->getValidCFGNode());
-        }
-    }
-    AstNode *getValidCFGNode() override {
-        return body.empty() ? nullptr : body.front();
-    }
 
     bool hasTerminator() override {
         for (auto it = body.rbegin(); it != body.rend(); ++it) {
@@ -392,7 +371,6 @@ public:
     AstStatList() {}
     AstStatList(AstNode *node);
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
 
     Object *accept(AstVisitor &visitor) override;
 };
@@ -416,13 +394,9 @@ public:
 class AstRet : public AstNode {
 public:
     AstNode *const expr = nullptr;
-    void setNextNode(AstNode *node) override {
-        // do nothing
-    }
 
     AstRet(const location &loc, AstNode *expr);
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
 
     bool hasTerminator() override {
         return true;
@@ -435,12 +409,7 @@ class AstBreak : public AstNode {
 public:
     explicit AstBreak(const location &loc) : AstNode(loc) {}
 
-    void setNextNode(AstNode *node) override {
-        // break targets are wired during semantic lowering, not via CFG next links.
-    }
-
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -448,12 +417,7 @@ class AstContinue : public AstNode {
 public:
     explicit AstContinue(const location &loc) : AstNode(loc) {}
 
-    void setNextNode(AstNode *node) override {
-        // continue targets are wired during semantic lowering, not via CFG next links.
-    }
-
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -463,13 +427,6 @@ public:
     AstNode *const then;
     AstNode *const els = nullptr;
     bool hasElse() const { return els != nullptr; }
-    void setNextNode(AstNode *node) override {
-        then->setNextNode(node->getValidCFGNode());
-        if (els)
-            els->setNextNode(node->getValidCFGNode());
-        else
-            cfg_next = node->getValidCFGNode();
-    }
 
     AstIf(AstNode *condition, AstNode *then, AstNode *els = nullptr);
 
@@ -481,7 +438,6 @@ public:
     }
 
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;
 };
 
@@ -491,13 +447,6 @@ public:
     AstNode *const body;
     AstNode *const els = nullptr;
     bool hasElse() const { return els != nullptr; }
-
-    void setNextNode(AstNode *node) override {
-        cfg_next = node->getValidCFGNode();
-        if (els) {
-            els->setNextNode(node);
-        }
-    }
 
     AstFor(AstNode *expr, AstNode *body, AstNode *els = nullptr);
 
@@ -509,7 +458,6 @@ public:
     }
 
     void toJson(Json &root) override;
-    void toCFG(CFGChecker &checker) override;
     Object *accept(AstVisitor &visitor) override;
 };
 

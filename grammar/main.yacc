@@ -146,7 +146,6 @@ stat_list
     }
     | stat_list stat {
         $$ = $1;
-        ($1)->setNextNode($2);
         ($$)->as<AstStatList>()->push($2);
     }
     ;

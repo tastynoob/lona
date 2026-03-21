@@ -157,9 +157,7 @@ AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
       condition(condition), then(then), els(els) {}
 
 AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
-    : AstNode(expr ? expr->loc : location()), expr(expr), body(body), els(els) {
-    body->setNextNode(this);
-}
+    : AstNode(expr ? expr->loc : location()), expr(expr), body(body), els(els) {}
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : AstNode(value ? value->loc : location()), value(value), args(args) {}
