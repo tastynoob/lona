@@ -2224,7 +2224,7 @@ public:
 
         auto *retType = funcType->getRetType();
         if (!hirFunc->isTopLevelEntry() && retType && !hirFunc->hasGuaranteedReturn()) {
-            functionError(hirFunc, "missing return value");
+            functionError(hirFunc, "not all paths return a value");
         }
 
         size_t llvmArgIndex = 0;

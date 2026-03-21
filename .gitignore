@@ -29,6 +29,6 @@ __pycache__/
 /objects
 /refs
 /.plan
-test*
+tmp*
 draft.md
 plan.md

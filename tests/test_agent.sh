@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-/tmp/lona-ai-tests}"
 MODEL="${CODEX_MODEL:-}"
-FOCUS="${*:-generate 3 positive cases and 1 diagnostic case that cover different documented syntax areas}"
+FOCUS="${*:-generate 10 positive cases and 10 diagnostic case that cover different documented syntax areas}"
 RESULT_FILE="$OUT_DIR/ai_test.result.txt"
 LOG_FILE="$OUT_DIR/ai_test.full.log"
 

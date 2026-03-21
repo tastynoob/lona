@@ -59,7 +59,7 @@ def bad(a i32) i32 {
 }
 EOF
 expect_emit_ir_failure "$missing_return_in" "$missing_return_out" 'expected all-paths missing return program to fail'
-grep -Fq 'semantic error: missing return value' "$missing_return_out"
+grep -Fq 'semantic error: not all paths return a value' "$missing_return_out"
 grep -Fq " --> $missing_return_in:1:5" "$missing_return_out"
 grep -Fq ' 1 | def bad(a i32) i32 {' "$missing_return_out"
 
@@ -88,6 +88,6 @@ def main() i32 {
 }
 EOF
 expect_emit_ir_failure "$import_diag_main_in" "$import_diag_out" 'expected imported implementation diagnostic to fail in defining module'
-grep -Fq 'semantic error: missing return value' "$import_diag_out"
+grep -Fq 'semantic error: not all paths return a value' "$import_diag_out"
 grep -Fq " --> $import_diag_dep_in:1:5" "$import_diag_out"
 grep -Fq ' 1 | def bad(flag bool) i32 {' "$import_diag_out"
