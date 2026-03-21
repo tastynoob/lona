@@ -104,8 +104,8 @@ import-stat       ::= "import" ImportPath NL
 说明：
 
 - 当前文法不接受完全空文件；至少需要一个顶层项或一个换行。
-- `import` 只能放在顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
-- 导入文件当前只允许声明，不允许顶层可执行语句。
+- `import` 只能放在文件顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
+- `import` 不属于 `stat`，因此不能出现在块、函数体或结构体体内；写在这些位置会在 parser 阶段报错。
 
 ### 3.2 语句
 
@@ -138,8 +138,8 @@ stat-expr         ::= final-expr NL
 
 ```ebnf
 struct-decl       ::= "struct" IDENT "{"
-                      struct-stat
-                      { struct-stat }
+                      ( struct-stat | NL )
+                      { NL | struct-stat }
                       "}"
 
 struct-stat       ::= var-decl NL
@@ -147,12 +147,15 @@ struct-stat       ::= var-decl NL
 
 func-decl         ::= "def" IDENT "(" ")" block
                     | "def" IDENT "(" ")" type-name block
-                    | "def" IDENT "(" var-decl-seq ")" block
-                    | "def" IDENT "(" var-decl-seq ")" type-name block
+                    | "def" IDENT "(" param-decl-seq ")" block
+                    | "def" IDENT "(" param-decl-seq ")" type-name block
 
 var-decl          ::= IDENT type-name
-var-decl-seq      ::= var-decl
-                    | var-decl-seq "," var-decl
+param-decl        ::= IDENT type-name
+                    | "ref" IDENT type-name
+
+param-decl-seq    ::= param-decl
+                    | param-decl-seq "," param-decl
 ```
 
 ### 3.4 变量定义
@@ -161,6 +164,8 @@ var-decl-seq      ::= var-decl
 var-def           ::= "var" var-decl
                     | "var" var-decl "=" expr
                     | "var" var-decl "=" array-init
+                    | "ref" IDENT type-name "=" expr
+                    | "ref" IDENT type-name "=" array-init
                     | "var" IDENT "=" expr
                     | "var" IDENT "=" array-init
                     | IDENT ":" "=" expr
@@ -196,6 +201,7 @@ expr-assign       ::= expr-assign-left "=" expr
 
 expr-assign-left  ::= variable
                     | expr-getpointee
+                    | field-call
 
 expr-binop        ::= expr "*" expr
                     | expr "/" expr
@@ -303,6 +309,8 @@ brace-init-item   ::= expr
 
 - `legacy-cast-expr` 不是正式特性，而是为了给旧式 `i32 value` / `i32(expr)` 写法提供明确错误诊断。
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
+- `expr-assign-left` 在 parser 层包含 `field-call`，因此 `a(1)`、`grid(1, 2)` 这类数组索引写法可以出现在赋值左侧。
+- 但语义阶段只接受“解析成数组索引”的那部分 `field-call` 作为左值；普通函数调用、构造函数调用仍然不是可赋值目标。
 - 当前 `aaa.bbb(...)` 除了结构体方法，也可以命中“成员函数注入”入口；内建数值转换 `aaa.tof32()` / `aaa.toi32()` 和位模式视图 `aaa.tobits()` 都走这条路径，但后端会直接 lower 成高效 cast / byte-copy，不生成真实函数调用。
 - 普通函数调用和构造函数调用共用同一套参数语法；`Vec2(x=1, y=2)` 与 `mix(x=1, y=2)` 在 parser 层没有分成两套节点。
 - 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；隐式 `ref self` 方法接收者不要求在调用点额外写这个标记。
