@@ -23,6 +23,7 @@ import_namespace_value_bad_out="$(new_tmp_file import-namespace-value-bad-out)"
 import_function_value_bad_out="$(new_tmp_file import-function-value-bad-out)"
 import_local_shadow_out="$(new_tmp_file import-local-shadow-out)"
 import_top_level_shadow_out="$(new_tmp_file import-top-level-shadow-out)"
+import_type_shadow_out="$(new_tmp_file import-type-shadow-out)"
 import_mid_in="$import_dir/mid.lo"
 import_leaf_in="$import_dir/leaf.lo"
 import_transitive_main_in="$import_dir/transitive-main.lo"
@@ -221,6 +222,16 @@ def math() i32 {
 EOF
 expect_emit_ir_failure "$import_main_in" "$import_top_level_shadow_out" 'expected top-level function/import alias conflict to fail'
 grep -Fq 'top-level function `math` conflicts with imported module alias `math`' "$import_top_level_shadow_out"
+
+cat >"$import_main_in" <<'EOF'
+import math
+
+struct math {
+    value i32
+}
+EOF
+expect_emit_ir_failure "$import_main_in" "$import_type_shadow_out" 'expected struct/import alias conflict to fail'
+grep -Fq 'struct `math` conflicts with imported module alias `math`' "$import_type_shadow_out"
 
 cat >"$import_named_method_dep_in" <<'EOF'
 struct Vec2 {

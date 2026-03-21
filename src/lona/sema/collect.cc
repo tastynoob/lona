@@ -44,6 +44,10 @@ error(const std::string &message);
 error(const location &loc, const std::string &message,
       const std::string &hint);
 
+[[noreturn]] void
+internalError(const std::string &message,
+              const std::string &hint = std::string());
+
 enum class TopLevelDeclKind {
     StructType,
     Function,
@@ -124,6 +128,11 @@ error(const std::string &message) {
 error(const location &loc, const std::string &message,
       const std::string &hint = std::string()) {
     throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
+}
+
+[[noreturn]] void
+internalError(const std::string &message, const std::string &hint) {
+    throw DiagnosticError(DiagnosticError::Category::Internal, message, hint);
 }
 
 std::string
@@ -808,6 +817,30 @@ class InterfaceCollector {
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
+    void validateImportAliasConflict(AstStructDecl *structDecl) {
+        const auto name = toStdString(structDecl->name);
+        if (!unit_.importsModule(name)) {
+            return;
+        }
+        error(structDecl->loc,
+              "struct `" + name + "` conflicts with imported module alias `" +
+                  name + "`",
+              "Rename the struct so `" + name +
+                  ".xxx` continues to refer to the imported module.");
+    }
+
+    void validateImportAliasConflict(AstFuncDecl *funcDecl) {
+        const auto name = toStdString(funcDecl->name);
+        if (!unit_.importsModule(name)) {
+            return;
+        }
+        error(funcDecl->loc,
+              "top-level function `" + name +
+                  "` conflicts with imported module alias `" + name + "`",
+              "Rename the function so `" + name +
+                  ".xxx` continues to refer to the imported module.");
+    }
+
     TypeClass *resolveType(TypeNode *node) {
         if (!node) {
             return nullptr;
@@ -900,11 +933,13 @@ class InterfaceCollector {
         }
         for (auto *stmt : body->getBody()) {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
+                validateImportAliasConflict(structDecl);
                 recordTopLevelDeclName(topLevelDecls_, toStdString(structDecl->name),
                                        TopLevelDeclKind::StructType,
                                        structDecl->loc);
                 structDecls_.push_back(structDecl);
             } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
+                validateImportAliasConflict(funcDecl);
                 recordTopLevelDeclName(topLevelDecls_, toStdString(funcDecl->name),
                                        TopLevelDeclKind::Function,
                                        funcDecl->loc);
@@ -1106,11 +1141,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     for (const auto &entry : interface->types()) {
         auto *type = typeMgr->internType(entry.second.type);
         if (!type) {
-            error("failed to materialize imported type `" + entry.first + "`");
-        }
-        if (unit.importsModule(entry.first)) {
-            error("top-level type `" + entry.first +
-                  "` conflicts with imported module alias `" + entry.first + "`");
+            internalError("failed to materialize imported type `" + entry.first +
+                              "` from module `" + unit.path() + "`",
+                          "Imported interfaces should only contain types that were "
+                          "successfully collected from the defining module.");
         }
         unit.bindLocalType(entry.first, toStdString(type->full_name));
     }
@@ -1118,12 +1152,11 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     for (const auto &entry : interface->functions()) {
         auto *funcType = typeMgr->internType(entry.second.type)->as<FuncType>();
         if (!funcType) {
-            error("failed to materialize imported function signature `" + entry.first +
-                  "`");
-        }
-        if (unit.importsModule(entry.first)) {
-            error("top-level function `" + entry.first +
-                  "` conflicts with imported module alias `" + entry.first + "`");
+            internalError(
+                "failed to materialize imported function signature `" + entry.first +
+                    "` from module `" + unit.path() + "`",
+                "Imported interfaces should only contain function signatures that "
+                "were successfully collected from the defining module.");
         }
         auto runtimeName = exportNamespace ? entry.second.exportedName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);
@@ -1240,6 +1273,19 @@ class FunctionCompiler {
             lona::error(currentLocation, message, hint);
         }
         throw DiagnosticError(DiagnosticError::Category::Semantic, message, hint);
+    }
+
+    [[noreturn]] void error(const location &loc, const std::string &message,
+                            const std::string &hint = std::string()) {
+        lona::error(loc, message, hint);
+    }
+
+    [[noreturn]] void functionError(HIRFunc *hirFunc, const std::string &message,
+                                    const std::string &hint = std::string()) {
+        if (hirFunc) {
+            error(hirFunc->getLocation(), message, hint);
+        }
+        error(message, hint);
     }
 
     Object *materializeLocal(TypeClass *type, Object *initVal) {
@@ -1612,11 +1658,11 @@ class FunctionCompiler {
             if (ret->getExpr()) {
                 auto *value = compileExpr(ret->getExpr());
                 if (!retSlot) {
-                    error("unexpected return value in void function");
+                    error(ret->getLocation(), "unexpected return value in void function");
                 }
                 retSlot->set(scope, value);
             } else if (retSlot) {
-                error("missing return value");
+                error(ret->getLocation(), "missing return value");
             }
 
             if (scope->retBlock()) {
@@ -2147,7 +2193,7 @@ public:
 
         auto *llvmFunc = hirFunc->getLLVMFunction();
         if (!llvmFunc) {
-            error("HIR function missing LLVM function");
+            functionError(hirFunc, "HIR function missing LLVM function");
         }
         if (!llvmFunc->empty()) {
             return;
@@ -2159,7 +2205,7 @@ public:
 
         auto *funcType = hirFunc->getFuncType();
         if (!funcType) {
-            error("invalid function type");
+            functionError(hirFunc, "invalid function type");
         }
         returnByPointer = typeMgr->shouldReturnByPointer(funcType->getRetType());
 
@@ -2178,7 +2224,7 @@ public:
 
         auto *retType = funcType->getRetType();
         if (!hirFunc->isTopLevelEntry() && retType && !hirFunc->hasGuaranteedReturn()) {
-            error("missing return value");
+            functionError(hirFunc, "missing return value");
         }
 
         size_t llvmArgIndex = 0;
@@ -2186,7 +2232,7 @@ public:
             Object *retSlot = nullptr;
             if (returnByPointer) {
                 if (llvmFunc->arg_size() < 1) {
-                    error("function is missing hidden return slot argument");
+                    functionError(hirFunc, "function is missing hidden return slot argument");
                 }
                 auto argIt = llvmFunc->arg_begin();
                 retSlot = retType->newObj(Object::VARIABLE);
@@ -2221,7 +2267,7 @@ public:
         auto expectedArgs = hirFunc->getParams().size() +
             (hirFunc->hasSelfBinding() ? 1 : 0) + (returnByPointer ? 1 : 0);
         if (llvmFunc->arg_size() != expectedArgs) {
-            error("function argument number mismatch");
+            functionError(hirFunc, "function argument number mismatch");
         }
         for (const auto &binding : hirFunc->getParams()) {
             auto argIt = llvmFunc->arg_begin();
