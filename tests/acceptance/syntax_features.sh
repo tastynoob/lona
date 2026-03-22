@@ -41,6 +41,8 @@ tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
 tuple_flow_in="$(new_tmp_file tuple-flow)"
 tuple_flow_out="$(new_tmp_file tuple-flow-out)"
+method_abi_in="$(new_tmp_file method-abi)"
+method_abi_out="$(new_tmp_file method-abi-out)"
 tuple_field_in="$(new_tmp_file tuple-field)"
 tuple_field_out="$(new_tmp_file tuple-field-out)"
 tuple_field_bad_in="$(new_tmp_file tuple-field-bad)"
@@ -350,8 +352,31 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
-grep -q '^define { i32, i1 } @echo' "$tuple_flow_out"
-grep -q 'call { i32, i1 } @echo' "$tuple_flow_out"
+grep -Eq '^define void @echo\(ptr [^,]+, ptr [^)]+\)' "$tuple_flow_out"
+grep -Eq 'call void @echo\(ptr [^,]+, ptr [^)]+\)' "$tuple_flow_out"
+
+cat >"$method_abi_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+
+    def swap(extra i32) Pair {
+        var out Pair
+        out.left = self.right + extra
+        out.right = self.left + extra
+        ret out
+    }
+}
+
+def main() i32 {
+    var pair = Pair(left = 1, right = 2)
+    var out = pair.swap(3)
+    ret out.left
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$method_abi_in" >"$method_abi_out"
+grep -Eq '^define void @.*Pair\.swap\(ptr [^,]+, ptr [^,]+, i32 [^)]+\)' "$method_abi_out"
+grep -Eq 'call void @.*Pair\.swap\(ptr [^,]+, ptr [^,]+, i32 3\)' "$method_abi_out"
 
 cat >"$tuple_field_in" <<'EOF'
 def echo(pair <i32, bool>) <i32, bool> {
@@ -368,8 +393,9 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_field_in" >"$tuple_field_out"
-grep -Fq 'extractvalue { i32, i1 }' "$tuple_field_out"
 grep -Fq 'getelementptr inbounds { i32, i1 }' "$tuple_field_out"
+grep -Fq 'load i1, ptr' "$tuple_field_out"
+grep -Fq 'load i32, ptr' "$tuple_field_out"
 grep -Fq 'store i32 7' "$tuple_field_out"
 
 cat >"$tuple_field_bad_in" <<'EOF'

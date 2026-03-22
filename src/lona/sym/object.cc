@@ -1,5 +1,6 @@
 #include "func.hh"
 #include "lona/module/compilation_unit.hh"
+#include "../abi/native_abi.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
 #include "../type/buildin.hh"
@@ -232,46 +233,69 @@ TypeObject::set(Scope *scope, Object *src) {
 
 Object *
 emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
-                 std::vector<Object *> &args) {
+                 std::vector<Object *> &args, bool hasImplicitSelf) {
     auto &builder = scope->builder;
-    auto *llvmFuncType = scope->getLLVMFunctionType(funcType);
+    auto abiSignature =
+        classifyNativeFunctionAbi(*scope->types(), funcType, hasImplicitSelf);
+    auto *llvmFuncType = abiSignature.llvmType;
     auto *retType = funcType->getRetType();
     const auto &argTypes = funcType->getArgTypes();
     std::vector<llvm::Value *> llvmargs;
     Object *retval = nullptr;
 
-    if (retType && scope->types()->shouldReturnByPointer(retType)) {
+    if (retType && abiSignature.hasIndirectResult) {
         retval = retType->newObj(Object::VARIABLE);
         retval->createllvmValue(scope);
+    }
+
+    if (argTypes.size() != args.size()) {
+        throw "Call argument number mismatch";
+    }
+
+    auto appendSourceArgument = [&](std::size_t index) {
+        auto *arg = args[index];
+        auto *expectedType = argTypes[index];
+        if (!isByteCopyCompatible(expectedType, arg->getType())) {
+            throw "Call argument type mismatch";
+        }
+        auto passKind = abiSignature.argPassKind(index);
+        if (passKind == NativeAbiPassKind::IndirectRef) {
+            if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
+                throw "Call reference argument must be addressable";
+            }
+            llvmargs.push_back(arg->getllvmValue());
+            return;
+        }
+        if (passKind == NativeAbiPassKind::IndirectValue) {
+            if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
+                auto *spill = expectedType->newObj(Object::VARIABLE);
+                spill->createllvmValue(scope);
+                spill->set(scope, arg);
+                arg = spill;
+            }
+            llvmargs.push_back(arg->getllvmValue());
+            return;
+        }
+        llvmargs.push_back(coerceObjectValue(scope, arg, expectedType));
+    };
+
+    std::size_t startIndex = 0;
+    if (hasImplicitSelf && !args.empty()) {
+        appendSourceArgument(0);
+        startIndex = 1;
+    }
+
+    if (retType && abiSignature.hasIndirectResult) {
         llvmargs.push_back(retval->getllvmValue());
     }
 
-    // check args type
-    if (argTypes.size() == args.size())
-        for (int i = 0; i < args.size(); i++) {
-            if (funcType->getArgBindingKind(i) == BindingKind::Ref) {
-                if (argTypes[i] != args[i]->getType()) {
-                    throw "Call reference argument type mismatch";
-                }
-                if (!args[i]->isVariable() || args[i]->isRegVal() ||
-                    !args[i]->getllvmValue()) {
-                    throw "Call reference argument must be addressable";
-                }
-                llvmargs.push_back(args[i]->getllvmValue());
-                continue;
-            }
-            if (!isByteCopyCompatible(argTypes[i], args[i]->getType())) {
-                throw "Call argument type mismatch";
-            }
-            llvmargs.push_back(coerceObjectValue(scope, args[i], argTypes[i]));
-        }
-    else {
-        throw "Call argument number mismatch";
+    for (std::size_t i = startIndex; i < args.size(); ++i) {
+        appendSourceArgument(i);
     }
 
     auto *ret = builder.CreateCall(llvmFuncType, calleeValue, llvmargs);
 
-    if (retType && scope->types()->shouldReturnByPointer(retType)) {
+    if (retType && abiSignature.hasIndirectResult) {
         return retval;
     } else if (retType) {
         auto obj = retType->newObj(Object::REG_VAL);
@@ -288,7 +312,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
 Object *
 Function::call(Scope *scope, std::vector<Object *> &args) {
     auto *funcType = type->as<FuncType>();
-    return emitFunctionCall(scope, val, funcType, args);
+    return emitFunctionCall(scope, val, funcType, args, hasImplicitSelf_);
 }
 
 }  // namespace lona

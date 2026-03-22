@@ -28,6 +28,7 @@
 ## 构建与运行
 
 - [native_build.md](native_build.md): `lona-ir`、`lac`、`lac-native` 的构建和运行方式。
+- [native_abi_v0.md](native_abi_v0.md): `native` 路线第一版内部 ABI 草案。
 - [../example/README.md](../example/README.md): 示例程序索引。
 
 ## 建议查阅顺序

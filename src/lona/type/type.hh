@@ -435,7 +435,8 @@ public:
         return static_cast<std::uint64_t>(type->typeSize);
     }
     bool shouldReturnByPointer(TypeClass *type) {
-        return type && type->as<StructType>() && getTypeAllocSize(type) > RVO_THRESHOLD;
+        return type && (type->as<StructType>() || type->as<TupleType>() ||
+                        type->as<ArrayType>());
     }
 
     bool addType(llvm::StringRef name, TypeClass *type) {

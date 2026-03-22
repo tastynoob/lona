@@ -1,4 +1,5 @@
 #include "../visitor.hh"
+#include "../abi/native_abi.hh"
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
@@ -563,11 +564,12 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     auto *llfunc = llvm::Function::Create(
-        typeMgr->getLLVMFunctionType(lofuncType),
+        getNativeAbiFunctionType(*typeMgr, lofuncType, methodParent != nullptr),
         llvm::Function::ExternalLinkage,
         llvm::Twine(llvmName),
         typeMgr->getModule());
-    auto *lofunc = new Function(llfunc, lofuncType, extractParamNames(node));
+    auto *lofunc = new Function(llfunc, lofuncType, extractParamNames(node),
+                                methodParent != nullptr);
 
     if (methodParent) {
         typeMgr->bindMethodFunction(
@@ -1141,16 +1143,20 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
 Function *
 materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType,
                             llvm::StringRef llvmName,
-                            std::vector<std::string> paramNames = {}) {
+                            std::vector<std::string> paramNames = {},
+                            bool hasImplicitSelf = false) {
     auto *existing = scope.getObj(llvmName);
     if (existing) {
         return existing->as<Function>();
     }
-    auto *llvmFunc = llvm::Function::Create(typeMgr->getLLVMFunctionType(funcType),
+    auto *llvmFunc = llvm::Function::Create(
+                                            getNativeAbiFunctionType(
+                                                *typeMgr, funcType, hasImplicitSelf),
                                             llvm::Function::ExternalLinkage,
                                             llvm::Twine(llvmName),
                                             typeMgr->getModule());
-    auto *func = new Function(llvmFunc, funcType, std::move(paramNames));
+    auto *func = new Function(llvmFunc, funcType, std::move(paramNames),
+                              hasImplicitSelf);
     scope.addObj(llvmName, func);
     return func;
 }
@@ -1208,7 +1214,9 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
                 continue;
             }
             auto methodName = toStdString(structType->full_name) + "." + method.first().str();
-            auto *llvmFunc = llvm::Function::Create(typeMgr->getLLVMFunctionType(methodType),
+            auto *llvmFunc = llvm::Function::Create(
+                                                    getNativeAbiFunctionType(
+                                                        *typeMgr, methodType, true),
                                                     llvm::Function::ExternalLinkage,
                                                     llvm::Twine(methodName),
                                                     typeMgr->getModule());
@@ -1219,7 +1227,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
             }
             typeMgr->bindMethodFunction(
                 structType, method.first(),
-                new Function(llvmFunc, methodType, std::move(paramNames)));
+                new Function(llvmFunc, methodType, std::move(paramNames), true));
         }
     }
 
@@ -1349,6 +1357,17 @@ class FunctionCompiler {
             obj->set(scope, initVal);
         }
         return obj;
+    }
+
+    Object *materializeIndirectValueBinding(Object *obj, llvm::Value *incomingPtr) {
+        if (!obj || !incomingPtr) {
+            error("indirect value binding requires an incoming pointer");
+        }
+        auto *bound = materializeBinding(obj);
+        auto *value = scope->builder.CreateLoad(scope->getLLVMType(obj->getType()),
+                                                incomingPtr);
+        scope->builder.CreateStore(value, bound->getllvmValue());
+        return bound;
     }
 
     std::vector<AstNode *> consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
@@ -1572,6 +1591,7 @@ class FunctionCompiler {
             std::vector<Object *> args;
             llvm::Value *calleeValue = nullptr;
             FuncType *funcType = nullptr;
+            bool hasImplicitSelf = false;
 
             if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee());
                 selector && selector->isMethodSelector()) {
@@ -1594,9 +1614,11 @@ class FunctionCompiler {
                     parent = materializeLocal(parent->getType(), parent);
                 }
                 args.push_back(parent);
+                hasImplicitSelf = true;
             } else if (auto *callee = getDirectFunctionCallee(call->getCallee())) {
                 funcType = callee->getType()->as<FuncType>();
                 calleeValue = callee->getllvmValue();
+                hasImplicitSelf = callee->hasImplicitSelf();
             } else {
                 auto *calleeObj = compileExpr(call->getCallee());
                 if (!calleeObj) {
@@ -1617,7 +1639,8 @@ class FunctionCompiler {
                 }
                 args.push_back(value);
             }
-            return emitFunctionCall(scope, calleeValue, funcType, args);
+            return emitFunctionCall(scope, calleeValue, funcType, args,
+                                    hasImplicitSelf);
         }
         if (auto *index = dynamic_cast<HIRIndex *>(expr)) {
             setLocation(index);
@@ -2251,7 +2274,9 @@ public:
         if (!funcType) {
             functionError(hirFunc, "invalid function type");
         }
-        returnByPointer = typeMgr->shouldReturnByPointer(funcType->getRetType());
+        auto abiSignature =
+            classifyNativeFunctionAbi(*typeMgr, funcType, hirFunc->hasSelfBinding());
+        returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
             scope->structTy = hirFunc->getSelfBinding().object->getType()->as<StructType>();
@@ -2272,6 +2297,19 @@ public:
         }
 
         size_t llvmArgIndex = 0;
+        if (hirFunc->hasSelfBinding()) {
+            auto &binding = hirFunc->getSelfBinding();
+            auto argIt = llvmFunc->arg_begin();
+            std::advance(argIt, llvmArgIndex);
+            auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
+            incomingSelf->setllvmValue(&*argIt);
+            auto *selfObj = materializeBinding(binding.object, incomingSelf);
+            scope->addObj(llvm::StringRef(binding.name), selfObj);
+            emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
+                             selfObj->getType(), binding.loc, 1);
+            ++llvmArgIndex;
+        }
+
         if (retType) {
             Object *retSlot = nullptr;
             if (returnByPointer) {
@@ -2279,6 +2317,7 @@ public:
                     functionError(hirFunc, "function is missing hidden return slot argument");
                 }
                 auto argIt = llvmFunc->arg_begin();
+                std::advance(argIt, llvmArgIndex);
                 retSlot = retType->newObj(Object::VARIABLE);
                 retSlot->setllvmValue(&*argIt);
                 ++llvmArgIndex;
@@ -2293,34 +2332,27 @@ public:
             scope->initRetBlock(retBB);
         }
 
-        unsigned debugArgIndex = 1;
-        if (hirFunc->hasSelfBinding()) {
-            auto &binding = hirFunc->getSelfBinding();
-            auto argIt = llvmFunc->arg_begin();
-            std::advance(argIt, llvmArgIndex);
-            auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
-            incomingSelf->setllvmValue(&*argIt);
-            auto *selfObj = materializeBinding(binding.object, incomingSelf);
-            scope->addObj(llvm::StringRef(binding.name), selfObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
-                             selfObj->getType(), binding.loc, debugArgIndex);
-            ++llvmArgIndex;
-            ++debugArgIndex;
-        }
+        unsigned debugArgIndex = hirFunc->hasSelfBinding() ? 2 : 1;
 
-        auto expectedArgs = hirFunc->getParams().size() +
-            (hirFunc->hasSelfBinding() ? 1 : 0) + (returnByPointer ? 1 : 0);
+        auto expectedArgs = abiSignature.llvmType
+            ? abiSignature.llvmType->getNumParams()
+            : 0;
         if (llvmFunc->arg_size() != expectedArgs) {
             functionError(hirFunc, "function argument number mismatch");
         }
+        const std::size_t sourceParamOffset = hirFunc->hasSelfBinding() ? 1 : 0;
+        std::size_t sourceParamIndex = sourceParamOffset;
         for (const auto &binding : hirFunc->getParams()) {
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
             Object *argObj = nullptr;
-            if (binding.object->isRefAlias()) {
+            auto passKind = abiSignature.argPassKind(sourceParamIndex);
+            if (passKind == NativeAbiPassKind::IndirectRef) {
                 auto *incomingArg = binding.object->getType()->newObj(Object::VARIABLE);
                 incomingArg->setllvmValue(&*argIt);
                 argObj = materializeBinding(binding.object, incomingArg);
+            } else if (passKind == NativeAbiPassKind::IndirectValue) {
+                argObj = materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
                 argObj = materializeBinding(binding.object);
                 scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
@@ -2330,6 +2362,7 @@ public:
                              argObj->getType(), binding.loc, debugArgIndex);
             ++llvmArgIndex;
             ++debugArgIndex;
+            ++sourceParamIndex;
         }
 
         compileBlock(hirFunc->getBody());

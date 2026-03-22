@@ -1,4 +1,5 @@
 #include "type.hh"
+#include "../abi/native_abi.hh"
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
@@ -143,29 +144,7 @@ TupleType::newObj(uint32_t specifiers) {
 
 llvm::Type *
 FuncType::buildLLVMType(TypeTable &types) {
-    auto hasSROA = types.shouldReturnByPointer(retType);
-    std::vector<llvm::Type *> llvmArgTypes;
-    llvmArgTypes.reserve(argTypes.size() + (hasSROA ? 1 : 0));
-    llvm::Type *llvmRetType = nullptr;
-    if (hasSROA) {
-        llvmArgTypes.push_back(
-            types.getLLVMType(types.createPointerType(retType)));
-        llvmRetType = llvm::Type::getVoidTy(types.getContext());
-    } else {
-        llvmRetType = retType
-            ? types.getLLVMType(retType)
-            : llvm::Type::getVoidTy(types.getContext());
-    }
-    for (std::size_t i = 0; i < argTypes.size(); ++i) {
-        auto *argType = argTypes[i];
-        if (getArgBindingKind(i) == BindingKind::Ref) {
-            llvmArgTypes.push_back(
-                types.getLLVMType(types.createPointerType(argType)));
-            continue;
-        }
-        llvmArgTypes.push_back(types.getLLVMType(argType));
-    }
-    return llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
+    return getNativeAbiFunctionType(types, this, false);
 }
 
 llvm::Type *

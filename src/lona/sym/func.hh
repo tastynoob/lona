@@ -9,15 +9,19 @@ namespace lona {
 
 class Function : public Object {
     std::vector<std::string> paramNames_;
+    bool hasImplicitSelf_ = false;
 
 public:
     Function(llvm::Function *val, FuncType *type,
-             std::vector<std::string> paramNames = {})
+             std::vector<std::string> paramNames = {},
+             bool hasImplicitSelf = false)
         : Object((llvm::Function *)val, (TypeClass *)type),
-          paramNames_(std::move(paramNames)) {}
+          paramNames_(std::move(paramNames)),
+          hasImplicitSelf_(hasImplicitSelf) {}
 
     Object *call(Scope *scope, std::vector<Object *> &args);
     const std::vector<std::string> &paramNames() const { return paramNames_; }
+    bool hasImplicitSelf() const { return hasImplicitSelf_; }
 
     llvm::Value *get(Scope *scope) override { return val; }
 
@@ -27,7 +31,8 @@ public:
 };
 
 Object *emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
-                         std::vector<Object *> &args);
+                         std::vector<Object *> &args,
+                         bool hasImplicitSelf = false);
 
 
 }

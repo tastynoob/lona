@@ -363,4 +363,4 @@ var sample = make_name(1, 2)
 EOF
 "$BIN" --emit-ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
 grep -Eq '^%.*Name = type \{ i32, i32 \}' "$grammar_subset_out"
-grep -Eq '^define %.*Name @make_name' "$grammar_subset_out"
+grep -Eq '^define void @make_name\(ptr [^,]+, i32 [^,]+, i32 [^)]+\)' "$grammar_subset_out"
