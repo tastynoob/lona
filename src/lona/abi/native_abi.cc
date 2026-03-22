@@ -160,11 +160,12 @@ storeNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
     builder.CreateStore(coercedValue, typedPtr);
 }
 
-NativeAbiFunctionSignature
+AbiFunctionSignature
 classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
                           bool hasImplicitSelf) {
-    NativeAbiFunctionSignature signature;
+    AbiFunctionSignature signature;
     signature.sourceType = funcType;
+    signature.abiKind = AbiKind::Native;
     signature.hasImplicitSelf = hasImplicitSelf;
     if (!funcType) {
         return signature;
@@ -177,8 +178,8 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
         isNativeAbiAggregateType(retType) &&
         !usesNativeAbiPackedRegisterAggregate(types, retType);
     signature.resultInfo.passKind = signature.hasIndirectResult
-        ? NativeAbiPassKind::IndirectValue
-        : NativeAbiPassKind::Direct;
+        ? AbiPassKind::IndirectValue
+        : AbiPassKind::Direct;
     signature.resultInfo.llvmType = signature.hasIndirectResult
         ? nullptr
         : getNativeAbiDirectLLVMType(types, retType);
@@ -188,24 +189,24 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
     const auto &argTypes = funcType->getArgTypes();
     signature.sourceArgInfos.reserve(argTypes.size());
     for (std::size_t i = 0; i < argTypes.size(); ++i) {
-        NativeAbiValueInfo info;
+        AbiValueInfo info;
         if ((hasImplicitSelf && i == 0) ||
             funcType->getArgBindingKind(i) == BindingKind::Ref) {
-            info.passKind = NativeAbiPassKind::IndirectRef;
+            info.passKind = AbiPassKind::IndirectRef;
         } else if (isNativeAbiAggregateType(argTypes[i])) {
             if (usesNativeAbiPackedRegisterAggregate(types, argTypes[i])) {
-                info.passKind = NativeAbiPassKind::Direct;
+                info.passKind = AbiPassKind::Direct;
                 info.packedRegisterAggregate = true;
                 info.llvmType = getNativeAbiDirectLLVMType(types, argTypes[i]);
             } else {
-                info.passKind = NativeAbiPassKind::IndirectValue;
+                info.passKind = AbiPassKind::IndirectValue;
             }
         } else {
-            info.passKind = NativeAbiPassKind::Direct;
+            info.passKind = AbiPassKind::Direct;
             info.llvmType = getNativeAbiDirectLLVMType(types, argTypes[i]);
         }
         if (!info.llvmType) {
-            info.llvmType = info.passKind == NativeAbiPassKind::Direct
+            info.llvmType = info.passKind == AbiPassKind::Direct
                 ? getNativeAbiDirectLLVMType(types, argTypes[i])
                 : types.getLLVMType(types.createPointerType(argTypes[i]));
         }

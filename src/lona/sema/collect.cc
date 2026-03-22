@@ -1,4 +1,5 @@
 #include "../visitor.hh"
+#include "../abi/abi.hh"
 #include "../abi/native_abi.hh"
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
@@ -714,7 +715,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     auto *llfunc = llvm::Function::Create(
-        getNativeAbiFunctionType(*typeMgr, lofuncType, methodParent != nullptr),
+        getFunctionAbiLLVMType(*typeMgr, lofuncType, methodParent != nullptr),
         llvm::Function::ExternalLinkage,
         llvm::Twine(llvmName),
         typeMgr->getModule());
@@ -1309,7 +1310,7 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType
         return existing->as<Function>();
     }
     auto *llvmFunc = llvm::Function::Create(
-                                            getNativeAbiFunctionType(
+                                            getFunctionAbiLLVMType(
                                                 *typeMgr, funcType, hasImplicitSelf),
                                             llvm::Function::ExternalLinkage,
                                             llvm::Twine(llvmName),
@@ -1374,7 +1375,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
             }
             auto methodName = toStdString(structType->full_name) + "." + method.first().str();
             auto *llvmFunc = llvm::Function::Create(
-                                                    getNativeAbiFunctionType(
+                                                    getFunctionAbiLLVMType(
                                                         *typeMgr, methodType, true),
                                                     llvm::Function::ExternalLinkage,
                                                     llvm::Twine(methodName),
@@ -1452,7 +1453,7 @@ class FunctionCompiler {
     llvm::LLVMContext &context;
     DebugInfoContext *debug;
     llvm::DISubprogram *debugSubprogram = nullptr;
-    NativeAbiFunctionSignature abiSignature;
+    AbiFunctionSignature abiSignature;
     bool returnByPointer = false;
     location currentLocation;
     bool hasCurrentLocation = false;
@@ -2490,7 +2491,7 @@ public:
             functionError(hirFunc, "invalid function type");
         }
         abiSignature =
-            classifyNativeFunctionAbi(*typeMgr, funcType, hirFunc->hasSelfBinding());
+            classifyFunctionAbi(*typeMgr, funcType, hirFunc->hasSelfBinding());
         returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
@@ -2563,11 +2564,11 @@ public:
             Object *argObj = nullptr;
             const auto &argInfo = abiSignature.argInfo(sourceParamIndex);
             auto passKind = argInfo.passKind;
-            if (passKind == NativeAbiPassKind::IndirectRef) {
+            if (passKind == AbiPassKind::IndirectRef) {
                 auto *incomingArg = binding.object->getType()->newObj(Object::VARIABLE);
                 incomingArg->setllvmValue(&*argIt);
                 argObj = materializeBinding(binding.object, incomingArg);
-            } else if (passKind == NativeAbiPassKind::IndirectValue) {
+            } else if (passKind == AbiPassKind::IndirectValue) {
                 argObj = materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
                 argObj = materializeDirectValueBinding(binding.object, &*argIt,

@@ -21,10 +21,14 @@ func_ptr_direct_return_agg_in="$(new_tmp_file func-ptr-direct-return-agg)"
 func_ptr_direct_return_agg_out="$(new_tmp_file func-ptr-direct-return-agg-out)"
 ffi_decl_json_in="$(new_tmp_file ffi-decl-json)"
 ffi_decl_json_out="$(new_tmp_file ffi-decl-json-out)"
+ffi_pointer_sig_in="$(new_tmp_file ffi-pointer-sig)"
+ffi_pointer_sig_out="$(new_tmp_file ffi-pointer-sig-out)"
 ffi_import_in="$(new_tmp_file ffi-import)"
 ffi_import_out="$(new_tmp_file ffi-import-out)"
 ffi_export_in="$(new_tmp_file ffi-export)"
 ffi_export_out="$(new_tmp_file ffi-export-out)"
+ffi_export_pointer_in="$(new_tmp_file ffi-export-pointer)"
+ffi_export_pointer_out="$(new_tmp_file ffi-export-pointer-out)"
 ffi_abi_bad_in="$(new_tmp_file ffi-abi-bad)"
 ffi_abi_bad_out="$(new_tmp_file ffi-abi-bad-out)"
 ffi_repr_bad_in="$(new_tmp_file ffi-repr-bad)"
@@ -219,6 +223,23 @@ grep -Fq '"declKind": "extern"' "$ffi_decl_json_out"
 grep -Fq '"declKind": "repr_c"' "$ffi_decl_json_out"
 grep -Fq '"body": null' "$ffi_decl_json_out"
 
+cat >"$ffi_pointer_sig_in" <<'EOF'
+extern struct FILE
+
+repr("C") struct Point {
+    x i32
+    y i32
+}
+
+extern "C" def shift(p Point*, fp FILE*) Point*
+
+def main() i32 {
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ffi_pointer_sig_in" >"$ffi_pointer_sig_out"
+grep -Fq 'declare ptr @shift(ptr, ptr)' "$ffi_pointer_sig_out"
+
 cat >"$ffi_import_in" <<'EOF'
 extern "C" def abs(v i32) i32
 
@@ -237,6 +258,19 @@ extern "C" def lona_add(a i32, b i32) i32 {
 EOF
 "$BIN" --emit-ir --verify-ir "$ffi_export_in" >"$ffi_export_out"
 grep -Eq '^define i32 @lona_add\(i32 [^,]+, i32 [^)]+\)' "$ffi_export_out"
+
+cat >"$ffi_export_pointer_in" <<'EOF'
+repr("C") struct Point {
+    x i32
+    y i32
+}
+
+extern "C" def passthrough(p Point*) Point* {
+    ret p
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ffi_export_pointer_in" >"$ffi_export_pointer_out"
+grep -Eq '^define ptr @passthrough\(ptr [^)]+\)' "$ffi_export_pointer_out"
 
 cat >"$ffi_abi_bad_in" <<'EOF'
 extern "Rust" def bad(v i32) i32

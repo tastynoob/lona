@@ -1,5 +1,5 @@
 #include "type.hh"
-#include "../abi/native_abi.hh"
+#include "../abi/abi.hh"
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
@@ -144,7 +144,7 @@ TupleType::newObj(uint32_t specifiers) {
 
 llvm::Type *
 FuncType::buildLLVMType(TypeTable &types) {
-    return getNativeAbiFunctionType(types, this, false);
+    return getFunctionAbiLLVMType(types, this, false);
 }
 
 llvm::Type *

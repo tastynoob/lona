@@ -1,5 +1,6 @@
 #include "func.hh"
 #include "lona/module/compilation_unit.hh"
+#include "../abi/abi.hh"
 #include "../abi/native_abi.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
@@ -249,7 +250,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
                  std::vector<Object *> &args, bool hasImplicitSelf) {
     auto &builder = scope->builder;
     auto abiSignature =
-        classifyNativeFunctionAbi(*scope->types(), funcType, hasImplicitSelf);
+        classifyFunctionAbi(*scope->types(), funcType, hasImplicitSelf);
     auto *llvmFuncType = abiSignature.llvmType;
     auto *retType = funcType->getRetType();
     const auto &argTypes = funcType->getArgTypes();
@@ -273,14 +274,14 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
         }
         const auto &argInfo = abiSignature.argInfo(index);
         auto passKind = argInfo.passKind;
-        if (passKind == NativeAbiPassKind::IndirectRef) {
+        if (passKind == AbiPassKind::IndirectRef) {
             if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
                 throw "Call reference argument must be addressable";
             }
             llvmargs.push_back(arg->getllvmValue());
             return;
         }
-        if (passKind == NativeAbiPassKind::IndirectValue) {
+        if (passKind == AbiPassKind::IndirectValue) {
             if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
                 auto *spill = expectedType->newObj(Object::VARIABLE);
                 spill->createllvmValue(scope);
