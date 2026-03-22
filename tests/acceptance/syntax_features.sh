@@ -383,13 +383,17 @@ grep -Fq 'unknown tuple field `_3`' "$tuple_field_bad_out"
 grep -Fq 'Tuple fields are named `_1`, `_2` in declaration order.' "$tuple_field_bad_out"
 
 cat >"$tuple_no_context_in" <<'EOF'
-def bad() i32 {
+def main() i32 {
     var pair = (1, true)
+    if pair._2 {
+        ret pair._1
+    }
     ret 0
 }
 EOF
-expect_emit_ir_failure "$tuple_no_context_in" "$tuple_no_context_out" 'expected context-free tuple literal program to fail'
-grep -Fq 'tuple literals need an explicit tuple target type' "$tuple_no_context_out"
+"$BIN" --emit-ir --verify-ir "$tuple_no_context_in" >"$tuple_no_context_out"
+grep -Fq 'alloca { i32, i1 }' "$tuple_no_context_out"
+grep -Fq 'store { i32, i1 } { i32 1, i1 true }' "$tuple_no_context_out"
 
 cat >"$tuple_array_in" <<'EOF'
 def main() i32 {

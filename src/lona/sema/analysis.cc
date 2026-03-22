@@ -1526,32 +1526,51 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeTupleLiteral(AstTupleLiteral *node, TypeClass *expectedType) {
         auto *tupleType = expectedType ? expectedType->as<TupleType>() : nullptr;
-        if (!tupleType) {
-            error(node->loc,
-                  "tuple literals need an explicit tuple target type",
-                  "Write a declaration like `var pair <i32, bool> = (1, true)`, or pass the literal to a parameter that already expects a tuple type.");
-        }
-
-        const auto &itemTypes = tupleType->getItemTypes();
         const auto actualCount = node->items ? node->items->size() : 0;
-        if (actualCount != itemTypes.size()) {
-            error(node->loc,
-                  "tuple literal arity mismatch: expected " +
-                      std::to_string(itemTypes.size()) + " items, got " +
-                      std::to_string(actualCount));
-        }
 
         std::vector<HIRExpr *> items;
         items.reserve(actualCount);
-        for (size_t i = 0; i < actualCount; ++i) {
-            auto *item = requireNonCallExpr(node->items->at(i), itemTypes[i]);
-            item = coerceNumericExpr(item, itemTypes[i], node->items->at(i)->loc,
-                                     false);
-            item = coercePointerExpr(item, itemTypes[i], node->items->at(i)->loc);
-            requireCompatibleTypes(node->items->at(i)->loc, itemTypes[i], item->getType(),
-                                   "tuple element type mismatch at index " +
-                                       std::to_string(i));
-            items.push_back(item);
+
+        if (!tupleType) {
+            std::vector<TypeClass *> inferredItemTypes;
+            inferredItemTypes.reserve(actualCount);
+            for (size_t i = 0; i < actualCount; ++i) {
+                auto *item = requireNonCallExpr(node->items->at(i));
+                auto *itemType = item ? item->getType() : nullptr;
+                if (!itemType) {
+                    auto *value = dynamic_cast<HIRValue *>(item);
+                    auto *object = value ? value->getValue() : nullptr;
+                    if (object && object->as<TypeObject>()) {
+                        error(node->items->at(i)->loc,
+                              "type names can't be stored as tuple elements",
+                              "Use the type in a type annotation, or construct a runtime value from it.");
+                    }
+                    error(node->items->at(i)->loc,
+                          "tuple element doesn't produce a storable runtime value");
+                }
+                inferredItemTypes.push_back(itemType);
+                items.push_back(item);
+            }
+            tupleType = typeMgr->getOrCreateTupleType(inferredItemTypes);
+        } else {
+            const auto &itemTypes = tupleType->getItemTypes();
+            if (actualCount != itemTypes.size()) {
+                error(node->loc,
+                      "tuple literal arity mismatch: expected " +
+                          std::to_string(itemTypes.size()) + " items, got " +
+                          std::to_string(actualCount));
+            }
+
+            for (size_t i = 0; i < actualCount; ++i) {
+                auto *item = requireNonCallExpr(node->items->at(i), itemTypes[i]);
+                item = coerceNumericExpr(item, itemTypes[i], node->items->at(i)->loc,
+                                         false);
+                item = coercePointerExpr(item, itemTypes[i], node->items->at(i)->loc);
+                requireCompatibleTypes(node->items->at(i)->loc, itemTypes[i], item->getType(),
+                                       "tuple element type mismatch at index " +
+                                           std::to_string(i));
+                items.push_back(item);
+            }
         }
         return makeHIR<HIRTupleLiteral>(std::move(items), tupleType, node->loc);
     }
