@@ -35,6 +35,11 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
         }
         return name;
     }
+    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+        auto name = describeTypeNode(indexable->base, nullDescription);
+        name += "[*]";
+        return name;
+    }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
         auto name = describeTypeNode(array->base, nullDescription);
         name += describeArrayDimensions(array->dim);

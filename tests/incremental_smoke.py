@@ -154,6 +154,25 @@ def method_program_text(module_name: str, dx_name: str, dy_name: str) -> str:
     )
 
 
+def indexable_pointer_dependency_text(type_name: str) -> str:
+    return (
+        f"def first(ptr {type_name}[*]) {type_name} {{\n"
+        "    ret ptr(0)\n"
+        "}\n"
+    )
+
+
+def indexable_pointer_program_text(module_name: str) -> str:
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        "    var raw u8[1] = {1}\n"
+        "    var ptr u8* = &raw(0)\n"
+        f"    ret {module_name}.first(ptr)\n"
+        "}\n"
+    )
+
+
 def run_body_vs_interface_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     dep_name = "dep"
     dep_path = root / f"{dep_name}.lo"
@@ -222,6 +241,26 @@ def run_named_method_interface_hash_case(rng: random.Random, runner: SessionRunn
         1,
         0,
         f"unknown parameter `{first_dx}` for function call",
+    )
+
+
+def run_indexable_pointer_interface_hash_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+
+    write_file(dep_path, indexable_pointer_dependency_text("u8"))
+    write_file(app_path, indexable_pointer_program_text("dep"))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, indexable_pointer_dependency_text("i32"))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        "call argument type mismatch at index 0: expected i32[*], got u8*",
     )
 
 
@@ -356,6 +395,12 @@ def main() -> int:
                 "named-method-interface-hash-invalidation",
                 lambda: run_named_method_interface_hash_case(
                     rng, runner, root / "named_method_interface"
+                ),
+            )
+            suite.add(
+                "indexable-pointer-interface-hash-invalidation",
+                lambda: run_indexable_pointer_interface_hash_case(
+                    rng, runner, root / "indexable_pointer_interface"
                 ),
             )
             suite.add(

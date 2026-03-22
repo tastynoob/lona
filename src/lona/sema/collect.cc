@@ -247,6 +247,11 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
             getOrCreateDebugType(debug, pointer->getPointeeType()),
             debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
             toStdString(type->full_name));
+    } else if (auto *indexable = type->as<IndexablePointerType>()) {
+        diType = debug.builder.createPointerType(
+            getOrCreateDebugType(debug, indexable->getElementType()),
+            debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
+            toStdString(type->full_name));
     } else if (auto *array = type->as<ArrayType>()) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, array->getElementType()),
@@ -763,9 +768,17 @@ errorInvalidArrayDimension(const location &loc) {
 [[noreturn]] void
 errorUnsupportedUnsizedArray(const location &loc, TypeNode *node) {
     error(loc,
-          "unsized array syntax is not implemented yet: " +
+          "explicit unsized array type syntax is not allowed: " +
               describeTypeNode(node, "<unknown type>"),
-          "Use fixed explicit dimensions like `i32[4]` or an explicit pointer type like `i32*`. `T[]` remains reserved syntax and has no stable ABI yet.");
+          "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
+}
+
+[[noreturn]] void
+errorLegacyIndexablePointerSyntax(const location &loc, TypeNode *node) {
+    error(loc,
+          "explicit unsized array type syntax is not allowed inside pointer declarations: " +
+              describeTypeNode(node, "<unknown type>"),
+          "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
 }
 
 void
@@ -778,7 +791,16 @@ validateTypeNodeLayout(TypeNode *node) {
         return;
     }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(pointer->base);
+            array && hasUnsizedArrayDimensions(array->dim) &&
+            isBareUnsizedArraySyntax(array->dim)) {
+            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
+        }
         validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+        validateTypeNodeLayout(indexable->base);
         return;
     }
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
@@ -841,14 +863,16 @@ class InterfaceCollector {
                   ".xxx` continues to refer to the imported module.");
     }
 
-    TypeClass *resolveType(TypeNode *node) {
+    TypeClass *resolveType(TypeNode *node, bool validateLayout = true) {
         if (!node) {
             return nullptr;
         }
         if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-            return resolveType(param->type);
+            return resolveType(param->type, false);
         }
-        validateTypeNodeLayout(node);
+        if (validateLayout) {
+            validateTypeNodeLayout(node);
+        }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = toStdString(base->name);
             auto separator = rawName.find('.');
@@ -878,14 +902,19 @@ class InterfaceCollector {
             return lookup.isType() && lookup.typeDecl ? lookup.typeDecl->type : nullptr;
         }
         if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-            auto *baseType = resolveType(pointer->base);
+            auto *baseType = resolveType(pointer->base, false);
             for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
                 baseType = interface_->getOrCreatePointerType(baseType);
             }
             return baseType;
         }
+        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+            auto *elementType = resolveType(indexable->base, false);
+            return elementType ? interface_->getOrCreateIndexablePointerType(elementType)
+                               : nullptr;
+        }
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-            auto *elementType = resolveType(array->base);
+            auto *elementType = resolveType(array->base, false);
             if (!elementType) {
                 return nullptr;
             }
@@ -895,7 +924,7 @@ class InterfaceCollector {
             std::vector<TypeClass *> itemTypes;
             itemTypes.reserve(tuple->items.size());
             for (auto *item : tuple->items) {
-                auto *itemType = resolveType(item);
+                auto *itemType = resolveType(item, false);
                 if (!itemType) {
                     return nullptr;
                 }
@@ -910,13 +939,13 @@ class InterfaceCollector {
             argBindingKinds.reserve(func->args.size());
             for (auto *arg : func->args) {
                 argBindingKinds.push_back(funcParamBindingKind(arg));
-                auto *argType = resolveType(unwrapFuncParamType(arg));
+                auto *argType = resolveType(unwrapFuncParamType(arg), false);
                 if (!argType) {
                     return nullptr;
                 }
                 argTypes.push_back(argType);
             }
-            auto *retType = resolveType(func->ret);
+            auto *retType = resolveType(func->ret, false);
             auto *funcType = interface_->getOrCreateFunctionType(
                 argTypes, retType, std::move(argBindingKinds));
             return funcType ? interface_->getOrCreatePointerType(funcType)
@@ -1597,21 +1626,36 @@ class FunctionCompiler {
                 error("array indexing target did not produce a value");
             }
             auto *arrayType = target->getType() ? target->getType()->as<ArrayType>() : nullptr;
-            if (!arrayType) {
-                error("array indexing expects an array value");
-            }
-            if (!arrayType->hasStaticLayout()) {
-                error("array indexing requires a fixed-layout array type");
-            }
-            auto *targetPtr = target->getllvmValue();
-            if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
-                error("array indexing expects an addressable array value");
+            auto *indexableType =
+                target->getType() ? target->getType()->as<IndexablePointerType>()
+                                  : nullptr;
+            if (!arrayType && !indexableType) {
+                error("array indexing expects an array value or indexable pointer");
             }
 
             std::vector<llvm::Value *> gepIndices;
-            gepIndices.reserve(index->getIndices().size() + 1);
-            gepIndices.push_back(
-                llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true));
+            llvm::Type *gepSourceType = nullptr;
+            llvm::Value *targetPtr = nullptr;
+            const bool fixedLayout = arrayType && arrayType->hasStaticLayout();
+            if (arrayType && !fixedLayout) {
+                error("array indexing requires a fixed-layout array type or an indexable pointer");
+            }
+            gepIndices.reserve(index->getIndices().size() + (fixedLayout ? 1 : 0));
+            if (fixedLayout) {
+                targetPtr = target->getllvmValue();
+                if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
+                    error("array indexing expects an addressable array value");
+                }
+                gepSourceType = scope->getLLVMType(arrayType);
+                gepIndices.push_back(
+                    llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true));
+            } else {
+                targetPtr = target->get(scope);
+                if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
+                    error("array indexing expects a pointer value");
+                }
+                gepSourceType = scope->getLLVMType(indexableType->getElementType());
+            }
             for (auto *argExpr : index->getIndices()) {
                 auto *arg = compileExpr(argExpr);
                 if (!arg || arg->getType() != i32Ty) {
@@ -1625,7 +1669,7 @@ class FunctionCompiler {
                 error("array indexing result type is missing");
             }
             auto *elementPtr = scope->builder.CreateInBoundsGEP(
-                scope->getLLVMType(arrayType), targetPtr, gepIndices);
+                gepSourceType, targetPtr, gepIndices);
             auto *result = resultType->newObj(Object::VARIABLE);
             result->setllvmValue(elementPtr);
             return result;
@@ -1794,7 +1838,7 @@ class FunctionCompiler {
             return scope->builder.CreateFCmpUNE(
                 value, llvm::ConstantFP::get(scope->getLLVMType(f64Ty), 0.0));
         }
-        if (type && type->as<PointerType>()) {
+        if (isPointerLikeType(type)) {
             return scope->builder.CreateICmpNE(
                 value, llvm::ConstantPointerNull::get(
                            llvm::cast<llvm::PointerType>(value->getType())));

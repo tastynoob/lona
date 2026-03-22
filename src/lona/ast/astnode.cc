@@ -20,6 +20,9 @@ findFuncPtrTypeNode(TypeNode *node) {
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         return findFuncPtrTypeNode(pointer->base);
     }
+    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+        return findFuncPtrTypeNode(indexable->base);
+    }
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
         return findFuncPtrTypeNode(array->base);
     }

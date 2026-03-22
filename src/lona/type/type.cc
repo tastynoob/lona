@@ -174,6 +174,11 @@ PointerType::buildLLVMType(TypeTable &types) {
 }
 
 llvm::Type *
+IndexablePointerType::buildLLVMType(TypeTable &types) {
+    return llvm::PointerType::getUnqual(types.getLLVMType(elementType));
+}
+
+llvm::Type *
 ArrayType::buildLLVMType(TypeTable &types) {
     bool ok = false;
     auto extents = staticDimensions(&ok);

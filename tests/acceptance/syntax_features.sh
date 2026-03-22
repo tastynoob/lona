@@ -57,8 +57,28 @@ array_mixed_in="$(new_tmp_file array-mixed)"
 array_mixed_out="$(new_tmp_file array-mixed-out)"
 array_value_init_in="$(new_tmp_file array-value-init)"
 array_value_init_out="$(new_tmp_file array-value-init-out)"
+array_infer_in="$(new_tmp_file array-infer)"
+array_infer_out="$(new_tmp_file array-infer-out)"
+array_infer_nested_in="$(new_tmp_file array-infer-nested)"
+array_infer_nested_out="$(new_tmp_file array-infer-nested-out)"
 array_ptr_in="$(new_tmp_file array-ptr)"
 array_ptr_out="$(new_tmp_file array-ptr-out)"
+array_view_fixed_elem_in="$(new_tmp_file array-view-fixed-elem)"
+array_view_fixed_elem_out="$(new_tmp_file array-view-fixed-elem-out)"
+array_view_ptr_in="$(new_tmp_file array-view-ptr)"
+array_view_ptr_out="$(new_tmp_file array-view-ptr-out)"
+array_view_nested_view_in="$(new_tmp_file array-view-nested-view)"
+array_view_nested_view_out="$(new_tmp_file array-view-nested-view-out)"
+array_view_nested_ptr_in="$(new_tmp_file array-view-nested-ptr)"
+array_view_nested_ptr_out="$(new_tmp_file array-view-nested-ptr-out)"
+array_view_nested_ptr_bad_in="$(new_tmp_file array-view-nested-ptr-bad)"
+array_view_nested_ptr_bad_out="$(new_tmp_file array-view-nested-ptr-bad-out)"
+array_view_eq_in="$(new_tmp_file array-view-eq)"
+array_view_eq_out="$(new_tmp_file array-view-eq-out)"
+array_legacy_indexable_bad_in="$(new_tmp_file array-legacy-indexable-bad)"
+array_legacy_indexable_bad_out="$(new_tmp_file array-legacy-indexable-bad-out)"
+array_fixed_ptr_bad_in="$(new_tmp_file array-fixed-ptr-bad)"
+array_fixed_ptr_bad_out="$(new_tmp_file array-fixed-ptr-bad-out)"
 array_decay_bad_in="$(new_tmp_file array-decay-bad)"
 array_decay_bad_out="$(new_tmp_file array-decay-bad-out)"
 array_unsized_bad_in="$(new_tmp_file array-unsized-bad)"
@@ -75,6 +95,8 @@ address_field_in="$(new_tmp_file address-field)"
 address_field_out="$(new_tmp_file address-field-out)"
 address_array_elem_in="$(new_tmp_file address-array-elem)"
 address_array_elem_out="$(new_tmp_file address-array-elem-out)"
+pointer_arith_bad_in="$(new_tmp_file pointer-arith-bad)"
+pointer_arith_bad_out="$(new_tmp_file pointer-arith-bad-out)"
 address_expr_bad_in="$(new_tmp_file address-expr-bad)"
 address_expr_bad_out="$(new_tmp_file address-expr-bad-out)"
 address_temp_bad_in="$(new_tmp_file address-temp-bad)"
@@ -432,6 +454,26 @@ EOF
 "$BIN" --emit-ir --verify-ir "$array_value_init_in" >"$array_value_init_out"
 grep -Fq 'store [4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_value_init_out"
 
+cat >"$array_infer_in" <<'EOF'
+def main() i32 {
+    var row = {1, 2}
+    ret row(0) + row(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_infer_in" >"$array_infer_out"
+grep -Fq 'alloca [2 x i32]' "$array_infer_out"
+grep -Fq 'store [2 x i32] [i32 1, i32 2]' "$array_infer_out"
+
+cat >"$array_infer_nested_in" <<'EOF'
+def main() i32 {
+    var matrix = {{1, 2}, {3, 4}}
+    ret matrix(1)(0)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_infer_nested_in" >"$array_infer_nested_out"
+grep -Fq 'alloca [2 x [2 x i32]]' "$array_infer_nested_out"
+grep -Fq 'store [2 x [2 x i32]] [[2 x i32] [i32 1, i32 2], [2 x i32] [i32 3, i32 4]]' "$array_infer_nested_out"
+
 cat >"$array_ptr_in" <<'EOF'
 def main() i32 {
     var row i32[4] = {1, 2, 3, 4}
@@ -447,6 +489,118 @@ grep -Fq 'store ptr %1, ptr %2' "$array_ptr_out"
 grep -Fq 'getelementptr inbounds [4 x i32], ptr %3, i32 0, i32 2' "$array_ptr_out"
 grep -Fq 'store i32 9' "$array_ptr_out"
 
+cat >"$array_view_fixed_elem_in" <<'EOF'
+def main() i32 {
+    var row i32[4] = {1, 2, 3, 4}
+    var slot i32[4]* = &row
+    var mixed i32[4][*] = slot
+    mixed(0)(2) = 9
+    ret row(2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_view_fixed_elem_in" >"$array_view_fixed_elem_out"
+grep -Fq 'alloca ptr' "$array_view_fixed_elem_out"
+grep -Fq 'getelementptr inbounds [4 x i32], ptr ' "$array_view_fixed_elem_out"
+grep -Fq 'store i32 9' "$array_view_fixed_elem_out"
+
+cat >"$array_view_ptr_in" <<'EOF'
+def main() i32 {
+    var raw u8[4] = {1, 2, 3, 4}
+    var bytes u8* = &raw(0)
+    var view u8[*] = bytes
+    view(1) = 9
+    ret raw(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_view_ptr_in" >"$array_view_ptr_out"
+grep -Fq 'alloca [4 x i8]' "$array_view_ptr_out"
+grep -Fq 'getelementptr inbounds i8, ptr ' "$array_view_ptr_out"
+grep -Fq 'store i8 9' "$array_view_ptr_out"
+
+cat >"$array_view_nested_view_in" <<'EOF'
+def main() i32 {
+    var raw u8[4] = {1, 2, 3, 4}
+    var bytes u8* = &raw(0)
+    var view u8[*] = bytes
+    var views u8[*][1] = {view}
+    var first u8[*]* = &views(0)
+    var nested u8[*][*] = first
+    nested(0)(2) = 7
+    ret raw(2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_view_nested_view_in" >"$array_view_nested_view_out"
+grep -Fq 'alloca [1 x ptr]' "$array_view_nested_view_out"
+grep -Fq 'getelementptr inbounds ptr, ptr ' "$array_view_nested_view_out"
+grep -Fq 'getelementptr inbounds i8, ptr ' "$array_view_nested_view_out"
+grep -Fq 'store i8 7' "$array_view_nested_view_out"
+
+cat >"$array_view_nested_ptr_in" <<'EOF'
+def main() i32 {
+    var row i8[8] = {1, 2, 3, 4, 5, 6, 7, 8}
+    var slot i8[8]* = &row
+    var slots i8[8]*[1] = {slot}
+    var first i8[8]** = &slots(0)
+    var mixed i8[8]*[*] = first
+    var picked i8[8]* = mixed(0)
+    (*picked)(3) = 11
+    ret row(3)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_view_nested_ptr_in" >"$array_view_nested_ptr_out"
+grep -Fq 'alloca [1 x ptr]' "$array_view_nested_ptr_out"
+grep -Fq 'getelementptr inbounds ptr, ptr ' "$array_view_nested_ptr_out"
+grep -Fq 'getelementptr inbounds [8 x i8], ptr ' "$array_view_nested_ptr_out"
+grep -Fq 'store i8 11' "$array_view_nested_ptr_out"
+
+cat >"$array_view_nested_ptr_bad_in" <<'EOF'
+def main() i32 {
+    var row i8[8] = {1, 2, 3, 4, 5, 6, 7, 8}
+    var slot i8[8]* = &row
+    var mixed i8[8]*[*] = slot
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_view_nested_ptr_bad_in" "$array_view_nested_ptr_bad_out" 'expected nested indexable pointer to reject wrong pointee depth'
+grep -Fq 'initializer type mismatch for `mixed`: expected i8[8]*[*], got i8[8]*' "$array_view_nested_ptr_bad_out"
+
+cat >"$array_view_eq_in" <<'EOF'
+def main() i32 {
+    var raw u8[4] = {1, 2, 3, 4}
+    var bytes u8* = &raw(0)
+    var view u8[*] = bytes
+    if bytes == view {
+        ret 1
+    }
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$array_view_eq_in" >"$array_view_eq_out"
+grep -Fq 'icmp eq ptr' "$array_view_eq_out"
+
+cat >"$array_legacy_indexable_bad_in" <<'EOF'
+def main() i32 {
+    var raw u8[4] = {1, 2, 3, 4}
+    var bytes u8* = &raw(0)
+    var view u8[]* = bytes
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_legacy_indexable_bad_in" "$array_legacy_indexable_bad_out" 'expected legacy indexable pointer syntax to fail'
+grep -Fq 'explicit unsized array type syntax is not allowed inside pointer declarations: u8[]*' "$array_legacy_indexable_bad_out"
+grep -Fq 'Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.' "$array_legacy_indexable_bad_out"
+
+cat >"$array_fixed_ptr_bad_in" <<'EOF'
+def main() i32 {
+    var raw i32[1] = {1}
+    var p i32* = &raw(0)
+    var fake i32[4]* = p
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$array_fixed_ptr_bad_in" "$array_fixed_ptr_bad_out" 'expected plain pointer to fixed-array-pointer conversion to fail'
+grep -Fq 'initializer type mismatch for `fake`: expected i32[4]*, got i32*' "$array_fixed_ptr_bad_out"
+
 cat >"$array_decay_bad_in" <<'EOF'
 def take(p i32[4]*) i32 {
     ret (*p)(0)
@@ -461,12 +615,14 @@ expect_emit_ir_failure "$array_decay_bad_in" "$array_decay_bad_out" 'expected im
 grep -Fq 'call argument type mismatch at index 0: expected i32[4]*, got i32[4]' "$array_decay_bad_out"
 
 cat >"$array_unsized_bad_in" <<'EOF'
-def take(row i32[]) i32 {
+def main() i32 {
+    var row i32[] = {1, 2}
     ret 0
 }
 EOF
 expect_emit_ir_failure "$array_unsized_bad_in" "$array_unsized_bad_out" 'expected unsized array program to fail'
-grep -Fq 'unsized array syntax is not implemented yet: i32[]' "$array_unsized_bad_out"
+grep -Fq 'explicit unsized array type syntax is not allowed: i32[]' "$array_unsized_bad_out"
+grep -Fq 'Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.' "$array_unsized_bad_out"
 
 cat >"$array_bad_dim_in" <<'EOF'
 def bad() i32 {
@@ -532,6 +688,17 @@ EOF
 "$BIN" --emit-ir --verify-ir "$address_array_elem_in" >"$address_array_elem_out"
 grep -Fq 'getelementptr inbounds [4 x i32]' "$address_array_elem_out"
 grep -Fq 'store i32 6' "$address_array_elem_out"
+
+cat >"$pointer_arith_bad_in" <<'EOF'
+def main() i32 {
+    var raw u8[4] = {1, 2, 3, 4}
+    var bytes u8* = &raw(0)
+    var next = bytes + 1
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$pointer_arith_bad_in" "$pointer_arith_bad_out" 'expected pointer arithmetic program to fail'
+grep -Fq 'operator `+` doesn'\''t support `u8*` and `i32`' "$pointer_arith_bad_out"
 
 cat >"$address_expr_bad_in" <<'EOF'
 def main() i32 {

@@ -26,6 +26,7 @@ namespace lona {
 
 class TypeClass;
 class PointerType;
+class IndexablePointerType;
 class StructType;
 class TupleType;
 class TypeTable;
@@ -255,6 +256,23 @@ public:
     llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
+class IndexablePointerType : public TypeClass {
+    TypeClass *elementType;
+
+public:
+    static string buildName(TypeClass *elementType) {
+        return elementType ? elementType->full_name + "[*]"
+                           : string("<unknown>[*]");
+    }
+
+    explicit IndexablePointerType(TypeClass *elementType)
+        : TypeClass(buildName(elementType)),
+          elementType(elementType) {}
+
+    TypeClass *getElementType() { return elementType; }
+    llvm::Type *buildLLVMType(TypeTable& types) override;
+};
+
 class ArrayType : public TypeClass {
     TypeClass *elementType;
     std::vector<AstNode *> dimensions;
@@ -454,6 +472,16 @@ public:
         return pointerType;
     }
 
+    IndexablePointerType *createIndexablePointerType(TypeClass *elementType) {
+        auto typeName = IndexablePointerType::buildName(elementType);
+        if (auto *type = getType(typeName)) {
+            return type->as<IndexablePointerType>();
+        }
+        auto *indexableType = new IndexablePointerType(elementType);
+        addType(typeName, indexableType);
+        return indexableType;
+    }
+
     ArrayType *createArrayType(TypeClass *elementType,
                                std::vector<AstNode *> dimensions = {}) {
         string arrayName = ArrayType::buildName(elementType, dimensions);
@@ -546,6 +574,20 @@ public:
                 return type;
             }
             return createPointerType(pointeeType);
+        }
+        if (auto *indexable = type->as<IndexablePointerType>()) {
+            auto *elementType = internType(indexable->getElementType());
+            if (!elementType) {
+                return nullptr;
+            }
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (elementType == indexable->getElementType()) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return createIndexablePointerType(elementType);
         }
         if (auto *array = type->as<ArrayType>()) {
             auto *elementType = internType(array->getElementType());
@@ -640,6 +682,11 @@ public:
             return type;
         }
 
+        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+            auto *elementType = getType(indexable->base);
+            return elementType ? createIndexablePointerType(elementType) : nullptr;
+        }
+
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
             auto *elementType = getType(array->base);
             if (!elementType) {
@@ -685,7 +732,25 @@ public:
 
 inline bool
 isByteCopyPlainType(TypeClass *type) {
-    return type && (type->as<BaseType>() || type->as<PointerType>());
+    return type && (type->as<BaseType>() || type->as<PointerType>() ||
+                    type->as<IndexablePointerType>());
+}
+
+inline bool
+isPointerLikeType(TypeClass *type) {
+    return type && (type->as<PointerType>() || type->as<IndexablePointerType>());
+}
+
+inline TypeClass *
+getRawPointerPointeeType(TypeClass *type) {
+    auto *pointer = type ? type->as<PointerType>() : nullptr;
+    return pointer ? pointer->getPointeeType() : nullptr;
+}
+
+inline TypeClass *
+getIndexablePointerElementType(TypeClass *type) {
+    auto *pointer = type ? type->as<IndexablePointerType>() : nullptr;
+    return pointer ? pointer->getElementType() : nullptr;
 }
 
 inline bool

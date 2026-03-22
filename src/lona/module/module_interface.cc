@@ -97,6 +97,26 @@ ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
     return typePtr->as<PointerType>();
 }
 
+IndexablePointerType *
+ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
+    if (!elementType) {
+        return nullptr;
+    }
+
+    auto typeName = IndexablePointerType::buildName(elementType);
+    auto name = std::string(typeName.tochara(), typeName.size());
+    auto found = derivedTypes_.find(name);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<IndexablePointerType>();
+    }
+
+    auto type = std::make_unique<IndexablePointerType>(elementType);
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[name] = typePtr;
+    return typePtr->as<IndexablePointerType>();
+}
+
 ArrayType *
 ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
                                       std::vector<AstNode *> dimensions) {

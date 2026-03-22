@@ -14,6 +14,7 @@ class StructType;
 class FuncType;
 class ArrayType;
 class PointerType;
+class IndexablePointerType;
 class TupleType;
 class AstNode;
 
@@ -82,6 +83,7 @@ public:
     bool declareFunction(std::string localName, FuncType *type,
                          std::vector<std::string> paramNames = {});
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
+    IndexablePointerType *getOrCreateIndexablePointerType(TypeClass *elementType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});
     TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);

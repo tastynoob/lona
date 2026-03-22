@@ -20,6 +20,10 @@ ptr_type
     : base_type '*' { $$ = new PointerTypeNode($1, 1, @$); }
     ;
 
+indexable_ptr_type
+    : base_type '[' '*' ']' { $$ = new IndexablePointerTypeNode($1, @$); }
+    ;
+
 array_type
     : base_type '[' ']' { $$ = new ArrayTypeNode($1, {}, @$); }
     | base_type '[' expr_seq ']' {
@@ -38,6 +42,7 @@ base_type
     : single_type { $$ = $1; }
     | tuple_type { $$ = $1; }
     | ptr_type { $$ = $1; }
+    | indexable_ptr_type { $$ = $1; }
     | array_type { $$ = $1; }
     ;
 
@@ -78,6 +83,12 @@ type_name
     }
     | bare_func_head '[' expr_seq ']' type_name {
         delete $3;
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "bare function signatures are not allowed in type positions.",
+            "Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.");
+    }
+    | bare_func_head '[' '*' ']' type_name {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "bare function signatures are not allowed in type positions.",

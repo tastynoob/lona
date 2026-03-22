@@ -60,9 +60,18 @@ errorInvalidArrayDimension(const location &loc) {
 errorUnsupportedUnsizedArray(const location &loc, const TypeNode *node) {
     throw DiagnosticError(
         DiagnosticError::Category::Semantic, loc,
-        "unsized array syntax is not implemented yet: " +
+        "explicit unsized array type syntax is not allowed: " +
             describeTypeNode(node, "<unknown type>"),
-        "Use fixed explicit dimensions like `i32[4]` or an explicit pointer type like `i32*`. `T[]` remains reserved syntax and has no stable ABI yet.");
+        "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
+}
+
+[[noreturn]] void
+errorLegacyIndexablePointerSyntax(const location &loc, const TypeNode *node) {
+    throw DiagnosticError(
+        DiagnosticError::Category::Semantic, loc,
+        "explicit unsized array type syntax is not allowed inside pointer declarations: " +
+            describeTypeNode(node, "<unknown type>"),
+        "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
 }
 
 void
@@ -75,7 +84,16 @@ validateTypeNodeLayout(const TypeNode *node) {
         return;
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        if (auto *array = dynamic_cast<const ArrayTypeNode *>(pointer->base);
+            array && hasUnsizedArrayDimensions(array->dim) &&
+            isBareUnsizedArraySyntax(array->dim)) {
+            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
+        }
         validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+        validateTypeNodeLayout(indexable->base);
         return;
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
@@ -238,6 +256,11 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashTypeNode(seed, pointer->base);
         return;
     }
+    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+        hashText(seed, "indexable-ptr");
+        hashTypeNode(seed, indexable->base);
+        return;
+    }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
         hashText(seed, "array");
         hashArrayDimensions(seed, array->dim);
@@ -272,15 +295,18 @@ computeInterfaceHash(AstNode *root) {
 }
 
 TypeClass *
-resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node) {
+resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node,
+                bool validateLayout = true) {
     if (!typeTable || !node) {
         return nullptr;
     }
 
-    validateTypeNodeLayout(node);
+    if (validateLayout) {
+        validateTypeNodeLayout(node);
+    }
 
     if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-        return resolveTypeNode(typeTable, unit, param->type);
+        return resolveTypeNode(typeTable, unit, param->type, false);
     }
 
     if (auto *cached = unit.findResolvedType(node)) {
@@ -318,7 +344,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     }
 
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        auto *type = resolveTypeNode(typeTable, unit, pointer->base);
+        auto *type = resolveTypeNode(typeTable, unit, pointer->base, false);
         for (uint32_t i = 0; type && i < pointer->dim; ++i) {
             type = typeTable->createPointerType(type);
         }
@@ -326,8 +352,16 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         return type;
     }
 
+    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+        auto *elementType = resolveTypeNode(typeTable, unit, indexable->base, false);
+        resolved = elementType ? typeTable->createIndexablePointerType(elementType)
+                               : nullptr;
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
+    }
+
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto *elementType = resolveTypeNode(typeTable, unit, array->base);
+        auto *elementType = resolveTypeNode(typeTable, unit, array->base, false);
         if (!elementType) {
             return nullptr;
         }
@@ -340,7 +374,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         std::vector<TypeClass *> itemTypes;
         itemTypes.reserve(tuple->items.size());
         for (auto *item : tuple->items) {
-            auto *itemType = resolveTypeNode(typeTable, unit, item);
+            auto *itemType = resolveTypeNode(typeTable, unit, item, false);
             if (!itemType) {
                 return nullptr;
             }
@@ -358,13 +392,14 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         argBindingKinds.reserve(func->args.size());
         for (auto *arg : func->args) {
             argBindingKinds.push_back(funcParamBindingKind(arg));
-            auto *argType = resolveTypeNode(typeTable, unit, unwrapFuncParamType(arg));
+            auto *argType =
+                resolveTypeNode(typeTable, unit, unwrapFuncParamType(arg), false);
             if (!argType) {
                 return nullptr;
             }
             argTypes.push_back(argType);
         }
-        auto *retType = resolveTypeNode(typeTable, unit, func->ret);
+        auto *retType = resolveTypeNode(typeTable, unit, func->ret, false);
         auto *funcType = typeTable->getOrCreateFunctionType(
             argTypes, retType, std::move(argBindingKinds));
         resolved = funcType ? typeTable->createPointerType(funcType) : nullptr;

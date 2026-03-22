@@ -11,6 +11,7 @@
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
 #include "parser.hh"
+#include <algorithm>
 #include <cassert>
 #include <memory>
 #include <optional>
@@ -95,6 +96,9 @@ describeResolvedType(TypeClass *type) {
         }
         return describeResolvedType(pointer->getPointeeType()) + "*";
     }
+    if (auto *indexable = type->as<IndexablePointerType>()) {
+        return describeResolvedType(indexable->getElementType()) + "[*]";
+    }
     if (auto *array = type->as<ArrayType>()) {
         return toStdString(array->full_name);
     }
@@ -141,9 +145,17 @@ errorInvalidArrayDimension(const location &loc) {
 [[noreturn]] void
 errorUnsupportedUnsizedArray(const location &loc, TypeNode *node) {
     error(loc,
-          "unsized array syntax is not implemented yet: " +
+          "explicit unsized array type syntax is not allowed: " +
               describeTypeNode(node, "<unknown type>"),
-          "Use fixed explicit dimensions like `i32[4]` or an explicit pointer type like `i32*`. `T[]` remains reserved syntax and has no stable ABI yet.");
+          "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
+}
+
+[[noreturn]] void
+errorLegacyIndexablePointerSyntax(const location &loc, TypeNode *node) {
+    error(loc,
+          "explicit unsized array type syntax is not allowed inside pointer declarations: " +
+              describeTypeNode(node, "<unknown type>"),
+          "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
 }
 
 void
@@ -156,7 +168,16 @@ validateTypeNodeLayout(TypeNode *node) {
         return;
     }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(pointer->base);
+            array && hasUnsizedArrayDimensions(array->dim) &&
+            isBareUnsizedArraySyntax(array->dim)) {
+            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
+        }
         validateTypeNodeLayout(pointer->base);
+        return;
+    }
+    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+        validateTypeNodeLayout(indexable->base);
         return;
     }
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
@@ -217,6 +238,11 @@ bitCopyHint() {
     return "Use `.tobits()` when you want raw bit-copy behavior. It returns `u8[N]`, and `u8[N].toXXX()` converts those bytes back with truncation or zero-fill.";
 }
 
+std::string
+pointerConversionHint() {
+    return "Only conversions between `T[*]` and matching raw pointers `T*` are implicit.";
+}
+
 bool
 isReservedInitialListTypeNode(TypeNode *node) {
     auto *base = dynamic_cast<BaseTypeNode *>(node);
@@ -258,8 +284,36 @@ getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
 
 FuncType *
 getFunctionPointerTarget(TypeClass *type) {
-    auto *pointerType = type ? type->as<PointerType>() : nullptr;
-    return pointerType ? pointerType->getPointeeType()->as<FuncType>() : nullptr;
+    auto *pointeeType = getRawPointerPointeeType(type);
+    return pointeeType ? pointeeType->as<FuncType>() : nullptr;
+}
+
+bool
+isRawMemoryPointerType(TypeClass *type) {
+    return getRawPointerPointeeType(type) != nullptr && getFunctionPointerTarget(type) == nullptr;
+}
+
+bool
+isIndexablePointerType(TypeClass *type) {
+    return getIndexablePointerElementType(type) != nullptr;
+}
+
+bool
+canIndexablePointerConvertTo(TypeClass *targetType, TypeClass *sourceType) {
+    auto *targetElement = getIndexablePointerElementType(targetType);
+    auto *sourceElement = getIndexablePointerElementType(sourceType);
+    if (targetElement && isRawMemoryPointerType(sourceType)) {
+        return targetElement == getRawPointerPointeeType(sourceType);
+    }
+    if (sourceElement && isRawMemoryPointerType(targetType)) {
+        return sourceElement == getRawPointerPointeeType(targetType);
+    }
+    return false;
+}
+
+bool
+canImplicitPointerViewConversion(TypeClass *targetType, TypeClass *sourceType) {
+    return canIndexablePointerConvertTo(targetType, sourceType);
 }
 
 Function *
@@ -446,7 +500,8 @@ class FunctionAnalyzer {
         }
         error(loc, context + ": expected " + describeResolvedType(expectedType) +
                         ", got " + describeResolvedType(actualType),
-              numericConversionHint() + " " + bitCopyHint());
+              numericConversionHint() + " " + bitCopyHint() + " " +
+                  pointerConversionHint());
     }
 
     template<typename T, typename... Args>
@@ -801,6 +856,14 @@ class FunctionAnalyzer {
                 EntityRef::typedValue(arrayType->getElementType());
             return resolution;
         }
+        if (auto *indexableType =
+                callee->getType() ? callee->getType()->as<IndexablePointerType>()
+                                  : nullptr) {
+            resolution.kind = CallResolutionKind::ArrayIndex;
+            resolution.resultEntity =
+                EntityRef::typedValue(indexableType->getElementType());
+            return resolution;
+        }
 
         resolution.kind = CallResolutionKind::NotCallable;
         return resolution;
@@ -819,7 +882,7 @@ class FunctionAnalyzer {
         (void)callee;
         error(loc,
               "this expression does not support call syntax",
-              "Only functions, function pointers, struct constructors, and arrays support `(...)` here.");
+              "Only functions, function pointers, struct constructors, fixed arrays, and indexable pointers support `(...)` here.");
     }
 
     Function *requireDeclaredFunction(const location &loc) {
@@ -876,6 +939,21 @@ class FunctionAnalyzer {
         }
         if (canImplicitNumericConversion(targetType, sourceType)) {
             return makeHIR<HIRNumericCast>(expr, targetType, false, loc);
+        }
+        return expr;
+    }
+
+    HIRExpr *coercePointerExpr(HIRExpr *expr, TypeClass *targetType,
+                               const location &loc) {
+        if (!expr || !targetType) {
+            return expr;
+        }
+        auto *sourceType = expr->getType();
+        if (!sourceType || sourceType == targetType) {
+            return expr;
+        }
+        if (canImplicitPointerViewConversion(targetType, sourceType)) {
+            return makeHIR<HIRBitCast>(expr, targetType, loc);
         }
         return expr;
     }
@@ -1268,6 +1346,7 @@ class FunctionAnalyzer {
                 }
             } else {
                 expr = coerceNumericExpr(expr, formal.type, argLoc, false);
+                expr = coercePointerExpr(expr, formal.type, argLoc);
                 requireCompatibleTypes(argLoc, formal.type, expr->getType(),
                                        formalCallArgTypeMismatchContext(formal));
             }
@@ -1468,6 +1547,7 @@ class FunctionAnalyzer {
             auto *item = requireNonCallExpr(node->items->at(i), itemTypes[i]);
             item = coerceNumericExpr(item, itemTypes[i], node->items->at(i)->loc,
                                      false);
+            item = coercePointerExpr(item, itemTypes[i], node->items->at(i)->loc);
             requireCompatibleTypes(node->items->at(i)->loc, itemTypes[i], item->getType(),
                                    "tuple element type mismatch at index " +
                                        std::to_string(i));
@@ -1491,6 +1571,112 @@ class FunctionAnalyzer {
             location loc;
             std::vector<InitialListItem> items;
         };
+
+        struct InferredArrayShape {
+            TypeClass *elementType = nullptr;
+            std::vector<std::size_t> extents;
+        };
+
+        AstNode *makeStaticDimensionNode(std::size_t extent, const location &loc) {
+            auto text = std::to_string(extent);
+            AstToken token(TokenType::ConstInt32, text.c_str(), loc);
+            return new AstConst(token);
+        }
+
+        TypeClass *mergeInferredElementType(TypeClass *current, TypeClass *next,
+                                            const location &loc) {
+            if (!current) {
+                return next;
+            }
+            if (!next || current == next) {
+                return current;
+            }
+            if (auto *common = commonNumericType(current, next)) {
+                return common;
+            }
+            if (canImplicitPointerViewConversion(current, next)) {
+                return current;
+            }
+            if (canImplicitPointerViewConversion(next, current)) {
+                return next;
+            }
+            owner.error(loc,
+                        "cannot infer a common array element type from `" +
+                            describeResolvedType(current) + "` and `" +
+                            describeResolvedType(next) + "`",
+                        numericConversionHint() + " " + pointerConversionHint());
+        }
+
+        ArrayType *buildArrayTypeFromShape(const InferredArrayShape &shape,
+                                           const location &loc) {
+            if (!shape.elementType || shape.extents.empty()) {
+                return nullptr;
+            }
+            TypeClass *current = shape.elementType;
+            for (auto it = shape.extents.rbegin(); it != shape.extents.rend(); ++it) {
+                std::vector<AstNode *> dims;
+                dims.push_back(makeStaticDimensionNode(*it, loc));
+                current = owner.typeMgr->createArrayType(current, std::move(dims));
+            }
+            return current ? current->as<ArrayType>() : nullptr;
+        }
+
+        InferredArrayShape inferArrayShape(const InitialList &initList) {
+            if (initList.items.empty()) {
+                owner.error(initList.loc,
+                            "cannot infer an array type from an empty brace initializer",
+                            "Write an explicit type like `var a i32[2] = {}`, or provide at least one element such as `var a = {1, 2}`.");
+            }
+
+            InferredArrayShape shape;
+            shape.extents.push_back(initList.items.size());
+
+            const bool hasNested =
+                std::any_of(initList.items.begin(), initList.items.end(),
+                            [](const InitialListItem &item) {
+                                return item.nested != nullptr;
+                            });
+
+            if (!hasNested) {
+                for (const auto &item : initList.items) {
+                    auto *expr = owner.requireNonCallExpr(item.expr);
+                    if (!expr->getType()) {
+                        owner.error(item.loc,
+                                    "array element does not produce an inferable runtime type",
+                                    "Write an explicit array type, or use elements with concrete runtime value types.");
+                    }
+                    shape.elementType =
+                        mergeInferredElementType(shape.elementType, expr->getType(),
+                                                 item.loc);
+                }
+                return shape;
+            }
+
+            std::optional<std::vector<std::size_t>> childExtents;
+            for (const auto &item : initList.items) {
+                if (!item.nested) {
+                    owner.error(item.loc,
+                                "array initializer cannot mix nested and non-nested elements",
+                                "Use either `{1, 2}` for a flat array, or `{{1, 2}, {3, 4}}` for a nested array.");
+                }
+                auto childShape = inferArrayShape(*item.nested);
+                if (!childExtents) {
+                    childExtents = childShape.extents;
+                } else if (*childExtents != childShape.extents) {
+                    owner.error(item.loc,
+                                "nested array initializer rows must have a consistent shape",
+                                "Keep each nested brace group the same length, for example `{{1, 2}, {3, 4}}`.");
+                }
+                shape.elementType =
+                    mergeInferredElementType(shape.elementType, childShape.elementType,
+                                             item.loc);
+            }
+            if (childExtents) {
+                shape.extents.insert(shape.extents.end(), childExtents->begin(),
+                                     childExtents->end());
+            }
+            return shape;
+        }
 
         std::vector<AstNode *>
         consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
@@ -1621,6 +1807,7 @@ class FunctionAnalyzer {
 
                 auto *value = owner.requireNonCallExpr(item.expr, childType);
                 value = owner.coerceNumericExpr(value, childType, item.loc, false);
+                value = owner.coercePointerExpr(value, childType, item.loc);
                 owner.requireCompatibleTypes(
                     item.loc, childType, value->getType(),
                     "array initializer element type mismatch at index " +
@@ -1635,8 +1822,12 @@ class FunctionAnalyzer {
                                      TypeClass *expectedType,
                                      const location &loc) {
             if (!expectedType) {
-                owner.internalError(loc, "invalid initializer-list materialization",
-                                    "This looks like a compiler pipeline bug.");
+                auto inferredShape = inferArrayShape(initList);
+                expectedType = buildArrayTypeFromShape(inferredShape, loc);
+                if (!expectedType) {
+                    owner.internalError(loc, "failed to build inferred array type",
+                                        "This looks like a compiler pipeline bug.");
+                }
             }
             if (auto *arrayType = expectedType->as<ArrayType>()) {
                 return materializeArrayInit(initList, arrayType, loc);
@@ -1658,11 +1849,6 @@ class FunctionAnalyzer {
         explicit InitialListLowering(FunctionAnalyzer &owner) : owner(owner) {}
 
         HIRExpr *analyze(AstBraceInit *node, TypeClass *expectedType) {
-            if (!expectedType) {
-                owner.error(node->loc,
-                            "brace initializer needs an explicit target type",
-                            "Use it in a typed variable declaration like `var matrix i32[4][5] = {{}}`, or pass it to a call target that already expects an array type.");
-            }
             auto initList = buildInitialList(node);
             return materializeInitList(*initList, expectedType, node->loc);
         }
@@ -1758,6 +1944,7 @@ class FunctionAnalyzer {
         auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
         right = coerceNumericExpr(right, left ? left->getType() : nullptr, node->loc,
                                   false);
+        right = coercePointerExpr(right, left ? left->getType() : nullptr, node->loc);
         auto *leftType = left->getType();
         auto *rightType = right->getType();
         if (!leftType || !rightType || !isByteCopyCompatible(leftType, rightType)) {
@@ -1792,6 +1979,19 @@ class FunctionAnalyzer {
             if (auto *commonType = commonNumericType(left->getType(), right->getType())) {
                 left = coerceNumericExpr(left, commonType, node->left->loc, false);
                 right = coerceNumericExpr(right, commonType, node->right->loc, false);
+            }
+        }
+        if (left->getType() != right->getType() &&
+            (node->op == Parser::token::LOGIC_EQUAL ||
+             node->op == Parser::token::LOGIC_NOT_EQUAL)) {
+            auto *leftType = left->getType();
+            auto *rightType = right->getType();
+            if (isRawMemoryPointerType(leftType) &&
+                isIndexablePointerType(rightType)) {
+                right = coercePointerExpr(right, leftType, node->right->loc);
+            } else if (isIndexablePointerType(leftType) &&
+                       isRawMemoryPointerType(rightType)) {
+                left = coercePointerExpr(left, rightType, node->left->loc);
             }
         }
         auto binding =
@@ -1861,6 +2061,7 @@ class FunctionAnalyzer {
                     }
                 } else {
                     init = coerceNumericExpr(init, type, node->loc, false);
+                    init = coercePointerExpr(init, type, node->loc);
                     requireCompatibleTypes(node->loc, type, init->getType(),
                                            "initializer type mismatch for `" +
                                                toStdString(node->getName()) + "`");
@@ -1910,6 +2111,7 @@ class FunctionAnalyzer {
                 error(node->loc, "unexpected return value in void function");
             }
             expr = coerceNumericExpr(expr, retType, node->expr->loc, false);
+            expr = coercePointerExpr(expr, retType, node->expr->loc);
             requireCompatibleTypes(node->loc, retType, expr->getType(),
                                    "return type mismatch");
         } else if (retType) {
@@ -2066,19 +2268,28 @@ class FunctionAnalyzer {
             case CallResolutionKind::ArrayIndex: {
                 auto *arrayType =
                     callee->getType() ? callee->getType()->as<ArrayType>() : nullptr;
-                if (!arrayType) {
+                auto *indexableType = callee->getType()
+                    ? callee->getType()->as<IndexablePointerType>()
+                    : nullptr;
+                const auto indexArity = arrayType ? arrayType->indexArity()
+                                                  : (indexableType ? 1u : 0u);
+                auto *elementType = arrayType ? arrayType->getElementType()
+                                              : (indexableType
+                                                     ? indexableType->getElementType()
+                                                     : nullptr);
+                if (!arrayType && !indexableType) {
                     internalError(node->loc,
-                                  "array index resolution is missing its array type",
+                                  "array index resolution is missing its indexable type",
                                   "This looks like a compiler pipeline bug.");
                 }
-                if (!arrayType->hasStaticLayout()) {
+                if (arrayType && !arrayType->hasStaticLayout()) {
                     error(node->loc,
-                          "array indexing requires fixed explicit dimensions",
-                          "Use positive integer literal dimensions. Dimension inference and dynamic sizes are not implemented yet.");
+                          "array indexing requires fixed explicit dimensions or an indexable pointer",
+                          "Use positive integer literal dimensions like `i32[4]`, or an indexable pointer like `T[*]` and write `ptr(i)`.");
                 }
                 std::vector<FormalCallArg> formals;
-                formals.reserve(arrayType->indexArity());
-                for (size_t i = 0; i < arrayType->indexArity(); ++i) {
+                formals.reserve(indexArity);
+                for (size_t i = 0; i < indexArity; ++i) {
                     formals.push_back(
                         {nullptr, i32Ty, BindingKind::Value,
                          FormalCallArgKind::ArrayIndex, i});
@@ -2093,7 +2304,7 @@ class FunctionAnalyzer {
                     args.push_back(arg.expr);
                 }
                 return makeHIR<HIRIndex>(callee, std::move(args),
-                                         arrayType->getElementType(), node->loc);
+                                         elementType, node->loc);
             }
             case CallResolutionKind::FunctionCall:
             case CallResolutionKind::FunctionPointerCall: {

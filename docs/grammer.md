@@ -349,6 +349,7 @@ type-name         ::= base-type
 base-type         ::= single-type
                     | tuple-type
                     | ptr-type
+                    | indexable-ptr-type
                     | array-type
 
 single-type       ::= IDENT
@@ -361,6 +362,8 @@ type-selector     ::= IDENT "." IDENT
                     | type-selector "." IDENT
 
 ptr-type          ::= base-type "*"
+
+indexable-ptr-type ::= base-type "[" "*" "]"
 
 array-type        ::= base-type "[" "]"
                     | base-type "[" expr-seq "]"
@@ -385,8 +388,9 @@ type-name-seq     ::= type-name
 - 裸函数签名如 `(i32, bool) i32` 不再作为 `type-name` 的合法写法。
 - 函数取指针不在类型层完成，而是通过表达式 `foo&<i32, bool>` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法，但它们在语义上表示不同的容器组合方式。
-- `base-type "[]"` 这种未定长数组写法当前只保留为语法占位；已实现的数组语义只覆盖显式固定维度的数组类型。
-- 当前编译器会对 `T[]` 直接报“未实现”诊断，不再把它视为可工作的指针式 ABI。
+- `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。
+- `base-type "[]"` 这种显式未定长数组类型写法对用户是禁止的；如果想省略数组维度，请用 `var a = {1, 2}` 这类初始化器推断。
+- 当前编译器会对 `T[]` 直接报 targeted diagnostic；旧写法 `T[]*` 也会给出迁移到 `T[*]` 的明确提示。
 
 ## 4. 运算符优先级与结合性
 
@@ -419,7 +423,6 @@ type-name-seq     ::= type-name
 
 ### 5.1 仍保留为占位的能力
 
-- array dimension inference
 - 未定长数组语义 (`T[]`)
 - string runtime semantics
 

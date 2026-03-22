@@ -128,7 +128,7 @@ matchesOperandClass(TypeClass *type, OperatorOperandClass operandClass) {
     case OperatorOperandClass::Bool:
         return isBoolStorageType(type);
     case OperatorOperandClass::Pointer:
-        return type && type->as<PointerType>() != nullptr;
+        return isPointerLikeType(type);
     case OperatorOperandClass::TruthyScalar:
         return isTruthyScalarType(type);
     default:
@@ -244,7 +244,7 @@ isNumericType(TypeClass *type) {
 bool
 isTruthyScalarType(TypeClass *type) {
     return isIntegerType(type) || isFloatType(type) || isBoolStorageType(type) ||
-        (type && type->as<PointerType>() != nullptr);
+        isPointerLikeType(type);
 }
 
 OperatorOperandClass
@@ -261,7 +261,7 @@ classifyOperatorOperand(TypeClass *type) {
     if (isBoolStorageType(type)) {
         return OperatorOperandClass::Bool;
     }
-    if (type && type->as<PointerType>() != nullptr) {
+    if (isPointerLikeType(type)) {
         return OperatorOperandClass::Pointer;
     }
     if (isTruthyScalarType(type)) {

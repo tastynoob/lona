@@ -9,6 +9,11 @@ isLegacyArrayDimensionPrefix(const std::vector<AstNode *> &dimensions) {
     return !dimensions.empty() && dimensions.front() == nullptr;
 }
 
+bool
+isBareUnsizedArraySyntax(const std::vector<AstNode *> &dimensions) {
+    return dimensions.empty();
+}
+
 std::size_t
 arrayIndexArity(const std::vector<AstNode *> &dimensions) {
     std::size_t count = 0;

@@ -67,6 +67,13 @@ struct PointerTypeNode : public TypeNode {
         : TypeNode(loc), base(base), dim(dim) {}
 };
 
+struct IndexablePointerTypeNode : public TypeNode {
+    TypeNode *base;
+
+    IndexablePointerTypeNode(TypeNode *base, const location &loc = location())
+        : TypeNode(loc), base(base) {}
+};
+
 struct ArrayTypeNode : public TypeNode {
     TypeNode *base;
     std::vector<AstNode*> dim;
