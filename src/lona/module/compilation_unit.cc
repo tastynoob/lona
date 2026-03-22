@@ -207,12 +207,18 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
         hashText(seed, "struct");
         hashText(seed, toStdString(structDecl->name));
-        hashInterfaceList(seed, structDecl->body);
+        hashText(seed, structDeclKindKeyword(structDecl->declKind));
+        if (structDecl->body) {
+            hashInterfaceList(seed, structDecl->body);
+        } else {
+            hashText(seed, "struct-body:none");
+        }
         return;
     }
     if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
         hashText(seed, "func");
         hashText(seed, toStdString(funcDecl->name));
+        hashText(seed, abiKindKeyword(funcDecl->abiKind));
         if (funcDecl->args) {
             seed = combineHash(seed, funcDecl->args->size());
             for (auto *arg : *funcDecl->args) {
@@ -222,6 +228,8 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
             seed = combineHash(seed, 0);
         }
         hashTypeNode(seed, funcDecl->retType);
+        hashText(seed, funcDecl->hasBody() ? "func-body:present"
+                                           : "func-body:none");
         return;
     }
     if (auto *varDecl = dynamic_cast<AstVarDecl *>(node)) {
@@ -591,7 +599,7 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.importedModule = &moduleNamespace;
         lookup.functionDecl = member.functionDecl;
         lookup.resolvedName =
-            member.functionDecl ? member.functionDecl->exportedName : std::string();
+            member.functionDecl ? member.functionDecl->symbolName : std::string();
         return lookup;
     }
     return lookup;

@@ -150,8 +150,14 @@ AstStatList::AstStatList(AstNode *node)
 }
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
-                         std::vector<AstNode *> *args, TypeNode *retType)
-    : AstNode(name.loc), name(name.text), body(body), args(args), retType(retType) {}
+                         std::vector<AstNode *> *args, TypeNode *retType,
+                         AbiKind abiKind)
+    : AstNode(name.loc),
+      name(name.text),
+      args(args),
+      body(body),
+      retType(retType),
+      abiKind(abiKind) {}
 
 AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
 

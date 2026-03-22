@@ -34,7 +34,8 @@ public:
 
     struct FunctionDecl {
         std::string localName;
-        std::string exportedName;
+        std::string symbolName;
+        AbiKind abiKind = AbiKind::Native;
         FuncType *type = nullptr;
         std::vector<std::string> paramNames;
     };
@@ -61,6 +62,8 @@ private:
     std::unordered_map<std::string, FunctionDecl> localFunctions_;
 
     std::string exportedNameFor(const std::string &localName) const;
+    std::string functionSymbolNameFor(const std::string &localName,
+                                      AbiKind abiKind) const;
 
 public:
     ModuleInterface(std::string sourcePath, std::string moduleKey,
@@ -89,7 +92,8 @@ public:
     TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                       TypeClass *retType,
-                                      std::vector<BindingKind> argBindingKinds = {});
+                                      std::vector<BindingKind> argBindingKinds = {},
+                                      AbiKind abiKind = AbiKind::Native);
     const TypeDecl *findType(const std::string &localName) const;
     const FunctionDecl *findFunction(const std::string &localName) const;
     TopLevelLookup lookupTopLevelName(const std::string &localName) const;

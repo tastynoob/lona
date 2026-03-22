@@ -29,6 +29,7 @@
 
 - [native_build.md](native_build.md): `lona-ir`、`lac`、`lac-native` 的构建和运行方式。
 - [native_abi_v0.md](native_abi_v0.md): `native` 路线第一版内部 ABI 草案。
+- [c_ffi_v0.md](c_ffi_v0.md): `lona <-> C` 互操作第一版草案，收口 `extern "C"`、opaque struct 和 `repr(C)` 的边界。
 - [../example/README.md](../example/README.md): 示例程序索引。
 
 ## 建议查阅顺序

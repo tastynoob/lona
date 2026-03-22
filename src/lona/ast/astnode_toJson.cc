@@ -140,8 +140,13 @@ void
 AstStructDecl::toJson(Json &root) {
     root["type"] = "StructDecl";
     root["name"] = this->name.tochara();
-    root["body"] = Json::object();
-    this->body->toJson(root["body"]);
+    root["declKind"] = structDeclKindKeyword(this->declKind);
+    if (this->body) {
+        root["body"] = Json::object();
+        this->body->toJson(root["body"]);
+    } else {
+        root["body"] = nullptr;
+    }
 }
 
 void
@@ -193,6 +198,7 @@ void
 AstFuncDecl::toJson(Json &root) {
     root["type"] = "FuncDecl";
     root["name"] = this->name.tochara();
+    root["abiKind"] = abiKindKeyword(this->abiKind);
     // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {
         root["args"] = Json::array();
@@ -203,8 +209,12 @@ AstFuncDecl::toJson(Json &root) {
     } else {
         root["args"] = "none";
     }
-    root["body"] = Json::object();
-    this->body->toJson(root["body"]);
+    if (this->body) {
+        root["body"] = Json::object();
+        this->body->toJson(root["body"]);
+    } else {
+        root["body"] = nullptr;
+    }
 }
 
 void

@@ -28,6 +28,15 @@ ModuleInterface::exportedNameFor(const std::string &localName) const {
     return moduleName_.empty() ? localName : moduleName_ + "." + localName;
 }
 
+std::string
+ModuleInterface::functionSymbolNameFor(const std::string &localName,
+                                       AbiKind abiKind) const {
+    if (abiKind == AbiKind::C) {
+        return localName;
+    }
+    return exportedNameFor(localName);
+}
+
 void
 ModuleInterface::refresh(std::string sourcePath, std::string moduleKey,
                          std::string moduleName, std::uint64_t sourceHash) {
@@ -70,9 +79,12 @@ ModuleInterface::declareStructType(const std::string &localName) {
 bool
 ModuleInterface::declareFunction(std::string localName, FuncType *type,
                                  std::vector<std::string> paramNames) {
+    auto abiKind = type ? type->getAbiKind() : AbiKind::Native;
     return localFunctions_
         .emplace(localName,
-                 FunctionDecl{localName, exportedNameFor(localName), type,
+                 FunctionDecl{localName,
+                              functionSymbolNameFor(localName, abiKind),
+                              abiKind, type,
                               std::move(paramNames)})
         .second;
 }
@@ -155,12 +167,8 @@ ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes)
 FuncType *
 ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                          TypeClass *retType,
-                                         std::vector<BindingKind> argBindingKinds) {
-    std::string funcTypeName = "f";
-    if (retType) {
-        funcTypeName += "_";
-        funcTypeName.append(retType->full_name.tochara(), retType->full_name.size());
-    }
+                                         std::vector<BindingKind> argBindingKinds,
+                                         AbiKind abiKind) {
     if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
         return nullptr;
     }
@@ -169,14 +177,8 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
             return nullptr;
         }
     }
-    for (std::size_t i = 0; i < argTypes.size(); ++i) {
-        funcTypeName += ".";
-        if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
-            funcTypeName += "&";
-        }
-        auto *argType = argTypes[i];
-        funcTypeName.append(argType->full_name.tochara(), argType->full_name.size());
-    }
+    auto funcTypeName =
+        toStdString(FuncType::buildName(argTypes, retType, argBindingKinds, abiKind));
 
     auto found = derivedTypes_.find(funcTypeName);
     if (found != derivedTypes_.end()) {
@@ -185,7 +187,7 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
 
     auto type = std::make_unique<FuncType>(std::vector<TypeClass *>(argTypes),
                                            retType, string(funcTypeName.c_str()),
-                                           std::move(argBindingKinds));
+                                           std::move(argBindingKinds), abiKind);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[funcTypeName] = typePtr;

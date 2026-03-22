@@ -19,6 +19,28 @@ func_ptr_packed_agg_in="$(new_tmp_file func-ptr-packed-agg)"
 func_ptr_packed_agg_out="$(new_tmp_file func-ptr-packed-agg-out)"
 func_ptr_direct_return_agg_in="$(new_tmp_file func-ptr-direct-return-agg)"
 func_ptr_direct_return_agg_out="$(new_tmp_file func-ptr-direct-return-agg-out)"
+ffi_decl_json_in="$(new_tmp_file ffi-decl-json)"
+ffi_decl_json_out="$(new_tmp_file ffi-decl-json-out)"
+ffi_import_in="$(new_tmp_file ffi-import)"
+ffi_import_out="$(new_tmp_file ffi-import-out)"
+ffi_export_in="$(new_tmp_file ffi-export)"
+ffi_export_out="$(new_tmp_file ffi-export-out)"
+ffi_abi_bad_in="$(new_tmp_file ffi-abi-bad)"
+ffi_abi_bad_out="$(new_tmp_file ffi-abi-bad-out)"
+ffi_repr_bad_in="$(new_tmp_file ffi-repr-bad)"
+ffi_repr_bad_out="$(new_tmp_file ffi-repr-bad-out)"
+ffi_extern_struct_bad_in="$(new_tmp_file ffi-extern-struct-bad)"
+ffi_extern_struct_bad_out="$(new_tmp_file ffi-extern-struct-bad-out)"
+ffi_method_bad_in="$(new_tmp_file ffi-method-bad)"
+ffi_method_bad_out="$(new_tmp_file ffi-method-bad-out)"
+ffi_ref_bad_in="$(new_tmp_file ffi-ref-bad)"
+ffi_ref_bad_out="$(new_tmp_file ffi-ref-bad-out)"
+ffi_indexable_bad_in="$(new_tmp_file ffi-indexable-bad)"
+ffi_indexable_bad_out="$(new_tmp_file ffi-indexable-bad-out)"
+ffi_callback_bad_in="$(new_tmp_file ffi-callback-bad)"
+ffi_callback_bad_out="$(new_tmp_file ffi-callback-bad-out)"
+ffi_aggregate_bad_in="$(new_tmp_file ffi-aggregate-bad)"
+ffi_aggregate_bad_out="$(new_tmp_file ffi-aggregate-bad-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
 func_name_conflict_in="$(new_tmp_file func-name-conflict)"
@@ -182,6 +204,110 @@ grep -q 'store ptr @echo' "$func_ptr_direct_return_agg_out"
 grep -Eq '^define %.*Triple @echo\(ptr [^)]+\)' "$func_ptr_direct_return_agg_out"
 grep -Eq 'call %.*Triple %.*\(ptr %.*\)' "$func_ptr_direct_return_agg_out"
 ! grep -q 'sret' "$func_ptr_direct_return_agg_out"
+
+cat >"$ffi_decl_json_in" <<'EOF'
+extern "C" def puts(msg i8*) i32
+extern struct FILE
+repr("C") struct Point {
+    x i32
+    y i32
+}
+EOF
+"$BIN" "$ffi_decl_json_in" >"$ffi_decl_json_out"
+grep -Fq '"abiKind": "c"' "$ffi_decl_json_out"
+grep -Fq '"declKind": "extern"' "$ffi_decl_json_out"
+grep -Fq '"declKind": "repr_c"' "$ffi_decl_json_out"
+grep -Fq '"body": null' "$ffi_decl_json_out"
+
+cat >"$ffi_import_in" <<'EOF'
+extern "C" def abs(v i32) i32
+
+def main() i32 {
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ffi_import_in" >"$ffi_import_out"
+grep -Eq '^declare i32 @abs\(i32\)$' "$ffi_import_out"
+! grep -Eq '^define i32 @abs' "$ffi_import_out"
+
+cat >"$ffi_export_in" <<'EOF'
+extern "C" def lona_add(a i32, b i32) i32 {
+    ret a + b
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ffi_export_in" >"$ffi_export_out"
+grep -Eq '^define i32 @lona_add\(i32 [^,]+, i32 [^)]+\)' "$ffi_export_out"
+
+cat >"$ffi_abi_bad_in" <<'EOF'
+extern "Rust" def bad(v i32) i32
+EOF
+expect_emit_ir_failure "$ffi_abi_bad_in" "$ffi_abi_bad_out" 'expected unsupported extern ABI program to fail'
+grep -Fq 'semantic error: unsupported extern ABI `Rust`' "$ffi_abi_bad_out"
+grep -Fq 'help: Only `extern "C"` is supported right now.' "$ffi_abi_bad_out"
+
+cat >"$ffi_repr_bad_in" <<'EOF'
+repr("Rust") struct Point {
+    x i32
+}
+EOF
+expect_emit_ir_failure "$ffi_repr_bad_in" "$ffi_repr_bad_out" 'expected unsupported repr program to fail'
+grep -Fq 'semantic error: unsupported struct repr `Rust`' "$ffi_repr_bad_out"
+grep -Fq 'help: Only `repr("C")` is supported right now.' "$ffi_repr_bad_out"
+
+cat >"$ffi_extern_struct_bad_in" <<'EOF'
+extern struct FILE {
+}
+EOF
+expect_emit_ir_failure "$ffi_extern_struct_bad_in" "$ffi_extern_struct_bad_out" 'expected extern struct body program to fail'
+grep -Fq 'semantic error: extern struct `FILE` cannot declare fields or methods' "$ffi_extern_struct_bad_out"
+grep -Fq 'help: Use `extern struct FILE` for an opaque C type, or drop `extern` and declare a normal struct body.' "$ffi_extern_struct_bad_out"
+
+cat >"$ffi_method_bad_in" <<'EOF'
+struct Point {
+    x i32
+
+    extern "C" def bad(v i32) i32 {
+        ret v
+    }
+}
+EOF
+expect_emit_ir_failure "$ffi_method_bad_in" "$ffi_method_bad_out" 'expected extern C method program to fail'
+grep -Fq 'semantic error: extern "C" method `' "$ffi_method_bad_out"
+grep -Fq '.Point.bad` is not supported' "$ffi_method_bad_out"
+grep -Fq 'help: Declare a top-level wrapper function instead. C FFI v0 only supports top-level functions.' "$ffi_method_bad_out"
+
+cat >"$ffi_ref_bad_in" <<'EOF'
+extern "C" def bad(ref x i32) i32
+EOF
+expect_emit_ir_failure "$ffi_ref_bad_in" "$ffi_ref_bad_out" 'expected extern C ref parameter program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` parameter `x` cannot use `ref` binding' "$ffi_ref_bad_out"
+grep -Fq 'help: Use an explicit pointer type like `i32*` instead.' "$ffi_ref_bad_out"
+
+cat >"$ffi_indexable_bad_in" <<'EOF'
+extern "C" def bad(p u8[*]) i32
+EOF
+expect_emit_ir_failure "$ffi_indexable_bad_in" "$ffi_indexable_bad_out" 'expected extern C indexable pointer program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: u8[*]' "$ffi_indexable_bad_out"
+grep -Fq 'help: Use an explicit raw pointer type like `u8*`. `T[*]` is a Lona-only indexable pointer type.' "$ffi_indexable_bad_out"
+
+cat >"$ffi_callback_bad_in" <<'EOF'
+extern "C" def bad(cb (i32)* i32) i32
+EOF
+expect_emit_ir_failure "$ffi_callback_bad_in" "$ffi_callback_bad_out" 'expected extern C callback parameter program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `cb`: (i32)* i32' "$ffi_callback_bad_out"
+grep -Fq 'help: Callback support is not implemented in C FFI v0 yet.' "$ffi_callback_bad_out"
+
+cat >"$ffi_aggregate_bad_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+extern "C" def bad(p Pair) i32
+EOF
+expect_emit_ir_failure "$ffi_aggregate_bad_in" "$ffi_aggregate_bad_out" 'expected extern C aggregate parameter program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair' "$ffi_aggregate_bad_out"
+grep -Fq 'help: Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.' "$ffi_aggregate_bad_out"
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {

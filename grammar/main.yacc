@@ -20,11 +20,54 @@
     #include "lona/scan/driver.hh"
     #include "lona/ast/token.hh"
     #include "lona/ast/astnode.hh"
+    #include <string>
 
     #undef yylex
     #define yylex driver.token
 
     #define YY_NULLPTR nullptr
+
+    static lona::AbiKind
+    parseExternAbi(lona::AstToken *token) {
+        if (!token || token->type != lona::TokenType::ConstStr) {
+            throw lona::DiagnosticError(
+                lona::DiagnosticError::Category::Semantic,
+                token ? token->loc : lona::location(),
+                "extern ABI name must be a string literal",
+                "Use syntax like `extern \"C\" def foo(...)`.");
+        }
+
+        auto abi = std::string(token->text.tochara(), token->text.size());
+        if (abi == "C") {
+            return lona::AbiKind::C;
+        }
+
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Semantic, token->loc,
+            "unsupported extern ABI `" + abi + "`",
+            "Only `extern \"C\"` is supported right now.");
+    }
+
+    static lona::StructDeclKind
+    parseStructDeclKind(lona::AstToken *token) {
+        if (!token || token->type != lona::TokenType::ConstStr) {
+            throw lona::DiagnosticError(
+                lona::DiagnosticError::Category::Semantic,
+                token ? token->loc : lona::location(),
+                "struct repr name must be a string literal",
+                "Use syntax like `repr(\"C\") struct Point { ... }`.");
+        }
+
+        auto repr = std::string(token->text.tochara(), token->text.size());
+        if (repr == "C") {
+            return lona::StructDeclKind::ReprC;
+        }
+
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Semantic, token->loc,
+            "unsupported struct repr `" + repr + "`",
+            "Only `repr(\"C\")` is supported right now.");
+    }
 }
 
 %union {
@@ -55,7 +98,7 @@
 %token TRUE "true" FALSE "false"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
-%token DEF "def" STRUCT "struct"
+%token DEF "def" STRUCT "struct" EXTERN "extern" REPR "repr"
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
@@ -97,7 +140,7 @@
 %type <seq> expr_seq var_decl_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
 %type <type_seq> func_param_type_seq
-%type <counter> opt_newlines
+%type <counter> opt_newlines extern_abi struct_decl_kind
 
 %start pragram
 
@@ -233,6 +276,42 @@ func_decl
     | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
     | DEF FIELD '(' param_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
     | DEF FIELD '(' param_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
+    | extern_abi DEF FIELD '(' ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, nullptr,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, $6,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' param_decl_seq ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $5, nullptr,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' param_decl_seq ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $5, $7,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $6, nullptr, nullptr,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $7, nullptr, $6,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' param_decl_seq ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $7, $5, nullptr,
+                             static_cast<lona::AbiKind>($1));
+    }
+    | extern_abi DEF FIELD '(' param_decl_seq ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $8, $5, $7,
+                             static_cast<lona::AbiKind>($1));
+    }
+    ;
+
+extern_abi
+    : EXTERN CONST { $$ = static_cast<int64_t>(parseExternAbi($2)); }
     ;
 
 var_decl
@@ -247,6 +326,20 @@ param_decl
 /* struct decl */
 struct_decl
     : STRUCT FIELD struct_statlist '}' { $$ = new AstStructDecl(*$2, $3); }
+    | EXTERN STRUCT FIELD NEWLINE {
+        $$ = new AstStructDecl(*$3, nullptr, lona::StructDeclKind::Extern);
+    }
+    | EXTERN STRUCT FIELD struct_statlist '}' {
+        $$ = new AstStructDecl(*$3, $4, lona::StructDeclKind::Extern);
+    }
+    | struct_decl_kind STRUCT FIELD struct_statlist '}' {
+        $$ = new AstStructDecl(*$3, $4,
+                               static_cast<lona::StructDeclKind>($1));
+    }
+    ;
+
+struct_decl_kind
+    : REPR '(' CONST ')' { $$ = static_cast<int64_t>(parseStructDeclKind($3)); }
     ;
 
 struct_statlist

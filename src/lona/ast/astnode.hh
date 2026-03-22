@@ -41,6 +41,35 @@ enum class BindingKind {
     Ref,
 };
 
+enum class AbiKind {
+    Native,
+    C,
+};
+
+inline const char *
+abiKindKeyword(AbiKind kind) {
+    return kind == AbiKind::C ? "c" : "native";
+}
+
+enum class StructDeclKind {
+    Native,
+    Extern,
+    ReprC,
+};
+
+inline const char *
+structDeclKindKeyword(StructDeclKind kind) {
+    switch (kind) {
+    case StructDeclKind::Extern:
+        return "extern";
+    case StructDeclKind::ReprC:
+        return "repr_c";
+    case StructDeclKind::Native:
+    default:
+        return "native";
+    }
+}
+
 inline const char *
 bindingKindKeyword(BindingKind kind) {
     return kind == BindingKind::Ref ? "ref" : "var";
@@ -297,9 +326,14 @@ class AstStructDecl : public AstNode {
 public:
     string const name;
     AstNode *const body;
+    StructDeclKind const declKind;
 
-    AstStructDecl(AstToken &field, AstNode *body)
-        : AstNode(field.loc), name(field.text), body(body) {}
+    AstStructDecl(AstToken &field, AstNode *body,
+                  StructDeclKind declKind = StructDeclKind::Native)
+        : AstNode(field.loc), name(field.text), body(body), declKind(declKind) {}
+    bool hasBody() const { return body != nullptr; }
+    bool isExternDecl() const { return declKind == StructDeclKind::Extern; }
+    bool isReprC() const { return declKind == StructDeclKind::ReprC; }
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
@@ -388,11 +422,15 @@ public:
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
     TypeNode *const retType;
+    AbiKind const abiKind;
     bool hasArgs() const { return args != nullptr; }
+    bool hasBody() const { return body != nullptr; }
+    bool isExternC() const { return abiKind == AbiKind::C; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,
-                TypeNode *retType = nullptr);
+                TypeNode *retType = nullptr,
+                AbiKind abiKind = AbiKind::Native);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;

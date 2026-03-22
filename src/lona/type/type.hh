@@ -186,7 +186,33 @@ class FuncType : public TypeClass {
     std::vector<TypeClass *> argTypes;
     std::vector<BindingKind> argBindingKinds;
     TypeClass * retType = nullptr;
+    AbiKind abiKind = AbiKind::Native;
 public:
+    static string buildName(const std::vector<TypeClass *> &argTypes,
+                            TypeClass *retType,
+                            const std::vector<BindingKind> &argBindingKinds = {},
+                            AbiKind abiKind = AbiKind::Native) {
+        std::string funcTypeName = abiKind == AbiKind::C ? "fc" : "fn";
+        if (retType) {
+            funcTypeName += "_";
+            funcTypeName.append(retType->full_name.tochara(), retType->full_name.size());
+        }
+        for (std::size_t i = 0; i < argTypes.size(); ++i) {
+            funcTypeName += ".";
+            if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
+                funcTypeName += "&";
+            }
+            auto *argType = argTypes[i];
+            if (!argType) {
+                funcTypeName += "<unknown>";
+                continue;
+            }
+            funcTypeName.append(argType->full_name.tochara(),
+                                argType->full_name.size());
+        }
+        return string(funcTypeName.c_str());
+    }
+
     auto& getArgTypes() const { return argTypes; }
     const auto &getArgBindingKinds() const { return argBindingKinds; }
     BindingKind getArgBindingKind(std::size_t index) const {
@@ -196,14 +222,18 @@ public:
         return argBindingKinds[index];
     }
     TypeClass *getRetType() const { return retType; }
+    AbiKind getAbiKind() const { return abiKind; }
+    bool isExternC() const { return abiKind == AbiKind::C; }
 
     FuncType(std::vector<TypeClass *> &&args,
              TypeClass *retType, string full_name,
-             std::vector<BindingKind> argBindingKinds = {})
+             std::vector<BindingKind> argBindingKinds = {},
+             AbiKind abiKind = AbiKind::Native)
         : TypeClass(full_name),
           argTypes(args),
           argBindingKinds(std::move(argBindingKinds)),
-          retType(retType) {
+          retType(retType),
+          abiKind(abiKind) {
         if (this->argBindingKinds.empty()) {
             this->argBindingKinds.resize(argTypes.size(), BindingKind::Value);
         }
@@ -220,7 +250,11 @@ class PointerType : public TypeClass {
 public:
     static string buildName(TypeClass *pointeeType) {
         if (auto *func = pointeeType ? pointeeType->as<FuncType>() : nullptr) {
-            std::string name = "(";
+            std::string name;
+            if (func->isExternC()) {
+                name += "extern \"C\" ";
+            }
+            name += "(";
             const auto &argTypes = func->getArgTypes();
             for (size_t i = 0; i < argTypes.size(); ++i) {
                 if (i != 0) {
@@ -506,12 +540,8 @@ public:
 
     FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
                                       TypeClass *retType,
-                                      std::vector<BindingKind> argBindingKinds = {}) {
-        string funcTypeName = "f";
-        if (retType) {
-            funcTypeName += "_";
-            funcTypeName += retType->full_name;
-        }
+                                      std::vector<BindingKind> argBindingKinds = {},
+                                      AbiKind abiKind = AbiKind::Native) {
         if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
             return nullptr;
         }
@@ -520,18 +550,14 @@ public:
                 return nullptr;
             }
         }
-        for (std::size_t i = 0; i < argTypes.size(); ++i) {
-            funcTypeName += ".";
-            if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
-                funcTypeName += "&";
-            }
-            funcTypeName += argTypes[i]->full_name;
-        }
+        auto funcTypeName = FuncType::buildName(argTypes, retType,
+                                                argBindingKinds, abiKind);
         if (auto *existing = getType(funcTypeName)) {
             return existing->as<FuncType>();
         }
         auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
-                                      funcTypeName, std::move(argBindingKinds));
+                                      funcTypeName, std::move(argBindingKinds),
+                                      abiKind);
         addType(funcTypeName, funcType);
         return funcType;
     }
@@ -644,7 +670,8 @@ public:
                 return type;
             }
             return getOrCreateFunctionType(argTypes, retType,
-                                           func->getArgBindingKinds());
+                                           func->getArgBindingKinds(),
+                                           func->getAbiKind());
         }
         return type;
     }
@@ -721,7 +748,8 @@ public:
                 argTypes.push_back(argType);
             }
             auto *funcType = getOrCreateFunctionType(argTypes, retType,
-                                                     std::move(argBindingKinds));
+                                                     std::move(argBindingKinds),
+                                                     AbiKind::Native);
             return funcType ? createPointerType(funcType) : nullptr;
         }
 

@@ -44,6 +44,10 @@ import_named_method_dir="$(new_tmp_dir import-named-method)"
 import_named_method_dep_in="$import_named_method_dir/dep.lo"
 import_named_method_main_in="$import_named_method_dir/main.lo"
 import_named_method_out="$(new_tmp_file import-named-method-out)"
+import_c_abi_dir="$(new_tmp_dir import-c-abi)"
+import_c_abi_dep_in="$import_c_abi_dir/dep.lo"
+import_c_abi_main_in="$import_c_abi_dir/main.lo"
+import_c_abi_out="$(new_tmp_file import-c-abi-out)"
 import_mutating_method_dir="$(new_tmp_dir import-mutating-method)"
 import_mutating_method_dep_in="$import_mutating_method_dir/dep.lo"
 import_mutating_method_main_in="$import_mutating_method_dir/main.lo"
@@ -166,6 +170,34 @@ grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
 
 printf 'import math\n\ndef main() i32 {\n    ret math.Box(point = math.Point(x = 4)).point.x\n}\n' >"$import_main_in"
 "$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_chain_out"
+
+cat >"$import_c_abi_dep_in" <<'EOF'
+extern "C" def abs(v i32) i32
+
+extern "C" def c_inc(v i32) i32 {
+    ret abs(v) + 1
+}
+
+def native_wrap(v i32) i32 {
+    ret c_inc(v)
+}
+EOF
+cat >"$import_c_abi_main_in" <<'EOF'
+import dep
+
+def main() i32 {
+    ret dep.native_wrap(-4) + dep.c_inc(-2)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$import_c_abi_main_in" >"$import_c_abi_out"
+grep -Fq 'declare i32 @abs(i32)' "$import_c_abi_out"
+grep -Fq 'define i32 @c_inc(i32 ' "$import_c_abi_out"
+grep -Fq 'define i32 @dep.native_wrap(i32 ' "$import_c_abi_out"
+grep -Fq 'call i32 @dep.native_wrap(i32 -4)' "$import_c_abi_out"
+grep -Fq 'call i32 @c_inc(i32 -2)' "$import_c_abi_out"
+grep -Fq 'call i32 @c_inc(i32 %' "$import_c_abi_out"
+grep -Fq 'call i32 @abs(i32 %' "$import_c_abi_out"
+! grep -Fq '@dep.c_inc' "$import_c_abi_out"
 
 cat >"$import_main_in" <<'EOF'
 import math

@@ -969,5 +969,5 @@ struct Bad {
 }
 EOF
 expect_emit_ir_failure "$struct_ref_field_bad_in" "$struct_ref_field_bad_out" 'expected ref struct field program to fail'
-grep -Fq 'unexpected ref' "$struct_ref_field_bad_out"
-grep -Fq "expected identifier, def, newline, '}'" "$struct_ref_field_bad_out"
+grep -Fq "syntax error: I couldn't parse this statement: unexpected ref." "$struct_ref_field_bad_out"
+grep -Fq 'help: Check for a missing separator, unmatched delimiter, or mistyped keyword near here.' "$struct_ref_field_bad_out"

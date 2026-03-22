@@ -2444,6 +2444,10 @@ private:
     }
 
     void analyzeBody() {
+        if (!resolved.body()) {
+            hirFunc->setBody(nullptr);
+            return;
+        }
         hirFunc->setBody(analyzeBlock(const_cast<AstNode *>(resolved.body())));
     }
 

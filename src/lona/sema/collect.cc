@@ -120,6 +120,144 @@ extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false) {
     return kinds;
 }
 
+std::string
+describeExternCFunctionName(AstFuncDecl *node, StructType *methodParent) {
+    if (!node) {
+        return "<unknown>";
+    }
+    auto name = toStdString(node->name);
+    if (!methodParent) {
+        return name;
+    }
+    return toStdString(methodParent->full_name) + "." + name;
+}
+
+std::string
+describeExternCTypeSubject(const std::string &role, const std::string &name) {
+    if (name.empty()) {
+        return role;
+    }
+    return role + " `" + name + "`";
+}
+
+std::string
+describeExternCType(TypeClass *type, TypeNode *node) {
+    if (node) {
+        return describeTypeNode(node, type ? toStdString(type->full_name) : "void");
+    }
+    if (type) {
+        return toStdString(type->full_name);
+    }
+    return "void";
+}
+
+bool
+isExternCCallbackType(TypeClass *type) {
+    auto *pointer = type ? type->as<PointerType>() : nullptr;
+    return pointer && pointer->getPointeeType() &&
+           pointer->getPointeeType()->as<FuncType>();
+}
+
+bool
+isExternCByValueAggregateType(TypeClass *type) {
+    return type && (type->as<StructType>() || type->as<TupleType>() ||
+                    type->as<ArrayType>());
+}
+
+void
+validateStructDeclShape(AstStructDecl *node) {
+    if (!node) {
+        return;
+    }
+    if (node->isExternDecl() && node->body) {
+        error(node->loc,
+              "extern struct `" + toStdString(node->name) +
+                  "` cannot declare fields or methods",
+              "Use `extern struct " + toStdString(node->name) +
+                  "` for an opaque C type, or drop `extern` and declare a normal struct body.");
+    }
+}
+
+void
+validateExternCType(AstFuncDecl *node, StructType *methodParent,
+                    const std::string &role, const std::string &bindingName,
+                    TypeClass *type, TypeNode *typeNode, const location &loc) {
+    if (!node || !node->isExternC() || !type) {
+        return;
+    }
+
+    auto funcName = describeExternCFunctionName(node, methodParent);
+    auto subject = describeExternCTypeSubject(role, bindingName);
+    auto typeName = describeExternCType(type, typeNode);
+
+    if (type->as<IndexablePointerType>()) {
+        error(loc,
+              "extern \"C\" function `" + funcName +
+                  "` uses unsupported " + subject + ": " + typeName,
+              "Use an explicit raw pointer type like `u8*`. `T[*]` is a Lona-only indexable pointer type.");
+    }
+    if (isExternCCallbackType(type)) {
+        error(loc,
+              "extern \"C\" function `" + funcName +
+                  "` uses unsupported " + subject + ": " + typeName,
+              "Callback support is not implemented in C FFI v0 yet.");
+    }
+    if (type->as<TupleType>()) {
+        error(loc,
+              "extern \"C\" function `" + funcName +
+                  "` uses unsupported " + subject + ": " + typeName,
+              "Flatten the tuple into scalar parameters or pass a pointer instead.");
+    }
+    if (isExternCByValueAggregateType(type)) {
+        error(loc,
+              "extern \"C\" function `" + funcName +
+                  "` uses unsupported " + subject + ": " + typeName,
+              "Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.");
+    }
+}
+
+void
+validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
+                                 const std::vector<TypeClass *> &argTypes,
+                                 TypeClass *retType) {
+    if (!node || !node->isExternC()) {
+        return;
+    }
+
+    auto funcName = describeExternCFunctionName(node, methodParent);
+    if (methodParent) {
+        error(node->loc,
+              "extern \"C\" method `" + funcName + "` is not supported",
+              "Declare a top-level wrapper function instead. C FFI v0 only supports top-level functions.");
+    }
+
+    size_t argTypeIndex = 0;
+    if (node->args) {
+        for (auto *arg : *node->args) {
+            auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+            if (!varDecl) {
+                continue;
+            }
+            if (varDecl->bindingKind == BindingKind::Ref) {
+                error(varDecl->loc,
+                      "extern \"C\" function `" + funcName +
+                          "` parameter `" + toStdString(varDecl->field) +
+                          "` cannot use `ref` binding",
+                      "Use an explicit pointer type like `i32*` instead.");
+            }
+            auto *argType = argTypeIndex < argTypes.size() ? argTypes[argTypeIndex]
+                                                           : nullptr;
+            validateExternCType(node, methodParent, "parameter",
+                                toStdString(varDecl->field), argType,
+                                varDecl->typeNode, varDecl->loc);
+            ++argTypeIndex;
+        }
+    }
+
+    validateExternCType(node, methodParent, "return type", std::string(),
+                        retType, node->retType, node->loc);
+}
+
 [[noreturn]] void
 error(const std::string &message) {
     throw DiagnosticError(DiagnosticError::Category::Semantic, message);
@@ -365,6 +503,15 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
     return unit->moduleName() + "." + resolved;
 }
 
+std::string
+resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
+                          AbiKind abiKind, bool exportNamespace) {
+    if (abiKind == AbiKind::C) {
+        return toStdString(name);
+    }
+    return resolveTopLevelName(unit, name, exportNamespace);
+}
+
 bool isReservedInitialListTypeName(llvm::StringRef name);
 [[noreturn]] void errorReservedInitialListType(const location &loc);
 
@@ -419,6 +566,7 @@ StructType *
 declareStructType(TypeTable *typeMgr, AstStructDecl *node,
                   CompilationUnit *unit = nullptr,
                   bool exportNamespace = false) {
+    validateStructDeclShape(node);
     auto resolvedName = resolveTopLevelName(unit, node->name, exportNamespace);
     if (unit) {
         if (unit->importsModule(toStdString(node->name))) {
@@ -459,8 +607,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 StructType *methodParent, CompilationUnit *unit = nullptr,
                 bool exportNamespace = false) {
     auto &func_name = node->name;
-    auto resolvedFunctionName =
-        resolveTopLevelName(unit, func_name, exportNamespace);
+    auto resolvedFunctionName = resolveFunctionSymbolName(
+        unit, func_name, node ? node->abiKind : AbiKind::Native, exportNamespace);
     if (methodParent) {
         if (auto *existing = typeMgr->getMethodFunction(
                 methodParent,
@@ -547,8 +695,10 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
     }
 
+    validateExternCFunctionSignature(node, methodParent, loargs, loretType);
     auto *lofuncType = typeMgr->getOrCreateFunctionType(loargs, loretType,
-                                                        std::move(loargKinds));
+                                                        std::move(loargKinds),
+                                                        node->abiKind);
     if (methodParent && !methodParent->getMethodType(
             llvm::StringRef(func_name.tochara(), func_name.size()))) {
         methodParent->addMethodType(
@@ -638,8 +788,11 @@ public:
             return;
         }
 
-        this->visit(node->body);
+        if (!node->body) {
+            return;
+        }
 
+        this->visit(node->body);
         lostructTy->complete(members);
     }
 };
@@ -666,6 +819,7 @@ class TypeCollector : public AstVisitorAny {
         for (auto *it : node->body) {
             if (it->is<AstStructDecl>()) {
                 auto *decl = it->as<AstStructDecl>();
+                validateStructDeclShape(decl);
                 recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
                                        TopLevelDeclKind::StructType, decl->loc);
                 structDecls.push_back(it->as<AstStructDecl>());
@@ -965,6 +1119,7 @@ class InterfaceCollector {
         for (auto *stmt : body->getBody()) {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
                 validateImportAliasConflict(structDecl);
+                validateStructDeclShape(structDecl);
                 recordTopLevelDeclName(topLevelDecls_, toStdString(structDecl->name),
                                        TopLevelDeclKind::StructType,
                                        structDecl->loc);
@@ -996,37 +1151,39 @@ class InterfaceCollector {
                 continue;
             }
 
-            llvm::StringMap<StructType::ValueTy> members;
             auto *body = dynamic_cast<AstStatList *>(structDecl->body);
-            if (body) {
-                int index = 0;
-                for (auto *stmt : body->getBody()) {
-                    auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
-                    if (!varDecl) {
-                        continue;
-                    }
-                    if (varDecl->bindingKind == BindingKind::Ref) {
-                        error(varDecl->loc,
-                              "struct fields cannot use `ref` binding for `" +
-                                  toStdString(varDecl->field) + "`",
-                              "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
-                    }
-                    auto *fieldType = resolveType(varDecl->typeNode);
-                    if (!fieldType) {
-                        error(varDecl->loc,
-                              "unknown struct field type for `" +
-                                  toStdString(varDecl->field) + "`: " +
-                                  describeTypeNode(varDecl->typeNode, "void"));
-                    }
-                    rejectBareFunctionType(
-                        fieldType, varDecl->typeNode,
-                        "unsupported bare function struct field type for `" +
-                            toStdString(varDecl->field) + "`",
-                        varDecl->loc);
-                    members.insert({llvm::StringRef(varDecl->field.tochara(),
-                                                    varDecl->field.size()),
-                                    {fieldType, index++}});
+            if (!body) {
+                continue;
+            }
+
+            llvm::StringMap<StructType::ValueTy> members;
+            int index = 0;
+            for (auto *stmt : body->getBody()) {
+                auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
+                if (!varDecl) {
+                    continue;
                 }
+                if (varDecl->bindingKind == BindingKind::Ref) {
+                    error(varDecl->loc,
+                          "struct fields cannot use `ref` binding for `" +
+                              toStdString(varDecl->field) + "`",
+                          "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
+                }
+                auto *fieldType = resolveType(varDecl->typeNode);
+                if (!fieldType) {
+                    error(varDecl->loc,
+                          "unknown struct field type for `" +
+                              toStdString(varDecl->field) + "`: " +
+                              describeTypeNode(varDecl->typeNode, "void"));
+                }
+                rejectBareFunctionType(
+                    fieldType, varDecl->typeNode,
+                    "unsupported bare function struct field type for `" +
+                        toStdString(varDecl->field) + "`",
+                    varDecl->loc);
+                members.insert({llvm::StringRef(varDecl->field.tochara(),
+                                                varDecl->field.size()),
+                                {fieldType, index++}});
             }
 
             structType->complete(members);
@@ -1081,8 +1238,10 @@ class InterfaceCollector {
                 node->loc);
         }
 
+        validateExternCFunctionSignature(node, methodParent, argTypes, retType);
         return interface_->getOrCreateFunctionType(argTypes, retType,
-                                                   std::move(argBindingKinds));
+                                                   std::move(argBindingKinds),
+                                                   node->abiKind);
     }
 
     void declareFunctions() {
@@ -1193,7 +1352,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
                 "Imported interfaces should only contain function signatures that "
                 "were successfully collected from the defining module.");
         }
-        auto runtimeName = exportNamespace ? entry.second.exportedName : entry.first;
+        auto runtimeName = exportNamespace ? entry.second.symbolName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);
         materializeDeclaredFunction(*global, typeMgr, funcType,
                                     llvm::StringRef(runtimeName),
@@ -2316,6 +2475,9 @@ public:
             functionError(hirFunc, "HIR function missing LLVM function");
         }
         if (!llvmFunc->empty()) {
+            return;
+        }
+        if (!hirFunc->getBody()) {
             return;
         }
 
