@@ -36,8 +36,6 @@ const llvm::DataLayout &defaultTargetDataLayout();
 const std::string &defaultTargetTriple();
 void configureModuleTargetLayout(llvm::Module &module);
 
-static const int RVO_THRESHOLD = 16;
-
 class TypeClass {
 public:
     string const full_name;

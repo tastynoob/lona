@@ -41,12 +41,16 @@ tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
 tuple_flow_in="$(new_tmp_file tuple-flow)"
 tuple_flow_out="$(new_tmp_file tuple-flow-out)"
-small_struct_sroa_in="$(new_tmp_file small-struct-sroa)"
-small_struct_sroa_out="$(new_tmp_file small-struct-sroa-out)"
-small_array_sroa_in="$(new_tmp_file small-array-sroa)"
-small_array_sroa_out="$(new_tmp_file small-array-sroa-out)"
+small_struct_packed_in="$(new_tmp_file small-struct-packed)"
+small_struct_packed_out="$(new_tmp_file small-struct-packed-out)"
+medium_struct_direct_return_in="$(new_tmp_file medium-struct-direct-return)"
+medium_struct_direct_return_out="$(new_tmp_file medium-struct-direct-return-out)"
+small_array_packed_in="$(new_tmp_file small-array-packed)"
+small_array_packed_out="$(new_tmp_file small-array-packed-out)"
 method_abi_in="$(new_tmp_file method-abi)"
 method_abi_out="$(new_tmp_file method-abi-out)"
+method_direct_return_in="$(new_tmp_file method-direct-return)"
+method_direct_return_out="$(new_tmp_file method-direct-return-out)"
 tuple_field_in="$(new_tmp_file tuple-field)"
 tuple_field_out="$(new_tmp_file tuple-field-out)"
 tuple_field_bad_in="$(new_tmp_file tuple-field-bad)"
@@ -359,7 +363,7 @@ EOF
 grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$tuple_flow_out"
 grep -Eq 'call i64 @echo\(i64 %' "$tuple_flow_out"
 
-cat >"$small_struct_sroa_in" <<'EOF'
+cat >"$small_struct_packed_in" <<'EOF'
 struct Pair {
     left i32
     right i32
@@ -374,12 +378,34 @@ def main() i32 {
     ret echo(pair).right
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$small_struct_sroa_in" >"$small_struct_sroa_out"
-grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_struct_sroa_out"
-grep -Eq 'call i64 @echo\(i64 %' "$small_struct_sroa_out"
-! grep -q 'llvm.memcpy' "$small_struct_sroa_out"
+"$BIN" --emit-ir --verify-ir "$small_struct_packed_in" >"$small_struct_packed_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_struct_packed_out"
+grep -Eq 'call i64 @echo\(i64 %' "$small_struct_packed_out"
+! grep -q 'llvm.memcpy' "$small_struct_packed_out"
 
-cat >"$small_array_sroa_in" <<'EOF'
+cat >"$medium_struct_direct_return_in" <<'EOF'
+struct Triple {
+    a i32
+    b i32
+    c i32
+}
+
+def echo(v Triple) Triple {
+    ret v
+}
+
+def main() i32 {
+    var triple = Triple(a = 1, b = 2, c = 3)
+    ret echo(triple).c
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$medium_struct_direct_return_in" >"$medium_struct_direct_return_out"
+grep -Eq '^%.*Triple = type \{ i32, i32, i32 \}' "$medium_struct_direct_return_out"
+grep -Eq '^define %.*Triple @echo\(ptr [^)]+\)' "$medium_struct_direct_return_out"
+grep -Eq 'call %.*Triple @echo\(ptr %' "$medium_struct_direct_return_out"
+! grep -q 'sret' "$medium_struct_direct_return_out"
+
+cat >"$small_array_packed_in" <<'EOF'
 def echo(v i32[2]) i32[2] {
     ret v
 }
@@ -389,9 +415,9 @@ def main() i32 {
     ret echo(row)(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$small_array_sroa_in" >"$small_array_sroa_out"
-grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_array_sroa_out"
-grep -Eq 'call i64 @echo\(i64 %' "$small_array_sroa_out"
+"$BIN" --emit-ir --verify-ir "$small_array_packed_in" >"$small_array_packed_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_array_packed_out"
+grep -Eq 'call i64 @echo\(i64 %' "$small_array_packed_out"
 
 cat >"$method_abi_in" <<'EOF'
 struct Pair {
@@ -415,6 +441,32 @@ EOF
 "$BIN" --emit-ir --verify-ir "$method_abi_in" >"$method_abi_out"
 grep -Eq '^define i64 @.*Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$method_abi_out"
 grep -Eq 'call i64 @.*Pair\.swap\(ptr [^,]+, i32 3\)' "$method_abi_out"
+
+cat >"$method_direct_return_in" <<'EOF'
+struct Triple {
+    a i32
+    b i32
+    c i32
+
+    def shift(delta i32) Triple {
+        var out Triple
+        out.a = self.b + delta
+        out.b = self.c + delta
+        out.c = self.a + delta
+        ret out
+    }
+}
+
+def main() i32 {
+    var triple = Triple(a = 1, b = 2, c = 3)
+    ret triple.shift(4).b
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$method_direct_return_in" >"$method_direct_return_out"
+grep -Eq '^%.*Triple = type \{ i32, i32, i32 \}' "$method_direct_return_out"
+grep -Eq '^define %.*Triple @.*Triple\.shift\(ptr [^,]+, i32 [^)]+\)' "$method_direct_return_out"
+grep -Eq 'call %.*Triple @.*Triple\.shift\(ptr [^,]+, i32 4\)' "$method_direct_return_out"
+! grep -q 'sret' "$method_direct_return_out"
 
 cat >"$tuple_field_in" <<'EOF'
 def echo(pair <i32, bool>) <i32, bool> {

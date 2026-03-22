@@ -15,13 +15,14 @@ enum class NativeAbiPassKind {
 struct NativeAbiValueInfo {
     NativeAbiPassKind passKind = NativeAbiPassKind::Direct;
     llvm::Type *llvmType = nullptr;
-    bool packedAggregate = false;
+    bool packedRegisterAggregate = false;
 };
 
 struct NativeAbiFunctionSignature {
     FuncType *sourceType = nullptr;
     bool hasImplicitSelf = false;
     bool hasIndirectResult = false;
+    bool hasDirectAggregateResult = false;
     NativeAbiValueInfo resultInfo;
     std::vector<NativeAbiValueInfo> sourceArgInfos;
     llvm::FunctionType *llvmType = nullptr;
@@ -36,8 +37,7 @@ struct NativeAbiFunctionSignature {
 };
 
 bool isNativeAbiAggregateType(TypeClass *type);
-bool usesNativeAbiPackedDirectType(TypeTable &types, TypeClass *type);
-bool isNativeAbiDirectType(TypeTable &types, TypeClass *type);
+bool usesNativeAbiPackedRegisterAggregate(TypeTable &types, TypeClass *type);
 bool usesNativeAbiIndirectResult(TypeTable &types, TypeClass *type);
 llvm::Type *getNativeAbiDirectLLVMType(TypeTable &types, TypeClass *type);
 llvm::Value *packNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,

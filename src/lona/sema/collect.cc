@@ -1372,12 +1372,12 @@ class FunctionCompiler {
     }
 
     Object *materializeDirectValueBinding(Object *obj, llvm::Value *incomingValue,
-                                          bool packedAggregate) {
+                                          bool packedRegisterAggregate) {
         if (!obj || !incomingValue) {
             error("direct value binding requires an incoming value");
         }
         auto *bound = materializeBinding(obj);
-        if (packedAggregate) {
+        if (packedRegisterAggregate) {
             storeNativeAbiDirectValue(scope->builder, *typeMgr, obj->getType(),
                                       incomingValue, bound->getllvmValue());
         } else {
@@ -2277,7 +2277,7 @@ class FunctionCompiler {
         if (scope->retVal()) {
             if (returnByPointer) {
                 scope->builder.CreateRetVoid();
-            } else if (abiSignature.resultInfo.packedAggregate) {
+            } else if (abiSignature.resultInfo.packedRegisterAggregate) {
                 auto *retSlot = scope->retVal();
                 llvm::Value *retValue = nullptr;
                 if (retSlot->isVariable() && !retSlot->isRegVal() &&
@@ -2409,7 +2409,7 @@ public:
                 argObj = materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
                 argObj = materializeDirectValueBinding(binding.object, &*argIt,
-                                                       argInfo.packedAggregate);
+                                                       argInfo.packedRegisterAggregate);
             }
             scope->addObj(llvm::StringRef(binding.name), argObj);
             emitDebugDeclare(debug, scope, debugSubprogram, argObj, binding.name,

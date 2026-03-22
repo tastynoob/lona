@@ -15,8 +15,10 @@ func_ptr_bad_in="$(new_tmp_file func-ptr-bad)"
 func_ptr_bad_out="$(new_tmp_file func-ptr-bad-out)"
 func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
 func_ptr_uninit_out="$(new_tmp_file func-ptr-uninit-out)"
-func_ptr_small_agg_in="$(new_tmp_file func-ptr-small-agg)"
-func_ptr_small_agg_out="$(new_tmp_file func-ptr-small-agg-out)"
+func_ptr_packed_agg_in="$(new_tmp_file func-ptr-packed-agg)"
+func_ptr_packed_agg_out="$(new_tmp_file func-ptr-packed-agg-out)"
+func_ptr_direct_return_agg_in="$(new_tmp_file func-ptr-direct-return-agg)"
+func_ptr_direct_return_agg_out="$(new_tmp_file func-ptr-direct-return-agg-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
 func_name_conflict_in="$(new_tmp_file func-name-conflict)"
@@ -137,7 +139,7 @@ EOF
 expect_emit_ir_failure "$func_ptr_uninit_in" "$func_ptr_uninit_out" 'expected uninitialized function pointer variable program to fail'
 grep -Fq 'function pointer variable type for `cb` requires initializer: (i32)* i32' "$func_ptr_uninit_out"
 
-cat >"$func_ptr_small_agg_in" <<'EOF'
+cat >"$func_ptr_packed_agg_in" <<'EOF'
 struct Pair {
     left i32
     right i32
@@ -153,10 +155,33 @@ def hold() i32 {
     ret cb(pair).right
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_small_agg_in" >"$func_ptr_small_agg_out"
-grep -q 'store ptr @echo' "$func_ptr_small_agg_out"
-grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$func_ptr_small_agg_out"
-grep -Eq 'call i64 %.*\(i64 %.*\)' "$func_ptr_small_agg_out"
+"$BIN" --emit-ir --verify-ir "$func_ptr_packed_agg_in" >"$func_ptr_packed_agg_out"
+grep -q 'store ptr @echo' "$func_ptr_packed_agg_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$func_ptr_packed_agg_out"
+grep -Eq 'call i64 %.*\(i64 %.*\)' "$func_ptr_packed_agg_out"
+
+cat >"$func_ptr_direct_return_agg_in" <<'EOF'
+struct Triple {
+    a i32
+    b i32
+    c i32
+}
+
+def echo(v Triple) Triple {
+    ret v
+}
+
+def hold() i32 {
+    var cb (Triple)* Triple = echo&<Triple>
+    var triple = Triple(a = 1, b = 2, c = 3)
+    ret cb(triple).c
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_direct_return_agg_in" >"$func_ptr_direct_return_agg_out"
+grep -q 'store ptr @echo' "$func_ptr_direct_return_agg_out"
+grep -Eq '^define %.*Triple @echo\(ptr [^)]+\)' "$func_ptr_direct_return_agg_out"
+grep -Eq 'call %.*Triple %.*\(ptr %.*\)' "$func_ptr_direct_return_agg_out"
+! grep -q 'sret' "$func_ptr_direct_return_agg_out"
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {

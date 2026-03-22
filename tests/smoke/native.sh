@@ -19,7 +19,8 @@ array_ptr_program="$WORKDIR/array_pointer.lo"
 method_self_program="$WORKDIR/method_self.lo"
 method_temp_program="$WORKDIR/method_temp.lo"
 struct_fields_program="$WORKDIR/struct_fields.lo"
-small_struct_program="$WORKDIR/small_struct_abi.lo"
+small_struct_program="$WORKDIR/small_struct_packed.lo"
+medium_struct_program="$WORKDIR/medium_struct_direct_return.lo"
 main_exe="$WORKDIR/return_42"
 top_level_exe="$WORKDIR/top_level"
 ref_local_exe="$WORKDIR/ref_local_address"
@@ -28,7 +29,8 @@ array_ptr_exe="$WORKDIR/array_pointer"
 method_self_exe="$WORKDIR/method_self"
 method_temp_exe="$WORKDIR/method_temp"
 struct_fields_exe="$WORKDIR/struct_fields"
-small_struct_exe="$WORKDIR/small_struct_abi"
+small_struct_exe="$WORKDIR/small_struct_packed"
+medium_struct_exe="$WORKDIR/medium_struct_direct_return"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -157,6 +159,32 @@ def main() i32 {
 }
 EOF
 
+cat >"$medium_struct_program" <<'EOF'
+struct Triple {
+    a i32
+    b i32
+    c i32
+
+    def shift(delta i32) Triple {
+        var out Triple
+        out.a = self.b + delta
+        out.b = self.c + delta
+        out.c = self.a + delta
+        ret out
+    }
+}
+
+def echo(v Triple) Triple {
+    ret v
+}
+
+def main() i32 {
+    var triple = Triple(a = 1, b = 2, c = 3)
+    var out = echo(triple).shift(4)
+    ret out.a + out.b + out.c
+}
+EOF
+
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"
 bash "$BUILD_NATIVE" "$top_level_program" "$top_level_exe"
 bash "$BUILD_NATIVE" "$ref_local_program" "$ref_local_exe"
@@ -166,6 +194,7 @@ bash "$BUILD_NATIVE" "$method_self_program" "$method_self_exe"
 bash "$BUILD_NATIVE" "$method_temp_program" "$method_temp_exe"
 bash "$BUILD_NATIVE" "$struct_fields_program" "$struct_fields_exe"
 bash "$BUILD_NATIVE" "$small_struct_program" "$small_struct_exe"
+bash "$BUILD_NATIVE" "$medium_struct_program" "$medium_struct_exe"
 
 set +e
 "$main_exe"
@@ -186,6 +215,8 @@ method_temp_status=$?
 struct_fields_status=$?
 "$small_struct_exe"
 small_struct_status=$?
+"$medium_struct_exe"
+medium_struct_status=$?
 set -e
 
 if [ "$main_status" -ne 42 ]; then
@@ -230,6 +261,11 @@ fi
 
 if [ "$small_struct_status" -ne 9 ]; then
     echo "expected small aggregate ABI program to exit with 9, got $small_struct_status" >&2
+    exit 1
+fi
+
+if [ "$medium_struct_status" -ne 18 ]; then
+    echo "expected medium aggregate direct-return program to exit with 18, got $medium_struct_status" >&2
     exit 1
 fi
 

@@ -48,10 +48,14 @@ import_mutating_method_dir="$(new_tmp_dir import-mutating-method)"
 import_mutating_method_dep_in="$import_mutating_method_dir/dep.lo"
 import_mutating_method_main_in="$import_mutating_method_dir/main.lo"
 import_mutating_method_out="$(new_tmp_file import-mutating-method-out)"
-import_small_sroa_dir="$(new_tmp_dir import-small-sroa)"
-import_small_sroa_dep_in="$import_small_sroa_dir/dep.lo"
-import_small_sroa_main_in="$import_small_sroa_dir/main.lo"
-import_small_sroa_out="$(new_tmp_file import-small-sroa-out)"
+import_packed_aggregate_dir="$(new_tmp_dir import-packed-aggregate)"
+import_packed_aggregate_dep_in="$import_packed_aggregate_dir/dep.lo"
+import_packed_aggregate_main_in="$import_packed_aggregate_dir/main.lo"
+import_packed_aggregate_out="$(new_tmp_file import-packed-aggregate-out)"
+import_direct_return_dir="$(new_tmp_dir import-direct-return)"
+import_direct_return_dep_in="$import_direct_return_dir/dep.lo"
+import_direct_return_main_in="$import_direct_return_dir/main.lo"
+import_direct_return_out="$(new_tmp_file import-direct-return-out)"
 
 cat >"$method_self_in" <<'EOF'
 struct Counter {
@@ -284,7 +288,7 @@ grep -q '^define i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -q 'call i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -Eq 'getelementptr inbounds %dep.Counter, ptr %0, i32 0, i32 0' "$import_mutating_method_out"
 
-cat >"$import_small_sroa_dep_in" <<'EOF'
+cat >"$import_packed_aggregate_dep_in" <<'EOF'
 struct Pair {
     left i32
     right i32
@@ -301,7 +305,7 @@ def echo(v Pair) Pair {
     ret v
 }
 EOF
-cat >"$import_small_sroa_main_in" <<'EOF'
+cat >"$import_packed_aggregate_main_in" <<'EOF'
 import dep
 
 def main() i32 {
@@ -309,11 +313,46 @@ def main() i32 {
     ret dep.echo(pair).swap(3).left
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_small_sroa_main_in" >"$import_small_sroa_out"
-grep -Eq '^define i64 @dep\.echo\(i64 [^)]+\)' "$import_small_sroa_out"
-grep -Eq '^define i64 @dep\.Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$import_small_sroa_out"
-grep -Eq 'call i64 @dep\.echo\(i64 %' "$import_small_sroa_out"
-grep -Eq 'call i64 @dep\.Pair\.swap\(ptr [^,]+, i32 3\)' "$import_small_sroa_out"
+"$BIN" --emit-ir --verify-ir "$import_packed_aggregate_main_in" >"$import_packed_aggregate_out"
+grep -Eq '^define i64 @dep\.echo\(i64 [^)]+\)' "$import_packed_aggregate_out"
+grep -Eq '^define i64 @dep\.Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$import_packed_aggregate_out"
+grep -Eq 'call i64 @dep\.echo\(i64 %' "$import_packed_aggregate_out"
+grep -Eq 'call i64 @dep\.Pair\.swap\(ptr [^,]+, i32 3\)' "$import_packed_aggregate_out"
+
+cat >"$import_direct_return_dep_in" <<'EOF'
+struct Triple {
+    a i32
+    b i32
+    c i32
+
+    def shift(delta i32) Triple {
+        var out Triple
+        out.a = self.b + delta
+        out.b = self.c + delta
+        out.c = self.a + delta
+        ret out
+    }
+}
+
+def echo(v Triple) Triple {
+    ret v
+}
+EOF
+cat >"$import_direct_return_main_in" <<'EOF'
+import dep
+
+def main() i32 {
+    var triple = dep.Triple(a = 1, b = 2, c = 3)
+    ret dep.echo(triple).shift(4).b
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$import_direct_return_main_in" >"$import_direct_return_out"
+grep -Eq '^%dep\.Triple = type \{ i32, i32, i32 \}' "$import_direct_return_out"
+grep -Eq '^define %dep\.Triple @dep\.echo\(ptr [^)]+\)' "$import_direct_return_out"
+grep -Eq '^define %dep\.Triple @dep\.Triple\.shift\(ptr [^,]+, i32 [^)]+\)' "$import_direct_return_out"
+grep -Eq 'call %dep\.Triple @dep\.echo\(ptr %' "$import_direct_return_out"
+grep -Eq 'call %dep\.Triple @dep\.Triple\.shift\(ptr [^,]+, i32 4\)' "$import_direct_return_out"
+! grep -q 'sret' "$import_direct_return_out"
 
 printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"
 printf 'import leaf\n\ndef call_leaf(v i32) i32 {\n    ret leaf.inc(v)\n}\n' >"$import_mid_in"

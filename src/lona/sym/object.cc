@@ -200,7 +200,7 @@ StructVar::set(Scope *scope, Object *src) {
         throw "type mismatch";
     }
 
-    if (usesNativeAbiPackedDirectType(*scope->types(), type)) {
+    if (usesNativeAbiPackedRegisterAggregate(*scope->types(), type)) {
         llvm::Value *packedValue = nullptr;
         if (!src->isRegVal() && src->isVariable() && src->getllvmValue()) {
             packedValue = loadNativeAbiDirectValue(builder, *scope->types(), type,
@@ -290,7 +290,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
             llvmargs.push_back(arg->getllvmValue());
             return;
         }
-        if (argInfo.packedAggregate) {
+        if (argInfo.packedRegisterAggregate) {
             if (arg->isVariable() && !arg->isRegVal() && arg->getllvmValue()) {
                 llvmargs.push_back(loadNativeAbiDirectValue(
                     builder, *scope->types(), expectedType, arg->getllvmValue()));
@@ -321,7 +321,13 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
 
     if (retType && abiSignature.hasIndirectResult) {
         return retval;
-    } else if (retType && abiSignature.resultInfo.packedAggregate) {
+    } else if (retType && abiSignature.resultInfo.packedRegisterAggregate) {
+        auto *obj = retType->newObj(Object::VARIABLE);
+        obj->createllvmValue(scope);
+        storeNativeAbiDirectValue(builder, *scope->types(), retType, ret,
+                                  obj->getllvmValue());
+        return obj;
+    } else if (retType && abiSignature.hasDirectAggregateResult) {
         auto *obj = retType->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
         storeNativeAbiDirectValue(builder, *scope->types(), retType, ret,

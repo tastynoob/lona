@@ -5,8 +5,10 @@ namespace lona {
 
 namespace {
 
+constexpr std::uint64_t kNativeAbiDirectAggregateReturnMaxSize = 16;
+
 bool
-isSingleRegisterSroaSize(std::uint64_t size) {
+isSingleRegisterPackSize(std::uint64_t size) {
     switch (size) {
     case 1:
     case 2:
@@ -18,13 +20,40 @@ isSingleRegisterSroaSize(std::uint64_t size) {
     }
 }
 
+bool
+hasNativeAbiFixedAggregateLayout(TypeClass *type) {
+    if (!type) {
+        return false;
+    }
+    if (type->as<StructType>() || type->as<TupleType>()) {
+        return true;
+    }
+    if (auto *array = type->as<ArrayType>()) {
+        return array->hasStaticLayout();
+    }
+    return false;
+}
+
+bool
+usesNativeAbiDirectAggregateReturn(TypeTable &types, TypeClass *type) {
+    // This keeps the aggregate result shape in the function signature.
+    if (!isNativeAbiAggregateType(type) ||
+        !hasNativeAbiFixedAggregateLayout(type)) {
+        return false;
+    }
+    auto size = types.getTypeAllocSize(type);
+    return size > 0 && size <= kNativeAbiDirectAggregateReturnMaxSize;
+}
+
 llvm::IntegerType *
-getPackedAggregateLLVMType(TypeTable &types, TypeClass *type) {
-    if (!isNativeAbiAggregateType(type)) {
+getPackedRegisterAggregateLLVMType(TypeTable &types, TypeClass *type) {
+    // This is ABI-level aggregate packing, not LLVM's local SROA pass.
+    if (!isNativeAbiAggregateType(type) ||
+        !hasNativeAbiFixedAggregateLayout(type)) {
         return nullptr;
     }
     auto size = types.getTypeAllocSize(type);
-    if (!isSingleRegisterSroaSize(size)) {
+    if (!isSingleRegisterPackSize(size)) {
         return nullptr;
     }
     return llvm::IntegerType::get(types.getContext(),
@@ -59,21 +88,15 @@ isNativeAbiAggregateType(TypeClass *type) {
 }
 
 bool
-usesNativeAbiPackedDirectType(TypeTable &types, TypeClass *type) {
+usesNativeAbiPackedRegisterAggregate(TypeTable &types, TypeClass *type) {
     return isNativeAbiAggregateType(type) &&
-        getPackedAggregateLLVMType(types, type) != nullptr;
-}
-
-bool
-isNativeAbiDirectType(TypeTable &types, TypeClass *type) {
-    return type && (type->as<BaseType>() || isPointerLikeType(type) ||
-                    usesNativeAbiPackedDirectType(types, type));
+        getPackedRegisterAggregateLLVMType(types, type) != nullptr;
 }
 
 bool
 usesNativeAbiIndirectResult(TypeTable &types, TypeClass *type) {
     return isNativeAbiAggregateType(type) &&
-        !usesNativeAbiPackedDirectType(types, type);
+        !usesNativeAbiDirectAggregateReturn(types, type);
 }
 
 llvm::Type *
@@ -81,7 +104,7 @@ getNativeAbiDirectLLVMType(TypeTable &types, TypeClass *type) {
     if (!type) {
         return nullptr;
     }
-    if (auto *packed = getPackedAggregateLLVMType(types, type)) {
+    if (auto *packed = getPackedRegisterAggregateLLVMType(types, type)) {
         return packed;
     }
     return types.getLLVMType(type);
@@ -94,7 +117,7 @@ packNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
         return value;
     }
     auto *directType = getNativeAbiDirectLLVMType(types, type);
-    if (!usesNativeAbiPackedDirectType(types, type)) {
+    if (!usesNativeAbiPackedRegisterAggregate(types, type)) {
         return coerceDirectValue(builder, value, directType);
     }
 
@@ -111,7 +134,7 @@ loadNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
         return nullptr;
     }
     auto *directType = getNativeAbiDirectLLVMType(types, type);
-    if (!usesNativeAbiPackedDirectType(types, type)) {
+    if (!usesNativeAbiPackedRegisterAggregate(types, type)) {
         return builder.CreateLoad(directType, sourcePtr);
     }
 
@@ -128,7 +151,7 @@ storeNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
     }
     auto *directType = getNativeAbiDirectLLVMType(types, type);
     auto *coercedValue = coerceDirectValue(builder, value, directType);
-    if (!usesNativeAbiPackedDirectType(types, type)) {
+    if (!usesNativeAbiPackedRegisterAggregate(types, type)) {
         builder.CreateStore(coercedValue, destPtr);
         return;
     }
@@ -149,14 +172,18 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
 
     auto *retType = funcType->getRetType();
     signature.hasIndirectResult = usesNativeAbiIndirectResult(types, retType);
+    signature.hasDirectAggregateResult =
+        retType && !signature.hasIndirectResult &&
+        isNativeAbiAggregateType(retType) &&
+        !usesNativeAbiPackedRegisterAggregate(types, retType);
     signature.resultInfo.passKind = signature.hasIndirectResult
         ? NativeAbiPassKind::IndirectValue
         : NativeAbiPassKind::Direct;
     signature.resultInfo.llvmType = signature.hasIndirectResult
         ? nullptr
         : getNativeAbiDirectLLVMType(types, retType);
-    signature.resultInfo.packedAggregate =
-        retType && usesNativeAbiPackedDirectType(types, retType);
+    signature.resultInfo.packedRegisterAggregate =
+        retType && usesNativeAbiPackedRegisterAggregate(types, retType);
 
     const auto &argTypes = funcType->getArgTypes();
     signature.sourceArgInfos.reserve(argTypes.size());
@@ -166,9 +193,9 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
             funcType->getArgBindingKind(i) == BindingKind::Ref) {
             info.passKind = NativeAbiPassKind::IndirectRef;
         } else if (isNativeAbiAggregateType(argTypes[i])) {
-            if (usesNativeAbiPackedDirectType(types, argTypes[i])) {
+            if (usesNativeAbiPackedRegisterAggregate(types, argTypes[i])) {
                 info.passKind = NativeAbiPassKind::Direct;
-                info.packedAggregate = true;
+                info.packedRegisterAggregate = true;
                 info.llvmType = getNativeAbiDirectLLVMType(types, argTypes[i]);
             } else {
                 info.passKind = NativeAbiPassKind::IndirectValue;
