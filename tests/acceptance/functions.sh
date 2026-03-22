@@ -29,6 +29,8 @@ ffi_export_in="$(new_tmp_file ffi-export)"
 ffi_export_out="$(new_tmp_file ffi-export-out)"
 ffi_export_pointer_in="$(new_tmp_file ffi-export-pointer)"
 ffi_export_pointer_out="$(new_tmp_file ffi-export-pointer-out)"
+self_ptr_struct_in="$(new_tmp_file self-ptr-struct)"
+self_ptr_struct_out="$(new_tmp_file self-ptr-struct-out)"
 ffi_abi_bad_in="$(new_tmp_file ffi-abi-bad)"
 ffi_abi_bad_out="$(new_tmp_file ffi-abi-bad-out)"
 ffi_repr_bad_in="$(new_tmp_file ffi-repr-bad)"
@@ -39,8 +41,8 @@ ffi_method_bad_in="$(new_tmp_file ffi-method-bad)"
 ffi_method_bad_out="$(new_tmp_file ffi-method-bad-out)"
 ffi_ref_bad_in="$(new_tmp_file ffi-ref-bad)"
 ffi_ref_bad_out="$(new_tmp_file ffi-ref-bad-out)"
-ffi_indexable_bad_in="$(new_tmp_file ffi-indexable-bad)"
-ffi_indexable_bad_out="$(new_tmp_file ffi-indexable-bad-out)"
+ffi_indexable_in="$(new_tmp_file ffi-indexable)"
+ffi_indexable_out="$(new_tmp_file ffi-indexable-out)"
 ffi_callback_bad_in="$(new_tmp_file ffi-callback-bad)"
 ffi_callback_bad_out="$(new_tmp_file ffi-callback-bad-out)"
 ffi_aggregate_bad_in="$(new_tmp_file ffi-aggregate-bad)"
@@ -280,6 +282,24 @@ EOF
 "$BIN" --emit-ir --verify-ir "$ffi_export_pointer_in" >"$ffi_export_pointer_out"
 grep -Eq '^define ptr @passthrough\(ptr [^)]+\)' "$ffi_export_pointer_out"
 
+cat >"$self_ptr_struct_in" <<'EOF'
+repr("C") struct Node {
+    value i32
+    next Node*
+}
+
+def main() i32 {
+    var node Node
+    var p Node* = &node
+    (*p).next = p
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$self_ptr_struct_in" >"$self_ptr_struct_out"
+grep -Eq '^%.*Node = type \{ i32, ptr \}$' "$self_ptr_struct_out"
+grep -Eq 'alloca %.*Node' "$self_ptr_struct_out"
+grep -Fq 'store ptr ' "$self_ptr_struct_out"
+
 cat >"$ffi_abi_bad_in" <<'EOF'
 extern "Rust" def bad(v i32) i32
 EOF
@@ -325,12 +345,13 @@ expect_emit_ir_failure "$ffi_ref_bad_in" "$ffi_ref_bad_out" 'expected extern C r
 grep -Fq 'semantic error: extern "C" function `bad` parameter `x` cannot use `ref` binding' "$ffi_ref_bad_out"
 grep -Fq 'help: Use an explicit pointer type like `i32*` instead.' "$ffi_ref_bad_out"
 
-cat >"$ffi_indexable_bad_in" <<'EOF'
-extern "C" def bad(p u8[*]) i32
+cat >"$ffi_indexable_in" <<'EOF'
+extern "C" def alloc(size u64) u8[*]
+extern "C" def fill(buf u8[*], value u8) i32
 EOF
-expect_emit_ir_failure "$ffi_indexable_bad_in" "$ffi_indexable_bad_out" 'expected extern C indexable pointer program to fail'
-grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: u8[*]' "$ffi_indexable_bad_out"
-grep -Fq 'help: Use an explicit raw pointer type like `u8*`. `T[*]` is a Lona-only indexable pointer type.' "$ffi_indexable_bad_out"
+"$BIN" --emit-ir --verify-ir "$ffi_indexable_in" >"$ffi_indexable_out"
+grep -q '^declare ptr @alloc(i64)' "$ffi_indexable_out"
+grep -q '^declare i32 @fill(ptr, i8)' "$ffi_indexable_out"
 
 cat >"$ffi_callback_bad_in" <<'EOF'
 extern "C" def bad(cb (i32)* i32) i32
@@ -361,7 +382,7 @@ extern "C" def bad(p Pair*) i32
 EOF
 expect_emit_ir_failure "$ffi_struct_ptr_bad_in" "$ffi_struct_ptr_bad_out" 'expected extern C native struct pointer program to fail'
 grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair*' "$ffi_struct_ptr_bad_out"
-grep -Fq 'help: Use raw pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$ffi_struct_ptr_bad_out"
+grep -Fq 'help: Use pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$ffi_struct_ptr_bad_out"
 
 cat >"$ffi_opaque_var_bad_in" <<'EOF'
 extern struct FILE

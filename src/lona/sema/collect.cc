@@ -154,9 +154,18 @@ describeExternCType(TypeClass *type, TypeNode *node) {
 
 bool
 isExternCCallbackType(TypeClass *type) {
-    auto *pointer = type ? type->as<PointerType>() : nullptr;
-    return pointer && pointer->getPointeeType() &&
-           pointer->getPointeeType()->as<FuncType>();
+    if (!type) {
+        return false;
+    }
+    if (auto *pointer = type->as<PointerType>()) {
+        return pointer->getPointeeType() &&
+               pointer->getPointeeType()->as<FuncType>();
+    }
+    if (auto *indexable = type->as<IndexablePointerType>()) {
+        return indexable->getElementType() &&
+               indexable->getElementType()->as<FuncType>();
+    }
+    return false;
 }
 
 bool
@@ -186,6 +195,11 @@ isCCompatiblePointerTarget(TypeClass *type) {
         return pointeeType && !pointeeType->as<FuncType>() &&
             isCCompatiblePointerTarget(pointeeType);
     }
+    if (auto *indexableType = type->as<IndexablePointerType>()) {
+        auto *elementType = indexableType->getElementType();
+        return elementType && !elementType->as<FuncType>() &&
+            isCCompatiblePointerTarget(elementType);
+    }
     return false;
 }
 
@@ -199,6 +213,9 @@ isCCompatibleReprCFieldType(TypeClass *type) {
     }
     if (auto *pointerType = type->as<PointerType>()) {
         return isCCompatiblePointerTarget(pointerType->getPointeeType());
+    }
+    if (auto *indexableType = type->as<IndexablePointerType>()) {
+        return isCCompatiblePointerTarget(indexableType->getElementType());
     }
     if (auto *structType = type->as<StructType>()) {
         return structType->isReprC();
@@ -251,12 +268,6 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
     auto subject = describeExternCTypeSubject(role, bindingName);
     auto typeName = describeExternCType(type, typeNode);
 
-    if (type->as<IndexablePointerType>()) {
-        error(loc,
-              "extern \"C\" function `" + funcName +
-                  "` uses unsupported " + subject + ": " + typeName,
-              "Use an explicit raw pointer type like `u8*`. `T[*]` is a Lona-only indexable pointer type.");
-    }
     if (isExternCCallbackType(type)) {
         error(loc,
               "extern \"C\" function `" + funcName +
@@ -268,7 +279,16 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
             error(loc,
                   "extern \"C\" function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use raw pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+        }
+        return;
+    }
+    if (auto *indexableType = type->as<IndexablePointerType>()) {
+        if (!isCCompatiblePointerTarget(indexableType->getElementType())) {
+            error(loc,
+                  "extern \"C\" function `" + funcName +
+                      "` uses unsupported " + subject + ": " + typeName,
+                  "Use pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }

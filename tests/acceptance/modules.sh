@@ -237,7 +237,7 @@ extern "C" def bad(p dep.Pair*) i32
 EOF
 expect_emit_ir_failure "$import_c_repr_main_in" "$import_c_native_ptr_bad_out" 'expected imported native struct pointer over C FFI to fail'
 grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: dep.Pair*' "$import_c_native_ptr_bad_out"
-grep -Fq 'help: Use raw pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$import_c_native_ptr_bad_out"
+grep -Fq 'help: Use pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$import_c_native_ptr_bad_out"
 
 cat >"$import_main_in" <<'EOF'
 import math

@@ -114,7 +114,6 @@ v0 必须把“允许过 FFI 的类型集合”收死。
 
 - `tuple`
 - `ref`
-- `T[*]`
 - 方法类型
 - 不具备 C 布局保证的聚合
 
@@ -127,9 +126,9 @@ v0 必须把“允许过 FFI 的类型集合”收死。
 建议语法：
 
 ```lona
-extern "C" def puts(msg i8*) i32
-extern "C" def malloc(size u64) u8*
-extern "C" def free(p u8*)
+extern "C" def puts(msg u8[*]) i32
+extern "C" def malloc(size u64) u8[*]
+extern "C" def free(p u8[*])
 ```
 
 语义：
@@ -260,14 +259,15 @@ callback 很重要，但它要求：
 以下类型允许：
 
 - `T*`
+- `T[*]`
 - `u8*` / `i8*`
+- `u8[*]` / `i8[*]`
 - `void*` 的语言映射，建议先用 `u8*` 或保留专门的 `opaque*` 设计到后续讨论
 - 指向 opaque struct 的指针
 - 指向 `repr(C)` struct 的指针
 
 以下类型禁止直接过 C FFI：
 
-- `T[*]`
 - `ref T`
 - `(...)* Ret`，除非后续 callback 阶段明确带有 C ABI
 
@@ -474,7 +474,6 @@ v0 更适合把下面这些能力放到 CLI / build system：
 
 - `extern "C"` method
 - `extern "C"` 中的 `ref`
-- `extern "C"` 中的 `T[*]`
 - 非 C-compatible 的聚合
 - opaque struct 按值使用
 
@@ -529,7 +528,7 @@ v0 至少补这些回归：
 
 5. 诊断
    - `extern "C"` method 拒绝
-   - `ref` / `T[*]` 拒绝
+   - `ref` 拒绝
    - 非 `repr(C)` struct 拒绝
    - opaque struct 按值拒绝
 

@@ -17,7 +17,7 @@
 ## Smoke
 
 - [smoke/benchmark.sh](smoke/benchmark.sh): 编译耗时 smoke benchmark。
-- [smoke/examples.sh](smoke/examples.sh): 编译 `example/` 下的主样例，锁住文档样例可用性。
+- [smoke/examples.sh](smoke/examples.sh): 编译 `example/` 下的主样例，并实际运行 system-level `C FFI` 示例，锁住文档样例可用性。
 - [smoke/system.sh](smoke/system.sh): `lac` system 路线 smoke。
 - [smoke/native.sh](smoke/native.sh): `lac-native` bare 路线 smoke。
 - [template_random.py](template_random.py): 模板随机拼接测试；生成支持的语法组合并验证 LLVM IR 和 clang object 编译。

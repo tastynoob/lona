@@ -20,6 +20,7 @@
 #include <llvm/IR/Value.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lona {
@@ -405,6 +406,37 @@ class TypeTable {
         }
     };
     std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash> methodFunctions_;
+    std::unordered_set<llvm::StructType *> materializingStructBodies_;
+
+    void completeStructBodyIfNeeded(StructType *structType,
+                                    llvm::StructType *llvmStruct) {
+        if (!structType || !llvmStruct || structType->isOpaque() ||
+            !llvmStruct->isOpaque()) {
+            return;
+        }
+
+        auto [_, inserted] = materializingStructBodies_.insert(llvmStruct);
+        if (!inserted) {
+            return;
+        }
+
+        struct Guard {
+            std::unordered_set<llvm::StructType *> &active;
+            llvm::StructType *type;
+            ~Guard() { active.erase(type); }
+        } guard{materializingStructBodies_, llvmStruct};
+
+        // Recursive struct pointers re-enter `getLLVMType` while the outer
+        // struct body is still being materialized. Reuse the placeholder
+        // `llvm::StructType` instead of trying to complete it twice.
+        std::vector<llvm::Type *> memberTypes;
+        auto orderedMembers = structType->getMembersInOrder();
+        memberTypes.reserve(orderedMembers.size());
+        for (const auto &member : orderedMembers) {
+            memberTypes.push_back(getLLVMType(member.first));
+        }
+        llvmStruct->setBody(memberTypes);
+    }
 
 public:
     TypeTable(llvm::Module& module)
@@ -422,15 +454,7 @@ public:
         if (found != llvmTypes_.end()) {
             if (auto *structType = type->as<StructType>()) {
                 auto *llvmStruct = llvm::cast<llvm::StructType>(found->second);
-                if (!structType->isOpaque() && llvmStruct->isOpaque()) {
-                    std::vector<llvm::Type *> memberTypes;
-                    auto orderedMembers = structType->getMembersInOrder();
-                    memberTypes.reserve(orderedMembers.size());
-                    for (const auto &member : orderedMembers) {
-                        memberTypes.push_back(getLLVMType(member.first));
-                    }
-                    llvmStruct->setBody(memberTypes);
-                }
+                completeStructBodyIfNeeded(structType, llvmStruct);
             }
             return found->second;
         }
@@ -439,15 +463,7 @@ public:
             auto *llvmStruct = llvm::cast<llvm::StructType>(
                 structType->buildLLVMType(*this));
             llvmTypes_[type] = llvmStruct;
-            if (!structType->isOpaque() && llvmStruct->isOpaque()) {
-                std::vector<llvm::Type *> memberTypes;
-                auto orderedMembers = structType->getMembersInOrder();
-                memberTypes.reserve(orderedMembers.size());
-                for (const auto &member : orderedMembers) {
-                    memberTypes.push_back(getLLVMType(member.first));
-                }
-                llvmStruct->setBody(memberTypes);
-            }
+            completeStructBodyIfNeeded(structType, llvmStruct);
             return llvmStruct;
         }
 
