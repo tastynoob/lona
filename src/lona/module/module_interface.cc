@@ -61,18 +61,25 @@ ModuleInterface::clear() {
 }
 
 StructType *
-ModuleInterface::declareStructType(const std::string &localName) {
+ModuleInterface::declareStructType(const std::string &localName,
+                                   StructDeclKind declKind) {
     auto found = localTypes_.find(localName);
     if (found != localTypes_.end()) {
-        return found->second.type ? found->second.type->as<StructType>() : nullptr;
+        auto *type = found->second.type ? found->second.type->as<StructType>() : nullptr;
+        if (type) {
+            type->setDeclKind(declKind);
+            found->second.declKind = declKind;
+        }
+        return type;
     }
 
     auto exportedName = exportedNameFor(localName);
-    auto type = std::make_unique<StructType>(string(exportedName.c_str()));
+    auto type = std::make_unique<StructType>(string(exportedName.c_str()), declKind);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[exportedName] = typePtr;
-    localTypes_.emplace(localName, TypeDecl{localName, exportedName, typePtr});
+    localTypes_.emplace(localName,
+                        TypeDecl{localName, exportedName, declKind, typePtr});
     return typePtr->as<StructType>();
 }
 

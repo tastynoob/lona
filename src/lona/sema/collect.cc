@@ -165,6 +165,66 @@ isExternCByValueAggregateType(TypeClass *type) {
                     type->as<ArrayType>());
 }
 
+bool
+isCCompatibleStructIdentity(StructType *type) {
+    return type && (type->isExternDecl() || type->isReprC());
+}
+
+bool
+isCCompatiblePointerTarget(TypeClass *type) {
+    if (!type) {
+        return false;
+    }
+    if (type->as<BaseType>()) {
+        return true;
+    }
+    if (auto *structType = type->as<StructType>()) {
+        return isCCompatibleStructIdentity(structType);
+    }
+    if (auto *pointerType = type->as<PointerType>()) {
+        auto *pointeeType = pointerType->getPointeeType();
+        return pointeeType && !pointeeType->as<FuncType>() &&
+            isCCompatiblePointerTarget(pointeeType);
+    }
+    return false;
+}
+
+bool
+isCCompatibleReprCFieldType(TypeClass *type) {
+    if (!type) {
+        return false;
+    }
+    if (type->as<BaseType>()) {
+        return true;
+    }
+    if (auto *pointerType = type->as<PointerType>()) {
+        return isCCompatiblePointerTarget(pointerType->getPointeeType());
+    }
+    if (auto *structType = type->as<StructType>()) {
+        return structType->isReprC();
+    }
+    if (auto *arrayType = type->as<ArrayType>()) {
+        return arrayType->hasStaticLayout() &&
+            isCCompatibleReprCFieldType(arrayType->getElementType());
+    }
+    return false;
+}
+
+void
+rejectOpaqueStructByValue(TypeClass *type, TypeNode *typeNode,
+                          const location &loc, const std::string &context) {
+    auto *structType = type ? type->as<StructType>() : nullptr;
+    if (!structType || !structType->isExternDecl()) {
+        return;
+    }
+    auto typeName = describeExternCType(type, typeNode);
+    error(loc,
+          "opaque extern struct `" + typeName +
+              "` cannot be used by value in " + context,
+          "Use `" + typeName +
+              "*` instead. Opaque C structs are only supported behind pointers.");
+}
+
 void
 validateStructDeclShape(AstStructDecl *node) {
     if (!node) {
@@ -203,6 +263,15 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
                   "` uses unsupported " + subject + ": " + typeName,
               "Callback support is not implemented in C FFI v0 yet.");
     }
+    if (auto *pointerType = type->as<PointerType>()) {
+        if (!isCCompatiblePointerTarget(pointerType->getPointeeType())) {
+            error(loc,
+                  "extern \"C\" function `" + funcName +
+                      "` uses unsupported " + subject + ": " + typeName,
+                  "Use raw pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+        }
+        return;
+    }
     if (type->as<TupleType>()) {
         error(loc,
               "extern \"C\" function `" + funcName +
@@ -215,6 +284,29 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
                   "` uses unsupported " + subject + ": " + typeName,
               "Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.");
     }
+}
+
+void
+validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                        TypeClass *fieldType) {
+    if (!structDecl || !fieldDecl || !fieldType) {
+        return;
+    }
+    rejectOpaqueStructByValue(fieldType, fieldDecl->typeNode, fieldDecl->loc,
+                              "struct field `" + toStdString(fieldDecl->field) + "`");
+    if (!structDecl->isReprC()) {
+        return;
+    }
+    if (isCCompatibleReprCFieldType(fieldType)) {
+        return;
+    }
+
+    auto fieldTypeName = describeExternCType(fieldType, fieldDecl->typeNode);
+    error(fieldDecl->loc,
+          "repr(\"C\") struct `" + toStdString(structDecl->name) +
+              "` field `" + toStdString(fieldDecl->field) +
+              "` uses unsupported type: " + fieldTypeName,
+          "Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `repr(\"C\")` structs.");
 }
 
 void
@@ -248,6 +340,10 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
             }
             auto *argType = argTypeIndex < argTypes.size() ? argTypes[argTypeIndex]
                                                            : nullptr;
+            rejectOpaqueStructByValue(
+                argType, varDecl->typeNode, varDecl->loc,
+                "parameter `" + toStdString(varDecl->field) + "` in function `" +
+                    funcName + "`");
             validateExternCType(node, methodParent, "parameter",
                                 toStdString(varDecl->field), argType,
                                 varDecl->typeNode, varDecl->loc);
@@ -255,6 +351,8 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
         }
     }
 
+    rejectOpaqueStructByValue(retType, node->retType, node->loc,
+                              "return type of function `" + funcName + "`");
     validateExternCType(node, methodParent, "return type", std::string(),
                         retType, node->retType, node->loc);
 }
@@ -593,11 +691,17 @@ declareStructType(TypeTable *typeMgr, AstStructDecl *node,
 
     auto *existing = typeMgr->getType(llvm::StringRef(resolvedName));
     if (existing != nullptr) {
-        return existing->as<StructType>();
+        auto *existingStruct = existing->as<StructType>();
+        if (existingStruct) {
+            existingStruct->setDeclKind(node ? node->declKind
+                                             : StructDeclKind::Native);
+        }
+        return existingStruct;
     }
 
     string struct_name(resolvedName.c_str());
-    auto *lostructTy = new StructType(struct_name);
+    auto *lostructTy = new StructType(
+        struct_name, node ? node->declKind : StructDeclKind::Native);
 
     typeMgr->addType(struct_name, lostructTy);
     return lostructTy;
@@ -664,6 +768,9 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
             loretType, node->retType,
             "unsupported bare function return type for `" + toStdString(func_name) + "`",
             node->loc);
+        rejectOpaqueStructByValue(
+            loretType, node->retType, node->loc,
+            "return type of function `" + toStdString(func_name) + "`");
     }
 
     if (methodParent) {
@@ -692,6 +799,10 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                     toStdString(varDecl->field) + "` in `" +
                     toStdString(func_name) + "`",
                 varDecl->loc);
+            rejectOpaqueStructByValue(
+                type, varDecl->typeNode, varDecl->loc,
+                "parameter `" + toStdString(varDecl->field) + "` in function `" +
+                    toStdString(func_name) + "`");
             loargs.push_back(type);
         }
     }
@@ -738,6 +849,7 @@ class StructVisitor : public AstVisitorAny {
     TypeTable *typeMgr;
     CompilationUnit *unit;
     bool exportNamespace;
+    AstStructDecl *structDecl = nullptr;
 
     llvm::StringMap<StructType::ValueTy> members;
     int nextMemberIndex = 0;
@@ -770,6 +882,7 @@ class StructVisitor : public AstVisitorAny {
             "unsupported bare function struct field type for `" +
                 toStdString(name) + "`",
             node->loc);
+        validateStructFieldType(structDecl, node, type);
 
         members.insert({llvm::StringRef(name.tochara(), name.size()),
                         {type, nextMemberIndex++}});
@@ -781,7 +894,8 @@ public:
     StructVisitor(TypeTable *typeMgr, AstStructDecl *node,
                   CompilationUnit *unit = nullptr,
                   bool exportNamespace = false)
-        : typeMgr(typeMgr), unit(unit), exportNamespace(exportNamespace) {
+        : typeMgr(typeMgr), unit(unit), exportNamespace(exportNamespace),
+          structDecl(node) {
         auto *lostructTy = declareStructType(typeMgr, node, unit, exportNamespace);
         assert(lostructTy);
 
@@ -1137,7 +1251,8 @@ class InterfaceCollector {
 
     void declareStructs() {
         for (auto *structDecl : structDecls_) {
-            interface_->declareStructType(toStdString(structDecl->name));
+            interface_->declareStructType(toStdString(structDecl->name),
+                                          structDecl->declKind);
         }
     }
 
@@ -1182,6 +1297,7 @@ class InterfaceCollector {
                     "unsupported bare function struct field type for `" +
                         toStdString(varDecl->field) + "`",
                     varDecl->loc);
+                validateStructFieldType(structDecl, varDecl, fieldType);
                 members.insert({llvm::StringRef(varDecl->field.tochara(),
                                                 varDecl->field.size()),
                                 {fieldType, index++}});
@@ -1219,6 +1335,10 @@ class InterfaceCollector {
                         toStdString(varDecl->field) + "` in `" +
                         toStdString(node->name) + "`",
                     varDecl->loc);
+                rejectOpaqueStructByValue(
+                    argType, varDecl->typeNode, varDecl->loc,
+                    "parameter `" + toStdString(varDecl->field) +
+                        "` in function `" + toStdString(node->name) + "`");
                 argTypes.push_back(argType);
             }
         }
@@ -1237,6 +1357,9 @@ class InterfaceCollector {
                 "unsupported bare function return type for `" +
                     toStdString(node->name) + "`",
                 node->loc);
+            rejectOpaqueStructByValue(
+                retType, node->retType, node->loc,
+                "return type of function `" + toStdString(node->name) + "`");
         }
 
         validateExternCFunctionSignature(node, methodParent, argTypes, retType);

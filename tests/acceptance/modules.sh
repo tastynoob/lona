@@ -48,6 +48,11 @@ import_c_abi_dir="$(new_tmp_dir import-c-abi)"
 import_c_abi_dep_in="$import_c_abi_dir/dep.lo"
 import_c_abi_main_in="$import_c_abi_dir/main.lo"
 import_c_abi_out="$(new_tmp_file import-c-abi-out)"
+import_c_repr_dir="$(new_tmp_dir import-c-repr)"
+import_c_repr_dep_in="$import_c_repr_dir/dep.lo"
+import_c_repr_main_in="$import_c_repr_dir/main.lo"
+import_c_repr_out="$(new_tmp_file import-c-repr-out)"
+import_c_native_ptr_bad_out="$(new_tmp_file import-c-native-ptr-bad-out)"
 import_mutating_method_dir="$(new_tmp_dir import-mutating-method)"
 import_mutating_method_dep_in="$import_mutating_method_dir/dep.lo"
 import_mutating_method_main_in="$import_mutating_method_dir/main.lo"
@@ -198,6 +203,41 @@ grep -Fq 'call i32 @c_inc(i32 -2)' "$import_c_abi_out"
 grep -Fq 'call i32 @c_inc(i32 %' "$import_c_abi_out"
 grep -Fq 'call i32 @abs(i32 %' "$import_c_abi_out"
 ! grep -Fq '@dep.c_inc' "$import_c_abi_out"
+
+cat >"$import_c_repr_dep_in" <<'EOF'
+extern struct FILE
+
+repr("C") struct Point {
+    x i32
+    y i32
+}
+EOF
+cat >"$import_c_repr_main_in" <<'EOF'
+import dep
+
+extern "C" def shift(p dep.Point*, fp dep.FILE*) dep.Point*
+
+def main() i32 {
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$import_c_repr_main_in" >"$import_c_repr_out"
+grep -Fq 'declare ptr @shift(ptr, ptr)' "$import_c_repr_out"
+
+cat >"$import_c_repr_dep_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+EOF
+cat >"$import_c_repr_main_in" <<'EOF'
+import dep
+
+extern "C" def bad(p dep.Pair*) i32
+EOF
+expect_emit_ir_failure "$import_c_repr_main_in" "$import_c_native_ptr_bad_out" 'expected imported native struct pointer over C FFI to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: dep.Pair*' "$import_c_native_ptr_bad_out"
+grep -Fq 'help: Use raw pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$import_c_native_ptr_bad_out"
 
 cat >"$import_main_in" <<'EOF'
 import math

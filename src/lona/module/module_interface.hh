@@ -29,6 +29,7 @@ public:
     struct TypeDecl {
         std::string localName;
         std::string exportedName;
+        StructDeclKind declKind = StructDeclKind::Native;
         TypeClass *type = nullptr;
     };
 
@@ -82,7 +83,8 @@ public:
     void markCollected() { collected_ = true; }
 
     void clear();
-    StructType *declareStructType(const std::string &localName);
+    StructType *declareStructType(const std::string &localName,
+                                  StructDeclKind declKind = StructDeclKind::Native);
     bool declareFunction(std::string localName, FuncType *type,
                          std::vector<std::string> paramNames = {});
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);

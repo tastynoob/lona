@@ -78,16 +78,25 @@ private:
     llvm::StringMap<std::vector<std::string>> methodParamNames;
 
     bool opaque = false;
+    StructDeclKind declKind = StructDeclKind::Native;
 public:
     StructType(llvm::StringMap<ValueTy> &&members,
-               string full_name)
-        : TypeClass(full_name), members(members), opaque(false) {}
+               string full_name,
+               StructDeclKind declKind = StructDeclKind::Native)
+        : TypeClass(full_name), members(members), opaque(false),
+          declKind(declKind) {}
 
     // create opaque struct
-    StructType(string full_name)
-        : TypeClass(full_name), opaque(true) {}
+    StructType(string full_name,
+               StructDeclKind declKind = StructDeclKind::Native)
+        : TypeClass(full_name), opaque(true), declKind(declKind) {}
 
     bool isOpaque() const { return opaque; }
+    StructDeclKind getDeclKind() const { return declKind; }
+    bool isExternDecl() const { return declKind == StructDeclKind::Extern; }
+    bool isReprC() const { return declKind == StructDeclKind::ReprC; }
+    bool isNativeDecl() const { return declKind == StructDeclKind::Native; }
+    void setDeclKind(StructDeclKind kind) { declKind = kind; }
 
     void complete(const llvm::StringMap<ValueTy> &newMembers) {
         members = newMembers;
@@ -575,6 +584,24 @@ public:
         }
         if (auto *structType = type->as<StructType>()) {
             if (auto *existing = getType(type->full_name)) {
+                auto *existingStruct = existing->as<StructType>();
+                if (existingStruct) {
+                    existingStruct->setDeclKind(structType->getDeclKind());
+                    if (existingStruct->isOpaque() && !structType->isOpaque()) {
+                        existingStruct->complete(structType->getMembers());
+                    }
+                    for (const auto &method : structType->getMethodTypes()) {
+                        if (!existingStruct->getMethodType(method.first())) {
+                            std::vector<std::string> paramNames;
+                            if (const auto *storedParamNames =
+                                    structType->getMethodParamNames(method.first())) {
+                                paramNames = *storedParamNames;
+                            }
+                            existingStruct->addMethodType(method.first(), method.second,
+                                                          std::move(paramNames));
+                        }
+                    }
+                }
                 return existing;
             }
             addType(type->full_name, type);

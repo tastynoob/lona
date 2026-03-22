@@ -406,6 +406,23 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
 }
 
 void
+rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
+    if (!node || !type) {
+        return;
+    }
+    auto *structType = type->as<StructType>();
+    if (!structType || !structType->isExternDecl()) {
+        return;
+    }
+    error(node->loc,
+          "opaque extern struct `" + describeStorageType(type, node) +
+              "` cannot be used by value in variable `" +
+              toStdString(node->getName()) + "`",
+          "Use `" + describeStorageType(type, node) +
+              "*` instead. Opaque C structs are only supported behind pointers.");
+}
+
+void
 rejectUninitializedFunctionDerivedStorage(AstVarDef *node) {
     if (!node || node->withInitVal()) {
         return;
@@ -784,6 +801,14 @@ class FunctionAnalyzer {
                 auto *declaredType = typeObject->declaredType();
                 auto *structType = declaredType ? declaredType->as<StructType>() : nullptr;
                 if (structType) {
+                    if (structType->isExternDecl()) {
+                        error(loc,
+                              "opaque extern struct `" +
+                                  describeResolvedType(structType) +
+                                  "` cannot be constructed by value",
+                              "Use `" + describeResolvedType(structType) +
+                                  "*` from an `extern \"C\"` API instead. Opaque C structs do not expose fields or value layout.");
+                    }
                     resolution.kind = CallResolutionKind::ConstructorCall;
                     resolution.resultEntity = EntityRef::typedValue(structType);
                     return resolution;
@@ -2041,6 +2066,7 @@ class FunctionAnalyzer {
         if (auto *typeNode = node->getTypeNode()) {
             type = requireType(typeNode, typeNode->loc, "unknown variable type");
             rejectBareFunctionStorage(type, node);
+            rejectOpaqueStructStorage(type, node);
         } else if (isRefBinding) {
             error(node->loc,
                   "reference binding `" + toStdString(node->getName()) +
@@ -2101,6 +2127,7 @@ class FunctionAnalyzer {
                       "this expression doesn't produce a storable runtime value");
             }
             rejectBareFunctionStorage(type, node);
+            rejectOpaqueStructStorage(type, node);
         } else {
             error(node->loc,
                   "cannot infer the type of `" + toStdString(node->getName()) +

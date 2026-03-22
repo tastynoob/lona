@@ -45,6 +45,14 @@ ffi_callback_bad_in="$(new_tmp_file ffi-callback-bad)"
 ffi_callback_bad_out="$(new_tmp_file ffi-callback-bad-out)"
 ffi_aggregate_bad_in="$(new_tmp_file ffi-aggregate-bad)"
 ffi_aggregate_bad_out="$(new_tmp_file ffi-aggregate-bad-out)"
+ffi_struct_ptr_bad_in="$(new_tmp_file ffi-struct-ptr-bad)"
+ffi_struct_ptr_bad_out="$(new_tmp_file ffi-struct-ptr-bad-out)"
+ffi_opaque_var_bad_in="$(new_tmp_file ffi-opaque-var-bad)"
+ffi_opaque_var_bad_out="$(new_tmp_file ffi-opaque-var-bad-out)"
+ffi_opaque_ctor_bad_in="$(new_tmp_file ffi-opaque-ctor-bad)"
+ffi_opaque_ctor_bad_out="$(new_tmp_file ffi-opaque-ctor-bad-out)"
+ffi_repr_field_bad_in="$(new_tmp_file ffi-repr-field-bad)"
+ffi_repr_field_bad_out="$(new_tmp_file ffi-repr-field-bad-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
 func_name_conflict_in="$(new_tmp_file func-name-conflict)"
@@ -342,6 +350,56 @@ EOF
 expect_emit_ir_failure "$ffi_aggregate_bad_in" "$ffi_aggregate_bad_out" 'expected extern C aggregate parameter program to fail'
 grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair' "$ffi_aggregate_bad_out"
 grep -Fq 'help: Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.' "$ffi_aggregate_bad_out"
+
+cat >"$ffi_struct_ptr_bad_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+extern "C" def bad(p Pair*) i32
+EOF
+expect_emit_ir_failure "$ffi_struct_ptr_bad_in" "$ffi_struct_ptr_bad_out" 'expected extern C native struct pointer program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair*' "$ffi_struct_ptr_bad_out"
+grep -Fq 'help: Use raw pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.' "$ffi_struct_ptr_bad_out"
+
+cat >"$ffi_opaque_var_bad_in" <<'EOF'
+extern struct FILE
+
+def main() i32 {
+    var file FILE
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$ffi_opaque_var_bad_in" "$ffi_opaque_var_bad_out" 'expected opaque extern struct local variable program to fail'
+grep -Fq 'semantic error: opaque extern struct `FILE` cannot be used by value in variable `file`' "$ffi_opaque_var_bad_out"
+grep -Fq 'help: Use `FILE*` instead. Opaque C structs are only supported behind pointers.' "$ffi_opaque_var_bad_out"
+
+cat >"$ffi_opaque_ctor_bad_in" <<'EOF'
+extern struct FILE
+
+def main() i32 {
+    var file = FILE()
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$ffi_opaque_ctor_bad_in" "$ffi_opaque_ctor_bad_out" 'expected opaque extern struct constructor program to fail'
+grep -Eq 'semantic error: opaque extern struct `([^`]*\.)?FILE` cannot be constructed by value' "$ffi_opaque_ctor_bad_out"
+grep -Fq 'from an `extern "C"` API instead. Opaque C structs do not expose fields or value layout.' "$ffi_opaque_ctor_bad_out"
+
+cat >"$ffi_repr_field_bad_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+repr("C") struct Wrapper {
+    pair Pair
+}
+EOF
+expect_emit_ir_failure "$ffi_repr_field_bad_in" "$ffi_repr_field_bad_out" 'expected repr C native field program to fail'
+grep -Fq 'semantic error: repr("C") struct `Wrapper` field `pair` uses unsupported type: Pair' "$ffi_repr_field_bad_out"
+grep -Fq 'help: Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `repr("C")` structs.' "$ffi_repr_field_bad_out"
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {
