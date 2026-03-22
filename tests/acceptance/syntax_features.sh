@@ -337,8 +337,8 @@ def bad() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_in" >"$tuple_out"
-grep -q 'alloca { i32, i1 }' "$tuple_out"
-grep -q 'store { i32, i1 } { i32 1, i1 true }' "$tuple_out"
+grep -q 'alloca { i32, i8 }' "$tuple_out"
+grep -q 'store { i32, i8 } { i32 1, i8 1 }' "$tuple_out"
 
 cat >"$tuple_flow_in" <<'EOF'
 def echo(pair <i32, bool>) <i32, bool> {
@@ -393,8 +393,8 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_field_in" >"$tuple_field_out"
-grep -Fq 'getelementptr inbounds { i32, i1 }' "$tuple_field_out"
-grep -Fq 'load i1, ptr' "$tuple_field_out"
+grep -Fq 'getelementptr inbounds { i32, i8 }' "$tuple_field_out"
+grep -Fq 'load i8, ptr' "$tuple_field_out"
 grep -Fq 'load i32, ptr' "$tuple_field_out"
 grep -Fq 'store i32 7' "$tuple_field_out"
 
@@ -418,8 +418,8 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_no_context_in" >"$tuple_no_context_out"
-grep -Fq 'alloca { i32, i1 }' "$tuple_no_context_out"
-grep -Fq 'store { i32, i1 } { i32 1, i1 true }' "$tuple_no_context_out"
+grep -Fq 'alloca { i32, i8 }' "$tuple_no_context_out"
+grep -Fq 'store { i32, i8 } { i32 1, i8 1 }' "$tuple_no_context_out"
 
 cat >"$tuple_array_in" <<'EOF'
 def main() i32 {
@@ -431,8 +431,8 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_array_in" >"$tuple_array_out"
-grep -Fq 'alloca [2 x { i32, i1 }]' "$tuple_array_out"
-grep -Fq 'store [2 x { i32, i1 }]' "$tuple_array_out"
+grep -Fq 'alloca [2 x { i32, i8 }]' "$tuple_array_out"
+grep -Fq 'store [2 x { i32, i8 }]' "$tuple_array_out"
 
 cat >"$array_init_in" <<'EOF'
 def bad() i32 {
@@ -868,7 +868,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$struct_field_types_in" >"$struct_field_types_out"
-grep -Eq 'type \{ i1, float, \[4 x i8\], \{ i32, i1 \}, ptr, ptr \}' "$struct_field_types_out"
+grep -Eq 'type \{ i8, float, \[4 x i8\], \{ i32, i8 \}, ptr, ptr \}' "$struct_field_types_out"
 grep -Eq 'call i32 %.*\(i32 %.*\)' "$struct_field_types_out"
 grep -Eq 'getelementptr inbounds .* i32 0, i32 4' "$struct_field_types_out"
 grep -Eq 'getelementptr inbounds .* i32 0, i32 5' "$struct_field_types_out"

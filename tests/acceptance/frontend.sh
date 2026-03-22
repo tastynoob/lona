@@ -21,7 +21,7 @@ grep -q '"type": "Program"' "$json_out"
 grep -q '"type": "FieldCall"' "$json_out"
 
 "$BIN" --emit-ir --verify-ir "$INPUT" >"$ir_out"
-grep -Eq '^define %.*Complex @.*Complex\.add' "$ir_out"
+grep -Eq '^define void @.*Complex\.add\(ptr ' "$ir_out"
 grep -q '^define i32 @fibo' "$ir_out"
 if grep -q 'llvm.dbg.declare' "$ir_out"; then
     echo 'unexpected debug metadata in non-debug IR' >&2
@@ -72,12 +72,12 @@ def local_bool(a i32) bool {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$bool_in" >"$bool_out"
-grep -q '^define i1 @local_bool' "$bool_out"
-grep -q 'alloca i1' "$bool_out"
-grep -q 'store i1 true' "$bool_out"
-grep -q 'store i1 false' "$bool_out"
-grep -q 'load i1, ptr ' "$bool_out"
-grep -q 'ret i1 %' "$bool_out"
+grep -q '^define i8 @local_bool' "$bool_out"
+grep -q 'alloca i8' "$bool_out"
+grep -q 'store i8 1' "$bool_out"
+grep -q 'store i8 0' "$bool_out"
+grep -q 'load i8, ptr ' "$bool_out"
+grep -q 'ret i8 %' "$bool_out"
 
 cat >"$pointer_in" <<'EOF'
 def pointer_roundtrip(a i32) i32 {

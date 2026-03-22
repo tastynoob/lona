@@ -12,7 +12,7 @@ namespace {
 llvm::Value *
 reinterpretValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
                      TypeClass *dstType) {
-    if (!scope || !value || !srcType || !dstType || srcType == dstType) {
+    if (!scope || !value || !srcType || !dstType) {
         return value;
     }
     if (!isByteCopyCompatible(dstType, srcType)) {

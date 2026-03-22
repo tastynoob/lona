@@ -115,7 +115,7 @@ BaseType::buildLLVMType(TypeTable& types) {
         case Type::F64:
             return llvm::Type::getDoubleTy(types.getContext());
         case Type::BOOL:
-            return llvm::Type::getInt1Ty(types.getContext());
+            return llvm::Type::getInt8Ty(types.getContext());
         default:
             throw "Unsupported base type";
     }

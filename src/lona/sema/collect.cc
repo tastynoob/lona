@@ -1847,7 +1847,8 @@ class FunctionCompiler {
         auto *value = obj->get(scope);
         auto *type = obj->getType();
         if (isBoolStorageType(type)) {
-            return value;
+            return scope->builder.CreateICmpNE(
+                value, llvm::ConstantInt::get(scope->getLLVMType(type), 0));
         }
         if (isIntegerType(type)) {
             return scope->builder.CreateICmpNE(
@@ -1870,6 +1871,20 @@ class FunctionCompiler {
     }
 
     Object *makeReadonlyValue(TypeClass *type, llvm::Value *value) {
+        if (type == boolTy && value) {
+            auto *boolLLVMType = scope->getLLVMType(boolTy);
+            if (value->getType() != boolLLVMType) {
+                if (value->getType()->isIntegerTy(1)) {
+                    value = scope->builder.CreateZExt(value, boolLLVMType);
+                } else if (value->getType()->isIntegerTy()) {
+                    auto *isTrue = scope->builder.CreateICmpNE(
+                        value, llvm::ConstantInt::get(value->getType(), 0));
+                    value = scope->builder.CreateZExt(isTrue, boolLLVMType);
+                } else {
+                    error("bool value lowering expects an integer LLVM value");
+                }
+            }
+        }
         auto *obj = type->newObj(Object::REG_VAL | Object::READONLY);
         obj->bindllvmValue(value);
         return obj;
@@ -2073,6 +2088,14 @@ class FunctionCompiler {
                                Object *right) {
         auto *lhs = left->get(scope);
         auto *rhs = right->get(scope);
+        if (binding.leftClass == OperatorOperandClass::Bool &&
+            binding.rightClass == OperatorOperandClass::Bool &&
+            (binding.kind == BinaryOperatorKind::BitAnd ||
+             binding.kind == BinaryOperatorKind::BitXor ||
+             binding.kind == BinaryOperatorKind::BitOr)) {
+            lhs = emitBoolCast(left);
+            rhs = emitBoolCast(right);
+        }
         llvm::Value *result = nullptr;
 
         switch (binding.kind) {
