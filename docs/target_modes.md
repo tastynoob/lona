@@ -58,7 +58,7 @@ flowchart LR
 `native` 面向：
 
 - 原生可执行文件
-- freestanding / hosted 两类原生链路
+- bare / system 两类原生链路
 - 最小运行时
 - 裸机或偏底层场景
 
@@ -170,7 +170,7 @@ flowchart LR
 - 原生函数约定
 - 原生调用边界
 - 原生模块 artifact
-- hosted / freestanding 最终可执行链路
+- system / bare 最终可执行链路
 
 当前仓库已经有这条路线的基础实现：
 

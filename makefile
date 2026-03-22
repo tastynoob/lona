@@ -2,7 +2,7 @@ ROOT ?= .
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share/lona
-RUNTIMEDIR ?= $(DATADIR)/runtime/linux_x86_64
+RUNTIMEDIR ?= $(DATADIR)/runtime/bare_x86_64
 INSTALL ?= install
 PYTHON ?= python3
 CLANG ?= clang-18
@@ -55,7 +55,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke template_random ai_test install uninstall
+.PHONY: clean format default frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke system_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -68,7 +68,7 @@ frontend: $(frontend_target)
 acceptance: $(target)
 	bash $(ROOT)/tests/acceptance/run.sh
 
-test: acceptance bench_smoke example_smoke incremental_smoke template_random hosted_smoke native_smoke
+test: acceptance bench_smoke example_smoke incremental_smoke template_random system_smoke native_smoke
 
 bench_smoke: $(target)
 	bash $(ROOT)/tests/smoke/benchmark.sh
@@ -91,8 +91,10 @@ ai_test:
 native_smoke: $(target)
 	bash $(ROOT)/tests/smoke/native.sh
 
-hosted_smoke: $(target)
-	bash $(ROOT)/tests/smoke/hosted.sh
+hosted_smoke: system_smoke
+
+system_smoke: $(target)
+	bash $(ROOT)/tests/smoke/system.sh
 
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
@@ -100,8 +102,8 @@ install: $(target)
 	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona-ir
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac.sh $(DESTDIR)$(BINDIR)/lac
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac-native.sh $(DESTDIR)$(BINDIR)/lac-native
-	$(INSTALL) -m 644 $(ROOT)/runtime/linux_x86_64/lona_start.S $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
-	$(INSTALL) -m 644 $(ROOT)/runtime/linux_x86_64/lona.ld $(DESTDIR)$(RUNTIMEDIR)/lona.ld
+	$(INSTALL) -m 644 $(ROOT)/runtime/bare_x86_64/lona_start.S $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
+	$(INSTALL) -m 644 $(ROOT)/runtime/bare_x86_64/lona.ld $(DESTDIR)$(RUNTIMEDIR)/lona.ld
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/lona-ir

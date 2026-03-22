@@ -112,7 +112,7 @@ flowchart LR
   - `lona compiler`
   - 先调用 `lona-ir`，再调用 clang 生成可执行文件
 - `lac-native`
-  - 走 freestanding 路线
+  - 走 bare 路线
   - 适合实验原生启动汇编和最小链接环境
 
 这意味着 `lona` 的工具链已经不再只是“产出一份 IR”，而是开始具备更完整的编译入口形态。

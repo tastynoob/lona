@@ -139,7 +139,7 @@ ensureExecutableEntryWrapper(llvm::Module &module, const CompilationUnit &rootUn
 }
 
 void
-ensureHostedMainWrapper(llvm::Module &module) {
+ensureSystemMainWrapper(llvm::Module &module) {
     auto *mainFunc = module.getFunction("main");
     if (mainFunc != nullptr) {
         auto *funcType = mainFunc->getFunctionType();
@@ -348,7 +348,7 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
     }
 
     ensureExecutableEntryWrapper(*linkedModule, rootUnit);
-    ensureHostedMainWrapper(*linkedModule);
+    ensureSystemMainWrapper(*linkedModule);
 
     if (verifyIR) {
         auto verifyStart = Clock::now();

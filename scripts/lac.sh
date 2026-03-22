@@ -83,7 +83,7 @@ if [ -z "$CLANG_BIN" ] || [ ! -x "$CLANG_BIN" ]; then
     exit 1
 fi
 
-TMPDIR_LOCAL="$(mktemp -d "${TMPDIR:-/tmp}/lona-hosted-XXXXXX")"
+TMPDIR_LOCAL="$(mktemp -d "${TMPDIR:-/tmp}/lona-system-XXXXXX")"
 cleanup() {
     if [ "$KEEP_TEMP" -eq 0 ]; then
         rm -rf "$TMPDIR_LOCAL"
@@ -99,8 +99,8 @@ IR_PATH="$TMPDIR_LOCAL/program.ll"
 
 if ! grep -q '^define i32 @main()' "$IR_PATH"; then
     cat >&2 <<EOF
-cannot build hosted executable from $INPUT
-help: the linked IR does not expose a hosted-compatible main()
+cannot build system executable from $INPUT
+help: the linked IR does not expose a host-compatible main()
 help: define a root-level top-level program or a zero-argument 'def main() i32'
 EOF
     exit 1

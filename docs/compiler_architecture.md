@@ -341,14 +341,14 @@ artifact 可复用的条件是：
 
 当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/native_build.md`：
 
-- hosted：复用 clang / 宿主 ABI
-- freestanding：自带最小 `_start` 和 linker script
+- system：复用 clang / 宿主 ABI 和系统 CRT 启动对象
+- bare：自带最小 `_start` 和 linker script
 
 这层不在 `CompilerSession` 内部直接产出 ELF，而是走下面这条链路：
 
 1. `lona-ir --emit-ir` 生成最终链接后的 LLVM IR
-2. hosted 路径通过 `lac` 把 IR 交给 clang 链接
-3. freestanding 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
+2. system 路径通过 `lac` 把 IR 交给 clang 链接
+3. bare 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
 
 为了让这两条链路都能稳定调用程序入口，最终链接后的 IR 会在可行时自动补出：
 

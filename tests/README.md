@@ -18,8 +18,8 @@
 
 - [smoke/benchmark.sh](smoke/benchmark.sh): 编译耗时 smoke benchmark。
 - [smoke/examples.sh](smoke/examples.sh): 编译 `example/` 下的主样例，锁住文档样例可用性。
-- [smoke/hosted.sh](smoke/hosted.sh): `lac` hosted 路线 smoke。
-- [smoke/native.sh](smoke/native.sh): `lac-native` freestanding 路线 smoke。
+- [smoke/system.sh](smoke/system.sh): `lac` system 路线 smoke。
+- [smoke/native.sh](smoke/native.sh): `lac-native` bare 路线 smoke。
 - [template_random.py](template_random.py): 模板随机拼接测试；生成支持的语法组合并验证 LLVM IR 和 clang object 编译。
 
 ## Perf

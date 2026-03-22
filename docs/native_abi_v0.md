@@ -10,7 +10,7 @@
 - `Linux x86_64`
 - `native` 目标模式
 - `lona -> lona` 的内部调用边界
-- freestanding / hosted 两条原生链路共享的语言 ABI
+- bare / system 两条原生链路共享的语言 ABI
 
 `native ABI v0` 暂时**不**定义：
 
@@ -472,10 +472,10 @@ v0 还冻结一个最小 native 程序入口契约：
 
 含义：
 
-- freestanding 启动代码 `_start` 调用它
+- bare 启动代码 `_start` 调用它
 - 返回值作为进程退出码
 
-当前 hosted 路线里的 `main` 只是对宿主工具链的适配入口，不视为 `lona` 语言 ABI 的核心定义。
+当前 system 路线里的 `main` 只是对宿主工具链的适配入口，不视为 `lona` 语言 ABI 的核心定义。
 
 ## 7. 当前不纳入 v0 的优化
 
@@ -538,8 +538,8 @@ v0 落地时至少补下列测试：
 
 4. native 入口测试
    - `__lona_entry__`
-   - hosted shim
-   - freestanding `_start`
+   - system shim
+   - bare `_start`
 
 ## 10. 结论
 

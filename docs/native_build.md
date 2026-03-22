@@ -8,20 +8,21 @@
 
 ## 两种构建模式
 
-### 1. Hosted 模式
+### 1. System 模式
 
-这是当前更推荐的临时方案。
+这是当前更推荐的系统级可执行文件方案。
 
 思路：
 
 - `lona-ir` 仍然只负责生成 LLVM IR
 - 最终可执行文件交给 clang 负责
+- 进程启动直接复用 clang / 系统 CRT 的宿主入口对象
 - 入口和调用约定暂时套用 clang / C 的宿主 ABI
 
 相关文件：
 
 - [scripts/lac.sh](../scripts/lac.sh)
-- [tests/smoke/hosted.sh](../tests/smoke/hosted.sh)
+- [tests/smoke/system.sh](../tests/smoke/system.sh)
 
 这条路径的优点是：
 
@@ -29,9 +30,9 @@
 - 可以直接复用 clang 的 IR 编译和系统链接流程
 - 更适合作为当前阶段的默认可执行文件方案
 
-### 2. Freestanding 模式
+### 2. Bare 模式
 
-这是当前保留的一版最小裸机式启动环境。
+这是当前保留的一版最小裸启动环境。
 
 思路：
 
@@ -47,17 +48,17 @@
 
 - [scripts/lac-native.sh](../scripts/lac-native.sh)
 - [tests/smoke/native.sh](../tests/smoke/native.sh)
-- [runtime/linux_x86_64/lona_start.S](../runtime/linux_x86_64/lona_start.S)
-- [runtime/linux_x86_64/lona.ld](../runtime/linux_x86_64/lona.ld)
+- [runtime/bare_x86_64/lona_start.S](../runtime/bare_x86_64/lona_start.S)
+- [runtime/bare_x86_64/lona.ld](../runtime/bare_x86_64/lona.ld)
 
 职责分工：
 
 - `lac.sh`
   - 调用 `lona-ir` 生成最终链接后的 LLVM IR
-  - 检查 IR 中是否存在 hosted 兼容的 `main`
+  - 检查 IR 中是否存在宿主 ABI 可接受的 `main`
   - 调用 clang 直接把 IR 链接成可执行文件
 - `lac`
-  - 这是推荐的安装入口，先产出 LLVM IR，再调用 clang 生成二进制文件
+  - 这是推荐的安装入口，先产出 LLVM IR，再调用 clang 和系统启动对象生成二进制文件
 - `lac-native.sh`
   - 调用 `lona-ir` 生成最终链接后的 LLVM IR
   - 调用 `llc-18` 把 `.ll` 编成 `.o`
@@ -82,7 +83,7 @@
 
 1. 如果 root 模块存在顶层程序入口 `<root-path>.main`，则 `__lona_entry__` 调用它。
 2. 否则，如果 root 模块存在 `def main() i32`，则 `__lona_entry__` 调用它。
-3. 如果模块里还没有标准 `main() -> i32`，则会再自动补一个 `main`，让 hosted 构建链可以直接交给 clang。
+3. 如果模块里还没有标准 `main() -> i32`，则会再自动补一个 `main`，让 system 构建链可以直接交给 clang。
 4. 如果连 `__lona_entry__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
 
 ## 使用方式
@@ -93,13 +94,13 @@
 make -j4 all
 ```
 
-然后走 hosted 路径构建一个可执行文件：
+然后走 system 路径构建一个可执行文件：
 
 ```bash
 bash scripts/lac.sh input.lo output/program
 ```
 
-如果你要走 freestanding 路径：
+如果你要走 bare 路径：
 
 ```bash
 bash scripts/lac-native.sh input.lo output/program
@@ -119,10 +120,10 @@ bash scripts/lac.sh -O 2 input.lo output/program
 
 其中：
 
-- `lac` 对应 hosted 路径
-- `lac-native` 对应 freestanding 路径
+- `lac` 对应 system 路径
+- `lac-native` 对应 bare 路径
 
-`lac` 会优先查找同目录下的 `lona-ir`。`lac-native` 会自动从安装目录下的 `share/lona/runtime/linux_x86_64` 查找启动汇编和链接脚本。
+`lac` 会优先查找同目录下的 `lona-ir`。`lac-native` 会自动从安装目录下的 `share/lona/runtime/bare_x86_64` 查找启动汇编和链接脚本。
 
 ## 工具依赖
 
@@ -154,10 +155,10 @@ bash scripts/lac.sh -O 2 input.lo output/program
 make native_smoke
 ```
 
-以及 hosted smoke：
+以及 system smoke：
 
 ```bash
-make hosted_smoke
+make system_smoke
 ```
 
 它会验证两种情况：
@@ -170,6 +171,6 @@ make hosted_smoke
 这套环境当前是“最小可用”实现，边界比较明确：
 
 - 只覆盖 Linux x86_64
-- hosted 路径当前直接复用 clang ABI，后续还可以替换成 lona 自己的 ABI
-- freestanding 路径仍然只支持无 libc 的最小裸链接路径
-- freestanding 启动代码只处理 `i32` 退出码，不处理参数和环境变量
+- system 路径当前直接复用 clang ABI 和宿主 CRT 启动对象
+- bare 路径仍然只支持无 libc 的最小裸链接路径
+- bare 启动代码只处理 `i32` 退出码，不处理参数和环境变量

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_ROOT="$(cd "$SCRIPT_DIR/../share/lona" 2>/dev/null && pwd || true)"
 ASSET_ROOT="$ROOT"
-if [ ! -f "$ASSET_ROOT/runtime/linux_x86_64/lona_start.S" ] && [ -n "$INSTALL_ROOT" ]; then
+if [ ! -f "$ASSET_ROOT/runtime/bare_x86_64/lona_start.S" ] && [ -n "$INSTALL_ROOT" ]; then
     ASSET_ROOT="$INSTALL_ROOT"
 fi
 
@@ -18,8 +18,8 @@ LONA_IR_BIN="${LONA_IR_BIN:-${LONA_BIN:-$DEFAULT_LONA_IR_BIN}}"
 LLC_BIN="${LLC_BIN:-$(command -v llc-18 || command -v llc || true)}"
 CC_BIN="${CC_BIN:-cc}"
 LD_BIN="${LD_BIN:-ld}"
-STARTUP_SRC="${STARTUP_SRC:-$ASSET_ROOT/runtime/linux_x86_64/lona_start.S}"
-LINKER_SCRIPT="${LINKER_SCRIPT:-$ASSET_ROOT/runtime/linux_x86_64/lona.ld}"
+STARTUP_SRC="${STARTUP_SRC:-$ASSET_ROOT/runtime/bare_x86_64/lona_start.S}"
+LINKER_SCRIPT="${LINKER_SCRIPT:-$ASSET_ROOT/runtime/bare_x86_64/lona.ld}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-pc-linux-gnu}"
 KEEP_TEMP=0
 OPT_LEVEL=0
