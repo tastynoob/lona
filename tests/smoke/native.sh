@@ -19,6 +19,7 @@ array_ptr_program="$WORKDIR/array_pointer.lo"
 method_self_program="$WORKDIR/method_self.lo"
 method_temp_program="$WORKDIR/method_temp.lo"
 struct_fields_program="$WORKDIR/struct_fields.lo"
+small_struct_program="$WORKDIR/small_struct_abi.lo"
 main_exe="$WORKDIR/return_42"
 top_level_exe="$WORKDIR/top_level"
 ref_local_exe="$WORKDIR/ref_local_address"
@@ -27,6 +28,7 @@ array_ptr_exe="$WORKDIR/array_pointer"
 method_self_exe="$WORKDIR/method_self"
 method_temp_exe="$WORKDIR/method_temp"
 struct_fields_exe="$WORKDIR/struct_fields"
+small_struct_exe="$WORKDIR/small_struct_abi"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -131,6 +133,30 @@ def main() i32 {
 }
 EOF
 
+cat >"$small_struct_program" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+
+    def swap(extra i32) Pair {
+        var out Pair
+        out.left = self.right + extra
+        out.right = self.left + extra
+        ret out
+    }
+}
+
+def echo(v Pair) Pair {
+    ret v
+}
+
+def main() i32 {
+    var p = Pair(left = 1, right = 2)
+    var out = echo(p).swap(3)
+    ret out.left + out.right
+}
+EOF
+
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"
 bash "$BUILD_NATIVE" "$top_level_program" "$top_level_exe"
 bash "$BUILD_NATIVE" "$ref_local_program" "$ref_local_exe"
@@ -139,6 +165,7 @@ bash "$BUILD_NATIVE" "$array_ptr_program" "$array_ptr_exe"
 bash "$BUILD_NATIVE" "$method_self_program" "$method_self_exe"
 bash "$BUILD_NATIVE" "$method_temp_program" "$method_temp_exe"
 bash "$BUILD_NATIVE" "$struct_fields_program" "$struct_fields_exe"
+bash "$BUILD_NATIVE" "$small_struct_program" "$small_struct_exe"
 
 set +e
 "$main_exe"
@@ -157,6 +184,8 @@ method_self_status=$?
 method_temp_status=$?
 "$struct_fields_exe"
 struct_fields_status=$?
+"$small_struct_exe"
+small_struct_status=$?
 set -e
 
 if [ "$main_status" -ne 42 ]; then
@@ -196,6 +225,11 @@ fi
 
 if [ "$struct_fields_status" -ne 44 ]; then
     echo "expected heterogeneous struct fields program to exit with 44, got $struct_fields_status" >&2
+    exit 1
+fi
+
+if [ "$small_struct_status" -ne 9 ]; then
+    echo "expected small aggregate ABI program to exit with 9, got $small_struct_status" >&2
     exit 1
 fi
 

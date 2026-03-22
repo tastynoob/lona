@@ -41,6 +41,10 @@ tuple_in="$(new_tmp_file tuple)"
 tuple_out="$(new_tmp_file tuple-out)"
 tuple_flow_in="$(new_tmp_file tuple-flow)"
 tuple_flow_out="$(new_tmp_file tuple-flow-out)"
+small_struct_sroa_in="$(new_tmp_file small-struct-sroa)"
+small_struct_sroa_out="$(new_tmp_file small-struct-sroa-out)"
+small_array_sroa_in="$(new_tmp_file small-array-sroa)"
+small_array_sroa_out="$(new_tmp_file small-array-sroa-out)"
 method_abi_in="$(new_tmp_file method-abi)"
 method_abi_out="$(new_tmp_file method-abi-out)"
 tuple_field_in="$(new_tmp_file tuple-field)"
@@ -352,8 +356,42 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
-grep -Eq '^define void @echo\(ptr [^,]+, ptr [^)]+\)' "$tuple_flow_out"
-grep -Eq 'call void @echo\(ptr [^,]+, ptr [^)]+\)' "$tuple_flow_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$tuple_flow_out"
+grep -Eq 'call i64 @echo\(i64 %' "$tuple_flow_out"
+
+cat >"$small_struct_sroa_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+def echo(v Pair) Pair {
+    ret v
+}
+
+def main() i32 {
+    var pair = Pair(left = 1, right = 2)
+    ret echo(pair).right
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$small_struct_sroa_in" >"$small_struct_sroa_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_struct_sroa_out"
+grep -Eq 'call i64 @echo\(i64 %' "$small_struct_sroa_out"
+! grep -q 'llvm.memcpy' "$small_struct_sroa_out"
+
+cat >"$small_array_sroa_in" <<'EOF'
+def echo(v i32[2]) i32[2] {
+    ret v
+}
+
+def main() i32 {
+    var row i32[2] = {1, 2}
+    ret echo(row)(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$small_array_sroa_in" >"$small_array_sroa_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_array_sroa_out"
+grep -Eq 'call i64 @echo\(i64 %' "$small_array_sroa_out"
 
 cat >"$method_abi_in" <<'EOF'
 struct Pair {
@@ -375,8 +413,8 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$method_abi_in" >"$method_abi_out"
-grep -Eq '^define void @.*Pair\.swap\(ptr [^,]+, ptr [^,]+, i32 [^)]+\)' "$method_abi_out"
-grep -Eq 'call void @.*Pair\.swap\(ptr [^,]+, ptr [^,]+, i32 3\)' "$method_abi_out"
+grep -Eq '^define i64 @.*Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$method_abi_out"
+grep -Eq 'call i64 @.*Pair\.swap\(ptr [^,]+, i32 3\)' "$method_abi_out"
 
 cat >"$tuple_field_in" <<'EOF'
 def echo(pair <i32, bool>) <i32, bool> {

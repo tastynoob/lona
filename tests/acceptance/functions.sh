@@ -15,6 +15,8 @@ func_ptr_bad_in="$(new_tmp_file func-ptr-bad)"
 func_ptr_bad_out="$(new_tmp_file func-ptr-bad-out)"
 func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
 func_ptr_uninit_out="$(new_tmp_file func-ptr-uninit-out)"
+func_ptr_small_agg_in="$(new_tmp_file func-ptr-small-agg)"
+func_ptr_small_agg_out="$(new_tmp_file func-ptr-small-agg-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
 func_name_conflict_in="$(new_tmp_file func-name-conflict)"
@@ -134,6 +136,27 @@ def bad_holder() i32 {
 EOF
 expect_emit_ir_failure "$func_ptr_uninit_in" "$func_ptr_uninit_out" 'expected uninitialized function pointer variable program to fail'
 grep -Fq 'function pointer variable type for `cb` requires initializer: (i32)* i32' "$func_ptr_uninit_out"
+
+cat >"$func_ptr_small_agg_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+def echo(v Pair) Pair {
+    ret v
+}
+
+def hold() i32 {
+    var cb (Pair)* Pair = echo&<Pair>
+    var pair = Pair(left = 1, right = 2)
+    ret cb(pair).right
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_small_agg_in" >"$func_ptr_small_agg_out"
+grep -q 'store ptr @echo' "$func_ptr_small_agg_out"
+grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$func_ptr_small_agg_out"
+grep -Eq 'call i64 %.*\(i64 %.*\)' "$func_ptr_small_agg_out"
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {

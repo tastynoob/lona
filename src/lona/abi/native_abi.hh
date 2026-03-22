@@ -12,21 +12,41 @@ enum class NativeAbiPassKind {
     IndirectRef,
 };
 
+struct NativeAbiValueInfo {
+    NativeAbiPassKind passKind = NativeAbiPassKind::Direct;
+    llvm::Type *llvmType = nullptr;
+    bool packedAggregate = false;
+};
+
 struct NativeAbiFunctionSignature {
     FuncType *sourceType = nullptr;
     bool hasImplicitSelf = false;
     bool hasIndirectResult = false;
-    std::vector<NativeAbiPassKind> sourceArgPassKinds;
+    NativeAbiValueInfo resultInfo;
+    std::vector<NativeAbiValueInfo> sourceArgInfos;
     llvm::FunctionType *llvmType = nullptr;
 
+    const NativeAbiValueInfo &argInfo(std::size_t index) const {
+        return sourceArgInfos.at(index);
+    }
+
     NativeAbiPassKind argPassKind(std::size_t index) const {
-        return sourceArgPassKinds.at(index);
+        return argInfo(index).passKind;
     }
 };
 
 bool isNativeAbiAggregateType(TypeClass *type);
-bool isNativeAbiDirectType(TypeClass *type);
-bool usesNativeAbiIndirectResult(TypeClass *type);
+bool usesNativeAbiPackedDirectType(TypeTable &types, TypeClass *type);
+bool isNativeAbiDirectType(TypeTable &types, TypeClass *type);
+bool usesNativeAbiIndirectResult(TypeTable &types, TypeClass *type);
+llvm::Type *getNativeAbiDirectLLVMType(TypeTable &types, TypeClass *type);
+llvm::Value *packNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
+                                      TypeClass *type, llvm::Value *value);
+llvm::Value *loadNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
+                                      TypeClass *type, llvm::Value *sourcePtr);
+void storeNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
+                               TypeClass *type, llvm::Value *value,
+                               llvm::Value *destPtr);
 NativeAbiFunctionSignature classifyNativeFunctionAbi(TypeTable &types,
                                                      FuncType *funcType,
                                                      bool hasImplicitSelf = false);

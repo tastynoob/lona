@@ -200,6 +200,19 @@ StructVar::set(Scope *scope, Object *src) {
         throw "type mismatch";
     }
 
+    if (usesNativeAbiPackedDirectType(*scope->types(), type)) {
+        llvm::Value *packedValue = nullptr;
+        if (!src->isRegVal() && src->isVariable() && src->getllvmValue()) {
+            packedValue = loadNativeAbiDirectValue(builder, *scope->types(), type,
+                                                   src->getllvmValue());
+        } else {
+            packedValue = packNativeAbiDirectValue(builder, *scope->types(), type,
+                                                   src->get(scope));
+        }
+        storeNativeAbiDirectValue(builder, *scope->types(), type, packedValue, val);
+        return;
+    }
+
     if (src->isRegVal()) {
         builder.CreateStore(src->get(scope), val);
     } else {
@@ -258,7 +271,8 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
         if (!isByteCopyCompatible(expectedType, arg->getType())) {
             throw "Call argument type mismatch";
         }
-        auto passKind = abiSignature.argPassKind(index);
+        const auto &argInfo = abiSignature.argInfo(index);
+        auto passKind = argInfo.passKind;
         if (passKind == NativeAbiPassKind::IndirectRef) {
             if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
                 throw "Call reference argument must be addressable";
@@ -274,6 +288,16 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
                 arg = spill;
             }
             llvmargs.push_back(arg->getllvmValue());
+            return;
+        }
+        if (argInfo.packedAggregate) {
+            if (arg->isVariable() && !arg->isRegVal() && arg->getllvmValue()) {
+                llvmargs.push_back(loadNativeAbiDirectValue(
+                    builder, *scope->types(), expectedType, arg->getllvmValue()));
+            } else {
+                llvmargs.push_back(packNativeAbiDirectValue(
+                    builder, *scope->types(), expectedType, arg->get(scope)));
+            }
             return;
         }
         llvmargs.push_back(coerceObjectValue(scope, arg, expectedType));
@@ -297,6 +321,12 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
 
     if (retType && abiSignature.hasIndirectResult) {
         return retval;
+    } else if (retType && abiSignature.resultInfo.packedAggregate) {
+        auto *obj = retType->newObj(Object::VARIABLE);
+        obj->createllvmValue(scope);
+        storeNativeAbiDirectValue(builder, *scope->types(), retType, ret,
+                                  obj->getllvmValue());
+        return obj;
     } else if (retType) {
         auto obj = retType->newObj(Object::REG_VAL);
         obj->bindllvmValue(ret);

@@ -21,7 +21,7 @@ grep -q '"type": "Program"' "$json_out"
 grep -q '"type": "FieldCall"' "$json_out"
 
 "$BIN" --emit-ir --verify-ir "$INPUT" >"$ir_out"
-grep -Eq '^define void @.*Complex\.add\(ptr ' "$ir_out"
+grep -Eq '^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)' "$ir_out"
 grep -q '^define i32 @fibo' "$ir_out"
 if grep -q 'llvm.dbg.declare' "$ir_out"; then
     echo 'unexpected debug metadata in non-debug IR' >&2

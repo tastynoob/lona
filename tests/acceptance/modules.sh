@@ -48,6 +48,10 @@ import_mutating_method_dir="$(new_tmp_dir import-mutating-method)"
 import_mutating_method_dep_in="$import_mutating_method_dir/dep.lo"
 import_mutating_method_main_in="$import_mutating_method_dir/main.lo"
 import_mutating_method_out="$(new_tmp_file import-mutating-method-out)"
+import_small_sroa_dir="$(new_tmp_dir import-small-sroa)"
+import_small_sroa_dep_in="$import_small_sroa_dir/dep.lo"
+import_small_sroa_main_in="$import_small_sroa_dir/main.lo"
+import_small_sroa_out="$(new_tmp_file import-small-sroa-out)"
 
 cat >"$method_self_in" <<'EOF'
 struct Counter {
@@ -280,6 +284,37 @@ grep -q '^define i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -q 'call i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -Eq 'getelementptr inbounds %dep.Counter, ptr %0, i32 0, i32 0' "$import_mutating_method_out"
 
+cat >"$import_small_sroa_dep_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+
+    def swap(extra i32) Pair {
+        var out Pair
+        out.left = self.right + extra
+        out.right = self.left + extra
+        ret out
+    }
+}
+
+def echo(v Pair) Pair {
+    ret v
+}
+EOF
+cat >"$import_small_sroa_main_in" <<'EOF'
+import dep
+
+def main() i32 {
+    var pair = dep.Pair(left = 1, right = 2)
+    ret dep.echo(pair).swap(3).left
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$import_small_sroa_main_in" >"$import_small_sroa_out"
+grep -Eq '^define i64 @dep\.echo\(i64 [^)]+\)' "$import_small_sroa_out"
+grep -Eq '^define i64 @dep\.Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$import_small_sroa_out"
+grep -Eq 'call i64 @dep\.echo\(i64 %' "$import_small_sroa_out"
+grep -Eq 'call i64 @dep\.Pair\.swap\(ptr [^,]+, i32 3\)' "$import_small_sroa_out"
+
 printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"
 printf 'import leaf\n\ndef call_leaf(v i32) i32 {\n    ret leaf.inc(v)\n}\n' >"$import_mid_in"
 printf 'import mid\n\ndef main() i32 {\n    ret mid.call_leaf(4)\n}\n' >"$import_transitive_main_in"
@@ -363,4 +398,4 @@ var sample = make_name(1, 2)
 EOF
 "$BIN" --emit-ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
 grep -Eq '^%.*Name = type \{ i32, i32 \}' "$grammar_subset_out"
-grep -Eq '^define void @make_name\(ptr [^,]+, i32 [^,]+, i32 [^)]+\)' "$grammar_subset_out"
+grep -Eq '^define i64 @make_name\(i32 [^,]+, i32 [^)]+\)' "$grammar_subset_out"

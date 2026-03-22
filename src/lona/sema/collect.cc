@@ -1293,6 +1293,7 @@ class FunctionCompiler {
     llvm::LLVMContext &context;
     DebugInfoContext *debug;
     llvm::DISubprogram *debugSubprogram = nullptr;
+    NativeAbiFunctionSignature abiSignature;
     bool returnByPointer = false;
     location currentLocation;
     bool hasCurrentLocation = false;
@@ -1367,6 +1368,21 @@ class FunctionCompiler {
         auto *value = scope->builder.CreateLoad(scope->getLLVMType(obj->getType()),
                                                 incomingPtr);
         scope->builder.CreateStore(value, bound->getllvmValue());
+        return bound;
+    }
+
+    Object *materializeDirectValueBinding(Object *obj, llvm::Value *incomingValue,
+                                          bool packedAggregate) {
+        if (!obj || !incomingValue) {
+            error("direct value binding requires an incoming value");
+        }
+        auto *bound = materializeBinding(obj);
+        if (packedAggregate) {
+            storeNativeAbiDirectValue(scope->builder, *typeMgr, obj->getType(),
+                                      incomingValue, bound->getllvmValue());
+        } else {
+            scope->builder.CreateStore(incomingValue, bound->getllvmValue());
+        }
         return bound;
     }
 
@@ -2261,6 +2277,20 @@ class FunctionCompiler {
         if (scope->retVal()) {
             if (returnByPointer) {
                 scope->builder.CreateRetVoid();
+            } else if (abiSignature.resultInfo.packedAggregate) {
+                auto *retSlot = scope->retVal();
+                llvm::Value *retValue = nullptr;
+                if (retSlot->isVariable() && !retSlot->isRegVal() &&
+                    retSlot->getllvmValue()) {
+                    retValue = loadNativeAbiDirectValue(
+                        scope->builder, *typeMgr, retSlot->getType(),
+                        retSlot->getllvmValue());
+                } else {
+                    retValue = packNativeAbiDirectValue(
+                        scope->builder, *typeMgr, retSlot->getType(),
+                        retSlot->get(scope));
+                }
+                scope->builder.CreateRet(retValue);
             } else {
                 scope->builder.CreateRet(scope->retVal()->get(scope));
             }
@@ -2297,7 +2327,7 @@ public:
         if (!funcType) {
             functionError(hirFunc, "invalid function type");
         }
-        auto abiSignature =
+        abiSignature =
             classifyNativeFunctionAbi(*typeMgr, funcType, hirFunc->hasSelfBinding());
         returnByPointer = abiSignature.hasIndirectResult;
 
@@ -2369,7 +2399,8 @@ public:
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
             Object *argObj = nullptr;
-            auto passKind = abiSignature.argPassKind(sourceParamIndex);
+            const auto &argInfo = abiSignature.argInfo(sourceParamIndex);
+            auto passKind = argInfo.passKind;
             if (passKind == NativeAbiPassKind::IndirectRef) {
                 auto *incomingArg = binding.object->getType()->newObj(Object::VARIABLE);
                 incomingArg->setllvmValue(&*argIt);
@@ -2377,8 +2408,8 @@ public:
             } else if (passKind == NativeAbiPassKind::IndirectValue) {
                 argObj = materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
-                argObj = materializeBinding(binding.object);
-                scope->builder.CreateStore(&*argIt, argObj->getllvmValue());
+                argObj = materializeDirectValueBinding(binding.object, &*argIt,
+                                                       argInfo.packedAggregate);
             }
             scope->addObj(llvm::StringRef(binding.name), argObj);
             emitDebugDeclare(debug, scope, debugSubprogram, argObj, binding.name,
