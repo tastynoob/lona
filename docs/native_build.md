@@ -18,6 +18,7 @@
 - 最终可执行文件交给系统 linker driver
 - 进程启动复用系统 CRT 的宿主入口对象
 - hosted wrapper 使用标准 `main(argc, argv)` 形态
+- 默认 target triple 是 `x86_64-unknown-linux-gnu`
 
 相关文件：
 
@@ -41,6 +42,9 @@
 - 自定义 `_start`
 - 自定义 linker script
 - 不依赖 libc 或系统 CRT
+- 默认 target triple 是 `x86_64-none-elf`
+- LLVM 会把它规范化打印成 `x86_64-none-unknown-elf`
+- `x86_64-unknown-none-elf` 也会按 bare 目标处理
 
 ## 组成
 
@@ -54,13 +58,13 @@
 职责分工：
 
 - `lac.sh`
-  - 调用 `lona-ir --emit obj`
+  - 调用 `lona-ir --emit obj --target x86_64-unknown-linux-gnu`
   - 检查对象里是否存在语言入口 `__lona_main__`
   - 调用系统 linker driver 生成可执行文件
 - `lac`
   - 这是推荐的安装入口，先产出 `.o`，再调用系统 linker driver 和系统启动对象生成二进制文件
 - `lac-native.sh`
-  - 调用 `lona-ir` 生成最终链接后的 LLVM IR
+  - 调用 `lona-ir --emit ir --target x86_64-none-elf` 生成最终链接后的 LLVM IR
   - 调用 `llc-18` 把 `.ll` 编成 `.o`
   - 汇编启动代码
   - 使用自定义 linker script 生成 ELF 可执行文件
@@ -83,8 +87,8 @@
 
 1. 如果 root 模块存在顶层可执行语句，它们会直接 lower 到 `__lona_main__() -> i32`。
 2. `def main() i32` 现在只是普通函数名，不再自动提升成入口。
-3. system 路线在 `--emit obj` 阶段再额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
-4. bare 路线只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
+3. hosted target（例如 `x86_64-unknown-linux-gnu`）会额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
+4. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
 5. 如果连 `__lona_main__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
 
 ## 使用方式
@@ -105,6 +109,15 @@ bash scripts/lac.sh input.lo output/program
 
 ```bash
 bash scripts/lac-native.sh input.lo output/program
+```
+
+如果要覆盖默认 target：
+
+```bash
+lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
+lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.o
+bash scripts/lac.sh --target x86_64-unknown-linux-gnu input.lo output/program
+bash scripts/lac-native.sh --target x86_64-none-elf input.lo output/program
 ```
 
 带优化级别：

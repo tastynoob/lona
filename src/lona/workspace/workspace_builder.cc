@@ -190,11 +190,12 @@ ensureHostedMainWrapper(llvm::Module &module) {
 }
 
 void
-emitObjectFile(llvm::Module &module, std::ostream &out) {
+emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
+               std::ostream &out) {
     llvm::SmallString<0> objectData;
     llvm::raw_svector_ostream objectOut(objectData);
     llvm::legacy::PassManager passManager;
-    auto &targetMachine = defaultTargetMachine();
+    auto &targetMachine = targetMachineFor(targetTriple);
 
     if (targetMachine.addPassesToEmitFile(passManager, objectOut, nullptr,
                                           llvm::CodeGenFileType::ObjectFile)) {
@@ -311,10 +312,16 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) 
 
 bool
 WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
-                                  const ModuleArtifact &artifact) const {
+                                  const ModuleArtifact &artifact,
+                                  const CompileOptions &options) const {
     if (artifact.sourceHash() != unit.sourceHash() ||
         artifact.interfaceHash() != unit.interfaceHash() ||
         artifact.implementationHash() != unit.implementationHash()) {
+        return false;
+    }
+    if (artifact.targetTriple() != normalizeTargetTriple(options.targetTriple) ||
+        artifact.optLevel() != options.optLevel ||
+        artifact.debugInfo() != options.debugInfo) {
         return false;
     }
     return artifact.dependencyInterfaceHashes() ==
@@ -322,20 +329,24 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
 }
 
 const ModuleArtifact *
-WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit) const {
+WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
+                                      const CompileOptions &options) const {
     auto *artifact = workspace_.findArtifact(unit.path());
     if (artifact == nullptr) {
         return nullptr;
     }
-    return matchesArtifact(unit, *artifact) ? artifact : nullptr;
+    return matchesArtifact(unit, *artifact, options) ? artifact : nullptr;
 }
 
 ModuleArtifact
-WorkspaceBuilder::createArtifact(const CompilationUnit &unit) const {
+WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
+                                 const CompileOptions &options) const {
     ModuleArtifact artifact(unit.path(), unit.moduleKey(), unit.moduleName(),
                             unit.sourceHash(), unit.interfaceHash(),
                             unit.implementationHash());
     artifact.setDependencyInterfaceHashes(collectDependencyInterfaceHashes(unit));
+    artifact.setCompileProfile(normalizeTargetTriple(options.targetTriple),
+                               options.optLevel, options.debugInfo);
     return artifact;
 }
 
@@ -352,13 +363,13 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                   "This looks like a compiler module queue bug.");
         }
 
-        if (reusableArtifactFor(*queuedUnit) != nullptr) {
+        if (reusableArtifactFor(*queuedUnit, options) != nullptr) {
             queuedUnit->markCompiled();
             ++stats.reusedModules;
             return 0;
         }
 
-        ModuleArtifact artifact = createArtifact(*queuedUnit);
+        ModuleArtifact artifact = createArtifact(*queuedUnit, options);
         int moduleExitCode =
             compileModule(*queuedUnit, options, artifact, stats, out);
         if (moduleExitCode != 0) {
@@ -459,7 +470,8 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, false, options.verifyIR, out,
+    auto linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+                                options.verifyIR, out,
                                 &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
@@ -482,13 +494,14 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, true, options.verifyIR, out,
+    auto linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+                                options.verifyIR, out,
                                 &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
     }
 
-    emitObjectFile(*linked.module, out);
+    emitObjectFile(*linked.module, options.targetTriple, out);
     return 0;
 }
 

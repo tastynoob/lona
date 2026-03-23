@@ -26,7 +26,9 @@ pointer_out="$(new_tmp_file pointer-out)"
 byte_json_in="$(new_tmp_file byte-json)"
 byte_json_out="$(new_tmp_file byte-json-out)"
 entry_ir_in="$(new_tmp_file entry-ir)"
-entry_ir_out="$(new_tmp_file entry-ir-out)"
+entry_bare_ir_out="$(new_tmp_file entry-bare-ir-out)"
+entry_alt_bare_ir_out="$(new_tmp_file entry-alt-bare-ir-out)"
+entry_system_ir_out="$(new_tmp_file entry-system-ir-out)"
 
 "$BIN" "$INPUT" >"$json_out"
 grep -q '"type": "Program"' "$json_out"
@@ -63,13 +65,31 @@ def run() i32 {
 
 ret run()
 EOF
-"$BIN" --emit ir --verify-ir "$entry_ir_in" >"$entry_ir_out"
-grep -q '^define i32 @__lona_main__()' "$entry_ir_out"
-grep -q '^define i32 @run()' "$entry_ir_out"
-! grep -q '^define i32 @main()' "$entry_ir_out"
-! grep -q '^define i32 @main(i32' "$entry_ir_out"
-! grep -q '^@__lona_argc =' "$entry_ir_out"
-! grep -q '^@__lona_argv =' "$entry_ir_out"
+"$BIN" --emit ir --target x86_64-none-elf --verify-ir "$entry_ir_in" >"$entry_bare_ir_out"
+grep -q 'target triple = "x86_64-none-unknown-elf"' "$entry_bare_ir_out"
+grep -q '^define i32 @__lona_main__()' "$entry_bare_ir_out"
+grep -q '^define i32 @run()' "$entry_bare_ir_out"
+! grep -q '^define i32 @main()' "$entry_bare_ir_out"
+! grep -q '^define i32 @main(i32' "$entry_bare_ir_out"
+! grep -q '^@__lona_argc =' "$entry_bare_ir_out"
+! grep -q '^@__lona_argv =' "$entry_bare_ir_out"
+
+"$BIN" --emit ir --target x86_64-unknown-none-elf --verify-ir "$entry_ir_in" >"$entry_alt_bare_ir_out"
+grep -q 'target triple = "x86_64-unknown-none-elf"' "$entry_alt_bare_ir_out"
+grep -q '^define i32 @__lona_main__()' "$entry_alt_bare_ir_out"
+grep -q '^define i32 @run()' "$entry_alt_bare_ir_out"
+! grep -q '^define i32 @main()' "$entry_alt_bare_ir_out"
+! grep -q '^define i32 @main(i32' "$entry_alt_bare_ir_out"
+! grep -q '^@__lona_argc =' "$entry_alt_bare_ir_out"
+! grep -q '^@__lona_argv =' "$entry_alt_bare_ir_out"
+
+"$BIN" --emit ir --target x86_64-unknown-linux-gnu --verify-ir "$entry_ir_in" >"$entry_system_ir_out"
+grep -q 'target triple = "x86_64-unknown-linux-gnu"' "$entry_system_ir_out"
+grep -q '^define i32 @__lona_main__()' "$entry_system_ir_out"
+grep -q '^define i32 @run()' "$entry_system_ir_out"
+grep -q '^define i32 @main(i32' "$entry_system_ir_out"
+grep -q '^@__lona_argc =' "$entry_system_ir_out"
+grep -q '^@__lona_argv =' "$entry_system_ir_out"
 
 cat >"$missing_return_in" <<'EOF'
 def bad(a i32) i32 {

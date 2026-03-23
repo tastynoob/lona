@@ -6,12 +6,13 @@
 
 namespace lona {
 
-IRBuildState::IRBuildState(const CompilationUnit &unit)
+IRBuildState::IRBuildState(const CompilationUnit &unit,
+                           llvm::StringRef targetTriple)
     : module(unit.path(), context),
       builder(context),
       global(builder, module),
       types(module) {
-    configureModuleTargetLayout(module);
+    configureModuleTargetLayout(module, targetTriple);
     global.setTypeTable(&types);
 }
 
@@ -24,7 +25,7 @@ IRPipelineContext::IRPipelineContext(CompilationUnit &entryUnit,
       options(options),
       out(out),
       stats(stats),
-      build(entryUnit) {}
+      build(entryUnit, options.targetTriple) {}
 
 void
 CompilePipeline::addStage(std::string name, StageFn run) {

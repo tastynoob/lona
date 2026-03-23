@@ -346,8 +346,8 @@ artifact 可复用的条件是：
 
 这层不在 `CompilerSession` 内部直接产出 ELF，而是走下面这条链路：
 
-1. `lona-ir --emit ir` 生成最终链接后的语言级 LLVM IR
-2. `lona-ir --emit obj` 生成 hosted system CRT 目标对象文件
+1. `lona-ir --emit ir --target <triple>` 生成目标相关的最终链接 LLVM IR
+2. `lona-ir --emit obj --target <triple>` 生成目标相关的对象文件
 3. system 路径通过 `lac` 把 `.o` 交给系统 linker driver
 4. bare 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
 
@@ -397,7 +397,7 @@ artifact 可复用的条件是：
 - imported 模块当前只支持“直接 import 一层可见”，不做自动多层 re-export
 - 模块 artifact 仍然是 LLVM IR 文本，不是 bitcode
 - 最终链接通过“parse artifact IR -> LLVM linker”完成，尚未做更高性能的内存态链接
-- `--emit obj` 当前仍然是 `linux-x86_64-system-crt` 这一条 hosted 路线，不是通用 target-profile 输出
+- runtime profile 当前主要还是由 driver 约定，不是独立的一等配置对象；目前通过 `--target` 推导 hosted/bare 包装层
 - `WorkspaceBuilder` 当前内部仍然包含较多细节，未来如果并行和持久化缓存继续增强，可能再拆出更明确的子组件
 
 ## 8. 后续演进建议

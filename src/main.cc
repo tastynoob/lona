@@ -44,6 +44,10 @@ main(int argc, char *argv[]) {
     cmdline::parser cli;
     cli.add<std::string>("emit", 0, "select output artifact: ir or obj", false, "",
                          cmdline::oneof<std::string>("ir", "obj"));
+    cli.add<std::string>(
+        "target", 0,
+        "LLVM target triple, for example x86_64-none-elf or x86_64-unknown-linux-gnu",
+        false, "");
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
@@ -87,7 +91,8 @@ main(int argc, char *argv[]) {
 
     lona::SessionOptions options;
     const bool compileMode = emitIR || emitObject || cli.exist("verify-ir") ||
-                             cli.exist("debug") || cli.exist("opt");
+                             cli.exist("debug") || cli.exist("opt") ||
+                             cli.exist("target");
     options.outputMode =
         emitObject ? lona::OutputMode::ObjectFile
                    : compileMode ? lona::OutputMode::LLVMIR
@@ -95,6 +100,8 @@ main(int argc, char *argv[]) {
     options.compile.optLevel = cli.get<int>("opt");
     options.compile.verifyIR = cli.exist("verify-ir");
     options.compile.debugInfo = cli.exist("debug");
+    options.compile.targetTriple =
+        cli.exist("target") ? cli.get<std::string>("target") : std::string();
 
     int exitCode = session.runFile(inputPath, options, *out, std::cerr);
     if (cli.exist("stats")) {

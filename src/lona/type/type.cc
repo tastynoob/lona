@@ -4,84 +4,122 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 #include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace lona {
 
 namespace {
 
-struct NativeTargetLayout {
+struct TargetLayout {
     std::string triple;
+    llvm::Reloc::Model relocModel;
     std::unique_ptr<llvm::TargetMachine> machine;
     llvm::DataLayout dataLayout;
 
-    NativeTargetLayout()
-        : triple(llvm::sys::getDefaultTargetTriple()),
+    explicit TargetLayout(const std::string &requestedTriple)
+        : triple(normalizeTargetTriple(requestedTriple)),
+          relocModel(targetUsesHostedEntry(triple) ? llvm::Reloc::PIC_
+                                                   : llvm::Reloc::Static),
           dataLayout("") {
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        llvm::InitializeNativeTargetAsmParser();
+        llvm::InitializeAllTargets();
+        llvm::InitializeAllTargetMCs();
+        llvm::InitializeAllAsmPrinters();
+        llvm::InitializeAllAsmParsers();
 
         std::string error;
         auto *target = llvm::TargetRegistry::lookupTarget(triple, error);
         if (!target) {
-            throw std::runtime_error("failed to resolve native LLVM target: " +
-                                     error);
+            throw std::runtime_error("failed to resolve LLVM target `" + triple +
+                                     "`: " + error);
         }
 
         llvm::TargetOptions options;
         machine.reset(target->createTargetMachine(triple, "generic", "",
-                                                  options, llvm::Reloc::PIC_));
+                                                  options, relocModel));
         if (!machine) {
-            throw std::runtime_error(
-                "failed to create native LLVM target machine");
+            throw std::runtime_error("failed to create LLVM target machine for `" +
+                                     triple + "`");
         }
         dataLayout = machine->createDataLayout();
     }
 };
 
-NativeTargetLayout &
-nativeTargetLayout() {
+std::string
+targetLayoutCacheKey(llvm::StringRef triple) {
+    return normalizeTargetTriple(triple.str());
+}
+
+TargetLayout &
+targetLayoutFor(llvm::StringRef triple) {
     static std::once_flag once;
-    static std::unique_ptr<NativeTargetLayout> layout;
+    static std::unordered_map<std::string, std::unique_ptr<TargetLayout>> layouts;
     static std::string initError;
+    static std::mutex mutex;
     std::call_once(once, [] {
         try {
-            layout = std::make_unique<NativeTargetLayout>();
+            llvm::InitializeAllTargets();
+            llvm::InitializeAllTargetMCs();
+            llvm::InitializeAllAsmPrinters();
+            llvm::InitializeAllAsmParsers();
         } catch (const std::exception &ex) {
             initError = ex.what();
         }
     });
-    if (!layout) {
+    if (!initError.empty()) {
         throw std::runtime_error(initError.empty()
                                      ? "failed to initialize LLVM target layout"
                                      : initError);
     }
-    return *layout;
+
+    const std::string key = targetLayoutCacheKey(triple);
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = layouts.find(key);
+    if (it == layouts.end()) {
+        auto layout = std::make_unique<TargetLayout>(key);
+        it = layouts.emplace(key, std::move(layout)).first;
+    }
+    return *it->second;
 }
 
 }  // namespace
 
+std::string
+normalizeTargetTriple(const std::string &triple) {
+    const std::string requested =
+        triple.empty() ? llvm::sys::getDefaultTargetTriple() : triple;
+    return llvm::Triple::normalize(requested);
+}
+
+bool
+targetUsesHostedEntry(llvm::StringRef triple) {
+    llvm::Triple parsed(normalizeTargetTriple(triple.str()));
+    return parsed.getOS() != llvm::Triple::UnknownOS;
+}
+
 const llvm::DataLayout &
 defaultTargetDataLayout() {
-    return nativeTargetLayout().dataLayout;
+    return targetLayoutFor(defaultTargetTriple()).dataLayout;
 }
 
 const std::string &
 defaultTargetTriple() {
-    return nativeTargetLayout().triple;
+    static const std::string triple = normalizeTargetTriple("");
+    return triple;
 }
 
 llvm::TargetMachine &
-defaultTargetMachine() {
-    return *nativeTargetLayout().machine;
+targetMachineFor(llvm::StringRef triple) {
+    return *targetLayoutFor(triple).machine;
 }
 
 void
-configureModuleTargetLayout(llvm::Module &module) {
-    module.setTargetTriple(defaultTargetTriple());
-    module.setDataLayout(defaultTargetDataLayout());
+configureModuleTargetLayout(llvm::Module &module, llvm::StringRef triple) {
+    auto &layout = targetLayoutFor(triple);
+    module.setTargetTriple(layout.triple);
+    module.setDataLayout(layout.dataLayout);
 }
 
 TypeClass *

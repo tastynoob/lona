@@ -29,9 +29,12 @@ class WorkspaceBuilder {
     std::unordered_map<std::string, std::uint64_t>
     collectDependencyInterfaceHashes(const CompilationUnit &unit) const;
     bool matchesArtifact(const CompilationUnit &unit,
-                         const ModuleArtifact &artifact) const;
-    const ModuleArtifact *reusableArtifactFor(const CompilationUnit &unit) const;
-    ModuleArtifact createArtifact(const CompilationUnit &unit) const;
+                         const ModuleArtifact &artifact,
+                         const CompileOptions &options) const;
+    const ModuleArtifact *reusableArtifactFor(const CompilationUnit &unit,
+                                              const CompileOptions &options) const;
+    ModuleArtifact createArtifact(const CompilationUnit &unit,
+                                  const CompileOptions &options) const;
     int buildArtifacts(CompilationUnit &rootUnit, const CompileOptions &options,
                        SessionStats &stats, std::ostream &out) const;
     int compileModule(CompilationUnit &unit, const CompileOptions &options,

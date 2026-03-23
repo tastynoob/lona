@@ -14,6 +14,9 @@ class ModuleArtifact {
     std::uint64_t interfaceHash_ = 0;
     std::uint64_t implementationHash_ = 0;
     std::unordered_map<std::string, std::uint64_t> dependencyInterfaceHashes_;
+    std::string targetTriple_;
+    int optLevel_ = 0;
+    bool debugInfo_ = false;
     std::string llvmIR_;
 
 public:
@@ -32,10 +35,14 @@ public:
         const {
         return dependencyInterfaceHashes_;
     }
+    const std::string &targetTriple() const { return targetTriple_; }
+    int optLevel() const { return optLevel_; }
+    bool debugInfo() const { return debugInfo_; }
     const std::string &llvmIR() const { return llvmIR_; }
 
     void setDependencyInterfaceHashes(
         std::unordered_map<std::string, std::uint64_t> dependencyInterfaceHashes);
+    void setCompileProfile(std::string targetTriple, int optLevel, bool debugInfo);
     void setLLVMIR(std::string llvmIR);
 };
 

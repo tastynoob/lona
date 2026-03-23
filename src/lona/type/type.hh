@@ -29,6 +29,8 @@ class TargetMachine;
 
 namespace lona {
 
+std::string normalizeTargetTriple(const std::string &triple);
+bool targetUsesHostedEntry(llvm::StringRef triple);
 class TypeClass;
 class ConstType;
 class PointerType;
@@ -40,8 +42,8 @@ class Function;
 
 const llvm::DataLayout &defaultTargetDataLayout();
 const std::string &defaultTargetTriple();
-llvm::TargetMachine &defaultTargetMachine();
-void configureModuleTargetLayout(llvm::Module &module);
+llvm::TargetMachine &targetMachineFor(llvm::StringRef triple);
+void configureModuleTargetLayout(llvm::Module &module, llvm::StringRef triple);
 
 class TypeClass {
 public:

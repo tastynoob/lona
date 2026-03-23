@@ -322,12 +322,12 @@ if bash "$BUILD_SYSTEM" "$bad_main_program" "$bad_main_exe" >"$bad_main_log" 2>&
 fi
 grep -Fq 'cannot build system executable from' "$bad_main_log"
 grep -Fq 'define root-level executable statements in the root module' "$bad_main_log"
-"$BIN" --emit obj --verify-ir "$main_program" "$main_obj"
+"$BIN" --emit obj --target x86_64-unknown-linux-gnu --verify-ir "$main_program" "$main_obj"
 nm -g --defined-only "$main_obj" | grep -Eq ' [TW] __lona_main__$'
 nm -g --defined-only "$main_obj" | grep -Eq ' [TW] main$'
 nm -g --defined-only "$main_obj" | grep -Eq ' [BD] __lona_argc$'
 nm -g --defined-only "$main_obj" | grep -Eq ' [BD] __lona_argv$'
-"$BIN" --emit obj --verify-ir "$ffi_main_program" "$ffi_main_obj"
+"$BIN" --emit obj --target x86_64-unknown-linux-gnu --verify-ir "$ffi_main_program" "$ffi_main_obj"
 nm -g --defined-only "$ffi_main_obj" | grep -Eq ' [TW] __lona_main__$'
 nm -g "$ffi_main_obj" | grep -Eq ' U main$'
 if bash "$BUILD_SYSTEM" "$ffi_main_program" "$ffi_main_exe" >"$ffi_main_log" 2>&1; then

@@ -21,6 +21,14 @@ ModuleArtifact::setDependencyInterfaceHashes(
 }
 
 void
+ModuleArtifact::setCompileProfile(std::string targetTriple, int optLevel,
+                                  bool debugInfo) {
+    targetTriple_ = std::move(targetTriple);
+    optLevel_ = optLevel;
+    debugInfo_ = debugInfo;
+}
+
+void
 ModuleArtifact::setLLVMIR(std::string llvmIR) {
     llvmIR_ = std::move(llvmIR);
 }

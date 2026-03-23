@@ -20,6 +20,7 @@ buildOptions(const Json &command) {
     options.compile.verifyIR = command.value("verify_ir", false);
     options.compile.debugInfo = command.value("debug", false);
     options.compile.optLevel = command.value("opt_level", 0);
+    options.compile.targetTriple = command.value("target", std::string());
     return options;
 }
 

@@ -17,6 +17,7 @@ else
 fi
 CC_BIN="${CC_BIN:-$DEFAULT_CC_BIN}"
 NM_BIN="${NM_BIN:-$(command -v nm || true)}"
+TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-unknown-linux-gnu}"
 KEEP_TEMP=0
 OPT_LEVEL=0
 
@@ -26,6 +27,8 @@ Usage: scripts/lac.sh [options] <input.lo> <output>
 
 Options:
   -O <0-3>       Forward optimization level to lona-ir
+  --target <triple>
+                 Target triple for hosted builds
   --keep-temp    Keep intermediate .o file
   -h, --help     Show this help
 EOF
@@ -36,6 +39,10 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         -O)
             OPT_LEVEL="$2"
+            shift 2
+            ;;
+        --target)
+            TARGET_TRIPLE="$2"
             shift 2
             ;;
         --keep-temp)
@@ -95,7 +102,8 @@ trap cleanup EXIT
 
 OBJ_PATH="$TMPDIR_LOCAL/program.o"
 
-"$LONA_IR_BIN" --emit obj --verify-ir -O "$OPT_LEVEL" "$INPUT" "$OBJ_PATH"
+"$LONA_IR_BIN" --emit obj --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+    "$INPUT" "$OBJ_PATH"
 
 if [ -n "$NM_BIN" ] && [ -x "$NM_BIN" ]; then
     ALL_SYMBOLS="$("$NM_BIN" -g "$OBJ_PATH")"

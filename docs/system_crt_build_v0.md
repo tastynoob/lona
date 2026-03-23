@@ -91,10 +91,12 @@
 
 - [scripts/lac.sh](../scripts/lac.sh)
   - system 路线
-  - 当前仍然走 `clang -x ir`
+  - 当前默认 target 是 `x86_64-unknown-linux-gnu`
+  - 当前已经走 `lona-ir --emit obj --target ... -> cc`
 - [scripts/lac-native.sh](../scripts/lac-native.sh)
   - bare 路线
-  - 当前走 `lona-ir -> llc -> startup.o + ld`
+  - 当前默认 target 是 `x86_64-none-elf`
+  - 当前走 `lona-ir --emit ir --target ... -> llc -> startup.o + ld`
 
 同时仓库已经有一套 bare runtime asset：
 

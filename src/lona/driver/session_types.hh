@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 namespace lona {
 
@@ -8,6 +9,7 @@ struct CompileOptions {
     int optLevel = 0;
     bool verifyIR = false;
     bool debugInfo = false;
+    std::string targetTriple;
 };
 
 enum class OutputMode {

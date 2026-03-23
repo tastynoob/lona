@@ -20,7 +20,7 @@ if [ -z "$OBJ_OUTPUT" ]; then
     OBJ_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/lona-case-XXXXXX.o")"
 fi
 
-"$BIN" --emit ir --verify-ir "$INPUT" "$IR_OUTPUT"
-"$BIN" --emit obj --verify-ir "$INPUT" "$OBJ_OUTPUT"
+"$BIN" --emit ir --target x86_64-unknown-linux-gnu --verify-ir "$INPUT" "$IR_OUTPUT"
+"$BIN" --emit obj --target x86_64-unknown-linux-gnu --verify-ir "$INPUT" "$OBJ_OUTPUT"
 
 printf 'PASS %s -> %s -> %s\n' "$INPUT" "$IR_OUTPUT" "$OBJ_OUTPUT"

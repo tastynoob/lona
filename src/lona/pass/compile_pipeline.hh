@@ -24,7 +24,7 @@ struct IRBuildState {
     GlobalScope global;
     TypeTable types;
 
-    explicit IRBuildState(const CompilationUnit &unit);
+    IRBuildState(const CompilationUnit &unit, llvm::StringRef targetTriple);
 };
 
 struct IRPipelineContext {

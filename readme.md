@@ -107,12 +107,14 @@ flowchart LR
 目前仓库里的工具入口已经做了拆分：
 
 - `lona-ir`
-  - 专注做一件事：把 `.lo` 编译成语言级 LLVM IR 或 hosted object file
+  - 专注做一件事：把 `.lo` 编译成目标相关的 LLVM IR 或 object file
 - `lac`
   - `lona compiler`
-  - 先调用 `lona-ir --emit obj`，再调用系统 linker driver 生成可执行文件
+  - 默认走 `x86_64-unknown-linux-gnu`
+  - 先调用 `lona-ir --emit obj --target x86_64-unknown-linux-gnu`，再调用系统 linker driver 生成可执行文件
 - `lac-native`
   - 走 bare 路线
+  - 默认走 `x86_64-none-elf`
   - 适合实验原生启动汇编和最小链接环境
 
 这意味着 `lona` 的工具链已经不再只是“产出一份 IR”，而是开始具备更完整的编译入口形态。
@@ -148,7 +150,8 @@ make install
 ### 常用命令
 
 ```bash
-lona-ir --emit ir input.lo output.ll
+lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
+lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.o
 lac input.lo output/program
 lac-native input.lo output/program
 ```

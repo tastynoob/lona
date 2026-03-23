@@ -20,7 +20,7 @@ CC_BIN="${CC_BIN:-cc}"
 LD_BIN="${LD_BIN:-ld}"
 STARTUP_SRC="${STARTUP_SRC:-$ASSET_ROOT/runtime/bare_x86_64/lona_start.S}"
 LINKER_SCRIPT="${LINKER_SCRIPT:-$ASSET_ROOT/runtime/bare_x86_64/lona.ld}"
-TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-pc-linux-gnu}"
+TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-none-elf}"
 KEEP_TEMP=0
 OPT_LEVEL=0
 
@@ -30,6 +30,8 @@ Usage: scripts/lac-native.sh [options] <input.lo> <output>
 
 Options:
   -O <0-3>       Forward optimization level to lona-ir
+  --target <triple>
+                 Target triple for bare builds
   --keep-temp    Keep intermediate .ll/.o files
   -h, --help     Show this help
 EOF
@@ -40,6 +42,10 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         -O)
             OPT_LEVEL="$2"
+            shift 2
+            ;;
+        --target)
+            TARGET_TRIPLE="$2"
             shift 2
             ;;
         --keep-temp)
@@ -111,7 +117,8 @@ IR_PATH="$TMPDIR_LOCAL/program.ll"
 PROGRAM_OBJ="$TMPDIR_LOCAL/program.o"
 STARTUP_OBJ="$TMPDIR_LOCAL/lona_start.o"
 
-"$LONA_IR_BIN" --emit ir --verify-ir -O "$OPT_LEVEL" "$INPUT" "$IR_PATH"
+"$LONA_IR_BIN" --emit ir --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+    "$INPUT" "$IR_PATH"
 
 if ! grep -q '^define i32 @__lona_main__()' "$IR_PATH"; then
     cat >&2 <<EOF
