@@ -269,7 +269,7 @@ callback 很重要，但它要求：
 以下类型禁止直接过 C FFI：
 
 - `ref T`
-- `(...)* Ret`，除非后续 callback 阶段明确带有 C ABI
+- `(...: Ret)`，除非后续 callback 阶段明确带有 C ABI
 
 ### 4.3 聚合
 

@@ -76,14 +76,14 @@ grep -q '"targetType": "<i32, i32>"' "$cast_json_out"
 
 cat >"$func_ptr_json_in" <<'EOF'
 def hold() {
-    var slot (i32)** i32
-    var table ()*[1] const i32* const
+    var slot (i32: i32)*
+    var table (: i32* const)[1] const
     ret
 }
 EOF
 "$BIN" "$func_ptr_json_in" >"$func_ptr_json_out"
-grep -Fq '"declaredType": "(i32)** i32"' "$func_ptr_json_out"
-grep -Fq '"declaredType": "()*[1] const i32* const"' "$func_ptr_json_out"
+grep -Fq '"declaredType": "(i32: i32)*"' "$func_ptr_json_out"
+grep -Fq '"declaredType": "(: i32* const)[1] const"' "$func_ptr_json_out"
 
 cat >"$byte_json_in" <<'EOF'
 def main() {

@@ -19,6 +19,7 @@ func_param_type
 type_primary
     : single_type { $$ = $1; }
     | tuple_type { $$ = $1; }
+    | func_ptr_type { $$ = $1; }
     ;
 
 postfix_type
@@ -41,38 +42,17 @@ postfix_type
 
 type_name
     : postfix_type { $$ = $1; }
-    | func_ptr_type { $$ = $1; }
-    ;
-
-func_ptr_head
-    : '(' ')' '*' { $$ = new FuncPtrTypeNode({}, nullptr, @$); }
-    | '(' func_param_type_seq ')' '*' { $$ = new FuncPtrTypeNode(*$2, nullptr, @$); delete $2; }
-    ;
-
-func_ptr_storage_type
-    : func_ptr_head { $$ = $1; }
-    | func_ptr_storage_type '*' %prec type_suffix { $$ = new PointerTypeNode($1, 1, @$); }
-    | func_ptr_storage_type '[' '*' ']' %prec type_suffix { $$ = new IndexablePointerTypeNode($1, @$); }
-    | func_ptr_storage_type '[' ']' %prec type_suffix { $$ = new ArrayTypeNode($1, {}, @$); }
-    | func_ptr_storage_type '[' expr_seq ']' %prec type_suffix {
-        $$ = new ArrayTypeNode($1, *$3, @$);
-        delete $3;
-    }
-    | func_ptr_storage_type '[' ',' expr_seq ']' %prec type_suffix {
-        auto dims = *$4;
-        dims.insert(dims.begin(), (AstNode*)nullptr);
-        $$ = new ArrayTypeNode($1, dims, @$);
-        delete $4;
-    }
-    | func_ptr_storage_type TYPE_CONST %prec type_suffix { $$ = new ConstTypeNode($1, @$); }
     ;
 
 func_ptr_type
-    : func_ptr_storage_type { $$ = $1; }
-    | func_ptr_storage_type type_name {
-        $$ = $1;
-        auto *func = findFuncPtrTypeNode($1);
-        assert(func != nullptr);
-        func->ret = $2;
+    : '(' ':' ')' { $$ = new FuncPtrTypeNode({}, nullptr, @$); }
+    | '(' ':' type_name ')' { $$ = new FuncPtrTypeNode({}, $3, @$); }
+    | '(' func_param_type_seq ':' ')' {
+        $$ = new FuncPtrTypeNode(*$2, nullptr, @$);
+        delete $2;
+    }
+    | '(' func_param_type_seq ':' type_name ')' {
+        $$ = new FuncPtrTypeNode(*$2, $4, @$);
+        delete $2;
     }
     ;

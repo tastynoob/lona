@@ -263,7 +263,7 @@ def callback_{case_id}(v i32) i32 {{
     ret v + {rng.randint(1, 6)}
 }}
 
-def apply_{case_id}(v i32, cb (i32)* i32) i32 {{
+def apply_{case_id}(v i32, cb (i32: i32)) i32 {{
     ret cb(v)
 }}
 """

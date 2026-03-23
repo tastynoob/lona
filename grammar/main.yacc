@@ -137,7 +137,7 @@
 %type <typeNode> type_selector
 %type <node> var_decl param_decl var_def
 
-%type <typeNode> single_type type_primary postfix_type func_ptr_head func_ptr_storage_type func_ptr_type type_name tuple_type func_param_type
+%type <typeNode> single_type type_primary postfix_type func_ptr_type type_name tuple_type func_param_type
 
 %type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq

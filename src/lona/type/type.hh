@@ -308,11 +308,12 @@ public:
                     name += "<unknown>";
                 }
             }
-            name += ")*";
+            name += ":";
             if (auto *retType = func->getRetType()) {
                 name += " ";
                 name.append(retType->full_name.tochara(), retType->full_name.size());
             }
+            name += ")";
             return string(name.c_str());
         }
         return pointeeType ? pointeeType->full_name + "*" : string("<unknown>*");

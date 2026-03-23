@@ -102,7 +102,7 @@ def foo(v i32) i32 {
 }
 
 def hold() i32 {
-    var cb (i32)* i32 = foo&<i32>
+    var cb (i32: i32) = foo&<i32>
     ret 0
 }
 EOF
@@ -115,7 +115,7 @@ cat >"$func_ptr_void_in" <<'EOF'
 def ping() {}
 
 def hold() i32 {
-    var cb ()* = ping&<>
+    var cb (:) = ping&<>
     cb()
     ret 0
 }
@@ -131,8 +131,8 @@ def foo(v i32) i32 {
 }
 
 def hold() i32 {
-    var cb (i32)* i32 = foo&<i32>
-    var slot (i32)** i32 = &cb
+    var cb (i32: i32) = foo&<i32>
+    var slot (i32: i32)* = &cb
     ret (*slot)(7)
 }
 EOF
@@ -147,7 +147,7 @@ def ping() i32 {
 }
 
 def hold() i32 {
-    var table ()*[1] i32 = {ping&<>}
+    var table (: i32)[1] = {ping&<>}
     ret table(0)()
 }
 EOF
@@ -163,7 +163,7 @@ def set7(ref v i32) i32 {
 }
 
 def hold() i32 {
-    var cb (ref i32)* i32 = set7&<ref i32>
+    var cb (ref i32: i32) = set7&<ref i32>
     var x i32 = 1
     ret cb(ref x)
 }
@@ -203,12 +203,12 @@ grep -q 'function reference parameter type mismatch at index 0 for `foo`: expect
 
 cat >"$func_ptr_uninit_in" <<'EOF'
 def bad_holder() i32 {
-    var cb (i32)* i32
+    var cb (i32: i32)
     ret 0
 }
 EOF
 expect_emit_ir_failure "$func_ptr_uninit_in" "$func_ptr_uninit_out" 'expected uninitialized function pointer variable program to fail'
-grep -Fq 'function pointer variable type for `cb` requires initializer: (i32)* i32' "$func_ptr_uninit_out"
+grep -Fq 'function pointer variable type for `cb` requires initializer: (i32: i32)' "$func_ptr_uninit_out"
 
 cat >"$func_ptr_packed_agg_in" <<'EOF'
 struct Pair {
@@ -221,7 +221,7 @@ def echo(v Pair) Pair {
 }
 
 def hold() i32 {
-    var cb (Pair)* Pair = echo&<Pair>
+    var cb (Pair: Pair) = echo&<Pair>
     var pair = Pair(left = 1, right = 2)
     ret cb(pair).right
 }
@@ -243,7 +243,7 @@ def echo(v Triple) Triple {
 }
 
 def hold() i32 {
-    var cb (Triple)* Triple = echo&<Triple>
+    var cb (Triple: Triple) = echo&<Triple>
     var triple = Triple(a = 1, b = 2, c = 3)
     ret cb(triple).c
 }
@@ -389,10 +389,10 @@ grep -q '^declare ptr @alloc(i64)' "$ffi_indexable_out"
 grep -q '^declare i32 @fill(ptr, i8)' "$ffi_indexable_out"
 
 cat >"$ffi_callback_bad_in" <<'EOF'
-extern "C" def bad(cb (i32)* i32) i32
+extern "C" def bad(cb (i32: i32)) i32
 EOF
 expect_emit_ir_failure "$ffi_callback_bad_in" "$ffi_callback_bad_out" 'expected extern C callback parameter program to fail'
-grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `cb`: (i32)* i32' "$ffi_callback_bad_out"
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `cb`: (i32: i32)' "$ffi_callback_bad_out"
 grep -Fq 'help: Callback support is not implemented in C FFI v0 yet.' "$ffi_callback_bad_out"
 
 cat >"$ffi_aggregate_bad_in" <<'EOF'
@@ -539,7 +539,7 @@ def bad_inferred_local() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_inferred_local_bad_in" "$func_inferred_local_bad_out" 'expected inferred bare function local variable program to fail'
-grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_inferred_local_bad_out"
+grep -q 'unsupported bare function variable type for `cb`: (: i32)' "$func_inferred_local_bad_out"
 
 cat >"$func_inferred_top_bad_in" <<'EOF'
 def foo() i32 {
@@ -549,7 +549,7 @@ def foo() i32 {
 var cb = foo
 EOF
 expect_emit_ir_failure "$func_inferred_top_bad_in" "$func_inferred_top_bad_out" 'expected inferred bare function top-level variable program to fail'
-grep -q 'unsupported bare function variable type for `cb`: () i32' "$func_inferred_top_bad_out"
+grep -q 'unsupported bare function variable type for `cb`: (: i32)' "$func_inferred_top_bad_out"
 
 cat >"$func_inferred_method_local_bad_in" <<'EOF'
 struct Complex {
@@ -571,7 +571,7 @@ def bad_method_local() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_inferred_method_local_bad_in" "$func_inferred_method_local_bad_out" 'expected inferred bare method local variable program to fail'
-grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex\) [^ ]*Complex' "$func_inferred_method_local_bad_out"
+grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex: [^)]*Complex\)' "$func_inferred_method_local_bad_out"
 
 cat >"$func_inferred_method_top_bad_in" <<'EOF'
 struct Complex {
@@ -590,7 +590,7 @@ var sample = Complex(1, 2)
 var cb = sample.add
 EOF
 expect_emit_ir_failure "$func_inferred_method_top_bad_in" "$func_inferred_method_top_bad_out" 'expected inferred bare method top-level variable program to fail'
-grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex\) [^ ]*Complex' "$func_inferred_method_top_bad_out"
+grep -Eq 'unsupported bare function variable type for `cb`: \([^)]*Complex: [^)]*Complex\)' "$func_inferred_method_top_bad_out"
 
 cat >"$func_method_return_bad_in" <<'EOF'
 struct Complex {

@@ -61,11 +61,12 @@ describeResolvedFuncType(FuncType *type, size_t argOffset = 0) {
         }
         name += describeResolvedType(argTypes[i]);
     }
-    name += ")";
+    name += ":";
     if (type->getRetType() != nullptr) {
         name += " ";
         name += describeResolvedType(type->getRetType());
     }
+    name += ")";
     return name;
 }
 
@@ -90,11 +91,12 @@ describeResolvedType(TypeClass *type) {
                 }
                 name += describeResolvedType(argTypes[i]);
             }
-            name += ")*";
+            name += ":";
             if (func->getRetType() != nullptr) {
                 name += " ";
                 name += describeResolvedType(func->getRetType());
             }
+            name += ")";
             return name;
         }
         return describeResolvedType(pointer->getPointeeType()) + "*";
@@ -414,7 +416,7 @@ rejectBareFunctionStorage(TypeClass *type, AstVarDef *node) {
           "unsupported bare function variable type for `" +
               toStdString(node->getName()) + "`: " +
               describeStorageType(type, node),
-          "Use an explicit function pointer type like `(T1, T2)* Ret` instead.");
+          "Use an explicit function pointer type like `(T1, T2: Ret)` instead.");
 }
 
 void

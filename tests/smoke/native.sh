@@ -119,7 +119,7 @@ struct Mixed {
     bits u8[4]
     pair <i32, bool>
     ptr i32*
-    cb (i32)* i32
+    cb (i32: i32)
 }
 
 def main() i32 {

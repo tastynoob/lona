@@ -280,7 +280,7 @@ def main() i32 {
 }
 EOF
 expect_emit_ir_failure "$import_main_in" "$import_function_value_bad_out" 'expected imported bare function local variable program to fail'
-grep -Fq 'unsupported bare function variable type for `cb`: (i32) i32' "$import_function_value_bad_out"
+grep -Fq 'unsupported bare function variable type for `cb`: (i32: i32)' "$import_function_value_bad_out"
 
 cat >"$import_main_in" <<'EOF'
 import math

@@ -343,14 +343,19 @@ brace-init-item   ::= expr
 ### 3.6 类型语法
 
 ```ebnf
-type-name         ::= base-type
-                    | func-head type-name
+type-name         ::= postfix-type
 
-base-type         ::= single-type
+postfix-type      ::= type-primary
+                    | postfix-type "*"
+                    | postfix-type "[" "*" "]"
+                    | postfix-type "[" "]"
+                    | postfix-type "[" expr-seq "]"
+                    | postfix-type "[" "," expr-seq "]"
+                    | postfix-type "const"
+
+type-primary      ::= single-type
                     | tuple-type
-                    | ptr-type
-                    | indexable-ptr-type
-                    | array-type
+                    | func-type
 
 single-type       ::= IDENT
                     | BuiltinType
@@ -358,23 +363,13 @@ single-type       ::= IDENT
 
 tuple-type        ::= "<" type-name-seq ">"
 
+func-type         ::= "(" ":" ")"
+                    | "(" ":" type-name ")"
+                    | "(" type-name-seq ":" ")"
+                    | "(" type-name-seq ":" type-name ")"
+
 type-selector     ::= IDENT "." IDENT
                     | type-selector "." IDENT
-
-ptr-type          ::= base-type "*"
-
-indexable-ptr-type ::= base-type "[" "*" "]"
-
-array-type        ::= base-type "[" "]"
-                    | base-type "[" expr-seq "]"
-                    | base-type "[" "," expr-seq "]"
-
-func-head         ::= "(" ")"
-                    | "(" type-name-seq ")"
-                    | func-head "*"
-                    | func-head "[" "]"
-                    | func-head "[" expr-seq "]"
-                    | func-head "[" "," expr-seq "]"
 
 type-name-seq     ::= type-name
                     | type-name-seq "," type-name
@@ -384,8 +379,9 @@ type-name-seq     ::= type-name
 
 - 元组类型 `<T1, T2, ...>` 已经进入 parser / AST。
 - 顶层函数声明仍写成 `def foo(v i32) i32` 这种“参数头 + 返回类型”形式。
-- 但在类型位置里，parser 只接受显式函数指针，例如 `()*`、`(i32, bool)* i32`。
+- 但在类型位置里，parser 只接受显式函数指针，例如 `(:)`、`(i32, bool: i32)`。
 - 裸函数签名如 `(i32, bool) i32` 不再作为 `type-name` 的合法写法。
+- 函数指针类型本身是一个完整的 `type-primary`，因此后面可以继续接普通后缀，例如 `(i32: i32)*`、`(: i32)[4]`。
 - 函数取指针不在类型层完成，而是通过表达式 `foo&<i32, bool>` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法，但它们在语义上表示不同的容器组合方式。
 - `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。
@@ -452,5 +448,5 @@ box.callback(1)
 例如下面这种写法会报错：
 
 ```text
-var cb (i32)* i32
+var cb (i32: i32)
 ```

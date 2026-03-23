@@ -57,14 +57,14 @@ IDENT ":" "=" expr
 ```lona
 var p i32*
 var grid i32[4, 4]
-var handler (i32, i32)* i32 = add&<i32, i32>
-var allocator ()* Ptr = alloc&<>
-var cb (i32)* i32 = foo&<i32>
+var handler (i32, i32: i32) = add&<i32, i32>
+var allocator (: Ptr) = alloc&<>
+var cb (i32: i32) = foo&<i32>
 ```
 
 这些例子依赖的是 `var_decl ::= IDENT type-name`，其中 `type-name` 可以是指针、数组、函数指针等更复杂的类型写法。
 需要注意：
 
 - 裸函数签名如 `() i32`、`(i32, i32) i32` 本身不是有值语义的变量类型。
-- parser 只接受显式函数指针写法，因此如果要把函数放进变量里，应该写成 `()*`、`(i32)* i32` 这类形式，而不是 `() i32`。
+- parser 只接受显式函数指针写法，因此如果要把函数放进变量里，应该写成 `(:)`、`(i32: i32)` 这类形式，而不是 `() i32`。
 - 当前实现额外要求：函数指针变量在定义时必须同时给初始化值。
