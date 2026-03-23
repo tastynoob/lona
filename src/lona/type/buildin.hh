@@ -50,6 +50,5 @@ extern IntType* i64Ty;
 extern FLoatType* f32Ty;
 extern FLoatType* f64Ty;
 extern BoolType* boolTy;
-extern PointerType* strTy;
 
 }

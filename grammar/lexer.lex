@@ -69,7 +69,7 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
 (extern) { loc->columns(yyleng); return token::EXTERN; }
 (repr) { loc->columns(yyleng); return token::REPR; }
 (struct) { loc->columns(yyleng); return token::STRUCT; }
-(type|u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64|bool|str) {
+(type|u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64|bool) {
     loc->columns(yyleng);
     lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::TYPE;

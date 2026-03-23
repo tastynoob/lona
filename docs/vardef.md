@@ -14,7 +14,8 @@ var point Point
 
 ```lona
 var count i32 = 1
-var title str = "lona"
+var title u8 const[4] = "lona"
+var title_view u8 const[*] = &"lona"
 var ok bool = true
 ```
 
@@ -25,6 +26,11 @@ var count = 1
 var name = "compiler"
 var point = Point()
 ```
+
+说明：
+
+- `var name = "compiler"` 当前会推断成 `u8 const[8]`，不是 `str`。
+- `var view = &"compiler"` 会推断成 `u8 const[*]`。
 
 ## 4. 简写形式 `name := expr`
 

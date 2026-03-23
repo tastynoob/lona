@@ -53,6 +53,8 @@ string_borrow_in="$(new_tmp_file string-borrow)"
 string_borrow_out="$(new_tmp_file string-borrow-out)"
 string_const_borrow_bad_in="$(new_tmp_file string-const-borrow-bad)"
 string_const_borrow_bad_out="$(new_tmp_file string-const-borrow-bad-out)"
+string_str_bad_in="$(new_tmp_file string-str-bad)"
+string_str_bad_out="$(new_tmp_file string-str-bad-out)"
 string_escape_in="$(new_tmp_file string-escape)"
 string_escape_out="$(new_tmp_file string-escape-out)"
 const_type_json_in="$(new_tmp_file const-type-json)"
@@ -474,6 +476,16 @@ def main() i32 {
 EOF
 expect_emit_ir_failure "$string_const_borrow_bad_in" "$string_const_borrow_bad_out" 'expected borrowed string bytes to stay const'
 grep -Fq 'assignment target is const-qualified: u8 const' "$string_const_borrow_bad_out"
+
+cat >"$string_str_bad_in" <<'EOF'
+def main() i32 {
+    var title str = "lona"
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$string_str_bad_in" "$string_str_bad_out" 'expected legacy str string literal program to fail'
+grep -Fq 'semantic error: unknown variable type' "$string_str_bad_out"
+grep -Fq 'var title str = "lona"' "$string_str_bad_out"
 
 cat >"$string_escape_in" <<'EOF'
 def main() i32 {

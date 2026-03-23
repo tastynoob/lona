@@ -25,7 +25,8 @@
 说明：
 
 - `INT`、`FLOAT`、`STRING` 在语法层统一归为 `CONST`。
-- `FLOAT` 当前已经形成最小浮点语义闭环；`STRING` 仍保留为占位。
+- `FLOAT` 当前已经形成最小浮点语义闭环。
+- `STRING` 在语义层按 byte string literal 处理；`"..."` 是 `u8 const[N]`，`&"..."` 是 `u8 const[*]`。
 
 ### 1.2 关键字
 
@@ -50,7 +51,6 @@
 - `int`、`uint`
 - `f32`、`f64`
 - `bool`
-- `str`
 
 ### 1.3 注释、空白与换行
 

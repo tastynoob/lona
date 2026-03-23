@@ -1048,7 +1048,6 @@ lookupBuiltinType(llvm::StringRef name) {
     if (name == "f32") return f32Ty;
     if (name == "f64") return f64Ty;
     if (name == "bool") return boolTy;
-    if (name == "str") return strTy;
     return nullptr;
 }
 

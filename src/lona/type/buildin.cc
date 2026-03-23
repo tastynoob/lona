@@ -108,7 +108,6 @@ IntType* i64Ty = nullptr;
 FLoatType* f32Ty = nullptr;
 FLoatType* f64Ty = nullptr;
 BoolType* boolTy = nullptr;
-PointerType* strTy = nullptr;
 
 void
 initBuildinType(Scope* scope) {
@@ -130,9 +129,6 @@ initBuildinType(Scope* scope) {
         f64Ty = new FLoatType(BaseType::F64, "f64");
         boolTy = new BoolType();
     }
-    if (!strTy) {
-        strTy = new PointerType(i8Ty);
-    }
 
     typeTable->addType(string("u8"), u8Ty);
     typeTable->addType(string("i8"), i8Ty);
@@ -147,6 +143,5 @@ initBuildinType(Scope* scope) {
     typeTable->addType(string("f32"), f32Ty);
     typeTable->addType(string("f64"), f64Ty);
     typeTable->addType(string("bool"), boolTy);
-    typeTable->addType(string("str"), strTy);
 }
 }
