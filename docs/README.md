@@ -15,8 +15,9 @@
 
 ## 语言设计与约束
 
+- [const_qualifier_v0.md](const_qualifier_v0.md): `const` 类型修饰符草案；区分类型修饰与定义修饰，收口数组、指针、`u8 const[*]`，以及结构体字段与未来 `readonly` 的边界。
 - [pointer_reference.md](pointer_reference.md): 指针 / 引用 / 值语义的设计收口；当前已实现 `ref` 局部绑定、`ref` 参数和隐式 `ref self`。
-- [string_bytes_v0.md](string_bytes_v0.md): “字节串而不是字符串类型”的草案；收口 `u8[N]` / `u8[*]`、不引入 `char` / `string` / 内建 `Bytes`。
+- [string_bytes_v0.md](string_bytes_v0.md): “字节串而不是字符串类型”的草案；收口 `u8 const[N]` / `u8 const[*]`，以及字面量复制后得到的 `u8[N]`。
 
 ## 编译器与工程结构
 
