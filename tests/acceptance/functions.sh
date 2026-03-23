@@ -15,6 +15,8 @@ func_ptr_bad_in="$(new_tmp_file func-ptr-bad)"
 func_ptr_bad_out="$(new_tmp_file func-ptr-bad-out)"
 func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
 func_ptr_uninit_out="$(new_tmp_file func-ptr-uninit-out)"
+func_ptr_derived_uninit_in="$(new_tmp_file func-ptr-derived-uninit)"
+func_ptr_derived_uninit_out="$(new_tmp_file func-ptr-derived-uninit-out)"
 func_ptr_ptr_in="$(new_tmp_file func-ptr-ptr)"
 func_ptr_ptr_out="$(new_tmp_file func-ptr-ptr-out)"
 func_ptr_array_in="$(new_tmp_file func-ptr-array)"
@@ -25,6 +27,8 @@ func_ptr_direct_return_agg_in="$(new_tmp_file func-ptr-direct-return-agg)"
 func_ptr_direct_return_agg_out="$(new_tmp_file func-ptr-direct-return-agg-out)"
 ffi_decl_json_in="$(new_tmp_file ffi-decl-json)"
 ffi_decl_json_out="$(new_tmp_file ffi-decl-json-out)"
+ffi_string_in="$(new_tmp_file ffi-string)"
+ffi_string_out="$(new_tmp_file ffi-string-out)"
 ffi_pointer_sig_in="$(new_tmp_file ffi-pointer-sig)"
 ffi_pointer_sig_out="$(new_tmp_file ffi-pointer-sig-out)"
 ffi_import_in="$(new_tmp_file ffi-import)"
@@ -49,6 +53,8 @@ ffi_indexable_in="$(new_tmp_file ffi-indexable)"
 ffi_indexable_out="$(new_tmp_file ffi-indexable-out)"
 ffi_callback_bad_in="$(new_tmp_file ffi-callback-bad)"
 ffi_callback_bad_out="$(new_tmp_file ffi-callback-bad-out)"
+ffi_callback_ptr_bad_in="$(new_tmp_file ffi-callback-ptr-bad)"
+ffi_callback_ptr_bad_out="$(new_tmp_file ffi-callback-ptr-bad-out)"
 ffi_aggregate_bad_in="$(new_tmp_file ffi-aggregate-bad)"
 ffi_aggregate_bad_out="$(new_tmp_file ffi-aggregate-bad-out)"
 ffi_struct_ptr_bad_in="$(new_tmp_file ffi-struct-ptr-bad)"
@@ -61,6 +67,8 @@ ffi_repr_field_bad_in="$(new_tmp_file ffi-repr-field-bad)"
 ffi_repr_field_bad_out="$(new_tmp_file ffi-repr-field-bad-out)"
 func_array_uninit_in="$(new_tmp_file func-array-uninit)"
 func_array_uninit_out="$(new_tmp_file func-array-uninit-out)"
+func_array_partial_in="$(new_tmp_file func-array-partial)"
+func_array_partial_out="$(new_tmp_file func-array-partial-out)"
 func_name_conflict_in="$(new_tmp_file func-name-conflict)"
 func_name_conflict_out="$(new_tmp_file func-name-conflict-out)"
 struct_name_conflict_in="$(new_tmp_file struct-name-conflict)"
@@ -210,6 +218,15 @@ EOF
 expect_emit_ir_failure "$func_ptr_uninit_in" "$func_ptr_uninit_out" 'expected uninitialized function pointer variable program to fail'
 grep -Fq 'function pointer variable type for `cb` requires initializer: (i32: i32)' "$func_ptr_uninit_out"
 
+cat >"$func_ptr_derived_uninit_in" <<'EOF'
+def hold() i32 {
+    var slot (i32: i32)*
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_derived_uninit_in" >"$func_ptr_derived_uninit_out"
+grep -q 'alloca ptr' "$func_ptr_derived_uninit_out"
+
 cat >"$func_ptr_packed_agg_in" <<'EOF'
 struct Pair {
     left i32
@@ -267,6 +284,18 @@ grep -Fq '"abiKind": "c"' "$ffi_decl_json_out"
 grep -Fq '"declKind": "extern"' "$ffi_decl_json_out"
 grep -Fq '"declKind": "repr_c"' "$ffi_decl_json_out"
 grep -Fq '"body": null' "$ffi_decl_json_out"
+
+cat >"$ffi_string_in" <<'EOF'
+extern "C" def inspect(msg u8 const[*]) i32
+
+def main() i32 {
+    ret inspect(&"ok")
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ffi_string_in" >"$ffi_string_out"
+grep -Fq 'private constant [2 x i8] c"ok", align 1' "$ffi_string_out"
+grep -Fq 'declare i32 @inspect(ptr)' "$ffi_string_out"
+grep -Fq 'call i32 @inspect(ptr @.lona.bytes.' "$ffi_string_out"
 
 cat >"$ffi_pointer_sig_in" <<'EOF'
 extern struct FILE
@@ -395,6 +424,13 @@ expect_emit_ir_failure "$ffi_callback_bad_in" "$ffi_callback_bad_out" 'expected 
 grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `cb`: (i32: i32)' "$ffi_callback_bad_out"
 grep -Fq 'help: Callback support is not implemented in C FFI v0 yet.' "$ffi_callback_bad_out"
 
+cat >"$ffi_callback_ptr_bad_in" <<'EOF'
+extern "C" def bad(slot (i32: i32)*) i32
+EOF
+expect_emit_ir_failure "$ffi_callback_ptr_bad_in" "$ffi_callback_ptr_bad_out" 'expected extern C callback slot parameter program to fail'
+grep -Fq 'semantic error: extern "C" function `bad` uses unsupported parameter `slot`: (i32: i32)*' "$ffi_callback_ptr_bad_out"
+grep -Fq 'help: Callback support is not implemented in C FFI v0 yet.' "$ffi_callback_ptr_bad_out"
+
 cat >"$ffi_aggregate_bad_in" <<'EOF'
 struct Pair {
     left i32
@@ -459,12 +495,27 @@ grep -Fq 'help: Use only C-compatible field types: scalars, raw pointers, fixed 
 
 cat >"$func_array_uninit_in" <<'EOF'
 def bad_table() i32 {
-    var table ()[] i32
+    var table (: i32)[2]
     ret 0
 }
 EOF
 expect_emit_ir_failure "$func_array_uninit_in" "$func_array_uninit_out" 'expected uninitialized function array variable program to fail'
-grep -Fq "syntax error: I couldn't parse this statement:" "$func_array_uninit_out"
+grep -Fq 'function pointer array variable for `table` requires a full initializer: (: i32)[2]' "$func_array_uninit_out"
+grep -Fq 'Missing elements would become null function pointers.' "$func_array_uninit_out"
+
+cat >"$func_array_partial_in" <<'EOF'
+def ping() i32 {
+    ret 7
+}
+
+def bad_table() i32 {
+    var table (: i32)[2] = {ping&<>}
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$func_array_partial_in" "$func_array_partial_out" 'expected partial function pointer array initializer program to fail'
+grep -Fq 'function pointer arrays require full initialization: expected exactly 2 elements, got 1' "$func_array_partial_out"
+grep -Fq 'Missing elements would become null function pointers.' "$func_array_partial_out"
 
 cat >"$func_name_conflict_in" <<'EOF'
 struct Counter {

@@ -158,13 +158,21 @@ isExternCCallbackType(TypeClass *type) {
     if (!type) {
         return false;
     }
+    if (auto *qualified = type->as<ConstType>()) {
+        return isExternCCallbackType(qualified->getBaseType());
+    }
     if (auto *pointer = asUnqualified<PointerType>(type)) {
-        return pointer->getPointeeType() &&
-               pointer->getPointeeType()->as<FuncType>();
+        auto *pointeeType = pointer->getPointeeType();
+        return (pointeeType && pointeeType->as<FuncType>()) ||
+               isExternCCallbackType(pointeeType);
     }
     if (auto *indexable = asUnqualified<IndexablePointerType>(type)) {
-        return indexable->getElementType() &&
-               indexable->getElementType()->as<FuncType>();
+        auto *elementType = indexable->getElementType();
+        return (elementType && elementType->as<FuncType>()) ||
+               isExternCCallbackType(elementType);
+    }
+    if (auto *array = asUnqualified<ArrayType>(type)) {
+        return isExternCCallbackType(array->getElementType());
     }
     return false;
 }

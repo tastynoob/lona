@@ -269,6 +269,26 @@ isNullLiteralExpr(HIRExpr *expr) {
 }
 
 bool
+isDirectFunctionPointerValueType(TypeClass *type) {
+    auto *storageType = stripTopLevelConst(type);
+    auto *pointerType = storageType ? storageType->as<PointerType>() : nullptr;
+    return pointerType && pointerType->getPointeeType() &&
+           pointerType->getPointeeType()->as<FuncType>();
+}
+
+bool
+isFixedArrayOfFunctionPointerValues(TypeClass *type) {
+    auto *storageType = stripTopLevelConst(type);
+    auto *arrayType = storageType ? storageType->as<ArrayType>() : nullptr;
+    if (!arrayType) {
+        return false;
+    }
+    auto *elementType = arrayType->getElementType();
+    return isDirectFunctionPointerValueType(elementType) ||
+           isFixedArrayOfFunctionPointerValues(elementType);
+}
+
+bool
 isReservedInitialListTypeNode(TypeNode *node) {
     auto *base = dynamic_cast<BaseTypeNode *>(node);
     if (!base) {
@@ -458,24 +478,29 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
 }
 
 void
-rejectUninitializedFunctionDerivedStorage(AstVarDef *node) {
-    if (!node || node->withInitVal()) {
+rejectUninitializedFunctionPointerValueStorage(TypeClass *type, AstVarDef *node) {
+    if (!node || node->withInitVal() || !type) {
         return;
     }
 
-    auto *typeNode = node->getTypeNode();
-    if (!typeNode) {
+    if (isDirectFunctionPointerValueType(type)) {
+        error(node->loc,
+              "function pointer variable type for `" +
+                  toStdString(node->getName()) + "` requires initializer: " +
+                  describeStorageType(type, node),
+              "Initialize function pointers at the point of definition.");
         return;
     }
-    if (findFuncPtrTypeNode(typeNode) == nullptr) {
+
+    if (!isFixedArrayOfFunctionPointerValues(type)) {
         return;
     }
 
     error(node->loc,
-          "function pointer variable type for `" +
-              toStdString(node->getName()) + "` requires initializer: " +
-              describeTypeNode(typeNode),
-          "Initialize function pointers at the point of definition.");
+          "function pointer array variable for `" +
+              toStdString(node->getName()) + "` requires a full initializer: " +
+              describeStorageType(type, node),
+          "Initialize every slot explicitly. Missing elements would become null function pointers.");
 }
 
 TypeTable *
@@ -1998,6 +2023,15 @@ class FunctionAnalyzer {
                                 std::to_string(initList.items.size()),
                             "Remove extra elements or increase the array dimension.");
             }
+            if (isFixedArrayOfFunctionPointerValues(arrayType) &&
+                initList.items.size() != outerExtent) {
+                owner.error(
+                    loc,
+                    "function pointer arrays require full initialization: expected exactly " +
+                        std::to_string(outerExtent) + " elements, got " +
+                        std::to_string(initList.items.size()),
+                    "Initialize every slot explicitly. Missing elements would become null function pointers.");
+            }
 
             items.reserve(initList.items.size());
             for (std::size_t i = 0; i < initList.items.size(); ++i) {
@@ -2268,7 +2302,6 @@ class FunctionAnalyzer {
         if (auto *typeNode = node ? node->getTypeNode() : nullptr) {
             validateTypeNodeLayout(typeNode);
         }
-        rejectUninitializedFunctionDerivedStorage(node);
         const bool isRefBinding = node->isRefBinding();
 
         TypeClass *type = nullptr;
@@ -2276,6 +2309,7 @@ class FunctionAnalyzer {
             type = requireType(typeNode, typeNode->loc, "unknown variable type");
             rejectBareFunctionStorage(type, node);
             rejectOpaqueStructStorage(type, node);
+            rejectUninitializedFunctionPointerValueStorage(type, node);
         } else if (isRefBinding) {
             error(node->loc,
                   "reference binding `" + toStdString(node->getName()) +

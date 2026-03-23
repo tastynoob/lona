@@ -126,7 +126,7 @@ v0 必须把“允许过 FFI 的类型集合”收死。
 建议语法：
 
 ```lona
-extern "C" def puts(msg u8[*]) i32
+extern "C" def puts(msg u8 const[*]) i32
 extern "C" def malloc(size u64) u8[*]
 extern "C" def free(p u8[*])
 ```
@@ -186,7 +186,7 @@ extern struct DIR
 
 ```lona
 extern struct FILE
-extern "C" def fopen(path i8*, mode i8*) FILE*
+extern "C" def fopen(path u8 const[*], mode u8 const[*]) FILE*
 extern "C" def fclose(fp FILE*) i32
 ```
 
@@ -307,7 +307,8 @@ v0 不定义语言级字符串与 C 字符串自动桥接。
 
 因此：
 
-- C 字符串先统一视为 `i8*`
+- 字节串字面量 / 只读 C 字符串入口优先统一写成 `u8 const[*]`
+- `i8*` / `u8*` 仍然保留给真正按原始字节指针处理、或需要可写缓冲区的 API
 - 编码、所有权、是否以 `0` 结尾，都由调用者自行保证
 
 这虽然不够友好，但可以避免在 FFI v0 里提前引入字符串运行时设计。
