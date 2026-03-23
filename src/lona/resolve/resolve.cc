@@ -159,7 +159,8 @@ class FunctionResolver {
             }
             return;
         }
-        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {
+        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
+            node->is<AstImport>()) {
             return;
         }
         resolveExpr(node);

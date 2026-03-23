@@ -116,7 +116,7 @@ var x i32 = 3
 var y i32 = inc(x)
 EOF
 "$BIN" --emit ir --verify-ir "$top_level_mix_in" >"$top_level_mix_out"
-grep -q '\.main"()' "$top_level_mix_out"
+grep -q '^define i32 @__lona_main__()' "$top_level_mix_out"
 grep -q '@inc' "$top_level_mix_out"
 
 cat >"$field_method_chain_in" <<'EOF'

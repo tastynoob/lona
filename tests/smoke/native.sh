@@ -33,9 +33,11 @@ small_struct_exe="$WORKDIR/small_struct_packed"
 medium_struct_exe="$WORKDIR/medium_struct_direct_return"
 
 cat >"$main_program" <<'EOF'
-def main() i32 {
+def run() i32 {
     ret 42
 }
+
+ret run()
 EOF
 
 cat >"$top_level_program" <<'EOF'
@@ -44,13 +46,15 @@ x = x + 1
 EOF
 
 cat >"$ref_local_program" <<'EOF'
-def main() i32 {
+def run() i32 {
     var x i32 = 1
     ref alias i32 = x
     var p i32* = &alias
     *p = 11
     ret x
 }
+
+ret run()
 EOF
 
 cat >"$ref_param_program" <<'EOF'
@@ -60,19 +64,23 @@ def poke(ref x i32) i32 {
     ret x
 }
 
-def main() i32 {
+def run() i32 {
     var x i32 = 1
     ret poke(ref x)
 }
+
+ret run()
 EOF
 
 cat >"$array_ptr_program" <<'EOF'
-def main() i32 {
+def run() i32 {
     var row i32[4] = {1, 2, 3, 4}
     var p i32[4]* = &row
     (*p)(2) = 13
     ret row(2)
 }
+
+ret run()
 EOF
 
 cat >"$method_self_program" <<'EOF'
@@ -85,12 +93,14 @@ struct Counter {
     }
 }
 
-def main() i32 {
+def run() i32 {
     var c Counter
     c.value = 2
     c.bump(3)
     ret c.value
 }
+
+ret run()
 EOF
 
 cat >"$method_temp_program" <<'EOF'
@@ -103,9 +113,11 @@ struct Counter {
     }
 }
 
-def main() i32 {
+def run() i32 {
     ret Counter(1).bump(2)
 }
+
+ret run()
 EOF
 
 cat >"$struct_fields_program" <<'EOF'
@@ -122,7 +134,7 @@ struct Mixed {
     cb (i32: i32)
 }
 
-def main() i32 {
+def run() i32 {
     var x i32 = 41
     var raw u8[4] = cast[f32](1).tobits()
     var pair <i32, bool> = (1, true)
@@ -133,6 +145,8 @@ def main() i32 {
     }
     ret 0
 }
+
+ret run()
 EOF
 
 cat >"$small_struct_program" <<'EOF'
@@ -152,11 +166,13 @@ def echo(v Pair) Pair {
     ret v
 }
 
-def main() i32 {
+def run() i32 {
     var p = Pair(left = 1, right = 2)
     var out = echo(p).swap(3)
     ret out.left + out.right
 }
+
+ret run()
 EOF
 
 cat >"$medium_struct_program" <<'EOF'
@@ -178,11 +194,13 @@ def echo(v Triple) Triple {
     ret v
 }
 
-def main() i32 {
+def run() i32 {
     var triple = Triple(a = 1, b = 2, c = 3)
     var out = echo(triple).shift(4)
     ret out.a + out.b + out.c
 }
+
+ret run()
 EOF
 
 bash "$BUILD_NATIVE" "$main_program" "$main_exe"

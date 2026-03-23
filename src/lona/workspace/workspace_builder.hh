@@ -37,8 +37,9 @@ class WorkspaceBuilder {
     int compileModule(CompilationUnit &unit, const CompileOptions &options,
                       ModuleArtifact &artifact, SessionStats &stats,
                       std::ostream &out) const;
-    LinkedModule linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
-                               std::ostream &out, double *linkMs = nullptr,
+    LinkedModule linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntry,
+                               bool verifyIR, std::ostream &out,
+                               double *linkMs = nullptr,
                                double *verifyMs = nullptr) const;
 
 public:

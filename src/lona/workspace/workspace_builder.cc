@@ -100,93 +100,91 @@ parseArtifactModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) 
                           render);
 }
 
-llvm::Function *
-findExecutableEntryTarget(llvm::Module &module, const CompilationUnit &rootUnit) {
-    const std::string topLevelEntryName = rootUnit.path() + ".main";
-    if (auto *topLevelEntry = module.getFunction(topLevelEntryName)) {
-        return topLevelEntry;
-    }
-
-    auto *mainFunc = module.getFunction("main");
-    if (mainFunc == nullptr) {
-        return nullptr;
-    }
-
-    auto *funcType = mainFunc->getFunctionType();
-    if (funcType->getNumParams() != 0 ||
-        !funcType->getReturnType()->isIntegerTy(32)) {
-        return nullptr;
-    }
-    return mainFunc;
+llvm::StringRef
+languageEntryName() {
+    return "__lona_main__";
 }
 
-std::string
-nextAvailableFunctionName(llvm::Module &module, llvm::StringRef prefix) {
-    std::string name = prefix.str();
-    if (module.getFunction(name) == nullptr) {
-        return name;
-    }
+llvm::StringRef
+hostedArgcName() {
+    return "__lona_argc";
+}
 
-    for (unsigned suffix = 1;; ++suffix) {
-        name = (prefix + std::to_string(suffix)).str();
-        if (module.getFunction(name) == nullptr) {
-            return name;
-        }
-    }
+llvm::StringRef
+hostedArgvName() {
+    return "__lona_argv";
+}
+
+bool
+isLanguageEntryType(llvm::FunctionType *funcType) {
+    return funcType && funcType->getNumParams() == 0 &&
+        funcType->getReturnType()->isIntegerTy(32);
 }
 
 llvm::Function *
-ensureLanguageEntryWrapper(llvm::Module &module,
-                           const CompilationUnit &rootUnit) {
-    constexpr const char *wrapperName = "__lona_entry__";
-    if (auto *existing = module.getFunction(wrapperName)) {
+ensureLanguageEntryWrapper(llvm::Module &module) {
+    auto *entry = module.getFunction(languageEntryName());
+    if (entry && isLanguageEntryType(entry->getFunctionType())) {
+        return entry;
+    }
+    return nullptr;
+}
+
+llvm::GlobalVariable *
+getOrCreateHostedArgcGlobal(llvm::Module &module) {
+    if (auto *existing = module.getGlobalVariable(hostedArgcName())) {
         return existing;
     }
 
-    auto *target = findExecutableEntryTarget(module, rootUnit);
-    if (target == nullptr) {
-        return nullptr;
-    }
+    auto &context = module.getContext();
+    return new llvm::GlobalVariable(module, llvm::Type::getInt32Ty(context), false,
+                                    llvm::GlobalValue::ExternalLinkage,
+                                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
+                                    hostedArgcName());
+}
 
-    if (target->getName() == "main") {
-        target->setName(nextAvailableFunctionName(module, "__lona_user_main__"));
+llvm::GlobalVariable *
+getOrCreateHostedArgvGlobal(llvm::Module &module) {
+    if (auto *existing = module.getGlobalVariable(hostedArgvName())) {
+        return existing;
     }
 
     auto &context = module.getContext();
-    auto *wrapperType =
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
-    auto *wrapper = llvm::Function::Create(
-        wrapperType, llvm::Function::ExternalLinkage, wrapperName, module);
-    auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
-    llvm::IRBuilder<> builder(entry);
-    builder.CreateRet(builder.CreateCall(target));
-    return wrapper;
+    auto *ptrTy = llvm::PointerType::getUnqual(context);
+    return new llvm::GlobalVariable(module, ptrTy, false,
+                                    llvm::GlobalValue::ExternalLinkage,
+                                    llvm::ConstantPointerNull::get(ptrTy),
+                                    hostedArgvName());
 }
 
 llvm::Function *
 ensureHostedMainWrapper(llvm::Module &module) {
-    auto *mainFunc = module.getFunction("main");
-    if (mainFunc != nullptr) {
-        auto *funcType = mainFunc->getFunctionType();
-        if (funcType->getNumParams() == 0 &&
-            funcType->getReturnType()->isIntegerTy(32)) {
-            return mainFunc;
-        }
-        return mainFunc;
-    }
-
-    auto *entryFunc = module.getFunction("__lona_entry__");
+    auto *entryFunc = module.getFunction(languageEntryName());
     if (entryFunc == nullptr) {
         return nullptr;
     }
 
+    auto *mainFunc = module.getFunction("main");
+    if (mainFunc != nullptr) {
+        return nullptr;
+    }
+
     auto &context = module.getContext();
-    auto *mainType =
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+    auto *mainType = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(context),
+        {llvm::Type::getInt32Ty(context), llvm::PointerType::getUnqual(context)},
+        false);
     auto *wrapper = llvm::Function::Create(
         mainType, llvm::Function::ExternalLinkage, "main", module);
     auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
     llvm::IRBuilder<> builder(entry);
+    auto *argcGlobal = getOrCreateHostedArgcGlobal(module);
+    auto *argvGlobal = getOrCreateHostedArgvGlobal(module);
+    auto argIt = wrapper->arg_begin();
+    llvm::Value *argcValue = &*argIt++;
+    llvm::Value *argvValue = &*argIt;
+    builder.CreateStore(argcValue, argcGlobal);
+    builder.CreateStore(argvValue, argvGlobal);
     builder.CreateRet(builder.CreateCall(entryFunc));
     return wrapper;
 }
@@ -391,9 +389,9 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
 }
 
 WorkspaceBuilder::LinkedModule
-WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
-                                std::ostream &out, double *linkMs,
-                                double *verifyMs) const {
+WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntry,
+                                bool verifyIR, std::ostream &out,
+                                double *linkMs, double *verifyMs) const {
     auto *rootArtifact = workspace_.findArtifact(rootUnit.path());
     if (rootArtifact == nullptr) {
         throw DiagnosticError(DiagnosticError::Category::Internal,
@@ -426,8 +424,10 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
         }
     }
 
-    ensureLanguageEntryWrapper(*linkedModule, rootUnit);
-    ensureHostedMainWrapper(*linkedModule);
+    ensureLanguageEntryWrapper(*linkedModule);
+    if (hostedEntry) {
+        ensureHostedMainWrapper(*linkedModule);
+    }
 
     if (verifyIR) {
         auto verifyStart = Clock::now();
@@ -459,8 +459,8 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, options.verifyIR, out, &stats.linkMs,
-                                &stats.verifyMs);
+    auto linked = linkArtifacts(rootUnit, false, options.verifyIR, out,
+                                &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
     }
@@ -482,8 +482,8 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, options.verifyIR, out, &stats.linkMs,
-                                &stats.verifyMs);
+    auto linked = linkArtifacts(rootUnit, true, options.verifyIR, out,
+                                &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
     }

@@ -468,14 +468,14 @@ void @make_big(ptr sret(%Point))
 
 v0 还冻结一个最小 native 程序入口契约：
 
-- `__lona_entry__() -> i32`
+- `__lona_main__() -> i32`
 
 含义：
 
 - bare 启动代码 `_start` 调用它
 - 返回值作为进程退出码
 
-当前 system 路线里的 `main` 只是对宿主工具链的适配入口，不视为 `lona` 语言 ABI 的核心定义。
+当前 system 路线里的 `main(argc, argv)` 只是对宿主工具链的适配入口，不视为 `lona` 语言 ABI 的核心定义。
 
 ## 7. 当前不纳入 v0 的优化
 
@@ -537,7 +537,7 @@ v0 落地时至少补下列测试：
    - struct / tuple / array 布局变化
 
 4. native 入口测试
-   - `__lona_entry__`
+   - `__lona_main__`
    - system shim
    - bare `_start`
 

@@ -107,10 +107,10 @@ flowchart LR
 目前仓库里的工具入口已经做了拆分：
 
 - `lona-ir`
-  - 专注做一件事：把 `.lo` 编译成 LLVM IR
+  - 专注做一件事：把 `.lo` 编译成语言级 LLVM IR 或 hosted object file
 - `lac`
   - `lona compiler`
-  - 先调用 `lona-ir`，再调用 clang 生成可执行文件
+  - 先调用 `lona-ir --emit obj`，再调用系统 linker driver 生成可执行文件
 - `lac-native`
   - 走 bare 路线
   - 适合实验原生启动汇编和最小链接环境

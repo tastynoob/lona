@@ -94,29 +94,36 @@ cleanup() {
 trap cleanup EXIT
 
 OBJ_PATH="$TMPDIR_LOCAL/program.o"
-IR_PATH="$TMPDIR_LOCAL/program.ll"
-
-"$LONA_IR_BIN" --emit ir --verify-ir -O "$OPT_LEVEL" "$INPUT" "$IR_PATH"
-
-if ! grep -Eq '^define( [^@]+)? i32 @main\(\)' "$IR_PATH"; then
-    cat >&2 <<EOF
-cannot build system executable from $INPUT
-help: the linked module does not expose a host-compatible main()
-help: define a root-level top-level program or a zero-argument 'def main() i32'
-EOF
-    exit 1
-fi
 
 "$LONA_IR_BIN" --emit obj --verify-ir -O "$OPT_LEVEL" "$INPUT" "$OBJ_PATH"
 
-if [ -n "$NM_BIN" ] && [ -x "$NM_BIN" ] &&
-   ! "$NM_BIN" -g --defined-only "$OBJ_PATH" | grep -Eq ' [TW] main$'; then
-    cat >&2 <<EOF
+if [ -n "$NM_BIN" ] && [ -x "$NM_BIN" ]; then
+    ALL_SYMBOLS="$("$NM_BIN" -g "$OBJ_PATH")"
+    DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "$OBJ_PATH")"
+    if ! grep -Eq ' [TW] __lona_main__$' <<<"$DEFINED_SYMBOLS"; then
+        cat >&2 <<EOF
 cannot build system executable from $INPUT
-help: the linked object does not expose a host-compatible main()
-help: define a root-level top-level program or a zero-argument 'def main() i32'
+help: the linked object does not expose __lona_main__()
+help: define root-level executable statements in the root module
 EOF
-    exit 1
+        exit 1
+    fi
+    if ! grep -Eq ' [TW] main$' <<<"$DEFINED_SYMBOLS"; then
+        if grep -Eq ' [UTW] main$' <<<"$ALL_SYMBOLS"; then
+            cat >&2 <<EOF
+cannot build system executable from $INPUT
+help: this program already declares or imports a non-entry symbol named \`main\`
+help: rename that symbol or build a non-hosted artifact instead of a system executable
+EOF
+            exit 1
+        fi
+        cat >&2 <<EOF
+cannot build system executable from $INPUT
+help: the hosted system wrapper \`main(argc, argv)\` was not generated
+help: this looks like a compiler entry-wrapping bug rather than a user program error
+EOF
+        exit 1
+    fi
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"

@@ -33,7 +33,7 @@
 
 - 自定义 hosted `_start`
 - 自己维护 glibc / musl startup 汇编
-- `argc/argv/envp` 暴露到语言层
+- `argc/argv/envp` 的语言层访问语法
 - 跨平台 CRT 抽象
 - 直接调用 `ld` / `lld` 时的完整 `crt1.o` / `crti.o` / `crtn.o` 发现逻辑
 - 动态装载器、PIE、TLS 等完整宿主启动细节
@@ -56,16 +56,16 @@
 
 编译器内部应该有一个稳定语言入口：
 
-- `i32 @__lona_entry__()`
+- `i32 @__lona_main__()`
 
 宿主可执行文件入口则由 hosted profile 负责适配：
 
-- `i32 @main(...)`
+- `i32 @main(i32 argc, ptr argv)`
 
 因此：
 
-- `__lona_entry__` 是语言内部契约
-- `main` 是 system CRT profile 的宿主适配层
+- `__lona_main__` 是语言内部契约
+- `main(argc, argv)` 是 system CRT profile 的宿主适配层
 
 不要再把两者混成同一个概念。
 
@@ -147,22 +147,23 @@ source
 对 system CRT profile，编译器应在可执行入口可建立时自动补一个 wrapper：
 
 ```text
-main(...) -> __lona_entry__()
+main(argc, argv) -> store globals -> __lona_main__()
 ```
 
 第一阶段建议：
 
-- 继续保持语言侧 `def main() i32` 和顶层程序入口的现有规则
-- 最终统一归一成 `__lona_entry__() -> i32`
-- hosted profile 再生成 C ABI `main`
+- root 模块的顶层可执行语句直接 lower 到 `__lona_main__() -> i32`
+- `def main() i32` 现在只是普通函数名，不再自动提升成程序入口
+- hosted profile 再生成 C ABI `main(i32 argc, ptr argv)`
 
 推荐的最小 hosted wrapper 语义：
 
-- 忽略 `argc/argv/envp`
-- 直接调用 `__lona_entry__`
+- 把 `argc` 写入 `@__lona_argc`
+- 把 `argv` 写入 `@__lona_argv`
+- 直接调用 `__lona_main__`
 - 直接返回其 `i32` 结果
 
-也就是说，系统 CRT v0 并不要求语言层立刻理解进程参数。
+也就是说，系统 CRT v0 会先保存宿主进程参数，但还不急着把它们设计成语言层公开语法。
 
 ### 5.4 linking
 
@@ -293,7 +294,7 @@ cc program.o -o program
 2. hosted system smoke
    - `lona-ir --emit obj`
    - 再由 `cc` 链接
-   - 验证 `def main() i32` 与顶层程序入口两条现有路径都能运行
+   - 验证顶层程序入口和 `ret run()` 这种显式顶层调用都能运行
 
 3. symbol contract test
    - 验证最终 object 中存在 hosted `main`

@@ -341,19 +341,20 @@ artifact 可复用的条件是：
 
 当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/native_build.md`：
 
-- system：复用 clang / 宿主 ABI 和系统 CRT 启动对象
+- system：复用宿主 ABI 和系统 CRT 启动对象
 - bare：自带最小 `_start` 和 linker script
 
 这层不在 `CompilerSession` 内部直接产出 ELF，而是走下面这条链路：
 
-1. `lona-ir --emit ir` 生成最终链接后的 LLVM IR
-2. system 路径通过 `lac` 把 IR 交给 clang 链接
-3. bare 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
+1. `lona-ir --emit ir` 生成最终链接后的语言级 LLVM IR
+2. `lona-ir --emit obj` 生成 hosted system CRT 目标对象文件
+3. system 路径通过 `lac` 把 `.o` 交给系统 linker driver
+4. bare 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
 
-为了让这两条链路都能稳定调用程序入口，最终链接后的 IR 会在可行时自动补出：
+为了让两条链路都能稳定调用程序入口，当前实现把入口分成两层：
 
-- `__lona_entry__`
-- `main`
+- 语言入口：`__lona_main__() -> i32`
+- hosted system wrapper：`main(argc, argv) -> i32`
 
 ## 5. 当前增量编译语义
 
@@ -394,8 +395,9 @@ artifact 可复用的条件是：
 当前实现仍然有几个明确边界：
 
 - imported 模块当前只支持“直接 import 一层可见”，不做自动多层 re-export
-- 模块 artifact 仍然是 LLVM IR 文本，不是对象文件或 bitcode
+- 模块 artifact 仍然是 LLVM IR 文本，不是 bitcode
 - 最终链接通过“parse artifact IR -> LLVM linker”完成，尚未做更高性能的内存态链接
+- `--emit obj` 当前仍然是 `linux-x86_64-system-crt` 这一条 hosted 路线，不是通用 target-profile 输出
 - `WorkspaceBuilder` 当前内部仍然包含较多细节，未来如果并行和持久化缓存继续增强，可能再拆出更明确的子组件
 
 ## 8. 后续演进建议

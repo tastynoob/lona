@@ -1,6 +1,6 @@
 # 本地可执行文件构建
 
-当前仓库已经提供两条可执行文件构建路径，可以把 `lona-ir` 生成的 LLVM IR 继续编成可运行程序。
+当前仓库已经提供两条可执行文件构建路径，可以把 `lona` 程序继续编成可运行程序。
 
 当前支持的平台是：
 
@@ -14,10 +14,10 @@
 
 思路：
 
-- `lona-ir` 仍然只负责生成 LLVM IR
-- 最终可执行文件交给 clang 负责
-- 进程启动直接复用 clang / 系统 CRT 的宿主入口对象
-- 入口和调用约定暂时套用 clang / C 的宿主 ABI
+- `lona-ir` 直接生成最终 `.o`
+- 最终可执行文件交给系统 linker driver
+- 进程启动复用系统 CRT 的宿主入口对象
+- hosted wrapper 使用标准 `main(argc, argv)` 形态
 
 相关文件：
 
@@ -27,7 +27,7 @@
 这条路径的优点是：
 
 - 不需要自己接管宿主进程初始化
-- 可以直接复用 clang 的 IR 编译和系统链接流程
+- `clang` / `cc` 只负责最终链接，不再负责把 LLVM IR 编成目标码
 - 更适合作为当前阶段的默认可执行文件方案
 
 ### 2. Bare 模式
@@ -54,11 +54,11 @@
 职责分工：
 
 - `lac.sh`
-  - 调用 `lona-ir` 生成最终链接后的 LLVM IR
-  - 检查 IR 中是否存在宿主 ABI 可接受的 `main`
-  - 调用 clang 直接把 IR 链接成可执行文件
+  - 调用 `lona-ir --emit obj`
+  - 检查对象里是否存在语言入口 `__lona_main__`
+  - 调用系统 linker driver 生成可执行文件
 - `lac`
-  - 这是推荐的安装入口，先产出 LLVM IR，再调用 clang 和系统启动对象生成二进制文件
+  - 这是推荐的安装入口，先产出 `.o`，再调用系统 linker driver 和系统启动对象生成二进制文件
 - `lac-native.sh`
   - 调用 `lona-ir` 生成最终链接后的 LLVM IR
   - 调用 `llc-18` 把 `.ll` 编成 `.o`
@@ -66,7 +66,7 @@
   - 使用自定义 linker script 生成 ELF 可执行文件
 - `lona_start.S`
   - 提供 `_start`
-  - 调用稳定入口 `__lona_entry__`
+  - 调用稳定入口 `__lona_main__`
   - 把返回值作为进程退出码传给 `exit` syscall
 - `lona.ld`
   - 提供最小 ELF 链接布局
@@ -74,17 +74,18 @@
 
 ## 程序入口约定
 
-为了让启动代码不依赖带路径的内部符号名，最终链接后的 IR 现在会在可行时自动补一个稳定入口：
+为了让启动代码和 hosted wrapper 都不依赖带路径的内部符号名，当前实现把入口分成两层：
 
-- `__lona_entry__`
-- `main`
+- 语言入口：`__lona_main__() -> i32`
+- hosted system wrapper：`main(i32 argc, ptr argv) -> i32`
 
 入口选择规则：
 
-1. 如果 root 模块存在顶层程序入口 `<root-path>.main`，则 `__lona_entry__` 调用它。
-2. 否则，如果 root 模块存在 `def main() i32`，则 `__lona_entry__` 调用它。
-3. 如果模块里还没有标准 `main() -> i32`，则会再自动补一个 `main`，让 system 构建链可以直接交给 clang。
-4. 如果连 `__lona_entry__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
+1. 如果 root 模块存在顶层可执行语句，它们会直接 lower 到 `__lona_main__() -> i32`。
+2. `def main() i32` 现在只是普通函数名，不再自动提升成入口。
+3. system 路线在 `--emit obj` 阶段再额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
+4. bare 路线只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
+5. 如果连 `__lona_main__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
 
 ## 使用方式
 
@@ -130,7 +131,6 @@ bash scripts/lac.sh -O 2 input.lo output/program
 当前脚本默认依赖：
 
 - `build/lona-ir`
-- `clang-18` 或 clang
 - `llc-18` 或 `llc`
 - `cc`
 - `ld`
@@ -139,7 +139,6 @@ bash scripts/lac.sh -O 2 input.lo output/program
 
 - `LONA_IR_BIN`
 - `LONA_BIN`
-- `CLANG_BIN`
 - `LLC_BIN`
 - `CC_BIN`
 - `LD_BIN`
@@ -163,14 +162,15 @@ make system_smoke
 
 它会验证两种情况：
 
-- `def main() i32 { ... }` 能作为标准程序入口运行
-- 仅含顶层语句的程序也能成功包装成可执行文件并退出 `0`
+- 顶层语句程序能成功包装成可执行文件
+- 通过顶层 `ret run()` 调用普通函数也能作为可执行入口运行
 
 ## 当前边界
 
 这套环境当前是“最小可用”实现，边界比较明确：
 
 - 只覆盖 Linux x86_64
-- system 路径当前直接复用 clang ABI 和宿主 CRT 启动对象
+- system 路径当前直接复用宿主 ABI 和系统 CRT 启动对象
 - bare 路径仍然只支持无 libc 的最小裸链接路径
 - bare 启动代码只处理 `i32` 退出码，不处理参数和环境变量
+- system 路径当前只把 `argc/argv` 存进 `@__lona_argc` / `@__lona_argv`，还没有对应的语言层访问语法

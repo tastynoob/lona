@@ -121,7 +121,7 @@ def keep_status(status i32, ok bool, code i32) i32 {
     ret code
 }
 
-def main() i32 {
+def run() i32 {
     var list List
     var guard = list.guard_ptr()
     var status i32 = 0
@@ -154,3 +154,5 @@ def main() i32 {
 
     ret status
 }
+
+ret run()

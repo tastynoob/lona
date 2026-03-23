@@ -36,7 +36,7 @@ def use_matrix(seed i32) i32 {
     ret tensor(1, 2)(0)
 }
 
-def main() i32 {
+def run() i32 {
     var sample f32 = cast[f32](11)
     sample = blend(sample, 1.0)
     var sample_bits u8[4] = sample.tobits()
@@ -52,3 +52,5 @@ def main() i32 {
     kept = pair
     ret 0
 }
+
+ret run()

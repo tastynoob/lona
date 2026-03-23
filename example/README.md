@@ -22,3 +22,8 @@
 3. 需要看 system-level `C FFI` 和真实运行样例时，查 [c_ffi_linked_list.lo](c_ffi_linked_list.lo)。
 4. 需要看当前语法收口结果时，查 [syntax_suite.lo](syntax_suite.lo)。
 5. 需要模块导入时，查 [modules/main.lo](modules/main.lo)。
+
+说明：
+
+- 这些 root 可执行样例现在统一用顶层 `ret run()` 触发程序入口。
+- `def main() i32` 不再作为隐式入口保留兼容语义。

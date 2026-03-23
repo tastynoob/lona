@@ -113,11 +113,11 @@ STARTUP_OBJ="$TMPDIR_LOCAL/lona_start.o"
 
 "$LONA_IR_BIN" --emit ir --verify-ir -O "$OPT_LEVEL" "$INPUT" "$IR_PATH"
 
-if ! grep -q '^define i32 @__lona_entry__()' "$IR_PATH"; then
+if ! grep -q '^define i32 @__lona_main__()' "$IR_PATH"; then
     cat >&2 <<EOF
 cannot build executable from $INPUT
-help: the linked IR does not expose __lona_entry__()
-help: define a root-level top-level program or a zero-argument 'def main() i32'
+help: the linked IR does not expose __lona_main__()
+help: define root-level executable statements in the root module
 EOF
     exit 1
 fi

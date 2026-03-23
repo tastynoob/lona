@@ -25,6 +25,8 @@ pointer_in="$(new_tmp_file pointer)"
 pointer_out="$(new_tmp_file pointer-out)"
 byte_json_in="$(new_tmp_file byte-json)"
 byte_json_out="$(new_tmp_file byte-json-out)"
+entry_ir_in="$(new_tmp_file entry-ir)"
+entry_ir_out="$(new_tmp_file entry-ir-out)"
 
 "$BIN" "$INPUT" >"$json_out"
 grep -q '"type": "Program"' "$json_out"
@@ -53,6 +55,21 @@ grep -q '^define i32 @fibo' "$opt_ir_out"
 grep -q 'llvm.dbg.declare' "$debug_out"
 grep -q '!llvm.dbg.cu' "$debug_out"
 grep -q '!DISubprogram' "$debug_out"
+
+cat >"$entry_ir_in" <<'EOF'
+def run() i32 {
+    ret 7
+}
+
+ret run()
+EOF
+"$BIN" --emit ir --verify-ir "$entry_ir_in" >"$entry_ir_out"
+grep -q '^define i32 @__lona_main__()' "$entry_ir_out"
+grep -q '^define i32 @run()' "$entry_ir_out"
+! grep -q '^define i32 @main()' "$entry_ir_out"
+! grep -q '^define i32 @main(i32' "$entry_ir_out"
+! grep -q '^@__lona_argc =' "$entry_ir_out"
+! grep -q '^@__lona_argv =' "$entry_ir_out"
 
 cat >"$missing_return_in" <<'EOF'
 def bad(a i32) i32 {

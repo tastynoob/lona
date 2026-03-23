@@ -58,9 +58,8 @@ def noop() {}
 ```lona
 import math
 
-def main() i32 {
-    ret math.add_one(41)
-}
+var answer = math.add_one(41)
+ret answer
 ```
 
 说明：
@@ -70,3 +69,24 @@ def main() i32 {
 - 导入路径写成无引号、无文件后缀的形式；实际会按 `.lo` 文件解析。
 - imported module 的顶层函数通过 `file.xxx(...)` 的形式访问，模块名来自被导入文件的文件名。
 - 导入路径按当前文件所在目录解析。
+
+## 8. root 模块的可执行入口
+
+root 模块允许直接写顶层可执行语句：
+
+```lona
+var answer = 41
+answer = answer + 1
+```
+
+当前实现会把 root 模块的顶层可执行语句收进一个内部语言入口：
+
+- `__lona_main__() -> i32`
+
+规则是：
+
+- 只有 root 模块允许顶层可执行语句。
+- imported 模块仍然只能包含声明，不能包含顶层执行语句。
+- root 模块如果要构成可执行程序，必须直接提供顶层可执行语句。
+- `def main() i32` 现在只是普通函数名，不再自动提升成程序入口。
+- `__lona_main__` 是语言内部入口，不直接等同于宿主系统里的 `main(argc, argv)`。

@@ -27,6 +27,7 @@ main_program="$WORKDIR/return_9.lo"
 top_level_program="$WORKDIR/top_level.lo"
 lona_import_c_program="$WORKDIR/import_abs.lo"
 bad_main_program="$WORKDIR/bad_main.lo"
+ffi_main_program="$WORKDIR/ffi_main.lo"
 export_add_program="$WORKDIR/export_add.lo"
 export_add_harness_c="$WORKDIR/export_add_harness.c"
 export_add_ir="$WORKDIR/export_add.ll"
@@ -47,11 +48,16 @@ top_level_exe="$WORKDIR/top_level"
 lona_import_c_exe="$WORKDIR/import_abs"
 bad_main_exe="$WORKDIR/bad_main"
 bad_main_log="$WORKDIR/bad_main.log"
+ffi_main_obj="$WORKDIR/ffi_main.o"
+ffi_main_exe="$WORKDIR/ffi_main"
+ffi_main_log="$WORKDIR/ffi_main.log"
 
 cat >"$main_program" <<'EOF'
-def main() i32 {
+def run() i32 {
     ret 9
 }
+
+ret run()
 EOF
 
 cat >"$top_level_program" <<'EOF'
@@ -62,15 +68,23 @@ EOF
 cat >"$lona_import_c_program" <<'EOF'
 extern "C" def abs(v i32) i32
 
-def main() i32 {
+def run() i32 {
     ret abs(-9)
 }
+
+ret run()
 EOF
 
 cat >"$bad_main_program" <<'EOF'
 def main(argc i32) i32 {
     ret argc
 }
+EOF
+
+cat >"$ffi_main_program" <<'EOF'
+extern "C" def main(v i32) i32
+
+var seed i32 = main(7)
 EOF
 
 cat >"$export_add_program" <<'EOF'
@@ -242,7 +256,7 @@ def list_sum(slots Slot[*], head i32) i32 {
     ret total
 }
 
-def main() i32 {
+def run() i32 {
     var slots Slot[*] = malloc(64)
     var head i32 = -1
     var free_head i32 = -1
@@ -295,6 +309,8 @@ def main() i32 {
     free(slots)
     ret status
 }
+
+ret run()
 EOF
 
 bash "$BUILD_SYSTEM" "$main_program" "$main_exe"
@@ -305,10 +321,20 @@ if bash "$BUILD_SYSTEM" "$bad_main_program" "$bad_main_exe" >"$bad_main_log" 2>&
     exit 1
 fi
 grep -Fq 'cannot build system executable from' "$bad_main_log"
-grep -Fq 'zero-argument '\''def main() i32'\''' "$bad_main_log"
+grep -Fq 'define root-level executable statements in the root module' "$bad_main_log"
 "$BIN" --emit obj --verify-ir "$main_program" "$main_obj"
-nm -g --defined-only "$main_obj" | grep -Eq ' [TW] __lona_entry__$'
+nm -g --defined-only "$main_obj" | grep -Eq ' [TW] __lona_main__$'
 nm -g --defined-only "$main_obj" | grep -Eq ' [TW] main$'
+nm -g --defined-only "$main_obj" | grep -Eq ' [BD] __lona_argc$'
+nm -g --defined-only "$main_obj" | grep -Eq ' [BD] __lona_argv$'
+"$BIN" --emit obj --verify-ir "$ffi_main_program" "$ffi_main_obj"
+nm -g --defined-only "$ffi_main_obj" | grep -Eq ' [TW] __lona_main__$'
+nm -g "$ffi_main_obj" | grep -Eq ' U main$'
+if bash "$BUILD_SYSTEM" "$ffi_main_program" "$ffi_main_exe" >"$ffi_main_log" 2>&1; then
+    echo "expected lac.sh to reject hosted build when a non-entry main symbol is already declared" >&2
+    exit 1
+fi
+grep -Fq 'already declares or imports a non-entry symbol named `main`' "$ffi_main_log"
 bash "$COMPILE_CASE" "$export_add_program" "$export_add_ir" "$export_add_obj" >/dev/null
 "$CC_BIN" -Werror "$export_add_harness_c" "$export_add_obj" -o "$export_add_exe"
 bash "$COMPILE_CASE" "$repr_point_program" "$repr_point_ir" "$repr_point_obj" >/dev/null

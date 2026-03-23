@@ -559,9 +559,9 @@ requireTypeTable(Scope *scope) {
     return typeMgr;
 }
 
-std::string
-mainFunctionTypeName() {
-    return "f_i32";
+llvm::StringRef
+languageEntrySymbolName() {
+    return "__lona_main__";
 }
 
 FuncType *
@@ -572,8 +572,7 @@ getOrCreateMainType(TypeTable *typeMgr) {
 llvm::Function *
 getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
     auto *mainType = getOrCreateMainType(typeMgr);
-    auto moduleName = global->module.getName();
-    std::string entryName = moduleName.str() + ".main";
+    auto entryName = languageEntrySymbolName();
     if (auto *existing = global->module.getFunction(entryName)) {
         return existing;
     }
@@ -1716,7 +1715,8 @@ class FunctionAnalyzer {
         if (auto *forNode = node->as<AstFor>()) {
             return analyzeFor(forNode);
         }
-        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {
+        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
+            node->is<AstImport>()) {
             return nullptr;
         }
         auto *expr = requireNonCallExpr(node);
