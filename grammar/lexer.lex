@@ -51,6 +51,7 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
 
 (true) { loc->columns(yyleng); return token::TRUE; }
 (false) { loc->columns(yyleng); return token::FALSE; }
+(null) { loc->columns(yyleng); return token::NULL_KW; }
 (var) { loc->columns(yyleng); return token::VAR; }
 (ref) { loc->columns(yyleng); return token::REF; }
 (const) { loc->columns(yyleng); return token::TYPE_CONST; }

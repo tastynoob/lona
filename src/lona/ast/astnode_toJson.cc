@@ -75,6 +75,10 @@ AstConst::toJson(Json &root) {
             root["type"] = "const";
             root["value"] = *(bool *)this->buf;
             break;
+        case Type::NULLPTR:
+            root["type"] = "const";
+            root["value"] = nullptr;
+            break;
         default:
             throw std::runtime_error("Invalid type for AstConst");
     }

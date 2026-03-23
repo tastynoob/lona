@@ -97,7 +97,7 @@
 %token REF "ref"
 %token TYPE_CONST "const"
 %token CAST "cast"
-%token TRUE "true" FALSE "false"
+%token TRUE "true" FALSE "false" NULL_KW "null"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
 %token DEF "def" STRUCT "struct" EXTERN "extern" REPR "repr"
@@ -476,6 +476,7 @@ single_value
     | CONST { $$ = new AstConst(*$1); }
     | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
     | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
+    | NULL_KW { $$ = new AstConst(*new AstToken(TokenType::ConstNull, "null", @$)); }
     | cast_expr { $$ = $1; }
     | func_pointer_expr { $$ = $1; }
     | field_call { $$ = $1; }

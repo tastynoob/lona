@@ -10,6 +10,7 @@
 "hello"
 true
 false
+null
 name
 ```
 
@@ -18,6 +19,7 @@ name
 - `3.14` 当前默认作为浮点字面量进入语义，缺少上下文时按 `f64` 处理。
 - 字符串字面量现在按 byte string literal 处理；`"hello"` 的值类型是 `u8 const[5]`。
 - 对字符串字面量取地址 `&"hello"` 会得到只读借用视图 `u8 const[*]`。
+- `null` 是空指针字面量；它只能在指针上下文中使用，例如 `var p i32* = null`、`if p == null`。
 - 空字符串字面量暂未实现。
 - `i32 1`、`bool(expr)` 这类 C 风格 cast 写法已经移除。
 

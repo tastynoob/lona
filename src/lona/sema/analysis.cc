@@ -249,6 +249,11 @@ bitCopyHint() {
 }
 
 std::string
+nullLiteralHint() {
+    return "Use `null` only with pointer values such as `T*` or `T[*]`, for example `var p i32* = null` or `if p == null`.";
+}
+
+std::string
 pointerConversionHint() {
     return "Only conversions between `T[*]` and matching raw pointers `T*` are implicit.";
 }
@@ -256,6 +261,11 @@ pointerConversionHint() {
 bool
 isBuiltinCastType(TypeClass *type) {
     return isByteCopyPlainType(type);
+}
+
+bool
+isNullLiteralExpr(HIRExpr *expr) {
+    return dynamic_cast<HIRNullLiteral *>(expr) != nullptr;
 }
 
 bool
@@ -1064,6 +1074,15 @@ class FunctionAnalyzer {
         if (!expr || !targetType) {
             return expr;
         }
+        if (isNullLiteralExpr(expr)) {
+            if (isPointerLikeType(targetType)) {
+                if (expr->getType() == targetType) {
+                    return expr;
+                }
+                return makeHIR<HIRNullLiteral>(targetType, loc);
+            }
+            return expr;
+        }
         auto *sourceType = expr->getType();
         if (!sourceType || sourceType == targetType) {
             return expr;
@@ -1108,6 +1127,15 @@ class FunctionAnalyzer {
         auto *targetType = requireType(node->targetType, node->targetType->loc,
                                        "unknown cast target type");
         auto *value = requireNonCallExpr(node->value);
+        if (isNullLiteralExpr(value)) {
+            if (!isPointerLikeType(targetType)) {
+                error(node->loc,
+                      "unsupported builtin cast from `null` to `" +
+                          describeResolvedType(targetType) + "`",
+                      nullLiteralHint());
+            }
+            return makeHIR<HIRNullLiteral>(targetType, node->loc);
+        }
         auto *sourceType = value ? value->getType() : nullptr;
         if (!sourceType) {
             error(node->loc,
@@ -1687,6 +1715,13 @@ class FunctionAnalyzer {
         }
         case AstConst::Type::STRING:
             return analyzeByteStringLiteral(node);
+        case AstConst::Type::NULLPTR:
+            if (expectedType && !isPointerLikeType(expectedType)) {
+                error(node->loc,
+                      "`null` can only be used with pointer types",
+                      nullLiteralHint());
+            }
+            return makeHIR<HIRNullLiteral>(expectedType, node->loc);
         default:
             error(node->loc, "unsupported constant literal");
         }
@@ -2146,6 +2181,33 @@ class FunctionAnalyzer {
         auto *right = requireNonCallExpr(
             node->right, contextualOperandType ? contextualOperandType
                                                : (left ? left->getType() : nullptr));
+        if (isNullLiteralExpr(left) || isNullLiteralExpr(right)) {
+            if (node->op != Parser::token::LOGIC_EQUAL &&
+                node->op != Parser::token::LOGIC_NOT_EQUAL) {
+                error(node->loc,
+                      "`null` only supports pointer equality checks",
+                      nullLiteralHint());
+            }
+            if (isNullLiteralExpr(left) && right && isPointerLikeType(right->getType())) {
+                left = coercePointerExpr(left, right->getType(), node->left->loc);
+            }
+            if (isNullLiteralExpr(right) && left && isPointerLikeType(left->getType())) {
+                right = coercePointerExpr(right, left->getType(), node->right->loc);
+            }
+            if (isNullLiteralExpr(left) && isNullLiteralExpr(right)) {
+                error(node->loc,
+                      "`null` comparison requires a concrete pointer operand",
+                      "Compare a pointer value against `null`, for example `if p == null`.");
+            }
+            if ((isNullLiteralExpr(left) && !isPointerLikeType(left->getType())) ||
+                (isNullLiteralExpr(right) && !isPointerLikeType(right->getType())) ||
+                (isNullLiteralExpr(left) && !isPointerLikeType(right->getType())) ||
+                (isNullLiteralExpr(right) && !isPointerLikeType(left->getType()))) {
+                error(node->loc,
+                      "`null` can only be compared with pointer values",
+                      nullLiteralHint());
+            }
+        }
         if (left->getType() != right->getType()) {
             auto *leftConst = node->left ? node->left->as<AstConst>() : nullptr;
             if (leftConst && leftConst->getType() == AstConst::Type::FP64 &&
@@ -2263,6 +2325,12 @@ class FunctionAnalyzer {
             rejectMethodSelectorStorage(typeMgr, init, node);
             type = materializeValueType(typeMgr, init->getType());
             if (!type) {
+                if (isNullLiteralExpr(init)) {
+                    error(node->loc,
+                          "cannot infer the type of `" + toStdString(node->getName()) +
+                              "` from `null`",
+                          "Add an explicit pointer type such as `var p i32* = null`.");
+                }
                 auto *value = dynamic_cast<HIRValue *>(init);
                 auto *object = value ? value->getValue() : nullptr;
                 if (object && object->as<TypeObject>()) {

@@ -15,6 +15,8 @@ cast_json_in="$(new_tmp_file cast-json)"
 cast_json_out="$(new_tmp_file cast-json-out)"
 func_ptr_json_in="$(new_tmp_file func-ptr-json)"
 func_ptr_json_out="$(new_tmp_file func-ptr-json-out)"
+null_json_in="$(new_tmp_file null-json)"
+null_json_out="$(new_tmp_file null-json-out)"
 bool_in="$(new_tmp_file bool)"
 bool_out="$(new_tmp_file bool-out)"
 pointer_in="$(new_tmp_file pointer)"
@@ -84,6 +86,16 @@ EOF
 "$BIN" "$func_ptr_json_in" >"$func_ptr_json_out"
 grep -Fq '"declaredType": "(i32: i32)*"' "$func_ptr_json_out"
 grep -Fq '"declaredType": "(: i32* const)[1] const"' "$func_ptr_json_out"
+
+cat >"$null_json_in" <<'EOF'
+def main() i32 {
+    var ptr i32* = null
+    ret 0
+}
+EOF
+"$BIN" "$null_json_in" >"$null_json_out"
+grep -Fq '"declaredType": "i32*"' "$null_json_out"
+grep -Fq '"value": null' "$null_json_out"
 
 cat >"$byte_json_in" <<'EOF'
 def main() {

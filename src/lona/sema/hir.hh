@@ -105,6 +105,13 @@ public:
     bool isBorrowed() const { return borrowed_; }
 };
 
+class HIRNullLiteral : public HIRExpr {
+public:
+    explicit HIRNullLiteral(TypeClass *type = nullptr,
+                            const location &loc = location())
+        : HIRExpr(type, loc) {}
+};
+
 class HIRNumericCast : public HIRExpr {
     HIRExpr *expr;
     bool explicitRequest_ = false;

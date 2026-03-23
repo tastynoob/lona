@@ -55,6 +55,14 @@ string_const_borrow_bad_in="$(new_tmp_file string-const-borrow-bad)"
 string_const_borrow_bad_out="$(new_tmp_file string-const-borrow-bad-out)"
 string_str_bad_in="$(new_tmp_file string-str-bad)"
 string_str_bad_out="$(new_tmp_file string-str-bad-out)"
+null_pointer_in="$(new_tmp_file null-pointer)"
+null_pointer_out="$(new_tmp_file null-pointer-out)"
+null_infer_bad_in="$(new_tmp_file null-infer-bad)"
+null_infer_bad_out="$(new_tmp_file null-infer-bad-out)"
+null_scalar_bad_in="$(new_tmp_file null-scalar-bad)"
+null_scalar_bad_out="$(new_tmp_file null-scalar-bad-out)"
+null_cmp_bad_in="$(new_tmp_file null-cmp-bad)"
+null_cmp_bad_out="$(new_tmp_file null-cmp-bad-out)"
 string_escape_in="$(new_tmp_file string-escape)"
 string_escape_out="$(new_tmp_file string-escape-out)"
 const_type_json_in="$(new_tmp_file const-type-json)"
@@ -486,6 +494,72 @@ EOF
 expect_emit_ir_failure "$string_str_bad_in" "$string_str_bad_out" 'expected legacy str string literal program to fail'
 grep -Fq 'semantic error: unknown variable type' "$string_str_bad_out"
 grep -Fq 'var title str = "lona"' "$string_str_bad_out"
+
+cat >"$null_pointer_in" <<'EOF'
+def maybe(flag bool) u8 const[*] {
+    if flag {
+        ret null
+    }
+    ret &"ok"
+}
+
+def is_missing(data u8 const[*]) bool {
+    ret data == null
+}
+
+def main() i32 {
+    var value i32 = 7
+    var raw i32* = null
+    if raw == null {
+        raw = &value
+    }
+
+    var view i32[*] = cast[i32[*]](raw)
+    if view == null {
+        ret 1
+    }
+    if !is_missing(null) {
+        ret 2
+    }
+    if !is_missing(maybe(true)) {
+        ret 3
+    }
+    if is_missing(maybe(false)) {
+        ret 4
+    }
+    ret view(0)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$null_pointer_in" >"$null_pointer_out"
+grep -Fq 'store ptr null' "$null_pointer_out"
+grep -Fq 'icmp eq ptr' "$null_pointer_out"
+grep -Fq 'call i8 @is_missing(ptr null)' "$null_pointer_out"
+
+cat >"$null_infer_bad_in" <<'EOF'
+def main() i32 {
+    var ptr = null
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$null_infer_bad_in" "$null_infer_bad_out" 'expected null inference program to fail'
+grep -Fq 'cannot infer the type of `ptr` from `null`' "$null_infer_bad_out"
+
+cat >"$null_scalar_bad_in" <<'EOF'
+def main() i32 {
+    var value i32 = null
+    ret value
+}
+EOF
+expect_emit_ir_failure "$null_scalar_bad_in" "$null_scalar_bad_out" 'expected scalar null initializer program to fail'
+grep -Fq '`null` can only be used with pointer types' "$null_scalar_bad_out"
+
+cat >"$null_cmp_bad_in" <<'EOF'
+def main() bool {
+    ret null == null
+}
+EOF
+expect_emit_ir_failure "$null_cmp_bad_in" "$null_cmp_bad_out" 'expected null/null comparison program to fail'
+grep -Fq '`null` comparison requires a concrete pointer operand' "$null_cmp_bad_out"
 
 cat >"$string_escape_in" <<'EOF'
 def main() i32 {

@@ -1920,6 +1920,16 @@ class FunctionCompiler {
                 llvmArrayType, globalValue, {zero, zero});
             return makeReadonlyValue(byteString->getType(), borrowed);
         }
+        if (auto *nullLiteral = dynamic_cast<HIRNullLiteral *>(expr)) {
+            setLocation(nullLiteral);
+            auto *type = nullLiteral->getType();
+            if (!isPointerLikeType(type)) {
+                error("null literal requires a concrete pointer type");
+            }
+            auto *value = llvm::ConstantPointerNull::get(
+                llvm::cast<llvm::PointerType>(scope->getLLVMType(type)));
+            return makeReadonlyValue(type, value);
+        }
         if (auto *cast = dynamic_cast<HIRNumericCast *>(expr)) {
             setLocation(cast);
             return emitNumericCast(cast);

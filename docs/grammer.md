@@ -21,12 +21,14 @@
 - 浮点字面量 `FLOAT`：`[0-9]+\.[0-9]+`
 - 字符串字面量 `STRING`：`"[^"]*"`
 - 布尔字面量：`true`、`false`
+- 空指针字面量：`null`
 
 说明：
 
 - `INT`、`FLOAT`、`STRING` 在语法层统一归为 `CONST`。
 - `FLOAT` 当前已经形成最小浮点语义闭环。
 - `STRING` 在语义层按 byte string literal 处理；`"..."` 是 `u8 const[N]`，`&"..."` 是 `u8 const[*]`。
+- `null` 是单独关键字，不并入 `CONST`；语义层只允许它进入指针上下文。
 
 ### 1.2 关键字
 
@@ -40,6 +42,7 @@
 - `for`
 - `struct`
 - `import`
+- `null`
 
 内建类型关键字（词法记号 `BuiltinType`）：
 

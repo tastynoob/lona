@@ -16,6 +16,7 @@ var point Point
 var count i32 = 1
 var title u8 const[4] = "lona"
 var title_view u8 const[*] = &"lona"
+var next i32* = null
 var ok bool = true
 ```
 
@@ -31,6 +32,7 @@ var point = Point()
 
 - `var name = "compiler"` 当前会推断成 `u8 const[8]`，不是 `str`。
 - `var view = &"compiler"` 会推断成 `u8 const[*]`。
+- `var p = null` 不会做类型推断；需要写成 `var p i32* = null` 这类带显式指针类型的形式。
 
 ## 4. 简写形式 `name := expr`
 
