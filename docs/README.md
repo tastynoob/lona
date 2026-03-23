@@ -16,6 +16,7 @@
 ## 语言设计与约束
 
 - [pointer_reference.md](pointer_reference.md): 指针 / 引用 / 值语义的设计收口；当前已实现 `ref` 局部绑定、`ref` 参数和隐式 `ref self`。
+- [string_bytes_v0.md](string_bytes_v0.md): “字节串而不是字符串类型”的草案；收口 `u8[N]` / `u8[*]`、不引入 `char` / `string` / 内建 `Bytes`。
 
 ## 编译器与工程结构
 
