@@ -13,6 +13,10 @@ cast_pointer_in="$(new_tmp_file cast-pointer)"
 cast_pointer_out="$(new_tmp_file cast-pointer-out)"
 cast_bad_in="$(new_tmp_file cast-bad)"
 cast_bad_out="$(new_tmp_file cast-bad-out)"
+cast_tuple_bad_in="$(new_tmp_file cast-tuple-bad)"
+cast_tuple_bad_out="$(new_tmp_file cast-tuple-bad-out)"
+cast_struct_bad_in="$(new_tmp_file cast-struct-bad)"
+cast_struct_bad_out="$(new_tmp_file cast-struct-bad-out)"
 float_in="$(new_tmp_file float)"
 float_out="$(new_tmp_file float-out)"
 numeric_convert_in="$(new_tmp_file numeric-convert)"
@@ -226,6 +230,33 @@ def main() i32 {
 EOF
 expect_emit_ir_failure "$cast_bad_in" "$cast_bad_out" 'expected unsupported builtin cast program to fail'
 grep -Fq 'unsupported builtin cast from `i32` to `u8*`' "$cast_bad_out"
+
+cat >"$cast_tuple_bad_in" <<'EOF'
+def main() i32 {
+    var pair <i32, i32> = (1, 2)
+    var copy <i32, i32> = cast[<i32, i32>](pair)
+    ret copy._1
+}
+EOF
+expect_emit_ir_failure "$cast_tuple_bad_in" "$cast_tuple_bad_out" 'expected tuple builtin cast program to fail'
+grep -Fq 'unsupported builtin cast from `<i32, i32>` to `<i32, i32>`' "$cast_tuple_bad_out"
+grep -Fq 'Builtin cast only supports builtin scalar and pointer types.' "$cast_tuple_bad_out"
+
+cat >"$cast_struct_bad_in" <<'EOF'
+struct Pair {
+    left i32
+    right i32
+}
+
+def main() i32 {
+    var pair = Pair(left = 1, right = 2)
+    var copy Pair = cast[Pair](pair)
+    ret copy.left
+}
+EOF
+expect_emit_ir_failure "$cast_struct_bad_in" "$cast_struct_bad_out" 'expected struct builtin cast program to fail'
+grep -Eq 'unsupported builtin cast from `[^`]*Pair` to `[^`]*Pair`' "$cast_struct_bad_out"
+grep -Fq 'Builtin cast only supports builtin scalar and pointer types.' "$cast_struct_bad_out"
 
 cat >"$float_in" <<'EOF'
 def id(v f32) f32 {

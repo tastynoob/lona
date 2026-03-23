@@ -239,6 +239,11 @@ numericConversionHint() {
 }
 
 std::string
+castDomainHint() {
+    return "Builtin cast only supports builtin scalar and pointer types. Convert structs and tuples field-by-field, or use `.tobits()` when you need raw bit-copy behavior.";
+}
+
+std::string
 bitCopyHint() {
     return "Use `.tobits()` when you want raw bit-copy behavior. It returns `u8[N]`, and `u8[N].toXXX()` converts those bytes back with truncation or zero-fill.";
 }
@@ -246,6 +251,11 @@ bitCopyHint() {
 std::string
 pointerConversionHint() {
     return "Only conversions between `T[*]` and matching raw pointers `T*` are implicit.";
+}
+
+bool
+isBuiltinCastType(TypeClass *type) {
+    return isByteCopyPlainType(type);
 }
 
 bool
@@ -1100,6 +1110,14 @@ class FunctionAnalyzer {
             error(node->loc,
                   "cast source does not produce a typed runtime value",
                   "Cast a runtime value like `cast[i32](x)` instead of a type or namespace.");
+        }
+
+        if (!isBuiltinCastType(sourceType) || !isBuiltinCastType(targetType)) {
+            error(node->loc,
+                  "unsupported builtin cast from `" +
+                      describeResolvedType(sourceType) + "` to `" +
+                      describeResolvedType(targetType) + "`",
+                  castDomainHint());
         }
 
         if (sourceType == targetType) {

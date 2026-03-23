@@ -246,10 +246,7 @@ expr-getpointee   ::= "*" single-value
 
 expr-paren        ::= "(" expr ")"
 
-legacy-cast-expr  ::= BuiltinType IDENT
-                    | BuiltinType CONST
-                    | BuiltinType BOOL
-                    | BuiltinType expr-paren
+cast-expr         ::= "cast" "[" type-name "]" "(" expr ")"
 
 tuple-literal     ::= "(" expr "," expr-seq ")"
 
@@ -259,7 +256,7 @@ func-pointer-ref  ::= IDENT "&<" ">"
 single-value      ::= variable
                     | CONST
                     | BOOL
-                    | legacy-cast-expr
+                    | cast-expr
                     | func-pointer-ref
                     | field-call
                     | expr-paren
@@ -320,7 +317,7 @@ brace-init-item   ::= expr
 
 说明：
 
-- `legacy-cast-expr` 不是正式特性，而是为了给旧式 `i32 value` / `i32(expr)` 写法提供明确错误诊断。
+- `cast-expr` 是内建静态转换表达式；当前 `cast[T](expr)` 只支持内建标量和指针，不支持结构体、tuple、固定维数组等复合类型。
 - 当前 `xxx(...)` 统一视为“括号应用”语法；具体是函数调用、函数指针调用，还是未来的数组访问 / 其它重载行为，由后续语义阶段决定。
 - `expr-assign-left` 在 parser 层包含 `field-call`，因此 `a(1)`、`grid(1, 2)` 这类数组索引写法可以出现在赋值左侧。
 - 但语义阶段只接受“解析成数组索引”的那部分 `field-call` 作为左值；普通函数调用、构造函数调用仍然不是可赋值目标。
