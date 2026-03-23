@@ -7,6 +7,7 @@ INPUT="$FIXTURES_DIR/acceptance_main.lo"
 
 json_out="$(new_tmp_file json)"
 ir_out="$(new_tmp_file ir)"
+opt_ir_out="$(new_tmp_file opt-ir)"
 debug_out="$(new_tmp_file debug)"
 missing_return_in="$(new_tmp_file missing-return)"
 json_feature_in="$(new_tmp_file json-feature)"
@@ -35,6 +36,10 @@ if grep -q 'llvm.dbg.declare' "$ir_out"; then
     echo 'unexpected debug metadata in non-debug IR' >&2
     exit 1
 fi
+
+"$BIN" --emit-ir --verify-ir -O3 "$INPUT" >"$opt_ir_out"
+grep -Eq '^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)' "$opt_ir_out"
+grep -q '^define i32 @fibo' "$opt_ir_out"
 
 "$BIN" --emit-ir --verify-ir -g "$INPUT" >"$debug_out"
 grep -q 'llvm.dbg.declare' "$debug_out"

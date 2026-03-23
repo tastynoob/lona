@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -18,6 +19,24 @@ finishProcess(int exitCode, std::ostream *out = nullptr) {
     std::_Exit(exitCode);
 }
 
+std::vector<std::string>
+normalizeCliArgs(int argc, char *argv[]) {
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc) + 4);
+
+    for (int i = 0; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (i != 0 && arg.size() > 2 && arg[0] == '-' && arg[1] == 'O') {
+            args.push_back("-O");
+            args.push_back(arg.substr(2));
+            continue;
+        }
+        args.push_back(std::move(arg));
+    }
+
+    return args;
+}
+
 }  // namespace
 
 int
@@ -29,7 +48,8 @@ main(int argc, char *argv[]) {
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
-    cli.parse_check(argc, argv);
+    auto normalizedArgs = normalizeCliArgs(argc, argv);
+    cli.parse_check(normalizedArgs);
 
     const auto &args = cli.rest();
     if (args.empty() || args.size() > 2) {
