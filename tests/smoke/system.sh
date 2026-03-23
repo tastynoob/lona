@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BIN="$ROOT/build/lona-ir"
 BUILD_SYSTEM="$ROOT/scripts/lac.sh"
 COMPILE_CASE="$ROOT/tests/tools/compile_case.sh"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}"
@@ -25,6 +26,7 @@ trap cleanup EXIT
 main_program="$WORKDIR/return_9.lo"
 top_level_program="$WORKDIR/top_level.lo"
 lona_import_c_program="$WORKDIR/import_abs.lo"
+bad_main_program="$WORKDIR/bad_main.lo"
 export_add_program="$WORKDIR/export_add.lo"
 export_add_harness_c="$WORKDIR/export_add_harness.c"
 export_add_ir="$WORKDIR/export_add.ll"
@@ -40,8 +42,11 @@ list_crud_exe="$WORKDIR/list_crud"
 linked_list_program="$ROOT/example/c_ffi_linked_list.lo"
 linked_list_exe="$WORKDIR/linked_list"
 main_exe="$WORKDIR/return_9"
+main_obj="$WORKDIR/return_9.o"
 top_level_exe="$WORKDIR/top_level"
 lona_import_c_exe="$WORKDIR/import_abs"
+bad_main_exe="$WORKDIR/bad_main"
+bad_main_log="$WORKDIR/bad_main.log"
 
 cat >"$main_program" <<'EOF'
 def main() i32 {
@@ -59,6 +64,12 @@ extern "C" def abs(v i32) i32
 
 def main() i32 {
     ret abs(-9)
+}
+EOF
+
+cat >"$bad_main_program" <<'EOF'
+def main(argc i32) i32 {
+    ret argc
 }
 EOF
 
@@ -289,6 +300,15 @@ EOF
 bash "$BUILD_SYSTEM" "$main_program" "$main_exe"
 bash "$BUILD_SYSTEM" "$top_level_program" "$top_level_exe"
 bash "$BUILD_SYSTEM" "$lona_import_c_program" "$lona_import_c_exe"
+if bash "$BUILD_SYSTEM" "$bad_main_program" "$bad_main_exe" >"$bad_main_log" 2>&1; then
+    echo "expected lac.sh to reject non-host-compatible main(argc) entry" >&2
+    exit 1
+fi
+grep -Fq 'cannot build system executable from' "$bad_main_log"
+grep -Fq 'zero-argument '\''def main() i32'\''' "$bad_main_log"
+"$BIN" --emit obj --verify-ir "$main_program" "$main_obj"
+nm -g --defined-only "$main_obj" | grep -Eq ' [TW] __lona_entry__$'
+nm -g --defined-only "$main_obj" | grep -Eq ' [TW] main$'
 bash "$COMPILE_CASE" "$export_add_program" "$export_add_ir" "$export_add_obj" >/dev/null
 "$CC_BIN" -Werror "$export_add_harness_c" "$export_add_obj" -o "$export_add_exe"
 bash "$COMPILE_CASE" "$repr_point_program" "$repr_point_ir" "$repr_point_obj" >/dev/null

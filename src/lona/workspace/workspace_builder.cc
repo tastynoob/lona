@@ -4,16 +4,20 @@
 #include "lona/sema/hir.hh"
 #include "lona/visitor.hh"
 #include <chrono>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/SourceMgr.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/PassManager.h>
 #include <llvm-18/llvm/IR/Verifier.h>
 #include <llvm-18/llvm/Passes/OptimizationLevel.h>
 #include <llvm-18/llvm/Passes/PassBuilder.h>
+#include <llvm-18/llvm/Target/TargetMachine.h>
 #include <sstream>
 #include <utility>
 
@@ -116,16 +120,36 @@ findExecutableEntryTarget(llvm::Module &module, const CompilationUnit &rootUnit)
     return mainFunc;
 }
 
-void
-ensureExecutableEntryWrapper(llvm::Module &module, const CompilationUnit &rootUnit) {
+std::string
+nextAvailableFunctionName(llvm::Module &module, llvm::StringRef prefix) {
+    std::string name = prefix.str();
+    if (module.getFunction(name) == nullptr) {
+        return name;
+    }
+
+    for (unsigned suffix = 1;; ++suffix) {
+        name = (prefix + std::to_string(suffix)).str();
+        if (module.getFunction(name) == nullptr) {
+            return name;
+        }
+    }
+}
+
+llvm::Function *
+ensureLanguageEntryWrapper(llvm::Module &module,
+                           const CompilationUnit &rootUnit) {
     constexpr const char *wrapperName = "__lona_entry__";
-    if (module.getFunction(wrapperName) != nullptr) {
-        return;
+    if (auto *existing = module.getFunction(wrapperName)) {
+        return existing;
     }
 
     auto *target = findExecutableEntryTarget(module, rootUnit);
     if (target == nullptr) {
-        return;
+        return nullptr;
+    }
+
+    if (target->getName() == "main") {
+        target->setName(nextAvailableFunctionName(module, "__lona_user_main__"));
     }
 
     auto &context = module.getContext();
@@ -136,23 +160,24 @@ ensureExecutableEntryWrapper(llvm::Module &module, const CompilationUnit &rootUn
     auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
     llvm::IRBuilder<> builder(entry);
     builder.CreateRet(builder.CreateCall(target));
+    return wrapper;
 }
 
-void
-ensureSystemMainWrapper(llvm::Module &module) {
+llvm::Function *
+ensureHostedMainWrapper(llvm::Module &module) {
     auto *mainFunc = module.getFunction("main");
     if (mainFunc != nullptr) {
         auto *funcType = mainFunc->getFunctionType();
         if (funcType->getNumParams() == 0 &&
             funcType->getReturnType()->isIntegerTy(32)) {
-            return;
+            return mainFunc;
         }
-        return;
+        return mainFunc;
     }
 
     auto *entryFunc = module.getFunction("__lona_entry__");
     if (entryFunc == nullptr) {
-        return;
+        return nullptr;
     }
 
     auto &context = module.getContext();
@@ -163,6 +188,30 @@ ensureSystemMainWrapper(llvm::Module &module) {
     auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
     llvm::IRBuilder<> builder(entry);
     builder.CreateRet(builder.CreateCall(entryFunc));
+    return wrapper;
+}
+
+void
+emitObjectFile(llvm::Module &module, std::ostream &out) {
+    llvm::SmallString<0> objectData;
+    llvm::raw_svector_ostream objectOut(objectData);
+    llvm::legacy::PassManager passManager;
+    auto &targetMachine = defaultTargetMachine();
+
+    if (targetMachine.addPassesToEmitFile(passManager, objectOut, nullptr,
+                                          llvm::CodeGenFileType::ObjectFile)) {
+        throw DiagnosticError(DiagnosticError::Category::Internal,
+                              "LLVM target machine cannot emit object files for the active target",
+                              "Check native target initialization and object emission setup.");
+    }
+
+    passManager.run(module);
+    out.write(objectData.data(), static_cast<std::streamsize>(objectData.size()));
+    if (!out) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't write the emitted object file.",
+                              "Check that the destination stream or file is writable.");
+    }
 }
 
 void
@@ -293,6 +342,36 @@ WorkspaceBuilder::createArtifact(const CompilationUnit &unit) const {
 }
 
 int
+WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
+                                 const CompileOptions &options,
+                                 SessionStats &stats, std::ostream &out) const {
+    workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
+    return executor_->execute(workspace_.buildQueue(), [&](const std::string &path) -> int {
+        auto *queuedUnit = workspace_.moduleGraph().find(path);
+        if (queuedUnit == nullptr) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "module build queue references a missing unit",
+                                  "This looks like a compiler module queue bug.");
+        }
+
+        if (reusableArtifactFor(*queuedUnit) != nullptr) {
+            queuedUnit->markCompiled();
+            ++stats.reusedModules;
+            return 0;
+        }
+
+        ModuleArtifact artifact = createArtifact(*queuedUnit);
+        int moduleExitCode =
+            compileModule(*queuedUnit, options, artifact, stats, out);
+        if (moduleExitCode != 0) {
+            return moduleExitCode;
+        }
+        workspace_.storeArtifact(std::move(artifact));
+        return 0;
+    });
+}
+
+int
 WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &options,
                                 ModuleArtifact &artifact, SessionStats &stats,
                                 std::ostream &out) const {
@@ -311,7 +390,7 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
     return exitCode;
 }
 
-int
+WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
                                 std::ostream &out, double *linkMs,
                                 double *verifyMs) const {
@@ -323,8 +402,8 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
     }
 
     auto start = Clock::now();
-    llvm::LLVMContext context;
-    auto linkedModule = parseArtifactModule(*rootArtifact, context);
+    auto context = std::make_unique<llvm::LLVMContext>();
+    auto linkedModule = parseArtifactModule(*rootArtifact, *context);
     llvm::Linker linker(*linkedModule);
     for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         if (path == rootUnit.path()) {
@@ -337,7 +416,7 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
                                       path + "`",
                                   "This looks like a compiler module scheduling bug.");
         }
-        auto dependencyModule = parseArtifactModule(*artifact, context);
+        auto dependencyModule = parseArtifactModule(*artifact, *context);
         if (linker.linkInModule(std::move(dependencyModule))) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
@@ -347,8 +426,8 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
         }
     }
 
-    ensureExecutableEntryWrapper(*linkedModule, rootUnit);
-    ensureSystemMainWrapper(*linkedModule);
+    ensureLanguageEntryWrapper(*linkedModule, rootUnit);
+    ensureHostedMainWrapper(*linkedModule);
 
     if (verifyIR) {
         auto verifyStart = Clock::now();
@@ -357,19 +436,13 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool verifyIR,
             *verifyMs += elapsedMillis(verifyStart, Clock::now());
         }
         if (!ok) {
-            return 1;
+            return {};
         }
     }
-
-    std::string linkedIR;
-    llvm::raw_string_ostream irOut(linkedIR);
-    linkedModule->print(irOut, nullptr);
-    irOut.flush();
     if (linkMs != nullptr) {
         *linkMs += elapsedMillis(start, Clock::now());
     }
-    out << linkedIR;
-    return 0;
+    return {std::move(context), std::move(linkedModule)};
 }
 
 std::size_t
@@ -381,37 +454,42 @@ WorkspaceBuilder::loadedUnitCount() const {
 int
 WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                          SessionStats &stats, std::ostream &out) const {
-    workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
-    int exitCode =
-        executor_->execute(workspace_.buildQueue(), [&](const std::string &path) -> int {
-            auto *queuedUnit = workspace_.moduleGraph().find(path);
-            if (queuedUnit == nullptr) {
-                throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module build queue references a missing unit",
-                                      "This looks like a compiler module queue bug.");
-            }
-
-            if (reusableArtifactFor(*queuedUnit) != nullptr) {
-                queuedUnit->markCompiled();
-                ++stats.reusedModules;
-                return 0;
-            }
-
-            ModuleArtifact artifact = createArtifact(*queuedUnit);
-            int moduleExitCode =
-                compileModule(*queuedUnit, options, artifact, stats, out);
-            if (moduleExitCode != 0) {
-                return moduleExitCode;
-            }
-            workspace_.storeArtifact(std::move(artifact));
-            return 0;
-        });
+    int exitCode = buildArtifacts(rootUnit, options, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
 
-    return linkArtifacts(rootUnit, options.verifyIR, out, &stats.linkMs,
-                         &stats.verifyMs);
+    auto linked = linkArtifacts(rootUnit, options.verifyIR, out, &stats.linkMs,
+                                &stats.verifyMs);
+    if (!linked.module) {
+        return 1;
+    }
+
+    std::string linkedIR;
+    llvm::raw_string_ostream irOut(linkedIR);
+    linked.module->print(irOut, nullptr);
+    irOut.flush();
+    out << linkedIR;
+    return 0;
+}
+
+int
+WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
+                             const CompileOptions &options,
+                             SessionStats &stats, std::ostream &out) const {
+    int exitCode = buildArtifacts(rootUnit, options, stats, out);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    auto linked = linkArtifacts(rootUnit, options.verifyIR, out, &stats.linkMs,
+                                &stats.verifyMs);
+    if (!linked.module) {
+        return 1;
+    }
+
+    emitObjectFile(*linked.module, out);
+    return 0;
 }
 
 }  // namespace lona

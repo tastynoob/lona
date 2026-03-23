@@ -42,7 +42,8 @@ normalizeCliArgs(int argc, char *argv[]) {
 int
 main(int argc, char *argv[]) {
     cmdline::parser cli;
-    cli.add("emit-ir", 'S', "print LLVM IR instead of AST JSON");
+    cli.add<std::string>("emit", 0, "select output artifact: ir or obj", false, "",
+                         cmdline::oneof<std::string>("ir", "obj"));
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
@@ -59,11 +60,19 @@ main(int argc, char *argv[]) {
 
     const std::string &inputPath = args[0];
     lona::CompilerSession session;
+    const std::string emitTarget =
+        cli.exist("emit") ? cli.get<std::string>("emit") : std::string();
+    const bool emitIR = emitTarget == "ir";
+    const bool emitObject = emitTarget == "obj";
 
     std::ostream *out = &std::cout;
     std::ofstream output;
     if (args.size() == 2) {
-        output.open(args[1]);
+        std::ios::openmode fileMode = std::ios::out;
+        if (emitObject) {
+            fileMode |= std::ios::binary;
+        }
+        output.open(args[1], fileMode);
         if (!output) {
             session.diagnostics().emit(
                 lona::DiagnosticError(
@@ -77,10 +86,12 @@ main(int argc, char *argv[]) {
     }
 
     lona::SessionOptions options;
-    const bool compileMode = cli.exist("emit-ir") || cli.exist("verify-ir") ||
+    const bool compileMode = emitIR || emitObject || cli.exist("verify-ir") ||
                              cli.exist("debug") || cli.exist("opt");
     options.outputMode =
-        compileMode ? lona::OutputMode::LLVMIR : lona::OutputMode::AstJson;
+        emitObject ? lona::OutputMode::ObjectFile
+                   : compileMode ? lona::OutputMode::LLVMIR
+                                 : lona::OutputMode::AstJson;
     options.compile.optLevel = cli.get<int>("opt");
     options.compile.verifyIR = cli.exist("verify-ir");
     options.compile.debugInfo = cli.exist("debug");

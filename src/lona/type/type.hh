@@ -23,6 +23,10 @@
 #include <unordered_set>
 #include <vector>
 
+namespace llvm {
+class TargetMachine;
+}
+
 namespace lona {
 
 class TypeClass;
@@ -36,6 +40,7 @@ class Function;
 
 const llvm::DataLayout &defaultTargetDataLayout();
 const std::string &defaultTargetTriple();
+llvm::TargetMachine &defaultTargetMachine();
 void configureModuleTargetLayout(llvm::Module &module);
 
 class TypeClass {

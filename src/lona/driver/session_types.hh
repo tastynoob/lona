@@ -13,6 +13,7 @@ struct CompileOptions {
 enum class OutputMode {
     AstJson,
     LLVMIR,
+    ObjectFile,
 };
 
 struct SessionOptions {

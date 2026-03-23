@@ -52,7 +52,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$operator_ir_in" >"$operator_ir_out"
+"$BIN" --emit ir --verify-ir "$operator_ir_in" >"$operator_ir_out"
 grep -Fq 'srem i32' "$operator_ir_out"
 grep -Fq 'udiv i32' "$operator_ir_out"
 grep -Fq 'urem i32' "$operator_ir_out"
@@ -126,7 +126,7 @@ def main() i32 {
     ret 1
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$mixed_sign_in" >"$mixed_sign_out"
+"$BIN" --emit ir --verify-ir "$mixed_sign_in" >"$mixed_sign_out"
 grep -Fq 'icmp slt i64' "$mixed_sign_out"
 grep -Fq 'sdiv i64' "$mixed_sign_out"
 grep -Fq 'ashr i64' "$mixed_sign_out"

@@ -32,7 +32,7 @@ def main() i32 {
     ret x
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_local_in" >"$ref_local_out"
+"$BIN" --emit ir --verify-ir "$ref_local_in" >"$ref_local_out"
 if [ "$(grep -c 'alloca i32' "$ref_local_out")" -ne 2 ]; then
     echo 'expected ref local binding to reuse the source storage without adding another alloca' >&2
     exit 1
@@ -50,7 +50,7 @@ def main() i32 {
     ret set7(ref x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_param_in" >"$ref_param_out"
+"$BIN" --emit ir --verify-ir "$ref_param_in" >"$ref_param_out"
 grep -q '^define i32 @set7(ptr ' "$ref_param_out"
 grep -q 'call i32 @set7(ptr ' "$ref_param_out"
 
@@ -65,7 +65,7 @@ def main() i32 {
     ret set7(ref slot = x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_param_named_in" >"$ref_param_named_out"
+"$BIN" --emit ir --verify-ir "$ref_param_named_in" >"$ref_param_named_out"
 grep -q '^define i32 @set7(ptr ' "$ref_param_named_out"
 grep -q 'call i32 @set7(ptr ' "$ref_param_named_out"
 
@@ -108,7 +108,7 @@ def main() i32 {
     ret poke(ref x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_param_addr_in" >"$ref_param_addr_out"
+"$BIN" --emit ir --verify-ir "$ref_param_addr_in" >"$ref_param_addr_out"
 poke_body="$(sed -n '/^define i32 @poke(/,/^}/p' "$ref_param_addr_out")"
 echo "$poke_body" | grep -q '^define i32 @poke(ptr %0)'
 if [ "$(echo "$poke_body" | grep -c 'alloca i32')" -ne 1 ]; then
@@ -137,7 +137,7 @@ def main() i32 {
     ret read(ref x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_param_const_view_in" >"$ref_param_const_view_out"
+"$BIN" --emit ir --verify-ir "$ref_param_const_view_in" >"$ref_param_const_view_out"
 grep -q '^define i32 @read(ptr ' "$ref_param_const_view_out"
 grep -q 'call i32 @read(ptr ' "$ref_param_const_view_out"
 
@@ -169,6 +169,6 @@ def main() i32 {
     ret Counter(1).bump()
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ref_method_temp_in" >"$ref_method_temp_out"
+"$BIN" --emit ir --verify-ir "$ref_method_temp_in" >"$ref_method_temp_out"
 grep -Eq '^define i32 @.*Counter\.bump\(ptr ' "$ref_method_temp_out"
 grep -Eq 'call i32 @.*Counter\.bump\(ptr ' "$ref_method_temp_out"

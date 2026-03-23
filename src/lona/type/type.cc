@@ -32,7 +32,7 @@ struct NativeTargetLayout {
 
         llvm::TargetOptions options;
         machine.reset(target->createTargetMachine(triple, "generic", "",
-                                                  options, std::nullopt));
+                                                  options, llvm::Reloc::PIC_));
         if (!machine) {
             throw std::runtime_error(
                 "failed to create native LLVM target machine");
@@ -71,6 +71,11 @@ defaultTargetDataLayout() {
 const std::string &
 defaultTargetTriple() {
     return nativeTargetLayout().triple;
+}
+
+llvm::TargetMachine &
+defaultTargetMachine() {
+    return *nativeTargetLayout().machine;
 }
 
 void

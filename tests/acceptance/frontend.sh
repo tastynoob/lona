@@ -7,6 +7,7 @@ INPUT="$FIXTURES_DIR/acceptance_main.lo"
 
 json_out="$(new_tmp_file json)"
 ir_out="$(new_tmp_file ir)"
+obj_out="$(new_tmp_file obj)"
 opt_ir_out="$(new_tmp_file opt-ir)"
 debug_out="$(new_tmp_file debug)"
 missing_return_in="$(new_tmp_file missing-return)"
@@ -29,7 +30,7 @@ byte_json_out="$(new_tmp_file byte-json-out)"
 grep -q '"type": "Program"' "$json_out"
 grep -q '"type": "FieldCall"' "$json_out"
 
-"$BIN" --emit-ir --verify-ir "$INPUT" >"$ir_out"
+"$BIN" --emit ir --verify-ir "$INPUT" >"$ir_out"
 grep -Eq '^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)' "$ir_out"
 grep -q '^define i32 @fibo' "$ir_out"
 if grep -q 'llvm.dbg.declare' "$ir_out"; then
@@ -37,11 +38,18 @@ if grep -q 'llvm.dbg.declare' "$ir_out"; then
     exit 1
 fi
 
-"$BIN" --emit-ir --verify-ir -O3 "$INPUT" >"$opt_ir_out"
+"$BIN" --emit obj --verify-ir "$INPUT" "$obj_out"
+test -s "$obj_out"
+if [ "$(od -An -t x1 -N 4 "$obj_out" | tr -d ' \n')" != "7f454c46" ]; then
+    echo 'unexpected object file header for --emit obj output' >&2
+    exit 1
+fi
+
+"$BIN" --emit ir --verify-ir -O3 "$INPUT" >"$opt_ir_out"
 grep -Eq '^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)' "$opt_ir_out"
 grep -q '^define i32 @fibo' "$opt_ir_out"
 
-"$BIN" --emit-ir --verify-ir -g "$INPUT" >"$debug_out"
+"$BIN" --emit ir --verify-ir -g "$INPUT" >"$debug_out"
 grep -q 'llvm.dbg.declare' "$debug_out"
 grep -q '!llvm.dbg.cu' "$debug_out"
 grep -q '!DISubprogram' "$debug_out"
@@ -123,7 +131,7 @@ def local_bool(a i32) bool {
     ret false
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$bool_in" >"$bool_out"
+"$BIN" --emit ir --verify-ir "$bool_in" >"$bool_out"
 grep -q '^define i8 @local_bool' "$bool_out"
 grep -q 'alloca i8' "$bool_out"
 grep -q 'store i8 1' "$bool_out"
@@ -139,7 +147,7 @@ def pointer_roundtrip(a i32) i32 {
     ret value
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$pointer_in" >"$pointer_out"
+"$BIN" --emit ir --verify-ir "$pointer_in" >"$pointer_out"
 grep -q '^define i32 @pointer_roundtrip' "$pointer_out"
 grep -q 'alloca ptr' "$pointer_out"
 grep -q 'store ptr ' "$pointer_out"

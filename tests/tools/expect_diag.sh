@@ -17,7 +17,7 @@ if [ -z "$OUTPUT_FILE" ]; then
     OUTPUT_FILE="$(mktemp "${TMPDIR:-/tmp}/lona-diag-XXXXXX.txt")"
 fi
 
-if "$BIN" --emit-ir "$INPUT" >"$OUTPUT_FILE" 2>&1; then
+if "$BIN" --emit ir "$INPUT" >"$OUTPUT_FILE" 2>&1; then
     echo "expected compile failure for $INPUT" >&2
     exit 1
 fi

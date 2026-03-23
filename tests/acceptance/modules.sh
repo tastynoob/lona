@@ -81,7 +81,7 @@ def main() i32 {
     ret c.bump(3)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$method_self_in" >"$method_self_out"
+"$BIN" --emit ir --verify-ir "$method_self_in" >"$method_self_out"
 grep -Eq '@.*Counter\.bump' "$method_self_out"
 grep -Eq 'getelementptr inbounds %.*Counter' "$method_self_out"
 
@@ -102,7 +102,7 @@ def main() i32 {
     ret c.value
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$method_self_mutate_in" >"$method_self_mutate_out"
+"$BIN" --emit ir --verify-ir "$method_self_mutate_in" >"$method_self_mutate_out"
 grep -Eq '^define i32 @.*Counter\.bump\(ptr ' "$method_self_mutate_out"
 grep -Eq 'call i32 @.*Counter\.bump\(ptr ' "$method_self_mutate_out"
 grep -Eq 'store i32 .*ptr %' "$method_self_mutate_out"
@@ -115,7 +115,7 @@ def inc(a i32) i32 {
 var x i32 = 3
 var y i32 = inc(x)
 EOF
-"$BIN" --emit-ir --verify-ir "$top_level_mix_in" >"$top_level_mix_out"
+"$BIN" --emit ir --verify-ir "$top_level_mix_in" >"$top_level_mix_out"
 grep -q '\.main"()' "$top_level_mix_out"
 grep -q '@inc' "$top_level_mix_out"
 
@@ -137,7 +137,7 @@ def main() i32 {
     ret w.counter.read()
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$field_method_chain_in" >"$field_method_chain_out"
+"$BIN" --emit ir --verify-ir "$field_method_chain_in" >"$field_method_chain_out"
 grep -Eq '@.*Counter\.read' "$field_method_chain_out"
 grep -Eq 'call i32 @.*Counter\.read\(ptr ' "$field_method_chain_out"
 
@@ -159,7 +159,7 @@ struct Box {
 }
 EOF
 printf 'import math\n\ndef main() i32 {\n    ret math.helper(4)\n}\n' >"$import_main_in"
-"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_main_out"
+"$BIN" --emit ir --verify-ir "$import_main_in" >"$import_main_out"
 grep -q '^define i32 @math.inc(i32' "$import_main_out"
 grep -q '^define i32 @math.helper(i32' "$import_main_out"
 grep -q 'call i32 @math.helper(i32 4)' "$import_main_out"
@@ -169,12 +169,12 @@ if grep -q '^declare i32 @math.helper' "$import_main_out"; then
 fi
 
 printf 'import math\n\ndef main() i32 {\n    var p math.Point\n    p.x = math.inc(4)\n    ret p.x\n}\n' >"$import_main_in"
-"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_type_out"
+"$BIN" --emit ir --verify-ir "$import_main_in" >"$import_type_out"
 grep -q '^%math.Point = type { i32 }' "$import_type_out"
 grep -q 'call i32 @math.inc(i32 4)' "$import_type_out"
 
 printf 'import math\n\ndef main() i32 {\n    ret math.Box(point = math.Point(x = 4)).point.x\n}\n' >"$import_main_in"
-"$BIN" --emit-ir --verify-ir "$import_main_in" >"$import_chain_out"
+"$BIN" --emit ir --verify-ir "$import_main_in" >"$import_chain_out"
 
 cat >"$import_c_abi_dep_in" <<'EOF'
 extern "C" def abs(v i32) i32
@@ -194,7 +194,7 @@ def main() i32 {
     ret dep.native_wrap(-4) + dep.c_inc(-2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_c_abi_main_in" >"$import_c_abi_out"
+"$BIN" --emit ir --verify-ir "$import_c_abi_main_in" >"$import_c_abi_out"
 grep -Fq 'declare i32 @abs(i32)' "$import_c_abi_out"
 grep -Fq 'define i32 @c_inc(i32 ' "$import_c_abi_out"
 grep -Fq 'define i32 @dep.native_wrap(i32 ' "$import_c_abi_out"
@@ -221,7 +221,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_c_repr_main_in" >"$import_c_repr_out"
+"$BIN" --emit ir --verify-ir "$import_c_repr_main_in" >"$import_c_repr_out"
 grep -Fq 'declare ptr @shift(ptr, ptr)' "$import_c_repr_out"
 
 cat >"$import_c_repr_dep_in" <<'EOF'
@@ -331,7 +331,7 @@ def main() i32 {
     ret v.add(dy = 4, dx = 3)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_named_method_main_in" >"$import_named_method_out"
+"$BIN" --emit ir --verify-ir "$import_named_method_main_in" >"$import_named_method_out"
 grep -q '^define i32 @dep.Vec2.add(ptr ' "$import_named_method_out"
 grep -q 'call i32 @dep.Vec2.add(' "$import_named_method_out"
 
@@ -355,7 +355,7 @@ def main() i32 {
     ret c.value
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_mutating_method_main_in" >"$import_mutating_method_out"
+"$BIN" --emit ir --verify-ir "$import_mutating_method_main_in" >"$import_mutating_method_out"
 grep -q '^define i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -q 'call i32 @dep.Counter.bump(ptr ' "$import_mutating_method_out"
 grep -Eq 'getelementptr inbounds %dep.Counter, ptr %0, i32 0, i32 0' "$import_mutating_method_out"
@@ -385,7 +385,7 @@ def main() i32 {
     ret dep.echo(pair).swap(3).left
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_packed_aggregate_main_in" >"$import_packed_aggregate_out"
+"$BIN" --emit ir --verify-ir "$import_packed_aggregate_main_in" >"$import_packed_aggregate_out"
 grep -Eq '^define i64 @dep\.echo\(i64 [^)]+\)' "$import_packed_aggregate_out"
 grep -Eq '^define i64 @dep\.Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$import_packed_aggregate_out"
 grep -Eq 'call i64 @dep\.echo\(i64 %' "$import_packed_aggregate_out"
@@ -418,7 +418,7 @@ def main() i32 {
     ret dep.echo(triple).shift(4).b
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$import_direct_return_main_in" >"$import_direct_return_out"
+"$BIN" --emit ir --verify-ir "$import_direct_return_main_in" >"$import_direct_return_out"
 grep -Eq '^%dep\.Triple = type \{ i32, i32, i32 \}' "$import_direct_return_out"
 grep -Eq '^define %dep\.Triple @dep\.echo\(ptr [^)]+\)' "$import_direct_return_out"
 grep -Eq '^define %dep\.Triple @dep\.Triple\.shift\(ptr [^,]+, i32 [^)]+\)' "$import_direct_return_out"
@@ -429,7 +429,7 @@ grep -Eq 'call %dep\.Triple @dep\.Triple\.shift\(ptr [^,]+, i32 4\)' "$import_di
 printf 'def inc(v i32) i32 {\n    ret v + 1\n}\n\nstruct Point {\n    x i32\n}\n' >"$import_leaf_in"
 printf 'import leaf\n\ndef call_leaf(v i32) i32 {\n    ret leaf.inc(v)\n}\n' >"$import_mid_in"
 printf 'import mid\n\ndef main() i32 {\n    ret mid.call_leaf(4)\n}\n' >"$import_transitive_main_in"
-"$BIN" --emit-ir --verify-ir "$import_transitive_main_in" >"$import_transitive_ok_out"
+"$BIN" --emit ir --verify-ir "$import_transitive_main_in" >"$import_transitive_ok_out"
 grep -q 'call i32 @mid.call_leaf(i32 4)' "$import_transitive_ok_out"
 
 printf 'import mid\n\ndef main() i32 {\n    ret leaf.inc(4)\n}\n' >"$import_transitive_main_in"
@@ -486,7 +486,7 @@ def make_big(v i32) Big {
 
 var sample = make_big(3)
 EOF
-"$BIN" --emit-ir --verify-ir "$large_struct_return_in" >"$large_struct_return_out"
+"$BIN" --emit ir --verify-ir "$large_struct_return_in" >"$large_struct_return_out"
 grep -Eq '^%.*Big = type \{ i32, i32, i32, i32, i32 \}' "$large_struct_return_out"
 grep -Eq '^define void @.*Big\.add\(ptr ' "$large_struct_return_out"
 grep -q '^define void @make_big(ptr ' "$large_struct_return_out"
@@ -507,6 +507,6 @@ def make_name(a i32, b i32) Name {
 
 var sample = make_name(1, 2)
 EOF
-"$BIN" --emit-ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
+"$BIN" --emit ir --verify-ir "$grammar_subset_in" >"$grammar_subset_out"
 grep -Eq '^%.*Name = type \{ i32, i32 \}' "$grammar_subset_out"
 grep -Eq '^define i64 @make_name\(i32 [^,]+, i32 [^)]+\)' "$grammar_subset_out"

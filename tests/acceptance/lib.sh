@@ -38,7 +38,7 @@ expect_emit_ir_failure() {
     local output="$2"
     local message="$3"
 
-    if "$BIN" --emit-ir "$input" >"$output" 2>&1; then
+    if "$BIN" --emit ir "$input" >"$output" 2>&1; then
         echo "$message" >&2
         exit 1
     fi

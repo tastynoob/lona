@@ -11,6 +11,10 @@ cast_numeric_in="$(new_tmp_file cast-numeric)"
 cast_numeric_out="$(new_tmp_file cast-numeric-out)"
 cast_pointer_in="$(new_tmp_file cast-pointer)"
 cast_pointer_out="$(new_tmp_file cast-pointer-out)"
+cast_pointer_rebind_in="$(new_tmp_file cast-pointer-rebind)"
+cast_pointer_rebind_out="$(new_tmp_file cast-pointer-rebind-out)"
+cast_pointer_nested_const_bad_in="$(new_tmp_file cast-pointer-nested-const-bad)"
+cast_pointer_nested_const_bad_out="$(new_tmp_file cast-pointer-nested-const-bad-out)"
 cast_bad_in="$(new_tmp_file cast-bad)"
 cast_bad_out="$(new_tmp_file cast-bad-out)"
 cast_tuple_bad_in="$(new_tmp_file cast-tuple-bad)"
@@ -215,7 +219,7 @@ def main() i32 {
     ret cast[i32](widened)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$cast_numeric_in" >"$cast_numeric_out"
+"$BIN" --emit ir --verify-ir "$cast_numeric_in" >"$cast_numeric_out"
 grep -q 'sitofp i32' "$cast_numeric_out"
 grep -q 'fpext float' "$cast_numeric_out"
 grep -q 'fptosi double' "$cast_numeric_out"
@@ -228,10 +232,40 @@ def main() i32 {
     ret view(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$cast_pointer_in" >"$cast_pointer_out"
+"$BIN" --emit ir --verify-ir "$cast_pointer_in" >"$cast_pointer_out"
 grep -q 'ptrtoint ptr %' "$cast_pointer_out"
 grep -q 'inttoptr i64 %' "$cast_pointer_out"
 grep -Eq 'getelementptr( inbounds)? i8, ptr %' "$cast_pointer_out"
+
+cat >"$cast_pointer_rebind_in" <<'EOF'
+struct Box {
+    value i32
+}
+
+def main() i32 {
+    var box Box
+    var bytes u8[*] = cast[u8[*]](&box)
+    var view Box[*] = cast[Box[*]](bytes)
+    view(0).value = 7
+    ret box.value
+}
+EOF
+"$BIN" --emit ir --verify-ir "$cast_pointer_rebind_in" >"$cast_pointer_rebind_out"
+grep -q '^define i32 @main' "$cast_pointer_rebind_out"
+grep -q 'ptrtoint ptr %' "$cast_pointer_rebind_out"
+grep -q 'inttoptr i64 %' "$cast_pointer_rebind_out"
+
+cat >"$cast_pointer_nested_const_bad_in" <<'EOF'
+def main() i32 {
+    var bytes u8 const[2] = {1, 2}
+    var view u8 const[*] = &bytes(0)
+    var slot u8 const[*]* = &view
+    var bad u8[*][*] = cast[u8[*][*]](slot)
+    ret bad(0)(0)
+}
+EOF
+expect_emit_ir_failure "$cast_pointer_nested_const_bad_in" "$cast_pointer_nested_const_bad_out" 'expected nested const-dropping pointer rebind cast to fail'
+grep -Fq 'unsupported builtin cast from `u8 const[*]*` to `u8[*][*]`' "$cast_pointer_nested_const_bad_out"
 
 cat >"$cast_bad_in" <<'EOF'
 def main() i32 {
@@ -280,7 +314,7 @@ def bad() f32 {
     ret id(-x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$float_in" >"$float_out"
+"$BIN" --emit ir --verify-ir "$float_in" >"$float_out"
 grep -q '^define float @id' "$float_out"
 grep -q '^define float @bad' "$float_out"
 grep -q 'store float 3.000000e+00' "$float_out"
@@ -295,7 +329,7 @@ def main() i32 {
     ret cast[i32](promoted)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$numeric_convert_in" >"$numeric_convert_out"
+"$BIN" --emit ir --verify-ir "$numeric_convert_in" >"$numeric_convert_out"
 grep -q 'fptosi double' "$numeric_convert_out"
 grep -q 'sitofp i32' "$numeric_convert_out"
 grep -q 'fpext float' "$numeric_convert_out"
@@ -305,7 +339,7 @@ def chain(v f64) i32 {
     ret cast[i32](cast[f32](cast[i32](v)))
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$numeric_convert_chain_in" >"$numeric_convert_chain_out"
+"$BIN" --emit ir --verify-ir "$numeric_convert_chain_in" >"$numeric_convert_chain_out"
 grep -q 'fptosi double' "$numeric_convert_chain_out"
 grep -q 'sitofp i32' "$numeric_convert_chain_out"
 grep -q 'fptosi float' "$numeric_convert_chain_out"
@@ -318,7 +352,7 @@ def main() i32 {
     ret wide
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tobits_in" >"$tobits_out"
+"$BIN" --emit ir --verify-ir "$tobits_in" >"$tobits_out"
 grep -q 'insertvalue \[1 x i8\]' "$tobits_out"
 grep -q 'extractvalue \[1 x i8\]' "$tobits_out"
 grep -q 'zext i8' "$tobits_out"
@@ -330,7 +364,7 @@ def main() i32 {
     ret raw.toi32()
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tobits_infer_in" >"$tobits_infer_out"
+"$BIN" --emit ir --verify-ir "$tobits_infer_in" >"$tobits_infer_out"
 grep -q 'alloca \[4 x i8\]' "$tobits_infer_out"
 grep -q 'store \[4 x i8\] c"\\07\\00\\00\\00"' "$tobits_infer_out"
 grep -q 'extractvalue \[4 x i8\]' "$tobits_infer_out"
@@ -341,7 +375,7 @@ def main() i32 {
     ret raw.toi32()
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$wide_bits_in" >"$wide_bits_out"
+"$BIN" --emit ir --verify-ir "$wide_bits_in" >"$wide_bits_out"
 extract_count="$(grep -c 'extractvalue \[256 x i8\]' "$wide_bits_out")"
 if [ "$extract_count" -ne 4 ]; then
     echo "expected wide raw-toi32 program to extract exactly 4 bytes, got $extract_count" >&2
@@ -359,7 +393,7 @@ def main() i32 {
     ret widen(x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$implicit_numeric_in" >"$implicit_numeric_out"
+"$BIN" --emit ir --verify-ir "$implicit_numeric_in" >"$implicit_numeric_out"
 grep -q 'store i8 1' "$implicit_numeric_out"
 grep -q 'zext i8' "$implicit_numeric_out"
 grep -q 'zext i16' "$implicit_numeric_out"
@@ -371,7 +405,7 @@ def main() i32 {
     ret a + b
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$mixed_numeric_op_in" >"$mixed_numeric_op_out"
+"$BIN" --emit ir --verify-ir "$mixed_numeric_op_in" >"$mixed_numeric_op_out"
 grep -q 'zext i8' "$mixed_numeric_op_out"
 grep -q 'add i32' "$mixed_numeric_op_out"
 
@@ -420,7 +454,7 @@ def bad() bool {
     ret nan != nan
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$float_nan_cmp_in" >"$float_nan_cmp_out"
+"$BIN" --emit ir --verify-ir "$float_nan_cmp_in" >"$float_nan_cmp_out"
 grep -q 'fcmp une double' "$float_nan_cmp_out"
 
 cat >"$bool_bytecopy_bad_in" <<'EOF'
@@ -440,7 +474,7 @@ def main() i32 {
     ret msg(0)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$string_value_in" >"$string_value_out"
+"$BIN" --emit ir --verify-ir "$string_value_in" >"$string_value_out"
 grep -Fq 'private constant [5 x i8] c"hello", align 1' "$string_value_out"
 grep -q 'alloca \[5 x i8\]' "$string_value_out"
 grep -q 'load \[5 x i8\], ptr @.lona.bytes\.' "$string_value_out"
@@ -452,7 +486,7 @@ def main() u8 {
     ret "hi"(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$string_literal_index_in" >"$string_literal_index_out"
+"$BIN" --emit ir --verify-ir "$string_literal_index_in" >"$string_literal_index_out"
 grep -Fq 'private constant [2 x i8] c"hi", align 1' "$string_literal_index_out"
 grep -Eq 'load i8, ptr getelementptr inbounds \(\[2 x i8\], ptr @\.lona\.bytes\.[0-9]+, i32 0, i32 1\)' "$string_literal_index_out"
 
@@ -466,7 +500,7 @@ def main() i32 {
     ret second(bytes)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$string_borrow_in" >"$string_borrow_out"
+"$BIN" --emit ir --verify-ir "$string_borrow_in" >"$string_borrow_out"
 grep -Fq '.lona.bytes.' "$string_borrow_out"
 grep -Fq 'private constant [2 x i8] c"hi", align 1' "$string_borrow_out"
 grep -q 'call i8 @second(ptr' "$string_borrow_out"
@@ -530,7 +564,7 @@ def main() i32 {
     ret view(0)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$null_pointer_in" >"$null_pointer_out"
+"$BIN" --emit ir --verify-ir "$null_pointer_in" >"$null_pointer_out"
 grep -Fq 'store ptr null' "$null_pointer_out"
 grep -Fq 'icmp eq ptr' "$null_pointer_out"
 grep -Fq 'call i8 @is_missing(ptr null)' "$null_pointer_out"
@@ -567,7 +601,7 @@ def main() i32 {
     ret bytes(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$string_escape_in" >"$string_escape_out"
+"$BIN" --emit ir --verify-ir "$string_escape_in" >"$string_escape_out"
 grep -Fq 'private constant [3 x i8] c"AB\00", align 1' "$string_escape_out"
 
 cat >"$const_type_json_in" <<'EOF'
@@ -598,7 +632,7 @@ def main() i32 {
     ret copy(0)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$const_materialize_in" >"$const_materialize_out"
+"$BIN" --emit ir --verify-ir "$const_materialize_in" >"$const_materialize_out"
 grep -q 'alloca \[2 x i8\]' "$const_materialize_out"
 grep -q 'store i8 7' "$const_materialize_out"
 grep -q 'store ptr' "$const_materialize_out"
@@ -622,7 +656,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$struct_const_ptr_field_in" >"$struct_const_ptr_field_out"
+"$BIN" --emit ir --verify-ir "$struct_const_ptr_field_in" >"$struct_const_ptr_field_out"
 grep -q '^define i32 @main' "$struct_const_ptr_field_out"
 
 cat >"$struct_const_field_bad_in" <<'EOF'
@@ -657,7 +691,7 @@ def bad() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tuple_in" >"$tuple_out"
+"$BIN" --emit ir --verify-ir "$tuple_in" >"$tuple_out"
 grep -q 'alloca { i32, i8 }' "$tuple_out"
 grep -q 'store { i32, i8 } { i32 1, i8 1 }' "$tuple_out"
 
@@ -672,7 +706,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
+"$BIN" --emit ir --verify-ir "$tuple_flow_in" >"$tuple_flow_out"
 grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$tuple_flow_out"
 grep -Eq 'call i64 @echo\(i64 %' "$tuple_flow_out"
 
@@ -691,7 +725,7 @@ def main() i32 {
     ret echo(pair).right
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$small_struct_packed_in" >"$small_struct_packed_out"
+"$BIN" --emit ir --verify-ir "$small_struct_packed_in" >"$small_struct_packed_out"
 grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_struct_packed_out"
 grep -Eq 'call i64 @echo\(i64 %' "$small_struct_packed_out"
 ! grep -q 'llvm.memcpy' "$small_struct_packed_out"
@@ -712,7 +746,7 @@ def main() i32 {
     ret echo(triple).c
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$medium_struct_direct_return_in" >"$medium_struct_direct_return_out"
+"$BIN" --emit ir --verify-ir "$medium_struct_direct_return_in" >"$medium_struct_direct_return_out"
 grep -Eq '^%.*Triple = type \{ i32, i32, i32 \}' "$medium_struct_direct_return_out"
 grep -Eq '^define %.*Triple @echo\(ptr [^)]+\)' "$medium_struct_direct_return_out"
 grep -Eq 'call %.*Triple @echo\(ptr %' "$medium_struct_direct_return_out"
@@ -728,7 +762,7 @@ def main() i32 {
     ret echo(row)(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$small_array_packed_in" >"$small_array_packed_out"
+"$BIN" --emit ir --verify-ir "$small_array_packed_in" >"$small_array_packed_out"
 grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$small_array_packed_out"
 grep -Eq 'call i64 @echo\(i64 %' "$small_array_packed_out"
 
@@ -751,7 +785,7 @@ def main() i32 {
     ret out.left
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$method_abi_in" >"$method_abi_out"
+"$BIN" --emit ir --verify-ir "$method_abi_in" >"$method_abi_out"
 grep -Eq '^define i64 @.*Pair\.swap\(ptr [^,]+, i32 [^)]+\)' "$method_abi_out"
 grep -Eq 'call i64 @.*Pair\.swap\(ptr [^,]+, i32 3\)' "$method_abi_out"
 
@@ -775,7 +809,7 @@ def main() i32 {
     ret triple.shift(4).b
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$method_direct_return_in" >"$method_direct_return_out"
+"$BIN" --emit ir --verify-ir "$method_direct_return_in" >"$method_direct_return_out"
 grep -Eq '^%.*Triple = type \{ i32, i32, i32 \}' "$method_direct_return_out"
 grep -Eq '^define %.*Triple @.*Triple\.shift\(ptr [^,]+, i32 [^)]+\)' "$method_direct_return_out"
 grep -Eq 'call %.*Triple @.*Triple\.shift\(ptr [^,]+, i32 4\)' "$method_direct_return_out"
@@ -795,7 +829,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tuple_field_in" >"$tuple_field_out"
+"$BIN" --emit ir --verify-ir "$tuple_field_in" >"$tuple_field_out"
 grep -Fq 'getelementptr inbounds { i32, i8 }' "$tuple_field_out"
 grep -Fq 'load i8, ptr' "$tuple_field_out"
 grep -Fq 'load i32, ptr' "$tuple_field_out"
@@ -820,7 +854,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tuple_no_context_in" >"$tuple_no_context_out"
+"$BIN" --emit ir --verify-ir "$tuple_no_context_in" >"$tuple_no_context_out"
 grep -Fq 'alloca { i32, i8 }' "$tuple_no_context_out"
 grep -Fq 'store { i32, i8 } { i32 1, i8 1 }' "$tuple_no_context_out"
 
@@ -833,7 +867,7 @@ def main() i32 {
     ret items(1)._1
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$tuple_array_in" >"$tuple_array_out"
+"$BIN" --emit ir --verify-ir "$tuple_array_in" >"$tuple_array_out"
 grep -Fq 'alloca [2 x { i32, i8 }]' "$tuple_array_out"
 grep -Fq 'store [2 x { i32, i8 }]' "$tuple_array_out"
 
@@ -844,7 +878,7 @@ def bad() i32 {
     ret matrix(1)(2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_init_in" >"$array_init_out"
+"$BIN" --emit ir --verify-ir "$array_init_in" >"$array_init_out"
 grep -Fq 'alloca [5 x [4 x i32]]' "$array_init_out"
 grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_init_out"
 grep -Fq '[4 x i32] [i32 1, i32 0, i32 0, i32 0]' "$array_init_out"
@@ -859,7 +893,7 @@ def bad() i32 {
     ret matrix(1, 2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_group_in" >"$array_group_out"
+"$BIN" --emit ir --verify-ir "$array_group_in" >"$array_group_out"
 grep -Fq 'alloca [5 x [4 x i32]]' "$array_group_out"
 grep -Fq 'getelementptr inbounds [5 x [4 x i32]]' "$array_group_out"
 grep -Fq '[4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_group_out"
@@ -873,7 +907,7 @@ def bad() i32 {
     ret tensor(1, 2)(0)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_mixed_in" >"$array_mixed_out"
+"$BIN" --emit ir --verify-ir "$array_mixed_in" >"$array_mixed_out"
 grep -Fq 'alloca [4 x [5 x [3 x i32]]]' "$array_mixed_out"
 grep -Fq 'getelementptr inbounds [4 x [5 x [3 x i32]]]' "$array_mixed_out"
 grep -Fq 'store i32 11' "$array_mixed_out"
@@ -884,7 +918,7 @@ def main() i32 {
     ret row(0) + row(1) + row(2) + row(3)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_value_init_in" >"$array_value_init_out"
+"$BIN" --emit ir --verify-ir "$array_value_init_in" >"$array_value_init_out"
 grep -Fq 'store [4 x i32] [i32 1, i32 2, i32 0, i32 0]' "$array_value_init_out"
 
 cat >"$array_infer_in" <<'EOF'
@@ -893,7 +927,7 @@ def main() i32 {
     ret row(0) + row(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_infer_in" >"$array_infer_out"
+"$BIN" --emit ir --verify-ir "$array_infer_in" >"$array_infer_out"
 grep -Fq 'alloca [2 x i32]' "$array_infer_out"
 grep -Fq 'store [2 x i32] [i32 1, i32 2]' "$array_infer_out"
 
@@ -903,7 +937,7 @@ def main() i32 {
     ret matrix(1)(0)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_infer_nested_in" >"$array_infer_nested_out"
+"$BIN" --emit ir --verify-ir "$array_infer_nested_in" >"$array_infer_nested_out"
 grep -Fq 'alloca [2 x [2 x i32]]' "$array_infer_nested_out"
 grep -Fq 'store [2 x [2 x i32]] [[2 x i32] [i32 1, i32 2], [2 x i32] [i32 3, i32 4]]' "$array_infer_nested_out"
 
@@ -915,7 +949,7 @@ def main() i32 {
     ret row(2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_ptr_in" >"$array_ptr_out"
+"$BIN" --emit ir --verify-ir "$array_ptr_in" >"$array_ptr_out"
 grep -Fq 'alloca [4 x i32]' "$array_ptr_out"
 grep -Fq 'alloca ptr' "$array_ptr_out"
 grep -Fq 'store ptr %1, ptr %2' "$array_ptr_out"
@@ -931,7 +965,7 @@ def main() i32 {
     ret row(2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_view_fixed_elem_in" >"$array_view_fixed_elem_out"
+"$BIN" --emit ir --verify-ir "$array_view_fixed_elem_in" >"$array_view_fixed_elem_out"
 grep -Fq 'alloca ptr' "$array_view_fixed_elem_out"
 grep -Fq 'getelementptr inbounds [4 x i32], ptr ' "$array_view_fixed_elem_out"
 grep -Fq 'store i32 9' "$array_view_fixed_elem_out"
@@ -945,7 +979,7 @@ def main() i32 {
     ret raw(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_view_ptr_in" >"$array_view_ptr_out"
+"$BIN" --emit ir --verify-ir "$array_view_ptr_in" >"$array_view_ptr_out"
 grep -Fq 'alloca [4 x i8]' "$array_view_ptr_out"
 grep -Fq 'getelementptr inbounds i8, ptr ' "$array_view_ptr_out"
 grep -Fq 'store i8 9' "$array_view_ptr_out"
@@ -962,7 +996,7 @@ def main() i32 {
     ret raw(2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_view_nested_view_in" >"$array_view_nested_view_out"
+"$BIN" --emit ir --verify-ir "$array_view_nested_view_in" >"$array_view_nested_view_out"
 grep -Fq 'alloca [1 x ptr]' "$array_view_nested_view_out"
 grep -Fq 'getelementptr inbounds ptr, ptr ' "$array_view_nested_view_out"
 grep -Fq 'getelementptr inbounds i8, ptr ' "$array_view_nested_view_out"
@@ -980,7 +1014,7 @@ def main() i32 {
     ret row(3)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_view_nested_ptr_in" >"$array_view_nested_ptr_out"
+"$BIN" --emit ir --verify-ir "$array_view_nested_ptr_in" >"$array_view_nested_ptr_out"
 grep -Fq 'alloca [1 x ptr]' "$array_view_nested_ptr_out"
 grep -Fq 'getelementptr inbounds ptr, ptr ' "$array_view_nested_ptr_out"
 grep -Fq 'getelementptr inbounds [8 x i8], ptr ' "$array_view_nested_ptr_out"
@@ -1008,7 +1042,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$array_view_eq_in" >"$array_view_eq_out"
+"$BIN" --emit ir --verify-ir "$array_view_eq_in" >"$array_view_eq_out"
 grep -Fq 'icmp eq ptr' "$array_view_eq_out"
 
 cat >"$array_legacy_indexable_bad_in" <<'EOF'
@@ -1106,7 +1140,7 @@ def main() i32 {
     ret counter.value
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$address_field_in" >"$address_field_out"
+"$BIN" --emit ir --verify-ir "$address_field_in" >"$address_field_out"
 grep -Eq 'getelementptr inbounds %.*Counter, ptr %.*, i32 0, i32 0' "$address_field_out"
 grep -Fq 'store i32 8' "$address_field_out"
 
@@ -1118,7 +1152,7 @@ def main() i32 {
     ret row(1)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$address_array_elem_in" >"$address_array_elem_out"
+"$BIN" --emit ir --verify-ir "$address_array_elem_in" >"$address_array_elem_out"
 grep -Fq 'getelementptr inbounds [4 x i32]' "$address_array_elem_out"
 grep -Fq 'store i32 6' "$address_array_elem_out"
 
@@ -1172,7 +1206,7 @@ def main() i32 {
     ret fold(img = c.img, real = c.real)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$struct_init_in" >"$struct_init_out"
+"$BIN" --emit ir --verify-ir "$struct_init_in" >"$struct_init_out"
 grep -Fq 'store %' "$struct_init_out"
 grep -Fq 'Complex { i32 1, i32 2 }' "$struct_init_out"
 grep -Fq 'call i32 @fold(i32' "$struct_init_out"
@@ -1214,7 +1248,7 @@ def main() i32 {
     ret mix(1, y = 2)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$named_call_mix_in" >"$named_call_mix_out"
+"$BIN" --emit ir --verify-ir "$named_call_mix_in" >"$named_call_mix_out"
 grep -Fq 'call i32 @mix(i32 1, i32 2)' "$named_call_mix_out"
 
 cat >"$named_call_order_in" <<'EOF'
@@ -1270,7 +1304,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$struct_field_types_in" >"$struct_field_types_out"
+"$BIN" --emit ir --verify-ir "$struct_field_types_in" >"$struct_field_types_out"
 grep -Eq 'type \{ i8, float, \[4 x i8\], \{ i32, i8 \}, ptr, ptr \}' "$struct_field_types_out"
 grep -Eq 'call i32 %.*\(i32 %.*\)' "$struct_field_types_out"
 grep -Eq 'getelementptr inbounds .* i32 0, i32 4' "$struct_field_types_out"

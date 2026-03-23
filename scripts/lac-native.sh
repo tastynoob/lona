@@ -111,7 +111,7 @@ IR_PATH="$TMPDIR_LOCAL/program.ll"
 PROGRAM_OBJ="$TMPDIR_LOCAL/program.o"
 STARTUP_OBJ="$TMPDIR_LOCAL/lona_start.o"
 
-"$LONA_IR_BIN" --emit-ir --verify-ir -O "$OPT_LEVEL" "$INPUT" "$IR_PATH"
+"$LONA_IR_BIN" --emit ir --verify-ir -O "$OPT_LEVEL" "$INPUT" "$IR_PATH"
 
 if ! grep -q '^define i32 @__lona_entry__()' "$IR_PATH"; then
     cat >&2 <<EOF

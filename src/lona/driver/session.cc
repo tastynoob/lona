@@ -81,6 +81,9 @@ CompilerSession::runFile(const std::string &inputPath,
         if (options.outputMode == OutputMode::LLVMIR) {
             return finish(builder_.emitIR(unit, options.compile, lastStats_, out));
         }
+        if (options.outputMode == OutputMode::ObjectFile) {
+            return finish(builder_.emitObject(unit, options.compile, lastStats_, out));
+        }
         auto *jsonTree = requireSyntaxTree(unit);
         Json root = Json::object();
         jsonTree->toJson(root);

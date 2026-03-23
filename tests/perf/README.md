@@ -25,7 +25,7 @@ make perf
 流程固定为三步：
 
 1. 生成固定的 `fixed-large-100k.lo`
-2. 用 `perf record` 运行 `lona-ir --emit-ir --verify-ir`
+2. 用 `perf record` 运行 `lona-ir --emit ir --verify-ir`
 3. 直接打开 `perf report`，查看热点函数和调用栈
 
 工作目录固定在 `build/perf/profile-large-case/`，其中至少会留下：

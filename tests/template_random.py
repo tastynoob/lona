@@ -48,7 +48,9 @@ def compile_case(compiler: Path, clang: str, root: Path, input_path: Path) -> st
     ir_path = root / f"{input_path.stem}.ll"
     obj_path = root / f"{input_path.stem}.o"
 
-    compile_result = run_command([str(compiler), "--emit-ir", "--verify-ir", str(input_path)])
+    compile_result = run_command(
+        [str(compiler), "--emit", "ir", "--verify-ir", str(input_path)]
+    )
     expect(
         compile_result.returncode == 0,
         f"compile failed for {input_path.name}:\n{compile_result.stderr}",

@@ -50,7 +50,7 @@ run_case() {
     local start end elapsed_ms
 
     start=$(date +%s%N)
-    "$BIN" --emit-ir --verify-ir --stats "$input" >/dev/null 2>"$log"
+    "$BIN" --emit ir --verify-ir --stats "$input" >/dev/null 2>"$log"
     end=$(date +%s%N)
     elapsed_ms=$(((end - start) / 1000000))
 

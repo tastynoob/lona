@@ -20,7 +20,7 @@ for sample in \
     "$ROOT/example/syntax_suite.lo" \
     "$ROOT/example/modules/main.lo"
 do
-    "$BIN" --emit-ir --verify-ir "$sample" >/dev/null
+    "$BIN" --emit ir --verify-ir "$sample" >/dev/null
 done
 
 linked_list_exe="$WORKDIR/c_ffi_linked_list"

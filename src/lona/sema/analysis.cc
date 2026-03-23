@@ -371,6 +371,54 @@ canImplicitPointerViewConversion(TypeClass *targetType, TypeClass *sourceType) {
     return canIndexablePointerConvertTo(targetType, sourceType);
 }
 
+TypeClass *
+getPointerStorageElementType(TypeClass *type) {
+    if (auto *element = getIndexablePointerElementType(type)) {
+        return element;
+    }
+    return getRawPointerPointeeType(type);
+}
+
+bool
+preservesConstQualificationForPointerRebind(TypeClass *targetType,
+                                           TypeClass *sourceType) {
+    if (!targetType || !sourceType) {
+        return false;
+    }
+
+    auto *targetConst = targetType->as<ConstType>();
+    auto *sourceConst = sourceType->as<ConstType>();
+    if (sourceConst) {
+        return targetConst &&
+            preservesConstQualificationForPointerRebind(
+                   targetConst->getBaseType(), sourceConst->getBaseType());
+    }
+    if (targetConst) {
+        return preservesConstQualificationForPointerRebind(targetConst->getBaseType(),
+                                                           sourceType);
+    }
+
+    auto *targetNested = getPointerStorageElementType(targetType);
+    auto *sourceNested = getPointerStorageElementType(sourceType);
+    if (targetNested && sourceNested) {
+        return preservesConstQualificationForPointerRebind(targetNested, sourceNested);
+    }
+    return true;
+}
+
+bool
+canExplicitPointerRebindCast(TypeClass *targetType, TypeClass *sourceType) {
+    if (!(isRawMemoryPointerType(targetType) || isIndexablePointerType(targetType)) ||
+        !(isRawMemoryPointerType(sourceType) || isIndexablePointerType(sourceType))) {
+        return false;
+    }
+
+    auto *targetElement = getPointerStorageElementType(targetType);
+    auto *sourceElement = getPointerStorageElementType(sourceType);
+    return targetElement && sourceElement &&
+        preservesConstQualificationForPointerRebind(targetElement, sourceElement);
+}
+
 Function *
 getDirectFunctionCallee(HIRExpr *callee) {
     auto *calleeValue = dynamic_cast<HIRValue *>(callee);
@@ -1095,7 +1143,7 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *coercePointerExpr(HIRExpr *expr, TypeClass *targetType,
-                               const location &loc) {
+                               const location &loc, bool explicitCast = false) {
         if (!expr || !targetType) {
             return expr;
         }
@@ -1116,6 +1164,9 @@ class FunctionAnalyzer {
             (isRawMemoryPointerType(sourceType) || isIndexablePointerType(sourceType)) &&
             isConstQualificationConvertible(
                 targetType, materializeValueType(typeMgr, sourceType))) {
+            return makeHIR<HIRBitCast>(expr, targetType, loc);
+        }
+        if (explicitCast && canExplicitPointerRebindCast(targetType, sourceType)) {
             return makeHIR<HIRBitCast>(expr, targetType, loc);
         }
         if (canImplicitPointerViewConversion(targetType, sourceType)) {
@@ -1184,7 +1235,7 @@ class FunctionAnalyzer {
             return makeHIR<HIRNumericCast>(value, targetType, true, node->loc);
         }
 
-        auto *pointerCast = coercePointerExpr(value, targetType, node->loc);
+        auto *pointerCast = coercePointerExpr(value, targetType, node->loc, true);
         if (pointerCast && pointerCast->getType() == targetType) {
             return pointerCast;
         }

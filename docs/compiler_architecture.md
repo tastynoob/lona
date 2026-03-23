@@ -346,7 +346,7 @@ artifact 可复用的条件是：
 
 这层不在 `CompilerSession` 内部直接产出 ELF，而是走下面这条链路：
 
-1. `lona-ir --emit-ir` 生成最终链接后的 LLVM IR
+1. `lona-ir --emit ir` 生成最终链接后的 LLVM IR
 2. system 路径通过 `lac` 把 IR 交给 clang 链接
 3. bare 路径则用 `lac-native`、`llc-18`、启动汇编和 linker script 产出 ELF
 

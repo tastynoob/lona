@@ -148,7 +148,7 @@ make install
 ### 常用命令
 
 ```bash
-lona-ir --emit-ir input.lo output.ll
+lona-ir --emit ir input.lo output.ll
 lac input.lo output/program
 lac-native input.lo output/program
 ```

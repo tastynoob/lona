@@ -155,7 +155,7 @@ def main() i32 {
     ret choose(false)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$terminating_for_else_in" >"$terminating_for_else_out"
+"$BIN" --emit ir --verify-ir "$terminating_for_else_in" >"$terminating_for_else_out"
 grep -q '^define i32 @choose' "$terminating_for_else_out"
 
 cat >"$break_bad_in" <<'EOF'

@@ -114,7 +114,7 @@ def hold() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_in" >"$func_ptr_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_in" >"$func_ptr_out"
 grep -q '^define i32 @foo' "$func_ptr_out"
 grep -q '^define i32 @hold' "$func_ptr_out"
 grep -q 'store ptr @foo' "$func_ptr_out"
@@ -128,7 +128,7 @@ def hold() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_void_in" >"$func_ptr_void_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_void_in" >"$func_ptr_void_out"
 grep -q '^define void @ping' "$func_ptr_void_out"
 grep -q 'store ptr @ping' "$func_ptr_void_out"
 grep -Eq 'call void %.*\(\)' "$func_ptr_void_out"
@@ -144,7 +144,7 @@ def hold() i32 {
     ret (*slot)(7)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_ptr_in" >"$func_ptr_ptr_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_ptr_in" >"$func_ptr_ptr_out"
 grep -q '^define i32 @foo' "$func_ptr_ptr_out"
 grep -q 'store ptr @foo' "$func_ptr_ptr_out"
 grep -Eq 'call i32 %.*\(i32 7\)' "$func_ptr_ptr_out"
@@ -159,7 +159,7 @@ def hold() i32 {
     ret table(0)()
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_array_in" >"$func_ptr_array_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_array_in" >"$func_ptr_array_out"
 grep -q '^define i32 @ping' "$func_ptr_array_out"
 grep -q 'store \[1 x ptr\]' "$func_ptr_array_out"
 grep -Eq 'call i32 %.*\(\)' "$func_ptr_array_out"
@@ -176,7 +176,7 @@ def hold() i32 {
     ret cb(ref x)
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_ref_in" >"$func_ptr_ref_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_ref_in" >"$func_ptr_ref_out"
 grep -q '^define i32 @set7(ptr ' "$func_ptr_ref_out"
 grep -q 'store ptr @set7' "$func_ptr_ref_out"
 grep -Eq 'call i32 %.*\(ptr ' "$func_ptr_ref_out"
@@ -224,7 +224,7 @@ def hold() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_derived_uninit_in" >"$func_ptr_derived_uninit_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_derived_uninit_in" >"$func_ptr_derived_uninit_out"
 grep -q 'alloca ptr' "$func_ptr_derived_uninit_out"
 
 cat >"$func_ptr_packed_agg_in" <<'EOF'
@@ -243,7 +243,7 @@ def hold() i32 {
     ret cb(pair).right
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_packed_agg_in" >"$func_ptr_packed_agg_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_packed_agg_in" >"$func_ptr_packed_agg_out"
 grep -q 'store ptr @echo' "$func_ptr_packed_agg_out"
 grep -Eq '^define i64 @echo\(i64 [^)]+\)' "$func_ptr_packed_agg_out"
 grep -Eq 'call i64 %.*\(i64 %.*\)' "$func_ptr_packed_agg_out"
@@ -265,7 +265,7 @@ def hold() i32 {
     ret cb(triple).c
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$func_ptr_direct_return_agg_in" >"$func_ptr_direct_return_agg_out"
+"$BIN" --emit ir --verify-ir "$func_ptr_direct_return_agg_in" >"$func_ptr_direct_return_agg_out"
 grep -q 'store ptr @echo' "$func_ptr_direct_return_agg_out"
 grep -Eq '^define %.*Triple @echo\(ptr [^)]+\)' "$func_ptr_direct_return_agg_out"
 grep -Eq 'call %.*Triple %.*\(ptr %.*\)' "$func_ptr_direct_return_agg_out"
@@ -292,7 +292,7 @@ def main() i32 {
     ret inspect(&"ok")
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_string_in" >"$ffi_string_out"
+"$BIN" --emit ir --verify-ir "$ffi_string_in" >"$ffi_string_out"
 grep -Fq 'private constant [2 x i8] c"ok", align 1' "$ffi_string_out"
 grep -Fq 'declare i32 @inspect(ptr)' "$ffi_string_out"
 grep -Fq 'call i32 @inspect(ptr @.lona.bytes.' "$ffi_string_out"
@@ -311,7 +311,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_pointer_sig_in" >"$ffi_pointer_sig_out"
+"$BIN" --emit ir --verify-ir "$ffi_pointer_sig_in" >"$ffi_pointer_sig_out"
 grep -Fq 'declare ptr @shift(ptr, ptr)' "$ffi_pointer_sig_out"
 
 cat >"$ffi_import_in" <<'EOF'
@@ -321,7 +321,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_import_in" >"$ffi_import_out"
+"$BIN" --emit ir --verify-ir "$ffi_import_in" >"$ffi_import_out"
 grep -Eq '^declare i32 @abs\(i32\)$' "$ffi_import_out"
 ! grep -Eq '^define i32 @abs' "$ffi_import_out"
 
@@ -330,7 +330,7 @@ extern "C" def lona_add(a i32, b i32) i32 {
     ret a + b
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_export_in" >"$ffi_export_out"
+"$BIN" --emit ir --verify-ir "$ffi_export_in" >"$ffi_export_out"
 grep -Eq '^define i32 @lona_add\(i32 [^,]+, i32 [^)]+\)' "$ffi_export_out"
 
 cat >"$ffi_export_pointer_in" <<'EOF'
@@ -343,7 +343,7 @@ extern "C" def passthrough(p Point*) Point* {
     ret p
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_export_pointer_in" >"$ffi_export_pointer_out"
+"$BIN" --emit ir --verify-ir "$ffi_export_pointer_in" >"$ffi_export_pointer_out"
 grep -Eq '^define ptr @passthrough\(ptr [^)]+\)' "$ffi_export_pointer_out"
 
 cat >"$self_ptr_struct_in" <<'EOF'
@@ -359,7 +359,7 @@ def main() i32 {
     ret 0
 }
 EOF
-"$BIN" --emit-ir --verify-ir "$self_ptr_struct_in" >"$self_ptr_struct_out"
+"$BIN" --emit ir --verify-ir "$self_ptr_struct_in" >"$self_ptr_struct_out"
 grep -Eq '^%.*Node = type \{ i32, ptr \}$' "$self_ptr_struct_out"
 grep -Eq 'alloca %.*Node' "$self_ptr_struct_out"
 grep -Fq 'store ptr ' "$self_ptr_struct_out"
@@ -413,7 +413,7 @@ cat >"$ffi_indexable_in" <<'EOF'
 extern "C" def alloc(size u64) u8[*]
 extern "C" def fill(buf u8[*], value u8) i32
 EOF
-"$BIN" --emit-ir --verify-ir "$ffi_indexable_in" >"$ffi_indexable_out"
+"$BIN" --emit ir --verify-ir "$ffi_indexable_in" >"$ffi_indexable_out"
 grep -q '^declare ptr @alloc(i64)' "$ffi_indexable_out"
 grep -q '^declare i32 @fill(ptr, i8)' "$ffi_indexable_out"
 
