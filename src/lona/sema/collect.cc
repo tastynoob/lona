@@ -14,6 +14,7 @@
 #include "parser.hh"
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <list>
 #include <llvm-18/llvm/BinaryFormat/Dwarf.h>
 #include <llvm-18/llvm/IR/BasicBlock.h>
@@ -1651,6 +1652,32 @@ class FunctionCompiler {
         error(message, hint);
     }
 
+    llvm::Constant *buildByteStringArrayConstant(const std::string &bytes) {
+        std::vector<std::uint8_t> data;
+        data.reserve(bytes.size());
+        for (unsigned char byte : bytes) {
+            data.push_back(static_cast<std::uint8_t>(byte));
+        }
+        return llvm::ConstantDataArray::get(context, data);
+    }
+
+    std::string nextByteStringGlobalName() {
+        static std::uint64_t nextId = 0;
+        return ".lona.bytes." + std::to_string(nextId++);
+    }
+
+    llvm::GlobalVariable *createByteStringGlobal(const std::string &bytes) {
+        auto *initializer = buildByteStringArrayConstant(bytes);
+        auto *llvmArrayType =
+            llvm::cast<llvm::ArrayType>(initializer->getType());
+        auto *globalValue = new llvm::GlobalVariable(
+            scope->module, llvmArrayType, true,
+            llvm::GlobalValue::PrivateLinkage, initializer,
+            nextByteStringGlobalName());
+        globalValue->setAlignment(llvm::MaybeAlign(1));
+        return globalValue;
+    }
+
     Object *materializeLocal(TypeClass *type, Object *initVal) {
         auto *obj = type->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
@@ -1875,6 +1902,24 @@ class FunctionCompiler {
             auto *result = arrayType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
+        }
+        if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
+            setLocation(byteString);
+            if (!byteString->isBorrowed()) {
+                auto *globalValue = createByteStringGlobal(byteString->getBytes());
+                auto *result = byteString->getType()->newObj(
+                    Object::VARIABLE | Object::READONLY);
+                result->setllvmValue(globalValue);
+                return result;
+            }
+
+            auto *globalValue = createByteStringGlobal(byteString->getBytes());
+            auto *llvmArrayType =
+                llvm::cast<llvm::ArrayType>(globalValue->getValueType());
+            auto *zero = llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true);
+            auto *borrowed = scope->builder.CreateInBoundsGEP(
+                llvmArrayType, globalValue, {zero, zero});
+            return makeReadonlyValue(byteString->getType(), borrowed);
         }
         if (auto *cast = dynamic_cast<HIRNumericCast *>(expr)) {
             setLocation(cast);

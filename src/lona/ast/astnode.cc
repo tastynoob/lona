@@ -107,8 +107,7 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
             break;
         case TokenType::ConstStr:
             this->vtype = Type::STRING;
-            this->buf = new char[token.text.size() + 1];
-            std::strcpy(this->buf, token.text.tochara());
+            this->buf = new string(token.text);
             break;
         case TokenType::ConstBool:
             this->vtype = Type::BOOL;

@@ -205,7 +205,7 @@ public:
 private:
     // the type of the constant
     Type vtype;
-    char *buf = nullptr;  // never delete
+    void *buf = nullptr;  // never delete
 public:
     Type getType() const { return vtype; }
     template<typename T = char>

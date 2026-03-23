@@ -2,6 +2,52 @@
 #include "type_node_string.hh"
 
 namespace lona {
+namespace {
+
+std::string
+escapeByteStringForJson(const string &value) {
+    static constexpr char kHexDigits[] = "0123456789ABCDEF";
+
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const unsigned char byte = static_cast<unsigned char>(value[i]);
+        switch (byte) {
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        case '\0':
+            escaped += "\\0";
+            break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\"':
+            escaped += "\\\"";
+            break;
+        default:
+            if (byte >= 0x20 && byte <= 0x7E) {
+                escaped.push_back(static_cast<char>(byte));
+            } else {
+                escaped += "\\x";
+                escaped.push_back(kHexDigits[(byte >> 4) & 0x0F]);
+                escaped.push_back(kHexDigits[byte & 0x0F]);
+            }
+            break;
+        }
+    }
+
+    return escaped;
+}
+
+}  // namespace
 
 void
 AstProgram::toJson(Json &root) {
@@ -23,7 +69,7 @@ AstConst::toJson(Json &root) {
             break;
         case Type::STRING:
             root["type"] = "const";
-            root["value"] = (char *)this->buf;
+            root["value"] = escapeByteStringForJson(*this->getBuf<string>());
             break;
         case Type::BOOL:
             root["type"] = "const";

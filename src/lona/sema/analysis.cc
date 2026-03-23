@@ -558,6 +558,54 @@ class FunctionAnalyzer {
         bindingObjects[binding] = object;
     }
 
+    AstNode *makeStaticDimensionNode(std::size_t extent, const location &loc) {
+        auto text = std::to_string(extent);
+        AstToken token(TokenType::ConstInt32, text.c_str(), loc);
+        return new AstConst(token);
+    }
+
+    TypeClass *getConstU8Type() {
+        return typeMgr ? typeMgr->createConstType(u8Ty) : nullptr;
+    }
+
+    ArrayType *getByteStringArrayType(std::size_t size, const location &loc) {
+        if (size == 0) {
+            error(loc,
+                  "empty byte-string literals are not implemented yet",
+                  "Zero-sized fixed arrays are still rejected elsewhere in the type system. Use a non-empty literal for now.");
+        }
+        std::vector<AstNode *> dims;
+        dims.push_back(makeStaticDimensionNode(size, loc));
+        return typeMgr ? typeMgr->createArrayType(getConstU8Type(), std::move(dims))
+                       : nullptr;
+    }
+
+    std::string getByteStringBytes(AstConst *node) {
+        auto *bytes = node ? node->getBuf<string>() : nullptr;
+        if (!bytes) {
+            return {};
+        }
+        return std::string(bytes->tochara(), bytes->size());
+    }
+
+    HIRExpr *analyzeByteStringLiteral(AstConst *node) {
+        auto bytes = getByteStringBytes(node);
+        auto *type = getByteStringArrayType(bytes.size(), node->loc);
+        return makeHIR<HIRByteStringLiteral>(std::move(bytes), type, false,
+                                             node->loc);
+    }
+
+    HIRExpr *analyzeBorrowedByteStringLiteral(AstConst *node) {
+        auto bytes = getByteStringBytes(node);
+        if (bytes.empty()) {
+            getByteStringArrayType(bytes.size(), node->loc);
+        }
+        auto *type = typeMgr ? typeMgr->createIndexablePointerType(getConstU8Type())
+                             : nullptr;
+        return makeHIR<HIRByteStringLiteral>(std::move(bytes), type, true,
+                                             node->loc);
+    }
+
     ObjectPtr requireBoundObject(const ResolvedLocalBinding *binding,
                                  const location &loc) {
         if (!binding) {
@@ -1575,9 +1623,7 @@ class FunctionAnalyzer {
                   "Use a `f32` or `f64` destination. For numeric conversion, call an explicit helper like `1.5.toi32()`. For raw bits, call `.tobits()` and keep the resulting `u8[N]` array.");
         }
         case AstConst::Type::STRING:
-            error(node->loc,
-                  "string literals are reserved, but runtime string semantics are not implemented yet",
-                  "String syntax is intentionally kept as a placeholder until the runtime representation is defined.");
+            return analyzeByteStringLiteral(node);
         default:
             error(node->loc, "unsupported constant literal");
         }
@@ -1655,12 +1701,6 @@ class FunctionAnalyzer {
             std::vector<std::size_t> extents;
         };
 
-        AstNode *makeStaticDimensionNode(std::size_t extent, const location &loc) {
-            auto text = std::to_string(extent);
-            AstToken token(TokenType::ConstInt32, text.c_str(), loc);
-            return new AstConst(token);
-        }
-
         TypeClass *mergeInferredElementType(TypeClass *current, TypeClass *next,
                                             const location &loc) {
             if (!current) {
@@ -1693,7 +1733,7 @@ class FunctionAnalyzer {
             TypeClass *current = shape.elementType;
             for (auto it = shape.extents.rbegin(); it != shape.extents.rend(); ++it) {
                 std::vector<AstNode *> dims;
-                dims.push_back(makeStaticDimensionNode(*it, loc));
+                dims.push_back(owner.makeStaticDimensionNode(*it, loc));
                 current = owner.typeMgr->createArrayType(current, std::move(dims));
             }
             return asUnqualified<ArrayType>(current);
@@ -2084,6 +2124,12 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node, TypeClass *expectedType = nullptr) {
+        if (node && node->op == '&') {
+            if (auto *constant = node->expr ? node->expr->as<AstConst>() : nullptr;
+                constant && constant->getType() == AstConst::Type::STRING) {
+                return analyzeBorrowedByteStringLiteral(constant);
+            }
+        }
         TypeClass *contextualOperandType =
             expectedType && isNumericType(expectedType) ? expectedType : nullptr;
         auto *value = requireNonCallExpr(node->expr, contextualOperandType);

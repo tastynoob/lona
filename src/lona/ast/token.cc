@@ -1,6 +1,8 @@
 #include "../ast/token.hh"
 #include "parser.hh"
 
+#include <cctype>
+#include <cstdint>
 #include <sstream>
 
 namespace lona {
@@ -13,47 +15,74 @@ operator<<(std::ostream &os, const AstToken &token) {
 
 string
 strEscape(const string &str) {
-    // "\\n" -> "\n"
-    std::stringstream ss;
+    std::string bytes;
+    bytes.reserve(str.size());
+    auto appendByte = [&](unsigned value) {
+        bytes.push_back(static_cast<char>(static_cast<std::uint8_t>(value)));
+    };
+    auto hexValue = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') {
+            return ch - '0';
+        }
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (ch >= 'a' && ch <= 'f') {
+            return 10 + (ch - 'a');
+        }
+        return -1;
+    };
+
     for (size_t i = 0; i < str.size(); i++) {
         if (str[i] == '\\') {
             if (i + 1 < str.size()) {
                 switch (str[i + 1]) {
                     case 'n':
-                        ss << '\n';
+                        appendByte('\n');
                         break;
                     case 't':
-                        ss << '\t';
+                        appendByte('\t');
                         break;
                     case 'r':
-                        ss << '\r';
+                        appendByte('\r');
                         break;
                     case '0':
-                        ss << '\0';
+                        appendByte('\0');
                         break;
                     case '\\':
-                        ss << '\\';
+                        appendByte('\\');
                         break;
                     case '\'':
-                        ss << '\'';
+                        appendByte('\'');
                         break;
                     case '\"':
-                        ss << '\"';
+                        appendByte('\"');
+                        break;
+                    case 'x':
+                        if (i + 3 < str.size()) {
+                            const int hi = hexValue(str[i + 2]);
+                            const int lo = hexValue(str[i + 3]);
+                            if (hi >= 0 && lo >= 0) {
+                                appendByte(static_cast<unsigned>((hi << 4) | lo));
+                                i += 2;
+                                break;
+                            }
+                        }
+                        appendByte('\\');
+                        appendByte('x');
                         break;
                     default:
-                        ss << str[i];
+                        appendByte('\\');
+                        appendByte(str[i + 1]);
                         break;
                 }
                 i++;
             } else {
-                ss << str[i];
+                appendByte(str[i]);
             }
         } else {
-            ss << str[i];
+            appendByte(str[i]);
         }
     }
-    auto escaped = ss.str();
-    return string(escaped.c_str());
+    return string(bytes.data(), static_cast<uint32_t>(bytes.size()));
 }
 
 int

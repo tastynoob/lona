@@ -67,6 +67,8 @@ public:
     AstToken(location loc) : loc(loc) {}
     AstToken(TokenType type, const char *text, location loc)
         : type(type), text(text), loc(loc) {}
+    AstToken(TokenType type, const string &text, location loc)
+        : type(type), text(text), loc(loc) {}
     void toString(std::ostream &os) const {
         os << "AstToken(" << tokenTypeToStr(type) << ", " << text << ")";
     }

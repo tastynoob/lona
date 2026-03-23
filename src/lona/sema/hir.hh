@@ -89,6 +89,22 @@ public:
     const std::vector<HIRExpr *> &getItems() const { return items; }
 };
 
+class HIRByteStringLiteral : public HIRExpr {
+    std::string bytes_;
+    bool borrowed_ = false;
+
+public:
+    HIRByteStringLiteral(std::string bytes, TypeClass *type = nullptr,
+                         bool borrowed = false,
+                         const location &loc = location())
+        : HIRExpr(type, loc),
+          bytes_(std::move(bytes)),
+          borrowed_(borrowed) {}
+
+    const std::string &getBytes() const { return bytes_; }
+    bool isBorrowed() const { return borrowed_; }
+};
+
 class HIRNumericCast : public HIRExpr {
     HIRExpr *expr;
     bool explicitRequest_ = false;

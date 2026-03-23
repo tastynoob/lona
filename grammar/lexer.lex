@@ -128,12 +128,12 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
     return token::CONST;
 }
 
-(\"[^\"]*\") {
+(\"([^\\\"]|\\.)*\") {
     char* strpos = yytext + 1;
     yytext[yyleng - 1] = '\0';
     string escaped = strEscape(string(strpos));
     loc->columns(yyleng);
-    lval->token = new AstToken(TokenType::ConstStr, escaped.tochara(), *loc);
+    lval->token = new AstToken(TokenType::ConstStr, escaped, *loc);
     return token::CONST;
 }
 

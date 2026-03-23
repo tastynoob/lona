@@ -15,6 +15,8 @@ bool_in="$(new_tmp_file bool)"
 bool_out="$(new_tmp_file bool-out)"
 pointer_in="$(new_tmp_file pointer)"
 pointer_out="$(new_tmp_file pointer-out)"
+byte_json_in="$(new_tmp_file byte-json)"
+byte_json_out="$(new_tmp_file byte-json-out)"
 
 "$BIN" "$INPUT" >"$json_out"
 grep -q '"type": "Program"' "$json_out"
@@ -58,6 +60,15 @@ grep -q '"cond": {' "$json_feature_out"
 grep -q '"body": {' "$json_feature_out"
 grep -q '"type": "Return"' "$json_feature_out"
 grep -q '"value": null' "$json_feature_out"
+
+cat >"$byte_json_in" <<'EOF'
+def main() {
+    var raw = "\xFF\n"
+    ret
+}
+EOF
+"$BIN" "$byte_json_in" >"$byte_json_out"
+grep -Fq '"value": "\\xFF\\n"' "$byte_json_out"
 
 cat >"$bool_in" <<'EOF'
 def local_bool(a i32) bool {

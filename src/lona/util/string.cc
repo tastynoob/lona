@@ -24,6 +24,18 @@ string::string_data* string::string_data::create(const char* s)
     return sd;
 }
 
+string::string_data* string::string_data::create(const char* s, uint32_t size)
+{
+    string_data* sd = (string_data*)new char[sizeof(string_data) + size + 1];
+    sd->size = size;
+    sd->ref_cnt = 1;
+    if (size != 0) {
+        std::memcpy(sd->data, s, size);
+    }
+    sd->data[size] = '\0';
+    return sd;
+}
+
 string::string_data* string::string_data::create(uint32_t size)
 {
     string_data* sd = (string_data*)new char[sizeof(string_data) + size + 1];
@@ -46,4 +58,3 @@ std::ostream& operator<<(std::ostream& os, const string& str) {
     os << str.tochara();
     return os;
 }
-

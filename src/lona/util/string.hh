@@ -19,6 +19,7 @@ class string
         char data[0];
 
         static string_data* create(const char* s);
+        static string_data* create(const char* s, uint32_t size);
 
         static string_data* create(uint32_t size);
 
@@ -58,6 +59,15 @@ public:
             return;
         }
         ref = string_data::create(s);
+    }
+
+    string(const char* s, uint32_t len)
+        : ref(nullptr)
+    {
+        if (!s && len != 0) {
+            return;
+        }
+        ref = string_data::create(s ? s : "", len);
     }
 
     string(const string& other)
@@ -171,7 +181,23 @@ public:
 
     string& operator+=(const string& other)
     {
-        return operator+=(other.tochara());
+        if (other.size() == 0) {
+            return *this;
+        }
+
+        uint32_t old_size = size();
+        uint32_t new_size = old_size + other.size();
+        string_data* new_ref = string_data::create(new_size);
+
+        if (ref) {
+            std::memcpy(new_ref->data, ref->data, old_size);
+            ref->dec_ref();
+        }
+        std::memcpy(new_ref->data + old_size, other.tochara(), other.size());
+        new_ref->data[new_size] = '\0';
+        ref = new_ref;
+
+        return *this;
     }
 
     template<typename T>

@@ -33,8 +33,16 @@ float_nan_cmp_in="$(new_tmp_file float-nan-cmp)"
 float_nan_cmp_out="$(new_tmp_file float-nan-cmp-out)"
 bool_bytecopy_bad_in="$(new_tmp_file bool-bytecopy-bad)"
 bool_bytecopy_bad_out="$(new_tmp_file bool-bytecopy-bad-out)"
-string_placeholder_in="$(new_tmp_file string-placeholder)"
-string_placeholder_out="$(new_tmp_file string-placeholder-out)"
+string_value_in="$(new_tmp_file string-value)"
+string_value_out="$(new_tmp_file string-value-out)"
+string_literal_index_in="$(new_tmp_file string-literal-index)"
+string_literal_index_out="$(new_tmp_file string-literal-index-out)"
+string_borrow_in="$(new_tmp_file string-borrow)"
+string_borrow_out="$(new_tmp_file string-borrow-out)"
+string_const_borrow_bad_in="$(new_tmp_file string-const-borrow-bad)"
+string_const_borrow_bad_out="$(new_tmp_file string-const-borrow-bad-out)"
+string_escape_in="$(new_tmp_file string-escape)"
+string_escape_out="$(new_tmp_file string-escape-out)"
 const_type_json_in="$(new_tmp_file const-type-json)"
 const_type_json_out="$(new_tmp_file const-type-json-out)"
 const_materialize_in="$(new_tmp_file const-materialize)"
@@ -331,14 +339,66 @@ EOF
 expect_emit_ir_failure "$bool_bytecopy_bad_in" "$bool_bytecopy_bad_out" 'expected bool byte-copy mismatch program to fail'
 grep -Fq 'initializer type mismatch for `x`: expected i8, got bool' "$bool_bytecopy_bad_out"
 
-cat >"$string_placeholder_in" <<'EOF'
-def bad() i32 {
+cat >"$string_value_in" <<'EOF'
+def main() i32 {
     var msg = "hello"
+    msg(0) = 72
+    ret msg(0)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$string_value_in" >"$string_value_out"
+grep -Fq 'private constant [5 x i8] c"hello", align 1' "$string_value_out"
+grep -q 'alloca \[5 x i8\]' "$string_value_out"
+grep -q 'load \[5 x i8\], ptr @.lona.bytes\.' "$string_value_out"
+grep -q 'store \[5 x i8\] %' "$string_value_out"
+grep -q 'store i8 72' "$string_value_out"
+
+cat >"$string_literal_index_in" <<'EOF'
+def main() u8 {
+    ret "hi"(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$string_literal_index_in" >"$string_literal_index_out"
+grep -Fq 'private constant [2 x i8] c"hi", align 1' "$string_literal_index_out"
+grep -Eq 'load i8, ptr getelementptr inbounds \(\[2 x i8\], ptr @\.lona\.bytes\.[0-9]+, i32 0, i32 1\)' "$string_literal_index_out"
+
+cat >"$string_borrow_in" <<'EOF'
+def second(msg u8 const[*]) u8 {
+    ret msg(1)
+}
+
+def main() i32 {
+    var bytes = &"hi"
+    ret second(bytes)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$string_borrow_in" >"$string_borrow_out"
+grep -Fq '.lona.bytes.' "$string_borrow_out"
+grep -Fq 'private constant [2 x i8] c"hi", align 1' "$string_borrow_out"
+grep -q 'call i8 @second(ptr' "$string_borrow_out"
+if grep -Fq 'unnamed_addr' "$string_borrow_out"; then
+    echo 'expected borrowed string globals to keep address identity' >&2
+    exit 1
+fi
+
+cat >"$string_const_borrow_bad_in" <<'EOF'
+def main() i32 {
+    var bytes = &"hi"
+    bytes(0) = 0
     ret 0
 }
 EOF
-expect_emit_ir_failure "$string_placeholder_in" "$string_placeholder_out" 'expected string placeholder program to fail'
-grep -Fq 'string literals are reserved, but runtime string semantics are not implemented yet' "$string_placeholder_out"
+expect_emit_ir_failure "$string_const_borrow_bad_in" "$string_const_borrow_bad_out" 'expected borrowed string bytes to stay const'
+grep -Fq 'assignment target is const-qualified: u8 const' "$string_const_borrow_bad_out"
+
+cat >"$string_escape_in" <<'EOF'
+def main() i32 {
+    var bytes = "A\x42\0"
+    ret bytes(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$string_escape_in" >"$string_escape_out"
+grep -Fq 'private constant [3 x i8] c"AB\00", align 1' "$string_escape_out"
 
 cat >"$const_type_json_in" <<'EOF'
 def main() i32 {
