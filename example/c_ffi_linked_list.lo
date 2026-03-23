@@ -24,7 +24,7 @@ struct List {
 
     def append(value i32) {
         var guard = self.guard_ptr()
-        var node = malloc(16)
+        var node Node[*] = cast[Node[*]](malloc(16))
         node(0).value = value
         node(0).next = guard
 
@@ -64,7 +64,7 @@ struct List {
         for cur != guard {
             if cur(0).value == value {
                 prev(0).next = cur(0).next
-                free(cur)
+                free(cast[u8[*]](cur))
                 ret true
             }
             prev = cur
@@ -101,15 +101,15 @@ struct List {
         self.guard.next = guard
         for cur != guard {
             var next = cur(0).next
-            free(cur)
+            free(cast[u8[*]](cur))
             cur = next
         }
     }
 }
 
-extern "C" def malloc(size u64) Node[*]
-extern "C" def free(node Node[*])
-extern "C" def puts(msg u8[*]) i32
+extern "C" def malloc(size u64) u8[*]
+extern "C" def free(node u8[*])
+extern "C" def puts(msg u8 const[*]) i32
 
 def keep_status(status i32, ok bool, code i32) i32 {
     if status != 0 {
@@ -149,8 +149,7 @@ def main() i32 {
     status = keep_status(status, list.empty(), 39)
 
     if status == 0 {
-        var msg u8[10] = {108, 105, 110, 107, 101, 100, 32, 111, 107, 0}
-        puts(&msg(0))
+        puts(&"linked ok")
     }
 
     ret status
