@@ -513,6 +513,19 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstCastExpr : public AstNode {
+public:
+    TypeNode *const targetType;
+    AstNode *const value;
+
+    AstCastExpr(TypeNode *targetType, AstNode *value,
+                const location &loc = location())
+        : AstNode(loc), targetType(targetType), value(value) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstFieldCall : public AstNode {
 public:
     // Generic parenthesis application node. The concrete meaning of `xxx(...)`

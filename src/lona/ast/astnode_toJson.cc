@@ -311,6 +311,14 @@ AstFor::toJson(Json &root) {
 }
 
 void
+AstCastExpr::toJson(Json &root) {
+    root["type"] = "CastExpr";
+    root["targetType"] = describeTypeNode(this->targetType);
+    root["value"] = Json::object();
+    this->value->toJson(root["value"]);
+}
+
+void
 AstFieldCall::toJson(Json &root) {
     root["type"] = "FieldCall";
     root["value"] = Json::object();

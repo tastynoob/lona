@@ -87,6 +87,7 @@ DEF_ACCEPT(AstBreak)
 DEF_ACCEPT(AstContinue)
 DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFor)
+DEF_ACCEPT(AstCastExpr)
 DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstSelector)
 

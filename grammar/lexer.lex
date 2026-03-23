@@ -54,6 +54,7 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
 (var) { loc->columns(yyleng); return token::VAR; }
 (ref) { loc->columns(yyleng); return token::REF; }
 (const) { loc->columns(yyleng); return token::TYPE_CONST; }
+(cast) { loc->columns(yyleng); return token::CAST; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
 (import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }
@@ -76,7 +77,6 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
 (class) {}
 (trait) {}
 (case) {}
-(cast) {}
 
 
 <IMPORT_PATH_STATE>[ \t]+ {

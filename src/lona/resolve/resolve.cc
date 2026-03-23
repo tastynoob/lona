@@ -302,6 +302,10 @@ class FunctionResolver {
             resolveSelector(selector);
             return;
         }
+        if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
+            resolveExpr(castExpr->value);
+            return;
+        }
         if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
             resolveExpr(call->value);
             if (call->args) {

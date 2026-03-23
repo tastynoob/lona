@@ -37,6 +37,7 @@ public:
     DEF_VISIT(AstContinue)
     DEF_VISIT(AstIf)
     DEF_VISIT(AstFor)
+    DEF_VISIT(AstCastExpr)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstSelector)
 };
@@ -71,6 +72,7 @@ public:
     DEF_VISIT(AstContinue)
     DEF_VISIT(AstIf)
     DEF_VISIT(AstFor)
+    DEF_VISIT(AstCastExpr)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstSelector)
 };

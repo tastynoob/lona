@@ -233,7 +233,7 @@ describeTupleFieldHelp(TupleType *tupleType) {
 
 std::string
 numericConversionHint() {
-    return "Integer-to-integer and float-to-float convert implicitly. Integer/float cross-conversion requires an explicit `.toXXX()` call like `1.tof32()` or `1.5.toi32()`.";
+    return "Integer-to-integer and float-to-float convert implicitly. Integer/float cross-conversion requires an explicit `cast[T](expr)` or `.toXXX()` conversion such as `cast[f32](1)` or `1.5.toi32()`.";
 }
 
 std::string
@@ -1084,6 +1084,43 @@ class FunctionAnalyzer {
         return makeHIR<HIRBitCast>(expr, targetType, loc);
     }
 
+    HIRExpr *analyzeCastExpr(AstCastExpr *node) {
+        if (!node || !node->targetType || !node->value) {
+            error(node ? node->loc : location(),
+                  "builtin cast requires exactly one target type and one value");
+        }
+
+        auto *targetType = requireType(node->targetType, node->targetType->loc,
+                                       "unknown cast target type");
+        auto *value = requireNonCallExpr(node->value);
+        auto *sourceType = value ? value->getType() : nullptr;
+        if (!sourceType) {
+            error(node->loc,
+                  "cast source does not produce a typed runtime value",
+                  "Cast a runtime value like `cast[i32](x)` instead of a type or namespace.");
+        }
+
+        if (sourceType == targetType) {
+            return value;
+        }
+
+        if (canExplicitNumericConversion(targetType, sourceType)) {
+            return makeHIR<HIRNumericCast>(value, targetType, true, node->loc);
+        }
+
+        auto *pointerCast = coercePointerExpr(value, targetType, node->loc);
+        if (pointerCast && pointerCast->getType() == targetType) {
+            return pointerCast;
+        }
+
+        error(node->loc,
+              "unsupported builtin cast from `" +
+                  describeResolvedType(sourceType) + "` to `" +
+                  describeResolvedType(targetType) + "`",
+              numericConversionHint() + " " + pointerConversionHint() + " " +
+                  bitCopyHint());
+    }
+
     HIRExpr *requireNonCallExpr(AstNode *node, TypeClass *expectedType = nullptr) {
         auto *expr = requireExpr(node, expectedType);
         rejectNonCallMethodSelector(typeMgr, expr);
@@ -1594,6 +1631,9 @@ class FunctionAnalyzer {
         }
         if (auto *selector = node->as<AstSelector>()) {
             return analyzeSelector(selector);
+        }
+        if (auto *castExpr = node->as<AstCastExpr>()) {
+            return analyzeCastExpr(castExpr);
         }
         if (auto *call = node->as<AstFieldCall>()) {
             return analyzeCall(call, expectedType);

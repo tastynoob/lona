@@ -15,6 +15,10 @@ func_ptr_bad_in="$(new_tmp_file func-ptr-bad)"
 func_ptr_bad_out="$(new_tmp_file func-ptr-bad-out)"
 func_ptr_uninit_in="$(new_tmp_file func-ptr-uninit)"
 func_ptr_uninit_out="$(new_tmp_file func-ptr-uninit-out)"
+func_ptr_ptr_in="$(new_tmp_file func-ptr-ptr)"
+func_ptr_ptr_out="$(new_tmp_file func-ptr-ptr-out)"
+func_ptr_array_in="$(new_tmp_file func-ptr-array)"
+func_ptr_array_out="$(new_tmp_file func-ptr-array-out)"
 func_ptr_packed_agg_in="$(new_tmp_file func-ptr-packed-agg)"
 func_ptr_packed_agg_out="$(new_tmp_file func-ptr-packed-agg-out)"
 func_ptr_direct_return_agg_in="$(new_tmp_file func-ptr-direct-return-agg)"
@@ -120,6 +124,37 @@ EOF
 grep -q '^define void @ping' "$func_ptr_void_out"
 grep -q 'store ptr @ping' "$func_ptr_void_out"
 grep -Eq 'call void %.*\(\)' "$func_ptr_void_out"
+
+cat >"$func_ptr_ptr_in" <<'EOF'
+def foo(v i32) i32 {
+    ret v
+}
+
+def hold() i32 {
+    var cb (i32)* i32 = foo&<i32>
+    var slot (i32)** i32 = &cb
+    ret (*slot)(7)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_ptr_in" >"$func_ptr_ptr_out"
+grep -q '^define i32 @foo' "$func_ptr_ptr_out"
+grep -q 'store ptr @foo' "$func_ptr_ptr_out"
+grep -Eq 'call i32 %.*\(i32 7\)' "$func_ptr_ptr_out"
+
+cat >"$func_ptr_array_in" <<'EOF'
+def ping() i32 {
+    ret 7
+}
+
+def hold() i32 {
+    var table ()*[1] i32 = {ping&<>}
+    ret table(0)()
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$func_ptr_array_in" >"$func_ptr_array_out"
+grep -q '^define i32 @ping' "$func_ptr_array_out"
+grep -q 'store \[1 x ptr\]' "$func_ptr_array_out"
+grep -Eq 'call i32 %.*\(\)' "$func_ptr_array_out"
 
 cat >"$func_ptr_ref_in" <<'EOF'
 def set7(ref v i32) i32 {
@@ -429,8 +464,7 @@ def bad_table() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_array_uninit_in" "$func_array_uninit_out" 'expected uninitialized function array variable program to fail'
-grep -Fq 'bare function signatures are not allowed in type positions.' "$func_array_uninit_out"
-grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_array_uninit_out"
+grep -Fq "syntax error: I couldn't parse this statement:" "$func_array_uninit_out"
 
 cat >"$func_name_conflict_in" <<'EOF'
 struct Counter {
@@ -477,8 +511,7 @@ def bad_callback(cb () i32) i32 {
 }
 EOF
 expect_emit_ir_failure "$func_param_bad_in" "$func_param_bad_out" 'expected bare function parameter program to fail'
-grep -Fq 'bare function signatures are not allowed in type positions.' "$func_param_bad_out"
-grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_param_bad_out"
+grep -Fq "syntax error: I couldn't parse this statement:" "$func_param_bad_out"
 
 cat >"$func_local_bad_in" <<'EOF'
 def bad_local() i32 {
@@ -487,15 +520,13 @@ def bad_local() i32 {
 }
 EOF
 expect_emit_ir_failure "$func_local_bad_in" "$func_local_bad_out" 'expected bare function local variable program to fail'
-grep -Fq 'bare function signatures are not allowed in type positions.' "$func_local_bad_out"
-grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_local_bad_out"
+grep -Fq "syntax error: I couldn't parse this statement:" "$func_local_bad_out"
 
 cat >"$func_top_bad_in" <<'EOF'
 var cb () i32
 EOF
 expect_emit_ir_failure "$func_top_bad_in" "$func_top_bad_out" 'expected bare function top-level variable program to fail'
-grep -Fq 'bare function signatures are not allowed in type positions.' "$func_top_bad_out"
-grep -Fq 'Use an explicit function pointer type like `()*` or `(T1, T2)* Ret` instead.' "$func_top_bad_out"
+grep -Fq "syntax error: I couldn't parse this statement:" "$func_top_bad_out"
 
 cat >"$func_inferred_local_bad_in" <<'EOF'
 def foo() i32 {

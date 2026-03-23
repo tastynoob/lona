@@ -4,11 +4,6 @@ expr_seq
     | expr_seq ',' expr { $$ = $1; $$->emplace_back($3); }
     ;
 
-var_decl_seq
-    : var_decl { $$ = new std::vector<AstNode*>; $$->emplace_back($1); }
-    | var_decl_seq ',' var_decl { $$ = $1; $$->emplace_back($3); }
-    ;
-
 param_decl_seq
     : param_decl { $$ = new std::vector<AstNode*>; $$->emplace_back($1); }
     | param_decl_seq ',' param_decl { $$ = $1; $$->emplace_back($3); }

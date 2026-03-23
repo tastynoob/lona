@@ -96,6 +96,7 @@
 %token VAR "var"
 %token REF "ref"
 %token TYPE_CONST "const"
+%token CAST "cast"
 %token TRUE "true" FALSE "false"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
@@ -130,15 +131,15 @@
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_statlist struct_stat stat_list stat
 %type <node> stat_compound stat_if stat_for stat_ret stat_break stat_continue stat_expr
-%type <node> field_call tuple_literal brace_init brace_init_item call_arg named_call_arg legacy_cast_expr
+%type <node> field_call cast_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren single_value field_selector func_pointer_expr
 %type <typeNode> type_selector
 %type <node> var_decl param_decl var_def
 
-%type <typeNode> single_type type_primary bare_func_head func_ptr_head func_ptr_type type_name tuple_type func_param_type
+%type <typeNode> single_type type_primary postfix_type func_ptr_head func_ptr_storage_type func_ptr_type type_name tuple_type func_param_type
 
-%type <seq> expr_seq var_decl_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
+%type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
 %type <type_seq> func_param_type_seq
 %type <counter> opt_newlines extern_abi struct_decl_kind
@@ -475,43 +476,16 @@ single_value
     | CONST { $$ = new AstConst(*$1); }
     | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
     | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
-    | legacy_cast_expr { $$ = $1; }
+    | cast_expr { $$ = $1; }
     | func_pointer_expr { $$ = $1; }
     | field_call { $$ = $1; }
     | expr_paren { $$ = $1; }
     | tuple_literal { $$ = $1; }
     ;
 
-legacy_cast_expr
-    : TYPE FIELD {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "lona doesn't support C-style cast syntax like `i32 value`.",
-            "Use injected conversion members like `value.toi32()` for numeric conversion, or `value.tobits()` for raw byte views.");
-    }
-    | TYPE CONST {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "lona doesn't support C-style cast syntax like `i32 1`.",
-            "Use `1.toi32()` / `1.tof32()` for numeric conversion instead of a cast expression.");
-    }
-    | TYPE TRUE {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "lona doesn't support C-style cast syntax like `bool true`.",
-            "Write the value directly, or use an explicit conversion helper when numeric conversion is required.");
-    }
-    | TYPE FALSE {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "lona doesn't support C-style cast syntax like `bool false`.",
-            "Write the value directly, or use an explicit conversion helper when numeric conversion is required.");
-    }
-    | TYPE expr_paren {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "lona doesn't support C-style cast syntax like `i32(expr)`.",
-            "Use injected conversion members like `expr.toi32()` or `expr.tobits()` instead of cast syntax.");
+cast_expr
+    : CAST '[' type_name ']' '(' expr ')' {
+        $$ = new AstCastExpr($3, $6, @$);
     }
     ;
 

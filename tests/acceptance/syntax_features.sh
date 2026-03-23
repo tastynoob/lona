@@ -7,6 +7,12 @@ milestone_json_in="$(new_tmp_file milestone-json)"
 milestone_json_out="$(new_tmp_file milestone-json-out)"
 legacy_cast_in="$(new_tmp_file legacy-cast)"
 legacy_cast_out="$(new_tmp_file legacy-cast-out)"
+cast_numeric_in="$(new_tmp_file cast-numeric)"
+cast_numeric_out="$(new_tmp_file cast-numeric-out)"
+cast_pointer_in="$(new_tmp_file cast-pointer)"
+cast_pointer_out="$(new_tmp_file cast-pointer-out)"
+cast_bad_in="$(new_tmp_file cast-bad)"
+cast_bad_out="$(new_tmp_file cast-bad-out)"
 float_in="$(new_tmp_file float)"
 float_out="$(new_tmp_file float-out)"
 numeric_convert_in="$(new_tmp_file numeric-convert)"
@@ -183,8 +189,43 @@ def bad() i32 {
 }
 EOF
 expect_emit_ir_failure "$legacy_cast_in" "$legacy_cast_out" 'expected legacy cast syntax program to fail'
-grep -Fq "lona doesn't support C-style cast syntax like \`i32 1\`." "$legacy_cast_out"
-grep -Fq '.toi32()' "$legacy_cast_out"
+grep -Fq "syntax error: I couldn't parse this statement:" "$legacy_cast_out"
+
+cat >"$cast_numeric_in" <<'EOF'
+def main() i32 {
+    var base i32 = 1
+    var sample f32 = cast[f32](base)
+    var widened f64 = cast[f64](sample)
+    ret cast[i32](widened)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$cast_numeric_in" >"$cast_numeric_out"
+grep -q 'sitofp i32' "$cast_numeric_out"
+grep -q 'fpext float' "$cast_numeric_out"
+grep -q 'fptosi double' "$cast_numeric_out"
+
+cat >"$cast_pointer_in" <<'EOF'
+def main() i32 {
+    var bytes u8[2] = {7, 9}
+    var raw u8* = &bytes(0)
+    var view u8[*] = cast[u8[*]](raw)
+    ret view(1)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$cast_pointer_in" >"$cast_pointer_out"
+grep -q 'ptrtoint ptr %' "$cast_pointer_out"
+grep -q 'inttoptr i64 %' "$cast_pointer_out"
+grep -Eq 'getelementptr( inbounds)? i8, ptr %' "$cast_pointer_out"
+
+cat >"$cast_bad_in" <<'EOF'
+def main() i32 {
+    var value i32 = 1
+    var raw u8* = cast[u8*](value)
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$cast_bad_in" "$cast_bad_out" 'expected unsupported builtin cast program to fail'
+grep -Fq 'unsupported builtin cast from `i32` to `u8*`' "$cast_bad_out"
 
 cat >"$float_in" <<'EOF'
 def id(v f32) f32 {

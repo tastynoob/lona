@@ -11,6 +11,10 @@ debug_out="$(new_tmp_file debug)"
 missing_return_in="$(new_tmp_file missing-return)"
 json_feature_in="$(new_tmp_file json-feature)"
 json_feature_out="$(new_tmp_file json-feature-out)"
+cast_json_in="$(new_tmp_file cast-json)"
+cast_json_out="$(new_tmp_file cast-json-out)"
+func_ptr_json_in="$(new_tmp_file func-ptr-json)"
+func_ptr_json_out="$(new_tmp_file func-ptr-json-out)"
 bool_in="$(new_tmp_file bool)"
 bool_out="$(new_tmp_file bool-out)"
 pointer_in="$(new_tmp_file pointer)"
@@ -60,6 +64,26 @@ grep -q '"cond": {' "$json_feature_out"
 grep -q '"body": {' "$json_feature_out"
 grep -q '"type": "Return"' "$json_feature_out"
 grep -q '"value": null' "$json_feature_out"
+
+cat >"$cast_json_in" <<'EOF'
+def widen(v <i32, i32>) <i32, i32> {
+    ret cast[<i32, i32>](v)
+}
+EOF
+"$BIN" "$cast_json_in" >"$cast_json_out"
+grep -q '"type": "CastExpr"' "$cast_json_out"
+grep -q '"targetType": "<i32, i32>"' "$cast_json_out"
+
+cat >"$func_ptr_json_in" <<'EOF'
+def hold() {
+    var slot (i32)** i32
+    var table ()*[1] const i32* const
+    ret
+}
+EOF
+"$BIN" "$func_ptr_json_in" >"$func_ptr_json_out"
+grep -Fq '"declaredType": "(i32)** i32"' "$func_ptr_json_out"
+grep -Fq '"declaredType": "()*[1] const i32* const"' "$func_ptr_json_out"
 
 cat >"$byte_json_in" <<'EOF'
 def main() {
