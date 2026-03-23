@@ -83,6 +83,10 @@ validateTypeNodeLayout(const TypeNode *node) {
         validateTypeNodeLayout(param->type);
         return;
     }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        validateTypeNodeLayout(qualified->base);
+        return;
+    }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
         if (auto *array = dynamic_cast<const ArrayTypeNode *>(pointer->base);
             array && hasUnsizedArrayDimensions(array->dim) &&
@@ -253,6 +257,11 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashTypeNode(seed, param->type);
         return;
     }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        hashText(seed, "const");
+        hashTypeNode(seed, qualified->base);
+        return;
+    }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         hashText(seed, "base");
         hashText(seed, toStdString(base->name));
@@ -317,11 +326,18 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         return resolveTypeNode(typeTable, unit, param->type, false);
     }
 
+    TypeClass *resolved = nullptr;
+
+    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+        auto *baseType = resolveTypeNode(typeTable, unit, qualified->base, false);
+        resolved = baseType ? typeTable->createConstType(baseType) : nullptr;
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
+    }
+
     if (auto *cached = unit.findResolvedType(node)) {
         return cached;
     }
-
-    TypeClass *resolved = nullptr;
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
         auto rawName = std::string(base->name.tochara(), base->name.size());
         auto separator = rawName.find('.');

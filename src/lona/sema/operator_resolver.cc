@@ -164,7 +164,11 @@ findBinaryRule(const RuleContainer &rules, token_type token, TypeClass *leftType
         if (!matchesOperandClass(rightType, rule.rightClass)) {
             continue;
         }
-        if (rule.requireSameType && leftType != rightType) {
+        if (rule.requireSameType &&
+            !isConstQualificationConvertible(leftType,
+                                             materializeValueType(nullptr, rightType)) &&
+            !isConstQualificationConvertible(rightType,
+                                             materializeValueType(nullptr, leftType))) {
             continue;
         }
         return &rule;
@@ -193,13 +197,13 @@ errorUnsupportedUnary(token_type token, TypeClass *operandType, const location &
 
 bool
 isFloatType(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     return base && (base->type == BaseType::F32 || base->type == BaseType::F64);
 }
 
 bool
 isSignedIntegerType(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return false;
     }
@@ -216,7 +220,7 @@ isSignedIntegerType(TypeClass *type) {
 
 bool
 isUnsignedIntegerType(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return false;
     }
@@ -285,7 +289,8 @@ OperatorResolver::resolveUnary(token_type op, TypeClass *operandType, bool addre
             errorUnsupportedUnary(op, operandType, loc);
         }
         return {op, UnaryOperatorKind::BitwiseNot,
-                classifyOperatorOperand(operandType), operandType, operandType};
+                classifyOperatorOperand(operandType), operandType,
+                materializeValueType(typeTable_, operandType)};
     }
     if (op == '&') {
         if (!addressable || !operandType) {
@@ -296,7 +301,7 @@ OperatorResolver::resolveUnary(token_type op, TypeClass *operandType, bool addre
                 typeTable_ ? typeTable_->createPointerType(operandType) : nullptr};
     }
     if (op == '*') {
-        auto *pointerType = operandType ? operandType->as<PointerType>() : nullptr;
+        auto *pointerType = asUnqualified<PointerType>(operandType);
         if (!pointerType) {
             error(loc, "dereference expects a pointer value");
         }
@@ -307,7 +312,8 @@ OperatorResolver::resolveUnary(token_type op, TypeClass *operandType, bool addre
 
     if (const auto *rule = findUnaryRule(op, operandType)) {
         return {op, rule->kind, rule->operandClass, operandType,
-                rule->resultIsBool ? boolTy : operandType};
+                rule->resultIsBool ? boolTy
+                                   : materializeValueType(typeTable_, operandType)};
     }
 
     errorUnsupportedUnary(op, operandType, loc);
@@ -319,15 +325,21 @@ OperatorResolver::resolveBinary(token_type op, TypeClass *leftType,
                                 const location &loc) const {
     if (const auto *rule = findBinaryRule(kBinaryRules, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
-                rule->resultIsBool ? boolTy : leftType, rule->shortCircuit};
+                rule->resultIsBool ? boolTy
+                                   : materializeValueType(typeTable_, leftType),
+                rule->shortCircuit};
     }
     if (const auto *rule = findBinaryRule(kExtendedBinaryRules, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
-                rule->resultIsBool ? boolTy : leftType, rule->shortCircuit};
+                rule->resultIsBool ? boolTy
+                                   : materializeValueType(typeTable_, leftType),
+                rule->shortCircuit};
     }
     if (const auto *rule = findBinaryRule(kNotEqualNumericRules, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
-                rule->resultIsBool ? boolTy : leftType, rule->shortCircuit};
+                rule->resultIsBool ? boolTy
+                                   : materializeValueType(typeTable_, leftType),
+                rule->shortCircuit};
     }
     if (const auto *rule = findBinaryRule(kLogicalOrRule, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,

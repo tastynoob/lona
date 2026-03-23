@@ -144,7 +144,7 @@ ConstVar::get(Scope *scope) {
 Object *
 TupleVar::getField(Scope *scope, std::string name) {
     auto &builder = scope->builder;
-    auto *tupleType = type->as<TupleType>();
+    auto *tupleType = asUnqualified<TupleType>(type);
     assert(tupleType);
 
     TupleType::ValueTy member;
@@ -171,7 +171,7 @@ TupleVar::getField(Scope *scope, std::string name) {
 Object *
 StructVar::getField(Scope *scope, std::string name) {
     auto &builder = scope->builder;
-    auto *structType = type->as<StructType>();
+    auto *structType = asUnqualified<StructType>(type);
     assert(structType);
     auto *member = structType->getMember(
         llvm::StringRef(name.c_str(), name.size()));
@@ -197,7 +197,7 @@ StructVar::getField(Scope *scope, std::string name) {
 void
 StructVar::set(Scope *scope, Object *src) {
     auto &builder = scope->builder;
-    if (this->getType() != src->getType()) {
+    if (!isByteCopyCompatible(this->getType(), src->getType())) {
         throw "type mismatch";
     }
 

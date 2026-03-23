@@ -22,13 +22,14 @@ isSingleRegisterPackSize(std::uint64_t size) {
 
 bool
 hasNativeAbiFixedAggregateLayout(TypeClass *type) {
-    if (!type) {
+    auto *storageType = stripTopLevelConst(type);
+    if (!storageType) {
         return false;
     }
-    if (type->as<StructType>() || type->as<TupleType>()) {
+    if (storageType->as<StructType>() || storageType->as<TupleType>()) {
         return true;
     }
-    if (auto *array = type->as<ArrayType>()) {
+    if (auto *array = storageType->as<ArrayType>()) {
         return array->hasStaticLayout();
     }
     return false;
@@ -83,8 +84,10 @@ bitcastPointerForLoadStore(llvm::IRBuilder<> &builder, llvm::Value *ptr,
 
 bool
 isNativeAbiAggregateType(TypeClass *type) {
-    return type && (type->as<StructType>() || type->as<TupleType>() ||
-                    type->as<ArrayType>());
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+        (storageType->as<StructType>() || storageType->as<TupleType>() ||
+         storageType->as<ArrayType>());
 }
 
 bool

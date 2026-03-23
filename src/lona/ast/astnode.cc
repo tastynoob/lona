@@ -17,6 +17,9 @@ findFuncPtrTypeNode(TypeNode *node) {
     if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
         return func;
     }
+    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+        return findFuncPtrTypeNode(qualified->base);
+    }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         return findFuncPtrTypeNode(pointer->base);
     }

@@ -12,8 +12,10 @@ toStdString(const string &value) {
 
 bool
 isCAbiV0DirectType(TypeClass *type) {
-    return type && (type->as<BaseType>() || type->as<PointerType>() ||
-                    type->as<IndexablePointerType>());
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+        (storageType->as<BaseType>() || storageType->as<PointerType>() ||
+         storageType->as<IndexablePointerType>());
 }
 
 llvm::Type *

@@ -28,6 +28,9 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         return toStdString(base->name);
     }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        return describeTypeNode(qualified->base, nullDescription) + " const";
+    }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
         auto name = describeTypeNode(pointer->base, nullDescription);
         for (uint32_t i = 0; i < pointer->dim; ++i) {

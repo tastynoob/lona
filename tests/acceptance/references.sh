@@ -17,6 +17,10 @@ ref_param_addr_in="$(new_tmp_file ref-param-addr)"
 ref_param_addr_out="$(new_tmp_file ref-param-addr-out)"
 ref_local_type_bad_in="$(new_tmp_file ref-local-type-bad)"
 ref_local_type_bad_out="$(new_tmp_file ref-local-type-bad-out)"
+ref_param_const_view_in="$(new_tmp_file ref-param-const-view)"
+ref_param_const_view_out="$(new_tmp_file ref-param-const-view-out)"
+ref_param_drop_const_bad_in="$(new_tmp_file ref-param-drop-const-bad)"
+ref_param_drop_const_bad_out="$(new_tmp_file ref-param-drop-const-bad-out)"
 ref_method_temp_in="$(new_tmp_file ref-method-temp)"
 ref_method_temp_out="$(new_tmp_file ref-method-temp-out)"
 
@@ -122,6 +126,34 @@ def main() i32 {
 EOF
 expect_emit_ir_failure "$ref_local_type_bad_in" "$ref_local_type_bad_out" 'expected mismatched ref local binding type to fail'
 grep -q 'reference binding type mismatch for `alias`: expected i64, got i32' "$ref_local_type_bad_out"
+
+cat >"$ref_param_const_view_in" <<'EOF'
+def read(ref x i32 const) i32 {
+    ret x
+}
+
+def main() i32 {
+    var x i32 = 3
+    ret read(ref x)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$ref_param_const_view_in" >"$ref_param_const_view_out"
+grep -q '^define i32 @read(ptr ' "$ref_param_const_view_out"
+grep -q 'call i32 @read(ptr ' "$ref_param_const_view_out"
+
+cat >"$ref_param_drop_const_bad_in" <<'EOF'
+def bump(ref x i32) i32 {
+    x = x + 1
+    ret x
+}
+
+def main() i32 {
+    var x i32 const = 3
+    ret bump(ref x)
+}
+EOF
+expect_emit_ir_failure "$ref_param_drop_const_bad_in" "$ref_param_drop_const_bad_out" 'expected ref const drop program to fail'
+grep -q 'reference parameter `x` type mismatch: expected i32, got i32 const' "$ref_param_drop_const_bad_out"
 
 cat >"$ref_method_temp_in" <<'EOF'
 struct Counter {

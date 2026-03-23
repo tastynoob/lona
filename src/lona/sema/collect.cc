@@ -157,11 +157,11 @@ isExternCCallbackType(TypeClass *type) {
     if (!type) {
         return false;
     }
-    if (auto *pointer = type->as<PointerType>()) {
+    if (auto *pointer = asUnqualified<PointerType>(type)) {
         return pointer->getPointeeType() &&
                pointer->getPointeeType()->as<FuncType>();
     }
-    if (auto *indexable = type->as<IndexablePointerType>()) {
+    if (auto *indexable = asUnqualified<IndexablePointerType>(type)) {
         return indexable->getElementType() &&
                indexable->getElementType()->as<FuncType>();
     }
@@ -170,8 +170,10 @@ isExternCCallbackType(TypeClass *type) {
 
 bool
 isExternCByValueAggregateType(TypeClass *type) {
-    return type && (type->as<StructType>() || type->as<TupleType>() ||
-                    type->as<ArrayType>());
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+        (storageType->as<StructType>() || storageType->as<TupleType>() ||
+         storageType->as<ArrayType>());
 }
 
 bool
@@ -183,6 +185,9 @@ bool
 isCCompatiblePointerTarget(TypeClass *type) {
     if (!type) {
         return false;
+    }
+    if (auto *qualified = type->as<ConstType>()) {
+        return isCCompatiblePointerTarget(qualified->getBaseType());
     }
     if (type->as<BaseType>()) {
         return true;
@@ -208,6 +213,9 @@ isCCompatibleReprCFieldType(TypeClass *type) {
     if (!type) {
         return false;
     }
+    if (auto *qualified = type->as<ConstType>()) {
+        return isCCompatibleReprCFieldType(qualified->getBaseType());
+    }
     if (type->as<BaseType>()) {
         return true;
     }
@@ -230,7 +238,7 @@ isCCompatibleReprCFieldType(TypeClass *type) {
 void
 rejectOpaqueStructByValue(TypeClass *type, TypeNode *typeNode,
                           const location &loc, const std::string &context) {
-    auto *structType = type ? type->as<StructType>() : nullptr;
+    auto *structType = asUnqualified<StructType>(type);
     if (!structType || !structType->isExternDecl()) {
         return;
     }
@@ -274,7 +282,7 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
                   "` uses unsupported " + subject + ": " + typeName,
               "Callback support is not implemented in C FFI v0 yet.");
     }
-    if (auto *pointerType = type->as<PointerType>()) {
+    if (auto *pointerType = asUnqualified<PointerType>(type)) {
         if (!isCCompatiblePointerTarget(pointerType->getPointeeType())) {
             error(loc,
                   "extern \"C\" function `" + funcName +
@@ -283,7 +291,7 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
         }
         return;
     }
-    if (auto *indexableType = type->as<IndexablePointerType>()) {
+    if (auto *indexableType = asUnqualified<IndexablePointerType>(type)) {
         if (!isCCompatiblePointerTarget(indexableType->getElementType())) {
             error(loc,
                   "extern \"C\" function `" + funcName +
@@ -292,7 +300,7 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
         }
         return;
     }
-    if (type->as<TupleType>()) {
+    if (asUnqualified<TupleType>(type)) {
         error(loc,
               "extern \"C\" function `" + funcName +
                   "` uses unsupported " + subject + ": " + typeName,
@@ -311,6 +319,12 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
                         TypeClass *fieldType) {
     if (!structDecl || !fieldDecl || !fieldType) {
         return;
+    }
+    if (!isFullyWritableStructFieldType(fieldType)) {
+        error(fieldDecl->loc,
+              "struct field `" + toStdString(fieldDecl->field) +
+                  "` cannot use a const-qualified storage type",
+              "Struct fields must keep full read/write access during initialization. Use pointer views like `T const*` or `T const[*]`, and reserve field immutability for a future `readonly` feature.");
     }
     rejectOpaqueStructByValue(fieldType, fieldDecl->typeNode, fieldDecl->loc,
                               "struct field `" + toStdString(fieldDecl->field) + "`");
@@ -477,7 +491,7 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
     }
 
     llvm::DIType *diType = nullptr;
-    if (auto *base = type->as<BaseType>()) {
+    if (auto *base = asUnqualified<BaseType>(type)) {
         unsigned encoding = llvm::dwarf::DW_ATE_signed;
         switch (base->type) {
         case BaseType::BOOL:
@@ -500,17 +514,17 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
             toStdString(type->full_name),
             debug.typeTable.getTypeAllocSize(type) * 8,
             encoding);
-    } else if (auto *pointer = type->as<PointerType>()) {
+    } else if (auto *pointer = asUnqualified<PointerType>(type)) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, pointer->getPointeeType()),
             debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
             toStdString(type->full_name));
-    } else if (auto *indexable = type->as<IndexablePointerType>()) {
+    } else if (auto *indexable = asUnqualified<IndexablePointerType>(type)) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, indexable->getElementType()),
             debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
             toStdString(type->full_name));
-    } else if (auto *array = type->as<ArrayType>()) {
+    } else if (auto *array = asUnqualified<ArrayType>(type)) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, array->getElementType()),
             debug.typeTable.getTypeAllocSize(type) * 8, 0, std::nullopt,
@@ -524,7 +538,7 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
         }
         diType = debug.builder.createSubroutineType(
             debug.builder.getOrCreateTypeArray(elements));
-    } else if (type->as<StructType>()) {
+    } else if (asUnqualified<StructType>(type)) {
         diType = debug.builder.createStructType(
             debug.primaryFile, toStdString(type->full_name), debug.primaryFile, 1,
             debug.typeTable.getTypeAllocSize(type) * 8, 0,
@@ -1081,6 +1095,10 @@ validateTypeNodeLayout(TypeNode *node) {
         validateTypeNodeLayout(param->type);
         return;
     }
+    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+        validateTypeNodeLayout(qualified->base);
+        return;
+    }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         if (auto *array = dynamic_cast<ArrayTypeNode *>(pointer->base);
             array && hasUnsizedArrayDimensions(array->dim) &&
@@ -1163,6 +1181,10 @@ class InterfaceCollector {
         }
         if (validateLayout) {
             validateTypeNodeLayout(node);
+        }
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+            auto *baseType = resolveType(qualified->base, false);
+            return baseType ? interface_->getOrCreateConstType(baseType) : nullptr;
         }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = toStdString(base->name);
@@ -1573,7 +1595,7 @@ namespace {
 
 FuncType *
 getFunctionPointerTarget(TypeClass *type) {
-    auto *pointerType = type ? type->as<PointerType>() : nullptr;
+    auto *pointerType = asUnqualified<PointerType>(type);
     return pointerType ? pointerType->getPointeeType()->as<FuncType>() : nullptr;
 }
 
@@ -1650,7 +1672,8 @@ class FunctionCompiler {
                 !initVal->getllvmValue()) {
                 error("reference binding expects an addressable source");
             }
-            if (obj->getType() != initVal->getType()) {
+            if (!isConstQualificationConvertible(obj->getType(),
+                                                 initVal->getType())) {
                 error("reference binding type mismatch during lowering");
             }
             obj->setllvmValue(initVal->getllvmValue());
@@ -1758,7 +1781,7 @@ class FunctionCompiler {
         }
         if (auto *tuple = dynamic_cast<HIRTupleLiteral *>(expr)) {
             setLocation(tuple);
-            auto *tupleType = tuple->getType() ? tuple->getType()->as<TupleType>() : nullptr;
+            auto *tupleType = asUnqualified<TupleType>(tuple->getType());
             if (!tupleType) {
                 error("tuple literal is missing its tuple type");
             }
@@ -1774,7 +1797,7 @@ class FunctionCompiler {
                     error("tuple literal item did not produce a value");
                 }
                 auto *itemValue = item->get(scope);
-                if (item->getType() != itemTypes[i]) {
+                if (!isByteCopyCompatible(itemTypes[i], item->getType())) {
                     error("tuple literal item type mismatch during lowering");
                 }
                 aggregate = scope->builder.CreateInsertValue(
@@ -1786,8 +1809,7 @@ class FunctionCompiler {
         }
         if (auto *structLiteral = dynamic_cast<HIRStructLiteral *>(expr)) {
             setLocation(structLiteral);
-            auto *structType =
-                structLiteral->getType() ? structLiteral->getType()->as<StructType>() : nullptr;
+            auto *structType = asUnqualified<StructType>(structLiteral->getType());
             if (!structType) {
                 error("struct literal is missing its struct type");
             }
@@ -1817,7 +1839,7 @@ class FunctionCompiler {
                     error("struct literal field did not produce a value");
                 }
                 auto *fieldType = orderedMembers[i].first;
-                if (field->getType() != fieldType) {
+                if (!isByteCopyCompatible(fieldType, field->getType())) {
                     error("struct literal field type mismatch during lowering");
                 }
                 aggregate = scope->builder.CreateInsertValue(
@@ -1829,8 +1851,7 @@ class FunctionCompiler {
         }
         if (auto *arrayInit = dynamic_cast<HIRArrayInit *>(expr)) {
             setLocation(arrayInit);
-            auto *arrayType = arrayInit->getType() ? arrayInit->getType()->as<ArrayType>()
-                                                   : nullptr;
+            auto *arrayType = asUnqualified<ArrayType>(arrayInit->getType());
             if (!arrayType || !arrayType->hasStaticLayout()) {
                 error("array initializer requires a fixed-layout array type");
             }
@@ -1845,7 +1866,7 @@ class FunctionCompiler {
                 if (!item) {
                     error("array initializer item did not produce a value");
                 }
-                if (item->getType() != childType) {
+                if (!isByteCopyCompatible(childType, item->getType())) {
                     error("array initializer item type mismatch during lowering");
                 }
                 aggregate = scope->builder.CreateInsertValue(
@@ -1915,7 +1936,7 @@ class FunctionCompiler {
             if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee());
                 selector && selector->isMethodSelector()) {
                 auto *parent = compileExpr(selector->getParent());
-                auto *structType = parent->getType()->as<StructType>();
+                auto *structType = asUnqualified<StructType>(parent->getType());
                 if (!structType) {
                     error("selector call parent must be a struct value");
                 }
@@ -1967,10 +1988,9 @@ class FunctionCompiler {
             if (!target) {
                 error("array indexing target did not produce a value");
             }
-            auto *arrayType = target->getType() ? target->getType()->as<ArrayType>() : nullptr;
+            auto *arrayType = asUnqualified<ArrayType>(target->getType());
             auto *indexableType =
-                target->getType() ? target->getType()->as<IndexablePointerType>()
-                                  : nullptr;
+                asUnqualified<IndexablePointerType>(target->getType());
             if (!arrayType && !indexableType) {
                 error("array indexing expects an array value or indexable pointer");
             }
@@ -2190,7 +2210,7 @@ class FunctionCompiler {
     }
 
     Object *makeReadonlyValue(TypeClass *type, llvm::Value *value) {
-        if (type == boolTy && value) {
+        if (isBoolStorageType(type) && value) {
             auto *boolLLVMType = scope->getLLVMType(boolTy);
             if (value->getType() != boolLLVMType) {
                 if (value->getType()->isIntegerTy(1)) {
@@ -2286,7 +2306,7 @@ class FunctionCompiler {
             llvm::IntegerType::get(scope->builder.getContext(), targetBitsWidth);
 
         auto isBitsArray = [](TypeClass *type) {
-            auto *array = type ? type->as<ArrayType>() : nullptr;
+            auto *array = asUnqualified<ArrayType>(type);
             return array && array->getElementType() == u8Ty && array->hasStaticLayout() &&
                 array->staticDimensions().size() == 1;
         };
@@ -2312,7 +2332,7 @@ class FunctionCompiler {
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = scope->builder.CreatePtrToInt(sourceValue, sourceBitsType);
         } else if (isBitsArray(sourceType)) {
-            auto dims = sourceType->as<ArrayType>()->staticDimensions();
+            auto dims = asUnqualified<ArrayType>(sourceType)->staticDimensions();
             const auto relevantBytes =
                 std::max<std::int64_t>(1, std::min<std::int64_t>(
                                               dims[0],
@@ -2352,7 +2372,7 @@ class FunctionCompiler {
             result = scope->builder.CreateIntToPtr(bits, targetLLVMType);
         } else if (isBitsArray(targetType)) {
             result = llvm::UndefValue::get(targetLLVMType);
-            auto dims = targetType->as<ArrayType>()->staticDimensions();
+            auto dims = asUnqualified<ArrayType>(targetType)->staticDimensions();
             for (std::int64_t i = 0; i < dims[0]; ++i) {
                 auto *shift =
                     i == 0 ? bits : scope->builder.CreateLShr(
@@ -2638,7 +2658,8 @@ public:
         returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
-            scope->structTy = hirFunc->getSelfBinding().object->getType()->as<StructType>();
+            scope->structTy =
+                asUnqualified<StructType>(hirFunc->getSelfBinding().object->getType());
         }
 
         if (debug) {

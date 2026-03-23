@@ -79,6 +79,162 @@ configureModuleTargetLayout(llvm::Module &module) {
     module.setDataLayout(defaultTargetDataLayout());
 }
 
+TypeClass *
+stripTopLevelConst(TypeClass *type) {
+    auto *qualified = type ? type->as<ConstType>() : nullptr;
+    return qualified ? qualified->getBaseType() : type;
+}
+
+bool
+isConstQualifiedType(TypeClass *type) {
+    return type && type->as<ConstType>() != nullptr;
+}
+
+namespace {
+
+TypeClass *
+rematerializeArrayType(TypeTable *typeTable, ArrayType *array,
+                       TypeClass *elementType) {
+    if (!array || !elementType) {
+        return nullptr;
+    }
+    if (elementType == array->getElementType()) {
+        return array;
+    }
+    if (typeTable) {
+        return typeTable->createArrayType(elementType, array->getDimensions());
+    }
+    return new ArrayType(elementType, array->getDimensions());
+}
+
+TypeClass *
+rematerializeTupleType(TypeTable *typeTable, TupleType *tuple,
+                       const std::vector<TypeClass *> &itemTypes,
+                       bool reusedOriginalItems) {
+    if (!tuple) {
+        return nullptr;
+    }
+    if (reusedOriginalItems) {
+        return tuple;
+    }
+    if (typeTable) {
+        return typeTable->getOrCreateTupleType(itemTypes);
+    }
+    return new TupleType(std::vector<TypeClass *>(itemTypes));
+}
+
+}  // namespace
+
+TypeClass *
+materializeValueType(TypeTable *typeTable, TypeClass *type) {
+    if (!type) {
+        return nullptr;
+    }
+    if (auto *qualified = type->as<ConstType>()) {
+        return materializeValueType(typeTable, qualified->getBaseType());
+    }
+    if (auto *array = type->as<ArrayType>()) {
+        auto *elementType = materializeValueType(typeTable, array->getElementType());
+        return rematerializeArrayType(typeTable, array, elementType);
+    }
+    if (auto *tuple = type->as<TupleType>()) {
+        std::vector<TypeClass *> itemTypes;
+        itemTypes.reserve(tuple->getItemTypes().size());
+        bool reusedOriginalItems = true;
+        for (auto *itemType : tuple->getItemTypes()) {
+            auto *materializedItem = materializeValueType(typeTable, itemType);
+            reusedOriginalItems = reusedOriginalItems && materializedItem == itemType;
+            itemTypes.push_back(materializedItem);
+        }
+        return rematerializeTupleType(typeTable, tuple, itemTypes,
+                                      reusedOriginalItems);
+    }
+    return type;
+}
+
+bool
+isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
+    if (!targetType || !sourceType) {
+        return false;
+    }
+    if (targetType == sourceType) {
+        return true;
+    }
+
+    auto *targetConst = targetType->as<ConstType>();
+    auto *sourceConst = sourceType->as<ConstType>();
+    if (targetConst) {
+        return isConstQualificationConvertible(
+            targetConst->getBaseType(),
+            sourceConst ? sourceConst->getBaseType() : sourceType);
+    }
+    if (sourceConst) {
+        return false;
+    }
+
+    if (auto *targetPointer = targetType->as<PointerType>()) {
+        auto *sourcePointer = sourceType->as<PointerType>();
+        return sourcePointer &&
+            isConstQualificationConvertible(targetPointer->getPointeeType(),
+                                            sourcePointer->getPointeeType());
+    }
+    if (auto *targetIndexable = targetType->as<IndexablePointerType>()) {
+        auto *sourceIndexable = sourceType->as<IndexablePointerType>();
+        return sourceIndexable &&
+            isConstQualificationConvertible(targetIndexable->getElementType(),
+                                            sourceIndexable->getElementType());
+    }
+    if (auto *targetArray = targetType->as<ArrayType>()) {
+        auto *sourceArray = sourceType->as<ArrayType>();
+        return sourceArray &&
+            targetArray->getDimensions() == sourceArray->getDimensions() &&
+            isConstQualificationConvertible(targetArray->getElementType(),
+                                            sourceArray->getElementType());
+    }
+    if (auto *targetTuple = targetType->as<TupleType>()) {
+        auto *sourceTuple = sourceType->as<TupleType>();
+        if (!sourceTuple ||
+            targetTuple->getItemTypes().size() !=
+                sourceTuple->getItemTypes().size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < targetTuple->getItemTypes().size(); ++i) {
+            if (!isConstQualificationConvertible(targetTuple->getItemTypes()[i],
+                                                 sourceTuple->getItemTypes()[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return targetType == sourceType;
+}
+
+bool
+isFullyWritableStructFieldType(TypeClass *type) {
+    if (!type) {
+        return false;
+    }
+    if (isConstQualifiedType(type)) {
+        return false;
+    }
+    if (type->as<BaseType>() || type->as<StructType>() || type->as<FuncType>() ||
+        type->as<PointerType>() || type->as<IndexablePointerType>()) {
+        return true;
+    }
+    if (auto *array = type->as<ArrayType>()) {
+        return isFullyWritableStructFieldType(array->getElementType());
+    }
+    if (auto *tuple = type->as<TupleType>()) {
+        for (auto *itemType : tuple->getItemTypes()) {
+            if (!isFullyWritableStructFieldType(itemType)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 bool
 TupleType::getMember(llvm::StringRef name, ValueTy &member) const {
     if (!name.consume_front("_") || name.empty()) {
@@ -119,6 +275,11 @@ BaseType::buildLLVMType(TypeTable& types) {
         default:
             throw "Unsupported base type";
     }
+}
+
+llvm::Type *
+ConstType::buildLLVMType(TypeTable &types) {
+    return baseType ? types.getLLVMType(baseType) : nullptr;
 }
 
 llvm::Type *

@@ -15,6 +15,7 @@ class FuncType;
 class ArrayType;
 class PointerType;
 class IndexablePointerType;
+class ConstType;
 class TupleType;
 class AstNode;
 
@@ -89,6 +90,7 @@ public:
                          std::vector<std::string> paramNames = {});
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(TypeClass *elementType);
+    ConstType *getOrCreateConstType(TypeClass *baseType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});
     TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);

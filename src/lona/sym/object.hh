@@ -61,6 +61,10 @@ public:
         this->val = val;
     }
 
+    void setType(TypeClass *newType) {
+        this->type = newType;
+    }
+
     uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
     llvm::Value *getllvmValue() { return val; }

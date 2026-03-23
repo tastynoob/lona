@@ -18,7 +18,7 @@ bool isIntegerFamily(TypeClass *type) {
 }
 
 unsigned numericBitWidth(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return 0;
     }
@@ -89,7 +89,7 @@ AstNode *makeArrayDimension(std::int64_t value) {
 }
 
 bool isBitsArrayType(TypeClass *type, std::int64_t *byteCount = nullptr) {
-    auto *array = type ? type->as<ArrayType>() : nullptr;
+    auto *array = asUnqualified<ArrayType>(type);
     if (!array || array->getElementType() != u8Ty || !array->hasStaticLayout()) {
         return false;
     }

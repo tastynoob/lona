@@ -87,6 +87,13 @@ struct BaseTypeNode : public TypeNode {
         : TypeNode(loc), name(name) {}
 };
 
+struct ConstTypeNode : public TypeNode {
+    TypeNode *base;
+
+    explicit ConstTypeNode(TypeNode *base, const location &loc = location())
+        : TypeNode(loc), base(base) {}
+};
+
 struct PointerTypeNode : public TypeNode {
     TypeNode *base;
     uint32_t dim;

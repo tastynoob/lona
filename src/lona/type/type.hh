@@ -26,6 +26,7 @@
 namespace lona {
 
 class TypeClass;
+class ConstType;
 class PointerType;
 class IndexablePointerType;
 class StructType;
@@ -66,6 +67,33 @@ public:
         : TypeClass(full_name), type(type) {}
 
     llvm::Type* buildLLVMType(TypeTable& types) override;
+};
+
+class ConstType : public TypeClass {
+    TypeClass *baseType;
+
+public:
+    static string buildName(TypeClass *baseType) {
+        return baseType ? baseType->full_name + " const"
+                        : string("<unknown> const");
+    }
+
+    explicit ConstType(TypeClass *baseType)
+        : TypeClass(buildName(baseType)), baseType(baseType) {}
+
+    TypeClass *getBaseType() const { return baseType; }
+
+    llvm::Type *buildLLVMType(TypeTable &types) override;
+    ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
+        if (!baseType) {
+            return TypeClass::newObj(specifiers);
+        }
+        auto *obj = baseType->newObj(specifiers);
+        if (obj) {
+            obj->setType(this);
+        }
+        return obj;
+    }
 };
 
 class StructType : public TypeClass {
@@ -369,6 +397,20 @@ public:
     llvm::Type *buildLLVMType(TypeTable& types) override;
 };
 
+TypeClass *stripTopLevelConst(TypeClass *type);
+
+template<typename T>
+inline T *
+asUnqualified(TypeClass *type) {
+    auto *storageType = stripTopLevelConst(type);
+    return storageType ? storageType->as<T>() : nullptr;
+}
+
+bool isConstQualifiedType(TypeClass *type);
+bool isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType);
+TypeClass *materializeValueType(TypeTable *typeTable, TypeClass *type);
+bool isFullyWritableStructFieldType(TypeClass *type);
+
 
 
 class TypeTable {
@@ -492,8 +534,10 @@ public:
         return static_cast<std::uint64_t>(type->typeSize);
     }
     bool shouldReturnByPointer(TypeClass *type) {
-        return type && (type->as<StructType>() || type->as<TupleType>() ||
-                        type->as<ArrayType>());
+        auto *storageType = stripTopLevelConst(type);
+        return storageType &&
+            (storageType->as<StructType>() || storageType->as<TupleType>() ||
+             storageType->as<ArrayType>());
     }
 
     bool addType(llvm::StringRef name, TypeClass *type) {
@@ -538,6 +582,22 @@ public:
         auto *indexableType = new IndexablePointerType(elementType);
         addType(typeName, indexableType);
         return indexableType;
+    }
+
+    ConstType *createConstType(TypeClass *baseType) {
+        if (!baseType) {
+            return nullptr;
+        }
+        if (auto *qualified = baseType->as<ConstType>()) {
+            return qualified;
+        }
+        auto typeName = ConstType::buildName(baseType);
+        if (auto *type = getType(typeName)) {
+            return type->as<ConstType>();
+        }
+        auto *constType = new ConstType(baseType);
+        addType(typeName, constType);
+        return constType;
     }
 
     ArrayType *createArrayType(TypeClass *elementType,
@@ -628,6 +688,20 @@ public:
                 internType(method.second);
             }
             return type;
+        }
+        if (auto *qualified = type->as<ConstType>()) {
+            auto *baseType = internType(qualified->getBaseType());
+            if (!baseType) {
+                return nullptr;
+            }
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            if (baseType == qualified->getBaseType()) {
+                addType(type->full_name, type);
+                return type;
+            }
+            return createConstType(baseType);
         }
         if (auto *pointer = type->as<PointerType>()) {
             auto *pointeeType = internType(pointer->getPointeeType());
@@ -764,6 +838,11 @@ public:
             return createArrayType(elementType, array->dim);
         }
 
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+            auto *baseType = getType(qualified->base);
+            return baseType ? createConstType(baseType) : nullptr;
+        }
+
         if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
             std::vector<TypeClass *> itemTypes;
             itemTypes.reserve(tuple->items.size());
@@ -802,36 +881,40 @@ public:
 
 inline bool
 isByteCopyPlainType(TypeClass *type) {
-    return type && (type->as<BaseType>() || type->as<PointerType>() ||
-                    type->as<IndexablePointerType>());
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+        (storageType->as<BaseType>() || storageType->as<PointerType>() ||
+         storageType->as<IndexablePointerType>());
 }
 
 inline bool
 isPointerLikeType(TypeClass *type) {
-    return type && (type->as<PointerType>() || type->as<IndexablePointerType>());
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+        (storageType->as<PointerType>() || storageType->as<IndexablePointerType>());
 }
 
 inline TypeClass *
 getRawPointerPointeeType(TypeClass *type) {
-    auto *pointer = type ? type->as<PointerType>() : nullptr;
+    auto *pointer = asUnqualified<PointerType>(type);
     return pointer ? pointer->getPointeeType() : nullptr;
 }
 
 inline TypeClass *
 getIndexablePointerElementType(TypeClass *type) {
-    auto *pointer = type ? type->as<IndexablePointerType>() : nullptr;
+    auto *pointer = asUnqualified<IndexablePointerType>(type);
     return pointer ? pointer->getElementType() : nullptr;
 }
 
 inline bool
 isBoolStorageType(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     return base && base->type == BaseType::BOOL;
 }
 
 inline bool
 isNumericStorageType(TypeClass *type) {
-    auto *base = type ? type->as<BaseType>() : nullptr;
+    auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return false;
     }
@@ -854,7 +937,8 @@ isNumericStorageType(TypeClass *type) {
 
 inline bool
 isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
-    return dstType && srcType && dstType == srcType;
+    return dstType && srcType &&
+        isConstQualificationConvertible(dstType, materializeValueType(nullptr, srcType));
 }
 
 }  // namespace lona

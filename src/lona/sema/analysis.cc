@@ -74,6 +74,9 @@ describeResolvedType(TypeClass *type) {
     if (type == nullptr) {
         return "<unknown type>";
     }
+    if (auto *qualified = type->as<ConstType>()) {
+        return describeResolvedType(qualified->getBaseType()) + " const";
+    }
     if (auto *pointer = type->as<PointerType>()) {
         if (auto *func = pointer->getPointeeType()->as<FuncType>()) {
             std::string name = "(";
@@ -272,7 +275,7 @@ getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     }
 
     auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
-    auto *structType = parentType ? parentType->as<StructType>() : nullptr;
+    auto *structType = asUnqualified<StructType>(parentType);
     if (!structType) {
         return nullptr;
     }
@@ -302,11 +305,20 @@ bool
 canIndexablePointerConvertTo(TypeClass *targetType, TypeClass *sourceType) {
     auto *targetElement = getIndexablePointerElementType(targetType);
     auto *sourceElement = getIndexablePointerElementType(sourceType);
+    if (targetElement && sourceElement) {
+        return isConstQualificationConvertible(targetElement, sourceElement);
+    }
+    if (isRawMemoryPointerType(targetType) && isRawMemoryPointerType(sourceType)) {
+        return isConstQualificationConvertible(getRawPointerPointeeType(targetType),
+                                               getRawPointerPointeeType(sourceType));
+    }
     if (targetElement && isRawMemoryPointerType(sourceType)) {
-        return targetElement == getRawPointerPointeeType(sourceType);
+        return isConstQualificationConvertible(
+            targetElement, getRawPointerPointeeType(sourceType));
     }
     if (sourceElement && isRawMemoryPointerType(targetType)) {
-        return sourceElement == getRawPointerPointeeType(targetType);
+        return isConstQualificationConvertible(
+            getRawPointerPointeeType(targetType), sourceElement);
     }
     return false;
 }
@@ -410,7 +422,7 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
     if (!node || !type) {
         return;
     }
-    auto *structType = type->as<StructType>();
+    auto *structType = asUnqualified<StructType>(type);
     if (!structType || !structType->isExternDecl()) {
         return;
     }
@@ -519,6 +531,19 @@ class FunctionAnalyzer {
                         ", got " + describeResolvedType(actualType),
               numericConversionHint() + " " + bitCopyHint() + " " +
                   pointerConversionHint());
+    }
+
+    bool canBindReferenceType(TypeClass *targetType, TypeClass *sourceType) {
+        return targetType && sourceType &&
+            isConstQualificationConvertible(targetType, sourceType);
+    }
+
+    [[noreturn]] void errorConstAssignmentTarget(const location &loc,
+                                                 TypeClass *type) {
+        error(loc,
+              "assignment target is const-qualified: " +
+                  describeResolvedType(type),
+              "Write through a mutable value instead, or copy into a new `var` binding if you need a writable value.");
     }
 
     template<typename T, typename... Args>
@@ -637,8 +662,8 @@ class FunctionAnalyzer {
         MemberLookupOwner owner;
         owner.entity = classifyEntity(parent);
         owner.valueType = owner.entity.valueType();
-        owner.tupleType = owner.valueType ? owner.valueType->as<TupleType>() : nullptr;
-        owner.structType = owner.valueType ? owner.valueType->as<StructType>() : nullptr;
+        owner.tupleType = asUnqualified<TupleType>(owner.valueType);
+        owner.structType = asUnqualified<StructType>(owner.valueType);
         return owner;
     }
 
@@ -799,7 +824,7 @@ class FunctionAnalyzer {
         if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
             if (auto *typeObject = calleeValue->getValue()->as<TypeObject>()) {
                 auto *declaredType = typeObject->declaredType();
-                auto *structType = declaredType ? declaredType->as<StructType>() : nullptr;
+                auto *structType = asUnqualified<StructType>(declaredType);
                 if (structType) {
                     if (structType->isExternDecl()) {
                         error(loc,
@@ -822,7 +847,7 @@ class FunctionAnalyzer {
         if (auto *selector = dynamic_cast<HIRSelector *>(callee);
             selector && selector->isMethodSelector()) {
             auto *structType = selector->getParent()
-                ? selector->getParent()->getType()->as<StructType>()
+                ? asUnqualified<StructType>(selector->getParent()->getType())
                 : nullptr;
             if (!structType) {
                 internalError(loc, "selector call parent must be a struct value");
@@ -875,15 +900,14 @@ class FunctionAnalyzer {
         }
 
         if (auto *arrayType =
-                callee->getType() ? callee->getType()->as<ArrayType>() : nullptr) {
+                asUnqualified<ArrayType>(callee->getType())) {
             resolution.kind = CallResolutionKind::ArrayIndex;
             resolution.resultEntity =
                 EntityRef::typedValue(arrayType->getElementType());
             return resolution;
         }
         if (auto *indexableType =
-                callee->getType() ? callee->getType()->as<IndexablePointerType>()
-                                  : nullptr) {
+                asUnqualified<IndexablePointerType>(callee->getType())) {
             resolution.kind = CallResolutionKind::ArrayIndex;
             resolution.resultEntity =
                 EntityRef::typedValue(indexableType->getElementType());
@@ -897,7 +921,7 @@ class FunctionAnalyzer {
     [[noreturn]] void diagnoseCallFailure(HIRExpr *callee, const location &loc,
                                           const CallResolution &resolution) {
         if (auto *type = resolution.callee.asType()) {
-            if (!type->as<StructType>()) {
+            if (!asUnqualified<StructType>(type)) {
                 error(loc,
                       "constructor calls currently support struct types only",
                       "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
@@ -952,6 +976,10 @@ class FunctionAnalyzer {
         if (!sourceType || sourceType == targetType) {
             return expr;
         }
+        if (isConstQualificationConvertible(
+                targetType, materializeValueType(typeMgr, sourceType))) {
+            return expr;
+        }
         if (explicitRequest) {
             if (canExplicitNumericConversion(targetType, sourceType)) {
                 return makeHIR<HIRNumericCast>(expr, targetType, true, loc);
@@ -976,6 +1004,12 @@ class FunctionAnalyzer {
         auto *sourceType = expr->getType();
         if (!sourceType || sourceType == targetType) {
             return expr;
+        }
+        if ((isRawMemoryPointerType(targetType) || isIndexablePointerType(targetType)) &&
+            (isRawMemoryPointerType(sourceType) || isIndexablePointerType(sourceType)) &&
+            isConstQualificationConvertible(
+                targetType, materializeValueType(typeMgr, sourceType))) {
+            return makeHIR<HIRBitCast>(expr, targetType, loc);
         }
         if (canImplicitPointerViewConversion(targetType, sourceType)) {
             return makeHIR<HIRBitCast>(expr, targetType, loc);
@@ -1359,15 +1393,15 @@ class FunctionAnalyzer {
                     error(argLoc,
                           "reference " + describeFormalCallArg(formal) +
                               " expects an addressable value",
-                          "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
+                              "Pass a variable, struct field, dereferenced pointer, or array indexing expression.");
                 }
-                if (formal.type != expr->getType()) {
+                if (!canBindReferenceType(formal.type, expr->getType())) {
                     error(argLoc,
                           "reference " + describeFormalCallArg(formal) +
                               " type mismatch: expected " +
                               describeResolvedType(formal.type) + ", got " +
                               describeResolvedType(expr->getType()),
-                          "Reference arguments bind aliases directly, so the argument type must match exactly.");
+                          "Reference arguments can add const to the view, but they cannot drop existing const qualifiers from the referenced storage.");
                 }
             } else {
                 expr = coerceNumericExpr(expr, formal.type, argLoc, false);
@@ -1662,7 +1696,7 @@ class FunctionAnalyzer {
                 dims.push_back(makeStaticDimensionNode(*it, loc));
                 current = owner.typeMgr->createArrayType(current, std::move(dims));
             }
-            return current ? current->as<ArrayType>() : nullptr;
+            return asUnqualified<ArrayType>(current);
         }
 
         InferredArrayShape inferArrayShape(const InitialList &initList) {
@@ -1831,7 +1865,7 @@ class FunctionAnalyzer {
             for (std::size_t i = 0; i < initList.items.size(); ++i) {
                 const auto &item = initList.items[i];
                 if (item.nested) {
-                    auto *childArrayType = childType->as<ArrayType>();
+                    auto *childArrayType = asUnqualified<ArrayType>(childType);
                     if (!childArrayType) {
                         owner.error(item.loc,
                                     "array initializer nesting is deeper than the array shape",
@@ -1842,7 +1876,7 @@ class FunctionAnalyzer {
                     continue;
                 }
 
-                if (childType->as<ArrayType>()) {
+                if (asUnqualified<ArrayType>(childType)) {
                     owner.error(item.loc,
                                 "array initializer expects a nested brace group at index " +
                                     std::to_string(i),
@@ -1873,10 +1907,10 @@ class FunctionAnalyzer {
                                         "This looks like a compiler pipeline bug.");
                 }
             }
-            if (auto *arrayType = expectedType->as<ArrayType>()) {
+            if (auto *arrayType = asUnqualified<ArrayType>(expectedType)) {
                 return materializeArrayInit(initList, arrayType, loc);
             }
-            if (auto *structType = expectedType->as<StructType>()) {
+            if (auto *structType = asUnqualified<StructType>(expectedType)) {
                 owner.error(loc,
                             "brace initialization currently applies to arrays only",
                             "For structs, call the type directly like `" +
@@ -1984,6 +2018,10 @@ class FunctionAnalyzer {
             error(node->left ? node->left->loc : node->loc,
                   "assignment expects an addressable value on the left side",
                   "You can assign to variables, struct fields, dereferenced pointers, or array indexing expressions.");
+        }
+        if (left && isConstQualifiedType(left->getType())) {
+            errorConstAssignmentTarget(node->left ? node->left->loc : node->loc,
+                                       left->getType());
         }
         auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
         right = coerceNumericExpr(right, left ? left->getType() : nullptr, node->loc,
@@ -2096,13 +2134,13 @@ class FunctionAnalyzer {
                               "reference binding expects an addressable value",
                               "Bind references to variables, struct fields, dereferenced pointers, or array indexing expressions.");
                     }
-                    if (type != init->getType()) {
+                    if (!canBindReferenceType(type, init->getType())) {
                         error(node->loc,
                               "reference binding type mismatch for `" +
                                   toStdString(node->getName()) + "`: expected " +
                                   describeResolvedType(type) + ", got " +
                                   describeResolvedType(init->getType()),
-                              "References bind aliases directly, so the referenced value must have the exact declared type.");
+                              "Reference bindings can add const to the alias view, but they cannot drop existing const qualifiers from the referenced storage.");
                     }
                 } else {
                     init = coerceNumericExpr(init, type, node->loc, false);
@@ -2114,7 +2152,7 @@ class FunctionAnalyzer {
             }
         } else if (init) {
             rejectMethodSelectorStorage(typeMgr, init, node);
-            type = init->getType();
+            type = materializeValueType(typeMgr, init->getType());
             if (!type) {
                 auto *value = dynamic_cast<HIRValue *>(init);
                 auto *object = value ? value->getValue() : nullptr;
@@ -2283,7 +2321,7 @@ class FunctionAnalyzer {
         switch (resolution.kind) {
             case CallResolutionKind::ConstructorCall: {
                 auto *structType = resolution.callee.asType()
-                    ? resolution.callee.asType()->as<StructType>()
+                    ? asUnqualified<StructType>(resolution.callee.asType())
                     : nullptr;
                 if (!structType) {
                     internalError(node->loc,
@@ -2312,11 +2350,9 @@ class FunctionAnalyzer {
                                                  node->loc);
             }
             case CallResolutionKind::ArrayIndex: {
-                auto *arrayType =
-                    callee->getType() ? callee->getType()->as<ArrayType>() : nullptr;
-                auto *indexableType = callee->getType()
-                    ? callee->getType()->as<IndexablePointerType>()
-                    : nullptr;
+                auto *arrayType = asUnqualified<ArrayType>(callee->getType());
+                auto *indexableType =
+                    asUnqualified<IndexablePointerType>(callee->getType());
                 const auto indexArity = arrayType ? arrayType->indexArity()
                                                   : (indexableType ? 1u : 0u);
                 auto *elementType = arrayType ? arrayType->getElementType()

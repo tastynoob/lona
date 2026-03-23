@@ -35,6 +35,18 @@ bool_bytecopy_bad_in="$(new_tmp_file bool-bytecopy-bad)"
 bool_bytecopy_bad_out="$(new_tmp_file bool-bytecopy-bad-out)"
 string_placeholder_in="$(new_tmp_file string-placeholder)"
 string_placeholder_out="$(new_tmp_file string-placeholder-out)"
+const_type_json_in="$(new_tmp_file const-type-json)"
+const_type_json_out="$(new_tmp_file const-type-json-out)"
+const_materialize_in="$(new_tmp_file const-materialize)"
+const_materialize_out="$(new_tmp_file const-materialize-out)"
+const_assign_bad_in="$(new_tmp_file const-assign-bad)"
+const_assign_bad_out="$(new_tmp_file const-assign-bad-out)"
+struct_const_ptr_field_in="$(new_tmp_file struct-const-ptr-field)"
+struct_const_ptr_field_out="$(new_tmp_file struct-const-ptr-field-out)"
+struct_const_field_bad_in="$(new_tmp_file struct-const-field-bad)"
+struct_const_field_bad_out="$(new_tmp_file struct-const-field-bad-out)"
+struct_const_array_field_bad_in="$(new_tmp_file struct-const-array-field-bad)"
+struct_const_array_field_bad_out="$(new_tmp_file struct-const-array-field-bad-out)"
 initial_list_hidden_in="$(new_tmp_file initial-list-hidden)"
 initial_list_hidden_out="$(new_tmp_file initial-list-hidden-out)"
 tuple_in="$(new_tmp_file tuple)"
@@ -327,6 +339,77 @@ def bad() i32 {
 EOF
 expect_emit_ir_failure "$string_placeholder_in" "$string_placeholder_out" 'expected string placeholder program to fail'
 grep -Fq 'string literals are reserved, but runtime string semantics are not implemented yet' "$string_placeholder_out"
+
+cat >"$const_type_json_in" <<'EOF'
+def main() i32 {
+    var bytes u8 const[4]
+    var ptr u8 const[*]
+    var hold u8[*] const
+    var raw u8* const
+    ret 0
+}
+EOF
+"$BIN" "$const_type_json_in" >"$const_type_json_out"
+grep -Fq '"declaredType": "u8 const[4]"' "$const_type_json_out"
+grep -Fq '"declaredType": "u8 const[*]"' "$const_type_json_out"
+grep -Fq '"declaredType": "u8[*] const"' "$const_type_json_out"
+grep -Fq '"declaredType": "u8* const"' "$const_type_json_out"
+
+cat >"$const_materialize_in" <<'EOF'
+def main() i32 {
+    var bytes u8 const[2] = {1, 2}
+    var copy = bytes
+    copy(0) = 7
+
+    var ptr u8* const = &copy(0)
+    var next = ptr
+    next = &copy(1)
+
+    ret copy(0)
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$const_materialize_in" >"$const_materialize_out"
+grep -q 'alloca \[2 x i8\]' "$const_materialize_out"
+grep -q 'store i8 7' "$const_materialize_out"
+grep -q 'store ptr' "$const_materialize_out"
+
+cat >"$const_assign_bad_in" <<'EOF'
+def main() i32 {
+    var value u8 const = 1
+    value = 2
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$const_assign_bad_in" "$const_assign_bad_out" 'expected const assignment program to fail'
+grep -Fq 'assignment target is const-qualified: u8 const' "$const_assign_bad_out"
+
+cat >"$struct_const_ptr_field_in" <<'EOF'
+struct Span {
+    data u8 const[*]
+}
+
+def main() i32 {
+    ret 0
+}
+EOF
+"$BIN" --emit-ir --verify-ir "$struct_const_ptr_field_in" >"$struct_const_ptr_field_out"
+grep -q '^define i32 @main' "$struct_const_ptr_field_out"
+
+cat >"$struct_const_field_bad_in" <<'EOF'
+struct BadValue {
+    value u8 const
+}
+EOF
+expect_emit_ir_failure "$struct_const_field_bad_in" "$struct_const_field_bad_out" 'expected const scalar struct field program to fail'
+grep -Fq 'struct field `value` cannot use a const-qualified storage type' "$struct_const_field_bad_out"
+
+cat >"$struct_const_array_field_bad_in" <<'EOF'
+struct BadArray {
+    bytes u8 const[4]
+}
+EOF
+expect_emit_ir_failure "$struct_const_array_field_bad_in" "$struct_const_array_field_bad_out" 'expected const array struct field program to fail'
+grep -Fq 'struct field `bytes` cannot use a const-qualified storage type' "$struct_const_array_field_bad_out"
 
 cat >"$initial_list_hidden_in" <<'EOF'
 def bad() i32 {

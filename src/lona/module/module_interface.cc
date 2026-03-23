@@ -136,6 +136,29 @@ ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
     return typePtr->as<IndexablePointerType>();
 }
 
+ConstType *
+ModuleInterface::getOrCreateConstType(TypeClass *baseType) {
+    if (!baseType) {
+        return nullptr;
+    }
+    if (auto *qualified = baseType->as<ConstType>()) {
+        return qualified;
+    }
+
+    auto typeName = ConstType::buildName(baseType);
+    auto name = std::string(typeName.tochara(), typeName.size());
+    auto found = derivedTypes_.find(name);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<ConstType>();
+    }
+
+    auto type = std::make_unique<ConstType>(baseType);
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[name] = typePtr;
+    return typePtr->as<ConstType>();
+}
+
 ArrayType *
 ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
                                       std::vector<AstNode *> dimensions) {
