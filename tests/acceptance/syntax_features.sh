@@ -35,6 +35,8 @@ mixed_numeric_op_in="$(new_tmp_file mixed-numeric-op)"
 mixed_numeric_op_out="$(new_tmp_file mixed-numeric-op-out)"
 numeric_cross_bad_in="$(new_tmp_file numeric-cross-bad)"
 numeric_cross_bad_out="$(new_tmp_file numeric-cross-bad-out)"
+numeric_member_removed_in="$(new_tmp_file numeric-member-removed)"
+numeric_member_removed_out="$(new_tmp_file numeric-member-removed-out)"
 injected_member_bad_in="$(new_tmp_file injected-member-bad)"
 injected_member_bad_out="$(new_tmp_file injected-member-bad-out)"
 float_literal_target_bad_in="$(new_tmp_file float-literal-target-bad)"
@@ -277,10 +279,10 @@ grep -q 'call float @id(float %' "$float_out"
 
 cat >"$numeric_convert_in" <<'EOF'
 def main() i32 {
-    var base i32 = 1.5.toi32()
-    var sample f32 = base.tof32()
+    var base i32 = cast[i32](1.5)
+    var sample f32 = cast[f32](base)
     var promoted f64 = sample
-    ret promoted.toi32()
+    ret cast[i32](promoted)
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$numeric_convert_in" >"$numeric_convert_out"
@@ -290,7 +292,7 @@ grep -q 'fpext float' "$numeric_convert_out"
 
 cat >"$numeric_convert_chain_in" <<'EOF'
 def chain(v f64) i32 {
-    ret v.toi32().tof32().toi32()
+    ret cast[i32](cast[f32](cast[i32](v)))
 }
 EOF
 "$BIN" --emit-ir --verify-ir "$numeric_convert_chain_in" >"$numeric_convert_chain_out"
@@ -371,16 +373,26 @@ def main() i32 {
 EOF
 expect_emit_ir_failure "$numeric_cross_bad_in" "$numeric_cross_bad_out" 'expected implicit int-to-float program to fail'
 grep -Fq 'initializer type mismatch for `x`: expected f32, got i32' "$numeric_cross_bad_out"
-grep -Fq '.toXXX()' "$numeric_cross_bad_out"
+grep -Fq 'cast[T](expr)' "$numeric_cross_bad_out"
+
+cat >"$numeric_member_removed_in" <<'EOF'
+def main() i32 {
+    var x i32 = 1
+    var y f32 = x.tof32()
+    ret 0
+}
+EOF
+expect_emit_ir_failure "$numeric_member_removed_in" "$numeric_member_removed_out" 'expected removed numeric member conversion program to fail'
+grep -Fq 'unknown member `i32.tof32`' "$numeric_member_removed_out"
 
 cat >"$injected_member_bad_in" <<'EOF'
 def main() i32 {
-    var x = 1.tof32
+    var x = 1.tobits
     ret 0
 }
 EOF
 expect_emit_ir_failure "$injected_member_bad_in" "$injected_member_bad_out" 'expected non-call injected member program to fail'
-grep -Fq 'injected member `tof32` can only be used as a direct call callee' "$injected_member_bad_out"
+grep -Fq 'injected member `tobits` can only be used as a direct call callee' "$injected_member_bad_out"
 
 cat >"$float_literal_target_bad_in" <<'EOF'
 def bad() u64 {
@@ -1162,10 +1174,10 @@ struct Mixed {
 
 def main() i32 {
     var x i32 = 41
-    var raw u8[4] = 1.tof32().tobits()
+    var raw u8[4] = cast[f32](1).tobits()
     var pair <i32, bool> = (1, true)
-    var mixed = Mixed(flag = true, ratio = 1.tof32(), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
-    if mixed.flag && mixed.pair._2 && (mixed.ratio >= 1.tof32()) {
+    var mixed = Mixed(flag = true, ratio = cast[f32](1), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
+    if mixed.flag && mixed.pair._2 && (mixed.ratio >= cast[f32](1)) {
         mixed.bits(0) = 1
         ret mixed.cb(*mixed.ptr) + mixed.bits(0) + mixed.pair._1
     }

@@ -37,7 +37,7 @@ def use_matrix(seed i32) i32 {
 }
 
 def main() i32 {
-    var sample f32 = 11.tof32()
+    var sample f32 = cast[f32](11)
     sample = blend(sample, 1.0)
     var sample_bits u8[4] = sample.tobits()
     sample = sample_bits.tof32()

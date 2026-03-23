@@ -7,12 +7,11 @@
 namespace lona {
 
 enum class InjectedMemberKind {
-    NumericConversion,
     BitCopy,
 };
 
 struct InjectedMemberBinding {
-    InjectedMemberKind kind = InjectedMemberKind::NumericConversion;
+    InjectedMemberKind kind = InjectedMemberKind::BitCopy;
     std::string name;
     TypeClass *receiverType = nullptr;
     TypeClass *resultType = nullptr;

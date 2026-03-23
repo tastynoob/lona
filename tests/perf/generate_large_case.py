@@ -174,7 +174,7 @@ def render_conversion_block(index: int) -> list[str]:
             "    ret v + 1",
             "}",
             f"def {kernel_name}(seed i32) i32 {{",
-            "    var sample f32 = seed.tof32()",
+            "    var sample f32 = cast[f32](seed)",
             "    sample = sample + 1.0",
             "    var bits u8[4] = sample.tobits()",
             "    sample = bits.tof32()",

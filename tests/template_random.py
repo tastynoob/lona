@@ -164,9 +164,9 @@ def float_mix_{case_id}(v f32) f32 {{
         main_body.extend(
             [
                 f"    var conv_src_{case_id} i32 = {rng.randint(1, 9)}",
-                f"    var conv_mid_{case_id} f32 = conv_src_{case_id}.tof32()",
+                f"    var conv_mid_{case_id} f32 = cast[f32](conv_src_{case_id})",
                 f"    var conv_dst_{case_id} f64 = conv_mid_{case_id}",
-                f"    score = score + conv_dst_{case_id}.toi32()",
+                f"    score = score + cast[i32](conv_dst_{case_id})",
                 f"    var bits_{case_id} u8[4] = conv_mid_{case_id}.tobits()",
                 f"    score = score + bits_{case_id}.toi32()",
             ]

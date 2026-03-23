@@ -200,9 +200,8 @@ resolveInjectedMember(TypeTable *typeTable, TypeClass *receiverType,
         return InjectedMemberBinding{InjectedMemberKind::BitCopy, "tobits",
                                      receiverType, arrayType};
     }
-    const bool receiverIsNumeric = isNumericType(receiverType);
     const bool receiverIsBitsArray = isBitsArrayType(receiverType);
-    if (!receiverIsNumeric && !receiverIsBitsArray) {
+    if (!receiverIsBitsArray) {
         return std::nullopt;
     }
     if (!memberName.consume_front("to")) {
@@ -217,10 +216,6 @@ resolveInjectedMember(TypeTable *typeTable, TypeClass *receiverType,
         return std::nullopt;
     }
 
-    if (receiverIsNumeric) {
-        return InjectedMemberBinding{InjectedMemberKind::NumericConversion,
-                                     memberName.str(), receiverType, targetType};
-    }
     return InjectedMemberBinding{InjectedMemberKind::BitCopy, memberName.str(),
                                  receiverType, targetType};
 }

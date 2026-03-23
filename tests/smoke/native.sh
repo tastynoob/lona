@@ -124,10 +124,10 @@ struct Mixed {
 
 def main() i32 {
     var x i32 = 41
-    var raw u8[4] = 1.tof32().tobits()
+    var raw u8[4] = cast[f32](1).tobits()
     var pair <i32, bool> = (1, true)
-    var mixed = Mixed(flag = true, ratio = 1.tof32(), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
-    if mixed.flag && mixed.pair._2 && (mixed.ratio >= 1.tof32()) {
+    var mixed = Mixed(flag = true, ratio = cast[f32](1), bits = raw, pair = pair, ptr = &x, cb = inc&<i32>)
+    if mixed.flag && mixed.pair._2 && (mixed.ratio >= cast[f32](1)) {
         mixed.bits(0) = 1
         ret mixed.cb(*mixed.ptr) + mixed.bits(0) + mixed.pair._1
     }

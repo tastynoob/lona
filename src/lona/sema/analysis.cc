@@ -235,7 +235,7 @@ describeTupleFieldHelp(TupleType *tupleType) {
 
 std::string
 numericConversionHint() {
-    return "Integer-to-integer and float-to-float convert implicitly. Integer/float cross-conversion requires an explicit `cast[T](expr)` or `.toXXX()` conversion such as `cast[f32](1)` or `1.5.toi32()`.";
+    return "Integer-to-integer and float-to-float convert implicitly. Integer/float cross-conversion requires an explicit `cast[T](expr)` such as `cast[f32](1)` or `cast[i32](1.5)`.";
 }
 
 std::string
@@ -276,8 +276,9 @@ errorReservedInitialListType(const location &loc) {
 
 std::string
 describeInjectedMemberHelp(TypeClass *receiverType, const std::string &memberName) {
+    (void)receiverType;
     return "Call injected members directly as `<expr>." + memberName +
-           "(...)`. Built-in numeric conversion members are injected on numeric values.";
+           "(...)`. Raw bit-copy helpers are injected as `value.tobits()` and `u8[N].toXXX()`.";
 }
 
 FuncType *
@@ -826,8 +827,10 @@ class FunctionAnalyzer {
                   "Check the field name, or use a direct method call like `obj.method(...)`.");
         }
 
-        error(loc,
-              "member access expects a struct, tuple, or type value on the left side");
+        auto ownerType = lookup.owner.valueType
+            ? describeResolvedType(lookup.owner.valueType)
+            : std::string("<unknown type>");
+        error(loc, "unknown member `" + ownerType + "." + fieldName + "`");
     }
 
     [[noreturn]] void diagnoseModuleNamespaceValueUse(const std::string &moduleName,
@@ -984,7 +987,7 @@ class FunctionAnalyzer {
             if (!asUnqualified<StructType>(type)) {
                 error(loc,
                       "constructor calls currently support struct types only",
-                      "Use a struct type like `Vec2(...)`. Numeric conversion still uses `.toXXX()`.");
+                      "Use a struct type like `Vec2(...)`. Numeric conversion uses `cast[T](expr)`.");
             }
         }
 
@@ -1680,7 +1683,7 @@ class FunctionAnalyzer {
             }
             error(node->loc,
                   "floating-point literal doesn't match the expected target type",
-                  "Use a `f32` or `f64` destination. For numeric conversion, call an explicit helper like `1.5.toi32()`. For raw bits, call `.tobits()` and keep the resulting `u8[N]` array.");
+                  "Use a `f32` or `f64` destination. For numeric conversion, call `cast[T](expr)` like `cast[i32](1.5)`. For raw bits, call `.tobits()` and keep the resulting `u8[N]` array.");
         }
         case AstConst::Type::STRING:
             return analyzeByteStringLiteral(node);
@@ -2383,19 +2386,6 @@ class FunctionAnalyzer {
                 auto lookup = lookupMember(receiver, fieldName, node->loc);
                 if (lookup.result.kind == LookupResultKind::InjectedMember) {
                     assert(lookup.injectedMember.has_value());
-                    if (lookup.injectedMember->kind ==
-                        InjectedMemberKind::NumericConversion) {
-                        if (node->args && !node->args->empty()) {
-                            error(node->loc,
-                                  "numeric conversion member `" + fieldName +
-                                      "` does not take arguments",
-                                  "Call it as `<expr>." + fieldName + "()`.");
-                        }
-                        return coerceNumericExpr(receiver,
-                                                 lookup.injectedMember->resultType,
-                                                 node->loc,
-                                                 true);
-                    }
                     if (lookup.injectedMember->kind == InjectedMemberKind::BitCopy) {
                         if (node->args && !node->args->empty()) {
                             error(node->loc,
