@@ -28,6 +28,7 @@ buildOptions(const Json &command) {
     const std::string ltoMode = command.value("lto", std::string("off"));
     options.compile.verifyIR = command.value("verify_ir", false);
     options.compile.debugInfo = command.value("debug", false);
+    options.compile.noCache = command.value("no_cache", false);
     options.compile.optLevel = command.value("opt_level", 0);
     options.compile.targetTriple = command.value("target", std::string());
     options.compile.ltoMode = ltoMode == "full" ? CompileOptions::LTOMode::Full

@@ -141,7 +141,7 @@ else
     MANIFEST_PATH="$TMPDIR_LOCAL/objects.manifest"
     CACHE_DIR="$TMPDIR_LOCAL/objects"
     "$LONA_IR_BIN" --emit objects --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
-        --cache-out "$CACHE_DIR" \
+        --cache-dir "$CACHE_DIR" \
         "$INPUT" "$MANIFEST_PATH"
 
     while IFS=$'\t' read -r KIND ROLE PATH_VALUE; do

@@ -67,7 +67,7 @@
 职责分工：
 
 - `lac.sh`
-  - 调用 `lona-ir --emit objects --cache-out ... --target x86_64-unknown-linux-gnu`
+  - 调用 `lona-ir --emit objects --cache-dir ... --target x86_64-unknown-linux-gnu`
   - 读取 manifest，收集模块 object
   - 再单独调用 `lona-ir --emit entry --target ...` 生成 hosted entry object
   - 检查 object bundle 里是否存在语言入口 `__lona_main__`
@@ -129,7 +129,7 @@ bash scripts/lac-native.sh input.lo output/program
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
 lona-ir --emit objects --target x86_64-unknown-linux-gnu input.lo output.manifest
 lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
-lona-ir --emit objects --cache-out build/cache --target x86_64-unknown-linux-gnu input.lo output.manifest
+lona-ir --emit objects --cache-dir build/cache --target x86_64-unknown-linux-gnu input.lo output.manifest
 bash scripts/lac.sh --lto full input.lo output/program
 bash scripts/lac-native.sh --lto full input.lo output/program
 bash scripts/lac.sh --target x86_64-unknown-linux-gnu input.lo output/program
@@ -139,8 +139,9 @@ bash scripts/lac-native.sh --target x86_64-none-elf input.lo output/program
 其中：
 
 - `--emit objects` 会写一个 manifest
-- 默认 bundle object 会写到 `output.manifest.d/`
-- 如果显式传 `--cache-out <dir>`，bundle object 会改写到该目录
+- 默认 bundle object 会写到 `./lona_cache/output.manifest.d/`
+- 如果显式传 `--cache-dir <dir>`，bundle object 会写到 `<dir>/output.manifest.d/`
+- 如果显式传 `--no-cache`，本轮会跳过 object cache 复用并强制重新编译模块
 - `--emit entry` 会单独生成 hosted `main(argc, argv) -> __lona_main__` object
 
 带优化级别：

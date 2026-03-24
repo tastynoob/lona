@@ -7,6 +7,7 @@
 #include "workspace.hh"
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iosfwd>
 #include <llvm-18/llvm/IR/Module.h>
 #include <memory>
@@ -29,6 +30,9 @@ class WorkspaceBuilder {
     std::unordered_map<std::string, std::uint64_t>
     collectDependencyInterfaceHashes(const CompilationUnit &unit) const;
     std::string bundleObjectFileName(const ModuleArtifact &artifact) const;
+    std::filesystem::path bundleObjectPath(
+        const ModuleArtifact &artifact,
+        const std::filesystem::path &bundleDir) const;
     bool matchesArtifact(const CompilationUnit &unit,
                          const ModuleArtifact &artifact,
                          const CompileOptions &options) const;
@@ -42,6 +46,7 @@ class WorkspaceBuilder {
                               SessionStats &stats) const;
     int buildArtifacts(CompilationUnit &rootUnit, const CompileOptions &options,
                        bool requireObjects, bool requireBitcode,
+                       const std::filesystem::path *objectCacheDir,
                        SessionStats &stats,
                        std::ostream &out) const;
     int compileModule(CompilationUnit &unit, const CompileOptions &options,

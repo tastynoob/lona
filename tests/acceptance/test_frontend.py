@@ -141,6 +141,7 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
     )
     result.expect_ok()
     manifest = manifest_path.read_text(encoding="utf-8")
+    expected_bundle_dir = compiler.repo_root / "lona_cache" / f"{manifest_path.name}.d"
     assert_contains(manifest, "format\tlona-object-bundle-v0", label="object bundle manifest")
     assert_contains(
         manifest,
@@ -164,6 +165,7 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
     for object_path in object_paths:
         assert object_path.is_file(), f"expected emitted bundle object: {object_path}"
         assert object_path.stat().st_size > 0, f"expected non-empty bundle object: {object_path}"
+        assert object_path.parent == expected_bundle_dir
 
 
 def test_entry_emission_produces_hosted_wrapper_object(compiler: CompilerHarness, repo_root: Path) -> None:
@@ -178,7 +180,41 @@ def test_entry_emission_produces_hosted_wrapper_object(compiler: CompilerHarness
     assert_regex(symbols, r" U __lona_main__$", label="entry object symbols")
 
 
-def test_object_bundle_respects_cache_out_directory(compiler: CompilerHarness) -> None:
+def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "bundle_profile.lo",
+        """
+        ret 0
+        """,
+    )
+    cache_dir = compiler.output_path("shared-cache")
+    linux_result, linux_manifest_path = compiler.emit_objects(
+        input_path,
+        output_name="linux.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+    )
+    linux_result.expect_ok()
+    bare_result, bare_manifest_path = compiler.emit_objects(
+        input_path,
+        output_name="bare.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-none-elf",
+    )
+    bare_result.expect_ok()
+
+    def first_module_path(manifest_path: Path) -> Path:
+        manifest = manifest_path.read_text(encoding="utf-8")
+        for line in manifest.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[0] == "object" and parts[1] == "module":
+                return Path(parts[2])
+        raise AssertionError(f"missing module object entry in {manifest_path}")
+
+    assert first_module_path(linux_manifest_path) != first_module_path(bare_manifest_path)
+
+
+def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "bundle_cache.lo",
         """
@@ -189,11 +225,12 @@ def test_object_bundle_respects_cache_out_directory(compiler: CompilerHarness) -
     result, manifest_path = compiler.emit_objects(
         input_path,
         output_name="bundle-cache.manifest",
-        cache_out=cache_dir,
+        cache_dir=cache_dir,
         target="x86_64-unknown-linux-gnu",
     )
     result.expect_ok()
     manifest = manifest_path.read_text(encoding="utf-8")
+    expected_cache_bundle_dir = cache_dir / f"{manifest_path.name}.d"
     object_paths = []
     for line in manifest.splitlines():
         parts = line.split("\t")
@@ -202,7 +239,83 @@ def test_object_bundle_respects_cache_out_directory(compiler: CompilerHarness) -
 
     assert object_paths, "expected emitted cache bundle objects"
     for object_path in object_paths:
-        assert object_path.parent == cache_dir
+        assert object_path.parent == expected_cache_bundle_dir
+
+
+def test_object_bundle_reuses_cached_objects_across_cli_invocations(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "bundle_reuse.lo",
+        """
+        ret 0
+        """,
+    )
+    cache_dir = compiler.output_path("reuse-cache")
+    first, _ = compiler.emit_objects(
+        input_path,
+        output_name="reuse.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 1", label="first object bundle stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="first object bundle stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-objects: 0",
+        label="first object bundle stats",
+    )
+
+    second, _ = compiler.emit_objects(
+        input_path,
+        output_name="reuse.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 0", label="second object bundle stats")
+    assert_contains(second.stderr, "reused-modules: 1", label="second object bundle stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-objects: 1",
+        label="second object bundle stats",
+    )
+
+
+def test_object_bundle_no_cache_forces_full_recompile(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "bundle_no_cache.lo",
+        """
+        ret 0
+        """,
+    )
+    cache_dir = compiler.output_path("no-cache-reuse")
+    first, _ = compiler.emit_objects(
+        input_path,
+        output_name="no-cache.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+
+    second, _ = compiler.emit_objects(
+        input_path,
+        output_name="no-cache.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+        no_cache=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 1", label="no-cache stats")
+    assert_contains(second.stderr, "reused-modules: 0", label="no-cache stats")
+    assert_contains(second.stderr, "reused-module-objects: 0", label="no-cache stats")
 
 
 def test_object_bundle_rejects_lto_mode(compiler: CompilerHarness) -> None:

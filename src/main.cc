@@ -52,12 +52,13 @@ main(int argc, char *argv[]) {
         "LLVM target triple, for example x86_64-none-elf or x86_64-unknown-linux-gnu",
         false, "");
     cli.add<std::string>(
-        "cache-out", 0,
+        "cache-dir", 0,
         "output directory for `--emit objects` bundle members",
         false, "./lona_cache");
     cli.add<std::string>(
         "lto", 0, "link-time optimization mode: off or full", false, "off",
         cmdline::oneof<std::string>("off", "full"));
+    cli.add("no-cache", 0, "disable module artifact reuse for this compile");
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
@@ -103,8 +104,8 @@ main(int argc, char *argv[]) {
         std::cerr << cli.usage();
         return 1;
     }
-    if (!emitObjects && cli.exist("cache-out")) {
-        std::cerr << "`--cache-out` is only supported with `--emit objects`\n";
+    if (!emitObjects && cli.exist("cache-dir")) {
+        std::cerr << "`--cache-dir` is only supported with `--emit objects`\n";
         std::cerr << cli.usage();
         return 1;
     }
@@ -140,6 +141,7 @@ main(int argc, char *argv[]) {
 
     lona::SessionOptions options;
     const bool compileMode = emitIR || emitEntry || emitObject || emitObjects ||
+                             cli.exist("no-cache") ||
                              cli.exist("verify-ir") ||
                              cli.exist("debug") || cli.exist("opt") ||
                              cli.exist("target") || ltoMode != "off";
@@ -156,8 +158,9 @@ main(int argc, char *argv[]) {
     }
     options.outputPath = outputPath;
     options.cacheOutputPath =
-        emitObjects ? cli.get<std::string>("cache-out") : std::string();
+        emitObjects ? cli.get<std::string>("cache-dir") : std::string();
     options.compile.optLevel = cli.get<int>("opt");
+    options.compile.noCache = cli.exist("no-cache");
     options.compile.verifyIR = cli.exist("verify-ir");
     options.compile.debugInfo = cli.exist("debug");
     options.compile.targetTriple =

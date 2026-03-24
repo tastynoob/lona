@@ -368,20 +368,23 @@ artifact 可复用的条件是：
 
 ## 5. 当前增量编译语义
 
-当前增量编译是“单会话内的内存态增量复用”。
+当前增量编译分两层：
+
+- 同一 `CompilerSession` 内的内存态增量复用
+- `--emit objects` 路径下基于 `cache-dir` 的磁盘 object 复用
 
 已具备：
 
 - 同一 `CompilerSession` 内，多次构建可复用 `ModuleInterface`
 - 同一 `CompilerSession` 内，多次构建可复用 `ModuleArtifact`
 - 同一 `CompilerSession` 内，多次构建可复用模块 object / bitcode artifact
+- 多次独立 CLI 调用 `lona-ir --emit objects` 时，可通过同一个 `cache-dir/<manifest>.d/` 复用模块 object
 - 当模块 body 改变但接口不变时，只重编该模块
 - 当模块接口改变时，直接 importer 会失效并重新编译
 
 当前还没有做的事：
 
-- 跨进程持久化缓存
-- 文件系统级 artifact cache
+- 跨进程 bitcode / linked-IR 持久化缓存
 - 更细粒度的函数级增量
 - 真正的并行模块编译
 
@@ -416,6 +419,6 @@ artifact 可复用的条件是：
 如果继续沿当前方向推进，建议优先按这个顺序演进：
 
 1. 先把 `WorkspaceBuilder` 的输入输出整理成更显式的 build request / build result。
-2. 再把 artifact cache 从“会话内内存态”推进到“可选持久化缓存”。
+2. 再把当前“对象文件级持久化缓存”继续扩成“bitcode / linked artifact 的可选持久化缓存”。
 3. 然后替换 `SerialModuleExecutor`，引入线程池并行编译。
-4. 最后再考虑持久化缓存、ThinLTO 或更高性能的链接路径。
+4. 最后再考虑 ThinLTO 或更高性能的链接路径。

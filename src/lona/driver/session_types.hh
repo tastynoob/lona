@@ -14,6 +14,7 @@ struct CompileOptions {
     int optLevel = 0;
     bool verifyIR = false;
     bool debugInfo = false;
+    bool noCache = false;
     std::string targetTriple;
     LTOMode ltoMode = LTOMode::Off;
 };

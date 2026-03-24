@@ -169,17 +169,23 @@ class CompilerHarness:
         input_path: Path,
         *,
         output_name: str,
-        cache_out: Path | None = None,
+        cache_dir: Path | None = None,
         verify_ir: bool = True,
         target: str | None = None,
         lto: str | None = None,
+        stats: bool = False,
+        no_cache: bool = False,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         args = ["--emit", "objects"]
         if verify_ir:
             args.append("--verify-ir")
-        if cache_out is not None:
-            args.extend(["--cache-out", str(cache_out)])
+        if stats:
+            args.append("--stats")
+        if no_cache:
+            args.append("--no-cache")
+        if cache_dir is not None:
+            args.extend(["--cache-dir", str(cache_dir)])
         if target is not None:
             args.extend(["--target", target])
         if lto is not None:
@@ -206,10 +212,13 @@ class CompilerHarness:
         *,
         output_name: str,
         lto: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         env = os.environ.copy()
         env["LC_ALL"] = "C"
+        if extra_env is not None:
+            env.update(extra_env)
         cmd = [str(self.system_driver)]
         if lto is not None:
             cmd.extend(["--lto", lto])

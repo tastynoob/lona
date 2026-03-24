@@ -5,6 +5,7 @@
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
 #include "lona/visitor.hh"
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
@@ -327,6 +328,36 @@ writeBinaryFile(const std::filesystem::path &path,
     }
 }
 
+std::optional<ModuleArtifact::ByteBuffer>
+readBinaryFileIfPresent(const std::filesystem::path &path) {
+    std::ifstream in(path, std::ios::binary | std::ios::in);
+    if (!in) {
+        return std::nullopt;
+    }
+
+    in.seekg(0, std::ios::end);
+    std::streamoff size = in.tellg();
+    if (size < 0) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't inspect cached object file `" +
+                                  path.string() + "`.",
+                              "Check that the cache directory is readable.");
+    }
+    in.seekg(0, std::ios::beg);
+
+    ModuleArtifact::ByteBuffer bytes(static_cast<std::size_t>(size));
+    if (size > 0) {
+        in.read(reinterpret_cast<char *>(bytes.data()), size);
+    }
+    if (!in) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't read cached object file `" +
+                                  path.string() + "`.",
+                              "Check that the cache directory is readable.");
+    }
+    return bytes;
+}
+
 void
 appendHIRFunctions(HIRModule &target, const HIRModule &source) {
     for (auto *func : source.getFunctions()) {
@@ -436,11 +467,37 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
             ch = '_';
         }
     }
+
+    std::vector<std::pair<std::string, std::uint64_t>> dependencies(
+        artifact.dependencyInterfaceHashes().begin(),
+        artifact.dependencyInterfaceHashes().end());
+    std::sort(dependencies.begin(), dependencies.end(),
+              [](const auto &lhs, const auto &rhs) {
+                  return lhs.first < rhs.first;
+              });
+
+    std::ostringstream cacheKey;
+    cacheKey << artifact.moduleKey() << "|" << artifact.targetTriple() << "|O"
+             << artifact.optLevel() << "|"
+             << (artifact.debugInfo() ? "g" : "ng") << "|src="
+             << artifact.sourceHash() << "|iface=" << artifact.interfaceHash()
+             << "|impl=" << artifact.implementationHash();
+    for (const auto &[dependencyKey, dependencyHash] : dependencies) {
+        cacheKey << "|dep=" << dependencyKey << ":" << dependencyHash;
+    }
+
     std::ostringstream suffix;
     suffix << std::hex << std::setw(16) << std::setfill('0')
            << static_cast<unsigned long long>(
-                  std::hash<std::string>{}(artifact.moduleKey()));
+                  std::hash<std::string>{}(cacheKey.str()));
     return stem + "-" + suffix.str() + ".o";
+}
+
+std::filesystem::path
+WorkspaceBuilder::bundleObjectPath(
+    const ModuleArtifact &artifact,
+    const std::filesystem::path &bundleDir) const {
+    return bundleDir / bundleObjectFileName(artifact);
 }
 
 bool
@@ -464,6 +521,9 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
 ModuleArtifact *
 WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
                                       const CompileOptions &options) const {
+    if (options.noCache) {
+        return nullptr;
+    }
     auto *artifact = workspace_.findArtifact(unit.path());
     if (artifact == nullptr) {
         return nullptr;
@@ -521,6 +581,7 @@ int
 WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  const CompileOptions &options,
                                  bool requireObjects, bool requireBitcode,
+                                 const std::filesystem::path *objectCacheDir,
                                  SessionStats &stats,
                                  std::ostream &out) const {
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
@@ -552,6 +613,19 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
         }
 
         ModuleArtifact artifact = createArtifact(*queuedUnit, options);
+        if (!options.noCache && objectCacheDir != nullptr && requireObjects &&
+            !requireBitcode) {
+            auto cachedObject = readBinaryFileIfPresent(
+                bundleObjectPath(artifact, *objectCacheDir));
+            if (cachedObject.has_value()) {
+                artifact.setObjectCode(std::move(*cachedObject));
+                workspace_.storeArtifact(std::move(artifact));
+                queuedUnit->markCompiled();
+                ++stats.reusedModules;
+                ++stats.reusedModuleObjects;
+                return 0;
+            }
+        }
         int moduleExitCode =
             compileModule(*queuedUnit, options, artifact, requireObjects,
                           requireBitcode, stats, out);
@@ -686,7 +760,8 @@ int
 WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                          SessionStats &stats, std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
-    int exitCode = buildArtifacts(rootUnit, options, false, true, stats, out);
+    int exitCode =
+        buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
@@ -725,7 +800,8 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
                              const CompileOptions &options,
                              SessionStats &stats, std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
-    int exitCode = buildArtifacts(rootUnit, options, false, true, stats, out);
+    int exitCode =
+        buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
@@ -776,17 +852,20 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
             "Pass an output file when using `--emit objects`.");
     }
 
-    int exitCode = buildArtifacts(rootUnit, options, true, false,
-                                  stats, out);
+    namespace fs = std::filesystem;
+    fs::path manifestPath = fs::path(outputPath);
+    fs::path bundleStem = manifestPath.filename();
+    bundleStem += ".d";
+    fs::path bundleDir = cacheOutputPath.empty()
+        ? manifestPath.parent_path() / bundleStem
+        : fs::path(cacheOutputPath) / bundleStem;
+    fs::create_directories(bundleDir);
+
+    int exitCode =
+        buildArtifacts(rootUnit, options, true, false, &bundleDir, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
-
-    namespace fs = std::filesystem;
-    fs::path manifestPath = fs::path(outputPath);
-    fs::path bundleDir =
-        cacheOutputPath.empty() ? fs::path(outputPath + ".d") : fs::path(cacheOutputPath);
-    fs::create_directories(bundleDir);
 
     out << "format\tlona-object-bundle-v0\n";
     out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
@@ -806,7 +885,7 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
                                   "This looks like a compiler object emission bug.");
         }
 
-        fs::path objectPath = bundleDir / bundleObjectFileName(*artifact);
+        fs::path objectPath = bundleObjectPath(*artifact, bundleDir);
         writeBinaryFile(objectPath, artifact->objectCode());
         out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
     }

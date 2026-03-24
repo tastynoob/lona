@@ -4,7 +4,7 @@
 
 ## Acceptance
 
-- [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object/object bundle 语义，以及 `--lto full` 慢路径。
+- [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object/object bundle 语义、跨进程 object cache 复用，以及 `--lto full` 慢路径。
 - [acceptance/test_controlflow.py](acceptance/test_controlflow.py): 基于 `pytest` 的 `for` / `for ... else` / `break` / `continue` JSON、诊断和运行语义。
 - [acceptance/test_functions.py](acceptance/test_functions.py): 基于 `pytest` 的函数指针、C FFI、裸函数限制、方法选择器和调用检查。
 - [acceptance/test_diagnostics.py](acceptance/test_diagnostics.py): 基于 `pytest` 的语法和语义错误诊断。

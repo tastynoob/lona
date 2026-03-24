@@ -107,6 +107,15 @@ if [ -z "$CC_BIN" ] || [ ! -x "$CC_BIN" ]; then
     exit 1
 fi
 
+if [ -z "$NM_BIN" ] || [ ! -x "$NM_BIN" ]; then
+    cat >&2 <<EOF
+cannot build system executable from $INPUT
+help: hosted builds require \`nm\` so lac can validate \`main\` / \`__lona_main__\` symbols safely
+help: install \`nm\`, set NM_BIN, or build a non-hosted artifact instead
+EOF
+    exit 1
+fi
+
 TMPDIR_LOCAL="$(mktemp -d "${TMPDIR:-/tmp}/lona-system-XXXXXX")"
 cleanup() {
     if [ "$KEEP_TEMP" -eq 0 ]; then
@@ -127,7 +136,7 @@ else
     MANIFEST_PATH="$TMPDIR_LOCAL/objects.manifest"
     CACHE_DIR="$TMPDIR_LOCAL/objects"
     "$LONA_IR_BIN" --emit objects --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
-        --cache-out "$CACHE_DIR" \
+        --cache-dir "$CACHE_DIR" \
         "$INPUT" "$MANIFEST_PATH"
 
     while IFS=$'\t' read -r KIND ROLE PATH_VALUE; do
@@ -136,25 +145,23 @@ else
         fi
     done < "$MANIFEST_PATH"
 
-    if [ -n "$NM_BIN" ] && [ -x "$NM_BIN" ]; then
-        MODULE_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
-        MODULE_DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
-        if ! grep -Eq ' [TW] __lona_main__$' <<<"$MODULE_DEFINED_SYMBOLS"; then
-            cat >&2 <<EOF
+    MODULE_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
+    MODULE_DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
+    if ! grep -Eq ' [TW] __lona_main__$' <<<"$MODULE_DEFINED_SYMBOLS"; then
+        cat >&2 <<EOF
 cannot build system executable from $INPUT
 help: the linked object does not expose __lona_main__()
 help: define root-level executable statements in the root module
 EOF
-            exit 1
-        fi
-        if grep -Eq ' [UTW] main$' <<<"$MODULE_SYMBOLS"; then
-            cat >&2 <<EOF
+        exit 1
+    fi
+    if grep -Eq ' [UTW] main$' <<<"$MODULE_SYMBOLS"; then
+        cat >&2 <<EOF
 cannot build system executable from $INPUT
 help: this program already declares or imports a non-entry symbol named \`main\`
 help: rename that symbol or build a non-hosted artifact instead of a system executable
 EOF
-            exit 1
-        fi
+        exit 1
     fi
 
     ENTRY_OBJECT="$TMPDIR_LOCAL/lona-hosted-entry.o"
@@ -171,25 +178,23 @@ EOF
     exit 1
 fi
 
-if [ -n "$NM_BIN" ] && [ -x "$NM_BIN" ]; then
-    ALL_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
-    DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
-    if ! grep -Eq ' [TW] __lona_main__$' <<<"$DEFINED_SYMBOLS"; then
-        cat >&2 <<EOF
+ALL_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
+DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
+if ! grep -Eq ' [TW] __lona_main__$' <<<"$DEFINED_SYMBOLS"; then
+    cat >&2 <<EOF
 cannot build system executable from $INPUT
 help: the linked object does not expose __lona_main__()
 help: define root-level executable statements in the root module
 EOF
-        exit 1
-    fi
-    if ! grep -Eq ' [TW] main$' <<<"$DEFINED_SYMBOLS"; then
-        cat >&2 <<EOF
+    exit 1
+fi
+if ! grep -Eq ' [TW] main$' <<<"$DEFINED_SYMBOLS"; then
+    cat >&2 <<EOF
 cannot build system executable from $INPUT
 help: the hosted system wrapper \`main(argc, argv)\` was not generated
 help: this looks like a compiler entry-wrapping bug rather than a user program error
 EOF
-        exit 1
-    fi
+    exit 1
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
