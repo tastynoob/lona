@@ -1,4 +1,5 @@
 #include "lona/driver/session.hh"
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -15,12 +16,22 @@ buildOptions(const Json &command) {
     SessionOptions options;
     const std::string outputMode =
         command.value("output_mode", std::string("llvm_ir"));
-    options.outputMode = outputMode == "ast_json" ? OutputMode::AstJson
-                                                   : OutputMode::LLVMIR;
+    if (outputMode == "ast_json") {
+        options.outputMode = OutputMode::AstJson;
+    } else if (outputMode == "object_file") {
+        options.outputMode = OutputMode::ObjectFile;
+    } else if (outputMode == "object_bundle") {
+        options.outputMode = OutputMode::ObjectBundle;
+    } else {
+        options.outputMode = OutputMode::LLVMIR;
+    }
+    const std::string ltoMode = command.value("lto", std::string("off"));
     options.compile.verifyIR = command.value("verify_ir", false);
     options.compile.debugInfo = command.value("debug", false);
     options.compile.optLevel = command.value("opt_level", 0);
     options.compile.targetTriple = command.value("target", std::string());
+    options.compile.ltoMode = ltoMode == "full" ? CompileOptions::LTOMode::Full
+                                                 : CompileOptions::LTOMode::Off;
     return options;
 }
 
@@ -28,15 +39,30 @@ Json
 compileWithSession(CompilerSession &session, const Json &command) {
     Json result = Json::object();
     const auto input = command.at("input").get<std::string>();
+    auto options = buildOptions(command);
+    if (options.outputMode == OutputMode::ObjectBundle) {
+        const std::string requestedOutput =
+            command.value("output_path", std::string());
+        const auto manifestPath = requestedOutput.empty()
+            ? (std::filesystem::path(input).parent_path() / "session-runner.manifest")
+            : std::filesystem::path(requestedOutput);
+        options.outputPath = manifestPath.string();
+        result["output_path"] = manifestPath.string();
+    }
     std::ostringstream out;
     std::ostringstream diag;
-    const int exitCode =
-        session.runFile(input, buildOptions(command), out, diag);
+    const int exitCode = session.runFile(input, options, out, diag);
 
     result["command"] = "compile";
     result["input"] = input;
     result["exit_code"] = exitCode;
-    result["stdout"] = out.str();
+    const std::string output = out.str();
+    result["stdout_size"] = output.size();
+    if (options.outputMode == OutputMode::ObjectFile) {
+        result["stdout"] = "";
+    } else {
+        result["stdout"] = output;
+    }
     result["stderr"] = diag.str();
 
     Json stats = Json::object();
@@ -52,6 +78,10 @@ compileWithSession(CompilerSession &session, const Json &command) {
     stats["total_ms"] = lastStats.totalMs;
     stats["compiled_modules"] = lastStats.compiledModules;
     stats["reused_modules"] = lastStats.reusedModules;
+    stats["emitted_module_bitcode"] = lastStats.emittedModuleBitcode;
+    stats["reused_module_bitcode"] = lastStats.reusedModuleBitcode;
+    stats["emitted_module_objects"] = lastStats.emittedModuleObjects;
+    stats["reused_module_objects"] = lastStats.reusedModuleObjects;
     result["stats"] = std::move(stats);
     return result;
 }

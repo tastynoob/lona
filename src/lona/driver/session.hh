@@ -24,6 +24,7 @@ public:
     const SessionStats &lastStats() const { return lastStats_; }
 
     void printStats(std::ostream &out) const;
+    int runEntry(const SessionOptions &options, std::ostream &out, std::ostream &diag);
     int runFile(const std::string &inputPath, const SessionOptions &options,
                 std::ostream &out, std::ostream &diag);
 };

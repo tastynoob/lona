@@ -46,6 +46,7 @@ description: Generate and validate focused Lona compiler test cases from the loc
 
 - 正向样例：
   - `python3 tests/tools/compile_case.py path/to/case.lo`
+  - 这条是 tests/helper 路径，会生成单最终 `.o`，不要把它当成默认构建链语义
 - 负向样例：
   - `python3 tests/tools/expect_diag.py path/to/case.lo 'expected text'`
 - 模板随机样例参考：

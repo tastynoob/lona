@@ -5,14 +5,19 @@
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
 #include "lona/visitor.hh"
+#include <cctype>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/ADT/SmallString.h>
-#include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Linker/Linker.h>
-#include <llvm/Support/SourceMgr.h>
+#include <llvm/Support/Error.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
@@ -23,6 +28,7 @@
 #include <llvm-18/llvm/Passes/PassBuilder.h>
 #include <llvm-18/llvm/Target/TargetMachine.h>
 #include <optional>
+#include <iomanip>
 #include <sstream>
 #include <utility>
 
@@ -88,21 +94,20 @@ verifyCompiledModule(llvm::Module &module, std::ostream &out) {
 }
 
 std::unique_ptr<llvm::Module>
-parseArtifactModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) {
-    llvm::SMDiagnostic error;
-    auto module = llvm::parseAssemblyString(artifact.llvmIR(), error, context);
+parseArtifactBitcodeModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) {
+    llvm::StringRef bytes(
+        reinterpret_cast<const char *>(artifact.bitcode().data()),
+        artifact.bitcode().size());
+    auto buffer = llvm::MemoryBuffer::getMemBufferCopy(bytes, artifact.path() + ".bc");
+    auto module = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
     if (module) {
-        return module;
+        return std::move(*module);
     }
 
-    std::string render;
-    llvm::raw_string_ostream renderOut(render);
-    error.print(artifact.path().c_str(), renderOut);
-    renderOut.flush();
     throw DiagnosticError(DiagnosticError::Category::Internal,
-                          "failed to parse cached LLVM IR for module `" +
+                          "failed to parse cached LLVM bitcode for module `" +
                               artifact.path() + "`",
-                          render);
+                          llvm::toString(module.takeError()));
 }
 
 llvm::StringRef
@@ -124,6 +129,20 @@ bool
 isLanguageEntryType(llvm::FunctionType *funcType) {
     return funcType && funcType->getNumParams() == 0 &&
         funcType->getReturnType()->isIntegerTy(32);
+}
+
+void
+linkSyntheticModule(llvm::Linker &linker, std::unique_ptr<llvm::Module> module,
+                    const std::string &context) {
+    if (!module) {
+        return;
+    }
+    if (linker.linkInModule(std::move(module))) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "failed to link synthetic " + context + " module",
+            "Check for duplicate entry symbols or incompatible LLVM module state.");
+    }
 }
 
 bool
@@ -174,13 +193,9 @@ ensureNativeAbiVersionField(llvm::Module &module, llvm::StringRef targetTriple) 
     llvm::appendToCompilerUsed(module, {field});
 }
 
-llvm::Function *
-ensureLanguageEntryWrapper(llvm::Module &module) {
-    auto *entry = module.getFunction(languageEntryName());
-    if (entry && isLanguageEntryType(entry->getFunctionType())) {
-        return entry;
-    }
-    return nullptr;
+bool
+moduleHasFunctionSymbol(const llvm::Module &module, llvm::StringRef name) {
+    return module.getFunction(name) != nullptr;
 }
 
 llvm::GlobalVariable *
@@ -210,36 +225,38 @@ getOrCreateHostedArgvGlobal(llvm::Module &module) {
                                     hostedArgvName());
 }
 
-llvm::Function *
-ensureHostedMainWrapper(llvm::Module &module) {
-    auto *entryFunc = module.getFunction(languageEntryName());
-    if (entryFunc == nullptr) {
-        return nullptr;
-    }
+std::unique_ptr<llvm::Module>
+createHostedMainShimModule(llvm::LLVMContext &context,
+                           llvm::StringRef targetTriple) {
+    auto module = std::make_unique<llvm::Module>("lona.hosted_entry_shim", context);
+    configureModuleTargetLayout(*module, targetTriple);
 
-    auto *mainFunc = module.getFunction("main");
-    if (mainFunc != nullptr) {
-        return nullptr;
-    }
+    auto *entryType =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {}, false);
+    auto *entryDecl = llvm::Function::Create(
+        entryType, llvm::Function::ExternalLinkage, languageEntryName(), *module);
+    annotateFunctionAbi(*entryDecl, AbiKind::Native);
 
-    auto &context = module.getContext();
+    auto *argcGlobal = getOrCreateHostedArgcGlobal(*module);
+    auto *argvGlobal = getOrCreateHostedArgvGlobal(*module);
+
     auto *mainType = llvm::FunctionType::get(
         llvm::Type::getInt32Ty(context),
         {llvm::Type::getInt32Ty(context), llvm::PointerType::getUnqual(context)},
         false);
     auto *wrapper = llvm::Function::Create(
-        mainType, llvm::Function::ExternalLinkage, "main", module);
-    auto *entry = llvm::BasicBlock::Create(context, "entry", wrapper);
-    llvm::IRBuilder<> builder(entry);
-    auto *argcGlobal = getOrCreateHostedArgcGlobal(module);
-    auto *argvGlobal = getOrCreateHostedArgvGlobal(module);
+        mainType, llvm::Function::ExternalLinkage, "main", *module);
+    annotateFunctionAbi(*wrapper, AbiKind::C);
+
+    auto *block = llvm::BasicBlock::Create(context, "entry", wrapper);
+    llvm::IRBuilder<> builder(block);
     auto argIt = wrapper->arg_begin();
     llvm::Value *argcValue = &*argIt++;
     llvm::Value *argvValue = &*argIt;
     builder.CreateStore(argcValue, argcGlobal);
     builder.CreateStore(argvValue, argvGlobal);
-    builder.CreateRet(builder.CreateCall(entryFunc));
-    return wrapper;
+    builder.CreateRet(builder.CreateCall(entryDecl));
+    return module;
 }
 
 void
@@ -263,6 +280,50 @@ emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
         throw DiagnosticError(DiagnosticError::Category::Driver,
                               "I couldn't write the emitted object file.",
                               "Check that the destination stream or file is writable.");
+    }
+}
+
+ModuleArtifact::ByteBuffer
+emitObjectData(llvm::Module &module, llvm::StringRef targetTriple) {
+    llvm::SmallString<0> objectData;
+    llvm::raw_svector_ostream objectOut(objectData);
+    llvm::legacy::PassManager passManager;
+    auto &targetMachine = targetMachineFor(targetTriple);
+
+    if (targetMachine.addPassesToEmitFile(passManager, objectOut, nullptr,
+                                          llvm::CodeGenFileType::ObjectFile)) {
+        throw DiagnosticError(DiagnosticError::Category::Internal,
+                              "LLVM target machine cannot emit object files for the active target",
+                              "Check native target initialization and object emission setup.");
+    }
+
+    passManager.run(module);
+    return ModuleArtifact::ByteBuffer(objectData.begin(), objectData.end());
+}
+
+ModuleArtifact::ByteBuffer
+emitBitcodeData(llvm::Module &module) {
+    llvm::SmallVector<char, 0> bitcodeData;
+    llvm::raw_svector_ostream bitcodeOut(bitcodeData);
+    llvm::WriteBitcodeToFile(module, bitcodeOut);
+    return ModuleArtifact::ByteBuffer(bitcodeData.begin(), bitcodeData.end());
+}
+
+void
+writeBinaryFile(const std::filesystem::path &path,
+                const ModuleArtifact::ByteBuffer &bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::out);
+    if (!out) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't open output file `" + path.string() + "`.",
+                              "Check that the path is writable and that parent directories exist.");
+    }
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't write output file `" + path.string() + "`.",
+                              "Check that the path is writable and that the filesystem has enough space.");
     }
 }
 
@@ -339,6 +400,9 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
     });
 
     pipeline_.addStage("print-llvm", [](IRPipelineContext &context) {
+        if (!context.captureIRText) {
+            return 0;
+        }
         std::string ir;
         llvm::raw_string_ostream irOut(ir);
         context.build.module.print(irOut, nullptr);
@@ -363,6 +427,22 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) 
     return hashes;
 }
 
+std::string
+WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
+    std::string stem = artifact.moduleName().empty() ? "module" : artifact.moduleName();
+    for (char &ch : stem) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (!(std::isalnum(byte) || ch == '_' || ch == '-')) {
+            ch = '_';
+        }
+    }
+    std::ostringstream suffix;
+    suffix << std::hex << std::setw(16) << std::setfill('0')
+           << static_cast<unsigned long long>(
+                  std::hash<std::string>{}(artifact.moduleKey()));
+    return stem + "-" + suffix.str() + ".o";
+}
+
 bool
 WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
                                   const ModuleArtifact &artifact,
@@ -381,7 +461,7 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
         collectDependencyInterfaceHashes(unit);
 }
 
-const ModuleArtifact *
+ModuleArtifact *
 WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
                                       const CompileOptions &options) const {
     auto *artifact = workspace_.findArtifact(unit.path());
@@ -404,9 +484,45 @@ WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
 }
 
 int
+WorkspaceBuilder::ensureArtifactOutputs(ModuleArtifact &artifact,
+                                        const CompileOptions &options,
+                                        bool requireObjects, bool requireBitcode,
+                                        SessionStats &stats) const {
+    if (requireObjects && artifact.hasObjectCode()) {
+        ++stats.reusedModuleObjects;
+        requireObjects = false;
+    }
+    if (requireBitcode && artifact.hasBitcode()) {
+        ++stats.reusedModuleBitcode;
+        requireBitcode = false;
+    }
+    if (!requireObjects && !requireBitcode) {
+        return 0;
+    }
+
+    auto start = Clock::now();
+    auto context = std::make_unique<llvm::LLVMContext>();
+    auto module = parseArtifactBitcodeModule(artifact, *context);
+    artifact.setContainsNativeAbi(moduleUsesNativeAbi(*module));
+    if (requireBitcode) {
+        artifact.setBitcode(emitBitcodeData(*module));
+        ++stats.emittedModuleBitcode;
+    }
+    if (requireObjects) {
+        ensureNativeAbiVersionField(*module, options.targetTriple);
+        artifact.setObjectCode(emitObjectData(*module, options.targetTriple));
+        ++stats.emittedModuleObjects;
+    }
+    stats.codegenMs += elapsedMillis(start, Clock::now());
+    return 0;
+}
+
+int
 WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  const CompileOptions &options,
-                                 SessionStats &stats, std::ostream &out) const {
+                                 bool requireObjects, bool requireBitcode,
+                                 SessionStats &stats,
+                                 std::ostream &out) const {
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
     return executor_->execute(workspace_.buildQueue(), [&](const std::string &path) -> int {
         auto *queuedUnit = workspace_.moduleGraph().find(path);
@@ -416,15 +532,29 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                   "This looks like a compiler module queue bug.");
         }
 
-        if (reusableArtifactFor(*queuedUnit, options) != nullptr) {
+        auto *cachedArtifact = reusableArtifactFor(*queuedUnit, options);
+        if (cachedArtifact != nullptr && requireBitcode && !cachedArtifact->hasBitcode()) {
+            cachedArtifact = nullptr;
+        }
+        if (cachedArtifact != nullptr && requireObjects && !cachedArtifact->hasObjectCode() &&
+            !cachedArtifact->hasBitcode()) {
+            cachedArtifact = nullptr;
+        }
+        if (cachedArtifact != nullptr) {
             queuedUnit->markCompiled();
             ++stats.reusedModules;
+            int artifactExitCode = ensureArtifactOutputs(
+                *cachedArtifact, options, requireObjects, requireBitcode, stats);
+            if (artifactExitCode != 0) {
+                return artifactExitCode;
+            }
             return 0;
         }
 
         ModuleArtifact artifact = createArtifact(*queuedUnit, options);
         int moduleExitCode =
-            compileModule(*queuedUnit, options, artifact, stats, out);
+            compileModule(*queuedUnit, options, artifact, requireObjects,
+                          requireBitcode, stats, out);
         if (moduleExitCode != 0) {
             return moduleExitCode;
         }
@@ -435,16 +565,28 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
 
 int
 WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &options,
-                                ModuleArtifact &artifact, SessionStats &stats,
-                                std::ostream &out) const {
+                                ModuleArtifact &artifact, bool emitObject,
+                                bool emitBitcode,
+                                SessionStats &stats, std::ostream &out) const {
     unit.clearResolvedTypes();
     std::ostringstream ir;
     IRPipelineContext context(unit, workspace_.moduleGraph(), options, ir, stats);
     context.rootUnit = workspace_.moduleGraph().root();
+    context.captureIRText = false;
     int exitCode = pipeline_.run(context);
     if (exitCode == 0) {
         unit.markCompiled();
-        artifact.setLLVMIR(ir.str());
+        artifact.setContainsNativeAbi(moduleUsesNativeAbi(context.build.module));
+        if (emitBitcode) {
+            artifact.setBitcode(emitBitcodeData(context.build.module));
+            ++stats.emittedModuleBitcode;
+        }
+        if (emitObject) {
+            ensureNativeAbiVersionField(context.build.module, options.targetTriple);
+            artifact.setObjectCode(
+                emitObjectData(context.build.module, options.targetTriple));
+            ++stats.emittedModuleObjects;
+        }
         ++stats.compiledModules;
     } else {
         out << ir.str();
@@ -453,7 +595,8 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
 }
 
 WorkspaceBuilder::LinkedModule
-WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntry,
+WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
+                                bool hostedEntry,
                                 bool verifyIR, std::ostream &out,
                                 double *linkMs, double *verifyMs) const {
     auto *rootArtifact = workspace_.findArtifact(rootUnit.path());
@@ -465,7 +608,7 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntr
 
     auto start = Clock::now();
     auto context = std::make_unique<llvm::LLVMContext>();
-    auto linkedModule = parseArtifactModule(*rootArtifact, *context);
+    auto linkedModule = parseArtifactBitcodeModule(*rootArtifact, *context);
     llvm::Linker linker(*linkedModule);
     for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         if (path == rootUnit.path()) {
@@ -478,7 +621,7 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntr
                                       path + "`",
                                   "This looks like a compiler module scheduling bug.");
         }
-        auto dependencyModule = parseArtifactModule(*artifact, *context);
+        auto dependencyModule = parseArtifactBitcodeModule(*artifact, *context);
         if (linker.linkInModule(std::move(dependencyModule))) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
@@ -488,9 +631,12 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit, bool hostedEntr
         }
     }
 
-    ensureLanguageEntryWrapper(*linkedModule);
-    if (hostedEntry) {
-        ensureHostedMainWrapper(*linkedModule);
+    const bool hasLanguageEntry = moduleHasFunctionSymbol(*linkedModule, languageEntryName());
+    if (hasLanguageEntry && hostedEntry && !moduleHasFunctionSymbol(*linkedModule, "main")) {
+        linkSyntheticModule(
+            linker,
+            createHostedMainShimModule(*context, linkedModule->getTargetTriple()),
+            "hosted entry shim");
     }
 
     if (verifyIR) {
@@ -516,18 +662,54 @@ WorkspaceBuilder::loadedUnitCount() const {
 }
 
 int
+WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
+                                        std::ostream &out) const {
+    if (!targetUsesHostedEntry(options.targetTriple)) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "`--emit entry` is only supported for hosted targets",
+            "Use a hosted target triple such as `x86_64-unknown-linux-gnu`.");
+    }
+
+    auto context = std::make_unique<llvm::LLVMContext>();
+    auto hostedShim =
+        createHostedMainShimModule(*context, normalizeTargetTriple(options.targetTriple));
+    if (options.verifyIR && !verifyCompiledModule(*hostedShim, out)) {
+        return 1;
+    }
+    ensureNativeAbiVersionField(*hostedShim, options.targetTriple);
+    emitObjectFile(*hostedShim, options.targetTriple, out);
+    return 0;
+}
+
+int
 WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                          SessionStats &stats, std::ostream &out) const {
-    int exitCode = buildArtifacts(rootUnit, options, stats, out);
+    const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
+    int exitCode = buildArtifacts(rootUnit, options, false, true, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+    auto linked = linkArtifacts(rootUnit,
+                                targetUsesHostedEntry(options.targetTriple),
                                 options.verifyIR, out,
                                 &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
+    }
+    if (useLTO) {
+        auto optimizeStart = Clock::now();
+        optimizeModule(*linked.module, options.optLevel);
+        stats.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
+        if (options.verifyIR) {
+            auto verifyStart = Clock::now();
+            const bool ok = verifyCompiledModule(*linked.module, out);
+            stats.verifyMs += elapsedMillis(verifyStart, Clock::now());
+            if (!ok) {
+                return 1;
+            }
+        }
     }
 
     std::string linkedIR;
@@ -542,20 +724,93 @@ int
 WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
                              const CompileOptions &options,
                              SessionStats &stats, std::ostream &out) const {
-    int exitCode = buildArtifacts(rootUnit, options, stats, out);
+    const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
+    int exitCode = buildArtifacts(rootUnit, options, false, true, stats, out);
     if (exitCode != 0) {
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+    auto linked = linkArtifacts(rootUnit,
+                                targetUsesHostedEntry(options.targetTriple),
                                 options.verifyIR, out,
                                 &stats.linkMs, &stats.verifyMs);
     if (!linked.module) {
         return 1;
     }
+    if (useLTO) {
+        auto optimizeStart = Clock::now();
+        optimizeModule(*linked.module, options.optLevel);
+        stats.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
+        if (options.verifyIR) {
+            auto verifyStart = Clock::now();
+            const bool ok = verifyCompiledModule(*linked.module, out);
+            stats.verifyMs += elapsedMillis(verifyStart, Clock::now());
+            if (!ok) {
+                return 1;
+            }
+        }
+    }
 
     ensureNativeAbiVersionField(*linked.module, options.targetTriple);
     emitObjectFile(*linked.module, options.targetTriple, out);
+    return 0;
+}
+
+int
+WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
+                                   const CompileOptions &options,
+                                   const std::string &outputPath,
+                                   const std::string &cacheOutputPath,
+                                   SessionStats &stats,
+                                   std::ostream &out) const {
+    if (options.ltoMode != CompileOptions::LTOMode::Off) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "`--emit objects` does not support link-time optimization",
+            "Use `--emit obj --lto full` for the explicit slow LTO path.");
+    }
+    if (outputPath.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "multi-object emission requires an explicit manifest output path",
+            "Pass an output file when using `--emit objects`.");
+    }
+
+    int exitCode = buildArtifacts(rootUnit, options, true, false,
+                                  stats, out);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    namespace fs = std::filesystem;
+    fs::path manifestPath = fs::path(outputPath);
+    fs::path bundleDir =
+        cacheOutputPath.empty() ? fs::path(outputPath + ".d") : fs::path(cacheOutputPath);
+    fs::create_directories(bundleDir);
+
+    out << "format\tlona-object-bundle-v0\n";
+    out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
+
+    for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
+        auto *artifact = workspace_.findArtifact(path);
+        if (artifact == nullptr) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "bundle emission is missing module artifact `" +
+                                      path + "`",
+                                  "This looks like a compiler module scheduling bug.");
+        }
+        if (!artifact->hasObjectCode()) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "bundle emission is missing module object code for `" +
+                                      artifact->path() + "`",
+                                  "This looks like a compiler object emission bug.");
+        }
+
+        fs::path objectPath = bundleDir / bundleObjectFileName(*artifact);
+        writeBinaryFile(objectPath, artifact->objectCode());
+        out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
+    }
+
     return 0;
 }
 

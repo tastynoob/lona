@@ -38,13 +38,20 @@ class SessionRunner:
         reply = self._send({"command": "reset_session"})
         expect(reply.get("ok") is True, "reset_session failed")
 
-    def compile(self, input_path: Path, verify_ir: bool = True) -> dict:
+    def compile(
+        self,
+        input_path: Path,
+        verify_ir: bool = True,
+        output_mode: str = "llvm_ir",
+        lto: str = "off",
+    ) -> dict:
         return self._send(
             {
                 "command": "compile",
                 "input": str(input_path),
-                "output_mode": "llvm_ir",
+                "output_mode": output_mode,
                 "verify_ir": verify_ir,
+                "lto": lto,
             }
         )
 
@@ -70,6 +77,58 @@ def expect_compile_ok(result: dict, compiled: int, reused: int) -> None:
     stats = result["stats"]
     expect_equal(stats["compiled_modules"], compiled, "compiled module count")
     expect_equal(stats["reused_modules"], reused, "reused module count")
+
+
+def expect_object_compile_ok(
+    result: dict,
+    compiled: int,
+    reused: int,
+    emitted_bitcode: int,
+    reused_bitcode: int,
+    emitted_objects: int,
+    reused_objects: int,
+) -> None:
+    expect_equal(result["exit_code"], 0, "compile exit code")
+    expect_equal(result["stderr"], "", "diagnostics")
+    expect(result["stdout_size"] > 0, "expected non-empty object output")
+    stats = result["stats"]
+    expect_equal(stats["compiled_modules"], compiled, "compiled module count")
+    expect_equal(stats["reused_modules"], reused, "reused module count")
+    expect_equal(
+        stats["emitted_module_bitcode"], emitted_bitcode, "emitted module bitcode count"
+    )
+    expect_equal(
+        stats["reused_module_bitcode"], reused_bitcode, "reused module bitcode count"
+    )
+    expect_equal(
+        stats["emitted_module_objects"], emitted_objects, "emitted module object count"
+    )
+    expect_equal(
+        stats["reused_module_objects"], reused_objects, "reused module object count"
+    )
+
+
+def expect_bundle_compile_ok(
+    result: dict,
+    compiled: int,
+    reused: int,
+    emitted_objects: int,
+    reused_objects: int,
+) -> None:
+    expect_equal(result["exit_code"], 0, "compile exit code")
+    expect_equal(result["stderr"], "", "diagnostics")
+    expect("format\tlona-object-bundle-v0" in result["stdout"], "expected bundle manifest output")
+    stats = result["stats"]
+    expect_equal(stats["compiled_modules"], compiled, "compiled module count")
+    expect_equal(stats["reused_modules"], reused, "reused module count")
+    expect_equal(stats["emitted_module_bitcode"], 0, "emitted module bitcode count")
+    expect_equal(stats["reused_module_bitcode"], 0, "reused module bitcode count")
+    expect_equal(
+        stats["emitted_module_objects"], emitted_objects, "emitted module object count"
+    )
+    expect_equal(
+        stats["reused_module_objects"], reused_objects, "reused module object count"
+    )
 
 
 def expect_compile_failure(result: dict, compiled: int, reused: int, needle: str) -> None:
@@ -365,6 +424,82 @@ def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) 
         run_body_vs_interface_case(rng, runner, case_root)
 
 
+def run_module_object_reuse_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    first_delta = rng.randint(2, 8)
+    second_delta = first_delta + rng.randint(3, 9)
+    argument = rng.randint(1, 10)
+
+    write_file(dep_path, dependency_text(first_delta))
+    write_file(app_path, program_text("dep", argument))
+    expect_bundle_compile_ok(
+        runner.compile(app_path, output_mode="object_bundle"),
+        compiled=2,
+        reused=0,
+        emitted_objects=2,
+        reused_objects=0,
+    )
+
+    expect_bundle_compile_ok(
+        runner.compile(app_path, output_mode="object_bundle"),
+        compiled=0,
+        reused=2,
+        emitted_objects=0,
+        reused_objects=2,
+    )
+
+    write_file(dep_path, dependency_text(second_delta))
+    expect_bundle_compile_ok(
+        runner.compile(app_path, output_mode="object_bundle"),
+        compiled=1,
+        reused=1,
+        emitted_objects=1,
+        reused_objects=1,
+    )
+
+
+def run_module_bitcode_reuse_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    first_delta = rng.randint(2, 8)
+    second_delta = first_delta + rng.randint(3, 9)
+    argument = rng.randint(1, 10)
+
+    write_file(dep_path, dependency_text(first_delta))
+    write_file(app_path, program_text("dep", argument))
+    expect_object_compile_ok(
+        runner.compile(app_path, output_mode="object_file", lto="full"),
+        compiled=2,
+        reused=0,
+        emitted_bitcode=2,
+        reused_bitcode=0,
+        emitted_objects=0,
+        reused_objects=0,
+    )
+
+    expect_object_compile_ok(
+        runner.compile(app_path, output_mode="object_file", lto="full"),
+        compiled=0,
+        reused=2,
+        emitted_bitcode=0,
+        reused_bitcode=2,
+        emitted_objects=0,
+        reused_objects=0,
+    )
+
+    write_file(dep_path, dependency_text(second_delta))
+    expect_object_compile_ok(
+        runner.compile(app_path, output_mode="object_file", lto="full"),
+        compiled=1,
+        reused=1,
+        emitted_bitcode=1,
+        reused_bitcode=1,
+        emitted_objects=0,
+        reused_objects=0,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runner", required=True, type=Path)
@@ -418,6 +553,18 @@ def main() -> int:
             suite.add(
                 "randomized-template-cases",
                 lambda: run_randomized_cases(rng, runner, root / "randomized"),
+            )
+            suite.add(
+                "module-object-reuse",
+                lambda: run_module_object_reuse_case(
+                    rng, runner, root / "module_object_reuse"
+                ),
+            )
+            suite.add(
+                "module-bitcode-reuse",
+                lambda: run_module_bitcode_reuse_case(
+                    rng, runner, root / "module_bitcode_reuse"
+                ),
             )
             exit_code = suite.execute()
         finally:

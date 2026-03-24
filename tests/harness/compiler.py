@@ -124,6 +124,7 @@ class CompilerHarness:
         verify_ir: bool = True,
         target: str | None = None,
         optimize: str | None = None,
+        lto: str | None = None,
         debug: bool = False,
         stats: bool = False,
     ) -> CommandResult:
@@ -132,6 +133,8 @@ class CompilerHarness:
             args.append("--verify-ir")
         if target is not None:
             args.extend(["--target", target])
+        if lto is not None:
+            args.extend(["--lto", lto])
         if optimize is not None:
             args.append(optimize)
         if debug:
@@ -148,6 +151,7 @@ class CompilerHarness:
         output_name: str,
         verify_ir: bool = True,
         target: str | None = None,
+        lto: str | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         args = ["--emit", "obj"]
@@ -155,26 +159,84 @@ class CompilerHarness:
             args.append("--verify-ir")
         if target is not None:
             args.extend(["--target", target])
+        if lto is not None:
+            args.extend(["--lto", lto])
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
-    def build_system_executable(self, input_path: Path, *, output_name: str) -> tuple[CommandResult, Path]:
+    def emit_objects(
+        self,
+        input_path: Path,
+        *,
+        output_name: str,
+        cache_out: Path | None = None,
+        verify_ir: bool = True,
+        target: str | None = None,
+        lto: str | None = None,
+    ) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        args = ["--emit", "objects"]
+        if verify_ir:
+            args.append("--verify-ir")
+        if cache_out is not None:
+            args.extend(["--cache-out", str(cache_out)])
+        if target is not None:
+            args.extend(["--target", target])
+        if lto is not None:
+            args.extend(["--lto", lto])
+        args.extend([str(input_path), str(output_path)])
+        return self._run(args), output_path
+
+    def emit_entry(
+        self,
+        *,
+        output_name: str,
+        target: str | None = None,
+    ) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        args = ["--emit", "entry"]
+        if target is not None:
+            args.extend(["--target", target])
+        args.append(str(output_path))
+        return self._run(args), output_path
+
+    def build_system_executable(
+        self,
+        input_path: Path,
+        *,
+        output_name: str,
+        lto: str | None = None,
+    ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         env = os.environ.copy()
         env["LC_ALL"] = "C"
+        cmd = [str(self.system_driver)]
+        if lto is not None:
+            cmd.extend(["--lto", lto])
+        cmd.extend([str(input_path), str(output_path)])
         result = run_command(
-            [str(self.system_driver), str(input_path), str(output_path)],
+            cmd,
             cwd=self.repo_root,
             env=env,
         )
         return result, output_path
 
-    def build_native_executable(self, input_path: Path, *, output_name: str) -> tuple[CommandResult, Path]:
+    def build_native_executable(
+        self,
+        input_path: Path,
+        *,
+        output_name: str,
+        lto: str | None = None,
+    ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         env = os.environ.copy()
         env["LC_ALL"] = "C"
+        cmd = [str(self.native_driver)]
+        if lto is not None:
+            cmd.extend(["--lto", lto])
+        cmd.extend([str(input_path), str(output_path)])
         result = run_command(
-            [str(self.native_driver), str(input_path), str(output_path)],
+            cmd,
             cwd=self.repo_root,
             env=env,
         )

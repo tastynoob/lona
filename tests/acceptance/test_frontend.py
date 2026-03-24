@@ -10,6 +10,7 @@ from tests.harness import (
     nm_contains_symbol,
 )
 from tests.harness.compiler import CompilerHarness
+from tests.harness.compiler import run_command
 
 
 def test_acceptance_fixture_json(compiler: CompilerHarness, fixtures_dir: Path) -> None:
@@ -97,6 +98,7 @@ def test_hosted_target_emits_main_wrapper_and_arg_globals(compiler: CompilerHarn
     assert_contains(ir, "define i32 @__lona_main__()", label="hosted ir")
     assert_contains(ir, "define i32 @run()", label="hosted ir")
     assert_contains(ir, "define i32 @main(i32", label="hosted ir")
+    assert_contains(ir, "call i32 @__lona_main__()", label="hosted ir")
     assert_contains(ir, "@__lona_argc =", label="hosted ir")
     assert_contains(ir, "@__lona_argv =", label="hosted ir")
 
@@ -118,6 +120,145 @@ def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) ->
     result.expect_ok()
     assert not nm_contains_symbol(obj_path, "__lona_native_abi_", cwd=compiler.repo_root)
     assert_not_contains(obj_path.read_bytes().decode("latin-1"), "lona.native_abi=", label="c abi object payload")
+
+
+def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "bundle_entry.lo",
+        """
+        def run() i32 {
+            ret 7
+        }
+
+        ret run()
+        """,
+    )
+
+    result, manifest_path = compiler.emit_objects(
+        input_path,
+        output_name="bundle.manifest",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_ok()
+    manifest = manifest_path.read_text(encoding="utf-8")
+    assert_contains(manifest, "format\tlona-object-bundle-v0", label="object bundle manifest")
+    assert_contains(
+        manifest,
+        "target\tx86_64-unknown-linux-gnu",
+        label="object bundle manifest",
+    )
+    assert_contains(
+        manifest,
+        "object\tmodule\t",
+        label="object bundle manifest",
+    )
+    assert_not_contains(manifest, "object\thosted-entry\t", label="object bundle manifest")
+
+    object_paths = []
+    for line in manifest.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0] == "object":
+            object_paths.append(Path(parts[2]))
+
+    assert object_paths, "expected object bundle to list at least one object"
+    for object_path in object_paths:
+        assert object_path.is_file(), f"expected emitted bundle object: {object_path}"
+        assert object_path.stat().st_size > 0, f"expected non-empty bundle object: {object_path}"
+
+
+def test_entry_emission_produces_hosted_wrapper_object(compiler: CompilerHarness, repo_root: Path) -> None:
+    result, obj_path = compiler.emit_entry(
+        output_name="hosted-entry.o",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_ok()
+    assert obj_path.stat().st_size > 0, f"expected non-empty entry object: {obj_path}"
+    symbols = run_command(["nm", "-g", str(obj_path)], cwd=repo_root).stdout
+    assert_regex(symbols, r" [TW] main$", label="entry object symbols")
+    assert_regex(symbols, r" U __lona_main__$", label="entry object symbols")
+
+
+def test_object_bundle_respects_cache_out_directory(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "bundle_cache.lo",
+        """
+        ret 0
+        """,
+    )
+    cache_dir = compiler.output_path("bundle-cache")
+    result, manifest_path = compiler.emit_objects(
+        input_path,
+        output_name="bundle-cache.manifest",
+        cache_out=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_ok()
+    manifest = manifest_path.read_text(encoding="utf-8")
+    object_paths = []
+    for line in manifest.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0] == "object":
+            object_paths.append(Path(parts[2]))
+
+    assert object_paths, "expected emitted cache bundle objects"
+    for object_path in object_paths:
+        assert object_path.parent == cache_dir
+
+
+def test_object_bundle_rejects_lto_mode(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "bundle_lto_entry.lo",
+        """
+        ret 0
+        """,
+    )
+    rejected, _ = compiler.emit_objects(
+        input_path,
+        output_name="bundle-lto-rejected.manifest",
+        target="x86_64-unknown-linux-gnu",
+        lto="full",
+    )
+    rejected.expect_failed()
+    assert_contains(rejected.stderr, "does not support `--lto full`", label="object bundle lto")
+
+
+def test_full_lto_optimizes_linked_modules(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "dep.lo",
+        """
+        def add1(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    app_path = compiler.write_source(
+        "app.lo",
+        """
+        import dep
+
+        def run() i32 {
+            ret dep.add1(41)
+        }
+
+        ret run()
+        """,
+    )
+
+    base_ir = compiler.emit_ir(
+        app_path,
+        optimize="-O3",
+        target="x86_64-unknown-linux-gnu",
+    ).expect_ok().stdout
+    lto_ir = compiler.emit_ir(
+        app_path,
+        optimize="-O3",
+        lto="full",
+        target="x86_64-unknown-linux-gnu",
+    ).expect_ok().stdout
+
+    assert_regex(base_ir, r"call i32 @.*add1", label="non-lto linked ir")
+    assert_contains(lto_ir, "ret i32 42", label="full lto linked ir")
+    assert_not_contains(lto_ir, "call i32 @add1", label="full lto linked ir")
 
 
 def test_missing_return_is_rejected_when_emitting_ir(compiler: CompilerHarness) -> None:
@@ -252,4 +393,3 @@ def test_pointer_roundtrip_lowering_uses_pointer_alloca(compiler: CompilerHarnes
     assert_contains(ir, "store ptr ", label="pointer ir")
     assert_contains(ir, "load ptr, ptr ", label="pointer ir")
     assert_contains(ir, "store i32 %", label="pointer ir")
-

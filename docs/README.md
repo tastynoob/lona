@@ -46,6 +46,7 @@
 ## 计划与草案
 
 - [plans/indexable_pointer_plan.tmp.md](plans/indexable_pointer_plan.tmp.md): indexable pointer 语法与 lowering 的早期计划草案。
+- [plans/module_object_build_v0.md](plans/module_object_build_v0.md): 模块级 `.o` 增量构建、root shim object 和链接后优化的实施计划。
 
 ## 建议查阅顺序
 

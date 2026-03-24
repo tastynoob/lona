@@ -29,8 +29,18 @@ ModuleArtifact::setCompileProfile(std::string targetTriple, int optLevel,
 }
 
 void
-ModuleArtifact::setLLVMIR(std::string llvmIR) {
-    llvmIR_ = std::move(llvmIR);
+ModuleArtifact::setBitcode(ByteBuffer bitcode) {
+    bitcode_ = std::move(bitcode);
+}
+
+void
+ModuleArtifact::setObjectCode(ByteBuffer objectCode) {
+    objectCode_ = std::move(objectCode);
+}
+
+void
+ModuleArtifact::setContainsNativeAbi(bool containsNativeAbi) {
+    containsNativeAbi_ = containsNativeAbi;
 }
 
 }  // namespace lona

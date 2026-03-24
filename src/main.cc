@@ -42,12 +42,22 @@ normalizeCliArgs(int argc, char *argv[]) {
 int
 main(int argc, char *argv[]) {
     cmdline::parser cli;
-    cli.add<std::string>("emit", 0, "select output artifact: ir or obj", false, "",
-                         cmdline::oneof<std::string>("ir", "obj"));
+    cli.add<std::string>(
+        "emit", 0,
+        "select output artifact: ir, entry (hosted entry object), obj (single final object), or objects (module object bundle)",
+        false, "",
+        cmdline::oneof<std::string>("ir", "entry", "obj", "objects"));
     cli.add<std::string>(
         "target", 0,
         "LLVM target triple, for example x86_64-none-elf or x86_64-unknown-linux-gnu",
         false, "");
+    cli.add<std::string>(
+        "cache-out", 0,
+        "output directory for `--emit objects` bundle members",
+        false, "./lona_cache");
+    cli.add<std::string>(
+        "lto", 0, "link-time optimization mode: off or full", false, "off",
+        cmdline::oneof<std::string>("off", "full"));
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
@@ -57,31 +67,70 @@ main(int argc, char *argv[]) {
     cli.parse_check(normalizedArgs);
 
     const auto &args = cli.rest();
-    if (args.empty() || args.size() > 2) {
+    if (args.size() > 2) {
         std::cerr << cli.usage();
         return 1;
     }
 
-    const std::string &inputPath = args[0];
     lona::CompilerSession session;
     const std::string emitTarget =
         cli.exist("emit") ? cli.get<std::string>("emit") : std::string();
     const bool emitIR = emitTarget == "ir";
+    const bool emitEntry = emitTarget == "entry";
     const bool emitObject = emitTarget == "obj";
+    const bool emitObjects = emitTarget == "objects";
+    const std::string ltoMode = cli.get<std::string>("lto");
+
+    if (emitEntry) {
+        if (args.size() != 1) {
+            std::cerr << "`--emit entry` requires an explicit output object path\n";
+            std::cerr << cli.usage();
+            return 1;
+        }
+    } else if (args.empty() || args.size() > 2) {
+        std::cerr << cli.usage();
+        return 1;
+    }
+
+    if (emitObjects && args.size() != 2) {
+        std::cerr << "`--emit objects` requires an explicit manifest output path\n";
+        std::cerr << cli.usage();
+        return 1;
+    }
+    if (emitObjects && ltoMode != "off") {
+        std::cerr << "`--emit objects` does not support `--lto " << ltoMode
+                  << "`\n";
+        std::cerr << cli.usage();
+        return 1;
+    }
+    if (!emitObjects && cli.exist("cache-out")) {
+        std::cerr << "`--cache-out` is only supported with `--emit objects`\n";
+        std::cerr << cli.usage();
+        return 1;
+    }
+    if (emitEntry && ltoMode != "off") {
+        std::cerr << "`--emit entry` does not support `--lto " << ltoMode << "`\n";
+        std::cerr << cli.usage();
+        return 1;
+    }
 
     std::ostream *out = &std::cout;
     std::ofstream output;
-    if (args.size() == 2) {
+    const std::string inputPath =
+        (!emitEntry && !args.empty()) ? args[0] : std::string();
+    const std::string outputPath =
+        emitEntry ? args[0] : (args.size() == 2 ? args[1] : std::string());
+    if (!outputPath.empty()) {
         std::ios::openmode fileMode = std::ios::out;
-        if (emitObject) {
+        if (emitEntry || emitObject) {
             fileMode |= std::ios::binary;
         }
-        output.open(args[1], fileMode);
+        output.open(outputPath, fileMode);
         if (!output) {
             session.diagnostics().emit(
                 lona::DiagnosticError(
                     lona::DiagnosticError::Category::Driver,
-                    "I couldn't open output file `" + args[1] + "`.",
+                    "I couldn't open output file `" + outputPath + "`.",
                     "Check that the path is writable and that parent directories exist."),
                 std::cerr);
             finishProcess(1);
@@ -90,20 +139,36 @@ main(int argc, char *argv[]) {
     }
 
     lona::SessionOptions options;
-    const bool compileMode = emitIR || emitObject || cli.exist("verify-ir") ||
+    const bool compileMode = emitIR || emitEntry || emitObject || emitObjects ||
+                             cli.exist("verify-ir") ||
                              cli.exist("debug") || cli.exist("opt") ||
-                             cli.exist("target");
-    options.outputMode =
-        emitObject ? lona::OutputMode::ObjectFile
-                   : compileMode ? lona::OutputMode::LLVMIR
-                                 : lona::OutputMode::AstJson;
+                             cli.exist("target") || ltoMode != "off";
+    if (emitObjects) {
+        options.outputMode = lona::OutputMode::ObjectBundle;
+    } else if (emitEntry) {
+        options.outputMode = lona::OutputMode::EntryObject;
+    } else if (emitObject) {
+        options.outputMode = lona::OutputMode::ObjectFile;
+    } else if (compileMode) {
+        options.outputMode = lona::OutputMode::LLVMIR;
+    } else {
+        options.outputMode = lona::OutputMode::AstJson;
+    }
+    options.outputPath = outputPath;
+    options.cacheOutputPath =
+        emitObjects ? cli.get<std::string>("cache-out") : std::string();
     options.compile.optLevel = cli.get<int>("opt");
     options.compile.verifyIR = cli.exist("verify-ir");
     options.compile.debugInfo = cli.exist("debug");
     options.compile.targetTriple =
         cli.exist("target") ? cli.get<std::string>("target") : std::string();
+    options.compile.ltoMode = ltoMode == "full"
+        ? lona::CompileOptions::LTOMode::Full
+        : lona::CompileOptions::LTOMode::Off;
 
-    int exitCode = session.runFile(inputPath, options, *out, std::cerr);
+    int exitCode = emitEntry
+        ? session.runEntry(options, *out, std::cerr)
+        : session.runFile(inputPath, options, *out, std::cerr);
     if (cli.exist("stats")) {
         session.printStats(std::cerr);
     }

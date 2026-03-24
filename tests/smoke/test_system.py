@@ -86,6 +86,14 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     build_result.expect_ok()
     compiler.run_executable(main_exe).expect_exit_code(9)
 
+    lto_build_result, lto_main_exe = compiler.build_system_executable(
+        main_program,
+        output_name="return_9_lto",
+        lto="full",
+    )
+    lto_build_result.expect_ok()
+    compiler.run_executable(lto_main_exe).expect_exit_code(9)
+
     build_result, top_level_exe = compiler.build_system_executable(top_level_program, output_name="top_level")
     build_result.expect_ok()
     compiler.run_executable(top_level_exe).expect_exit_code(0)
@@ -424,4 +432,3 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
     build_result, linked_list_exe = compiler.build_system_executable(linked_list_program, output_name="linked_list")
     build_result.expect_ok()
     compiler.run_executable(linked_list_exe).expect_exit_code(0)
-

@@ -89,4 +89,5 @@ answer = answer + 1
 - imported 模块仍然只能包含声明，不能包含顶层执行语句。
 - root 模块如果要构成可执行程序，必须直接提供顶层可执行语句。
 - `def main() i32` 现在只是普通函数名，不再自动提升成程序入口。
+- root 模块的顶层执行体会直接 lower 到 `__lona_main__`。
 - `__lona_main__` 是语言内部入口，不直接等同于宿主系统里的 `main(argc, argv)`。

@@ -1,6 +1,6 @@
 # 编译 Pipeline
 
-当前 LLVM IR 编译链路分成两层：
+当前 native codegen 链路分成两层：
 
 - 单模块 compile pipeline
 - 多模块调度与最终链接
@@ -25,7 +25,7 @@
 5. `verify-llvm`
 6. `print-llvm`
 
-这些 stage 只负责“单个模块”的 IR 产物生成。
+这些 stage 只负责“单个模块”的 lowering 和 codegen。
 
 ## 模块调度
 
@@ -34,12 +34,14 @@
 - 默认由 `SerialModuleExecutor` 逐个执行模块编译任务
 - 每个模块都会生成独立 `ModuleArtifact`
 - 若 artifact 与当前源摘要、接口摘要和直接依赖接口摘要一致，则当前轮会直接复用，不重新 lowering/codegen
+- 文本 LLVM IR 不会被缓存进 `ModuleArtifact`；默认缓存的是 bitcode 和可选 object bytes
 
 ## 链接阶段
 
 - 所有需要的模块 artifact 生成完后，`WorkspaceBuilder` 会显式进入链接阶段
-- 当前实现使用 LLVM linker 把 root 模块和其依赖模块的 IR artifact 拼装成最终 module
+- 当前实现使用 LLVM linker 把 root 模块和其依赖模块的 bitcode artifact 拼装成最终 module
 - `--emit ir` 输出的是最终链接后的 LLVM IR，而不是 root 模块的半成品 IR
+- `--emit objects` 默认走模块 object bundle 快路径，不会额外生成文本 IR
 
 ## 扩展约定
 

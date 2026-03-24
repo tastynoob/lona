@@ -214,3 +214,20 @@ def test_native_smoke_programs_run(compiler: CompilerHarness) -> None:
         build_result.expect_ok()
         compiler.run_executable(exe_path).expect_exit_code(expected_exit)
 
+    lto_input = compiler.write_source(
+        "native/return_13_lto.lo",
+        """
+        def run() i32 {
+            ret 13
+        }
+
+        ret run()
+        """,
+    )
+    lto_build_result, lto_exe_path = compiler.build_native_executable(
+        lto_input,
+        output_name="native-return_13_lto.bin",
+        lto="full",
+    )
+    lto_build_result.expect_ok()
+    compiler.run_executable(lto_exe_path).expect_exit_code(13)

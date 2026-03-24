@@ -3,10 +3,15 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace lona {
 
 class ModuleArtifact {
+public:
+    using ByteBuffer = std::vector<std::uint8_t>;
+
+private:
     std::string path_;
     std::string moduleKey_;
     std::string moduleName_;
@@ -17,7 +22,9 @@ class ModuleArtifact {
     std::string targetTriple_;
     int optLevel_ = 0;
     bool debugInfo_ = false;
-    std::string llvmIR_;
+    ByteBuffer bitcode_;
+    ByteBuffer objectCode_;
+    bool containsNativeAbi_ = false;
 
 public:
     ModuleArtifact() = default;
@@ -38,12 +45,18 @@ public:
     const std::string &targetTriple() const { return targetTriple_; }
     int optLevel() const { return optLevel_; }
     bool debugInfo() const { return debugInfo_; }
-    const std::string &llvmIR() const { return llvmIR_; }
+    const ByteBuffer &bitcode() const { return bitcode_; }
+    bool hasBitcode() const { return !bitcode_.empty(); }
+    const ByteBuffer &objectCode() const { return objectCode_; }
+    bool hasObjectCode() const { return !objectCode_.empty(); }
+    bool containsNativeAbi() const { return containsNativeAbi_; }
 
     void setDependencyInterfaceHashes(
         std::unordered_map<std::string, std::uint64_t> dependencyInterfaceHashes);
     void setCompileProfile(std::string targetTriple, int optLevel, bool debugInfo);
-    void setLLVMIR(std::string llvmIR);
+    void setBitcode(ByteBuffer bitcode);
+    void setObjectCode(ByteBuffer objectCode);
+    void setContainsNativeAbi(bool containsNativeAbi);
 };
 
 }  // namespace lona

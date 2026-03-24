@@ -34,6 +34,44 @@ CompilerSession::CompilerSession()
 
 CompilerSession::~CompilerSession() = default;
 
+int
+CompilerSession::runEntry(const SessionOptions &options, std::ostream &out,
+                          std::ostream &diag) {
+    lastStats_ = {};
+    auto totalStart = Clock::now();
+    auto finish = [&](int exitCode) {
+        lastStats_.loadedUnits = 0;
+        lastStats_.totalMs = elapsedMillis(totalStart, Clock::now());
+        return exitCode;
+    };
+
+    try {
+        if (options.outputMode != OutputMode::EntryObject) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "entry emission was invoked with the wrong output mode",
+                                  "This looks like a driver/session integration bug.");
+        }
+        return finish(builder_.emitHostedEntryObject(options.compile, out));
+    } catch (const DiagnosticError &error) {
+        diagnostics().emit(error, diag);
+        return finish(1);
+    } catch (const std::exception &ex) {
+        diagnostics().emit(
+            DiagnosticError(DiagnosticError::Category::Internal,
+                            ex.what(),
+                            "This looks like a compiler bug or infrastructure failure."),
+            diag);
+        return finish(1);
+    } catch (const char *ex) {
+        diagnostics().emit(
+            DiagnosticError(DiagnosticError::Category::Internal,
+                            ex,
+                            "This looks like a compiler bug or infrastructure failure."),
+            diag);
+        return finish(1);
+    }
+}
+
 void
 CompilerSession::printStats(std::ostream &out) const {
     auto oldFlags = out.flags();
@@ -50,6 +88,10 @@ CompilerSession::printStats(std::ostream &out) const {
     out << "  link-ms: " << lastStats_.linkMs << '\n';
     out << "  compiled-modules: " << lastStats_.compiledModules << '\n';
     out << "  reused-modules: " << lastStats_.reusedModules << '\n';
+    out << "  emitted-module-bitcode: " << lastStats_.emittedModuleBitcode << '\n';
+    out << "  reused-module-bitcode: " << lastStats_.reusedModuleBitcode << '\n';
+    out << "  emitted-module-objects: " << lastStats_.emittedModuleObjects << '\n';
+    out << "  reused-module-objects: " << lastStats_.reusedModuleObjects << '\n';
     out << "  total-ms: " << lastStats_.totalMs << '\n';
     out.flags(oldFlags);
     out.precision(oldPrecision);
@@ -81,8 +123,18 @@ CompilerSession::runFile(const std::string &inputPath,
         if (options.outputMode == OutputMode::LLVMIR) {
             return finish(builder_.emitIR(unit, options.compile, lastStats_, out));
         }
+        if (options.outputMode == OutputMode::EntryObject) {
+            throw DiagnosticError(DiagnosticError::Category::Internal,
+                                  "entry object emission should not load source files",
+                                  "Use CompilerSession::runEntry instead.");
+        }
         if (options.outputMode == OutputMode::ObjectFile) {
             return finish(builder_.emitObject(unit, options.compile, lastStats_, out));
+        }
+        if (options.outputMode == OutputMode::ObjectBundle) {
+            return finish(builder_.emitObjectBundle(
+                unit, options.compile, options.outputPath, options.cacheOutputPath,
+                lastStats_, out));
         }
         auto *jsonTree = requireSyntaxTree(unit);
         Json root = Json::object();

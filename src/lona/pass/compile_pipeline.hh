@@ -34,6 +34,7 @@ struct IRPipelineContext {
     const CompileOptions &options;
     std::ostream &out;
     SessionStats &stats;
+    bool captureIRText = false;
     IRBuildState build;
     HIRModule programHIR;
     std::vector<std::unique_ptr<HIRModule>> loweredModules;

@@ -6,20 +6,30 @@
 namespace lona {
 
 struct CompileOptions {
+    enum class LTOMode {
+        Off,
+        Full,
+    };
+
     int optLevel = 0;
     bool verifyIR = false;
     bool debugInfo = false;
     std::string targetTriple;
+    LTOMode ltoMode = LTOMode::Off;
 };
 
 enum class OutputMode {
     AstJson,
     LLVMIR,
+    EntryObject,
     ObjectFile,
+    ObjectBundle,
 };
 
 struct SessionOptions {
     OutputMode outputMode = OutputMode::AstJson;
+    std::string outputPath;
+    std::string cacheOutputPath;
     CompileOptions compile;
 };
 
@@ -35,6 +45,10 @@ struct SessionStats {
     double totalMs = 0.0;
     std::size_t compiledModules = 0;
     std::size_t reusedModules = 0;
+    std::size_t emittedModuleBitcode = 0;
+    std::size_t reusedModuleBitcode = 0;
+    std::size_t emittedModuleObjects = 0;
+    std::size_t reusedModuleObjects = 0;
 };
 
 }  // namespace lona

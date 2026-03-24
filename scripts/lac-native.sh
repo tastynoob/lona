@@ -15,12 +15,13 @@ if [ -x "$SCRIPT_DIR/lona-ir" ]; then
 fi
 
 LONA_IR_BIN="${LONA_IR_BIN:-${LONA_BIN:-$DEFAULT_LONA_IR_BIN}}"
-LLC_BIN="${LLC_BIN:-$(command -v llc-18 || command -v llc || true)}"
 CC_BIN="${CC_BIN:-cc}"
 LD_BIN="${LD_BIN:-ld}"
+NM_BIN="${NM_BIN:-$(command -v nm || true)}"
 STARTUP_SRC="${STARTUP_SRC:-$ASSET_ROOT/runtime/bare_x86_64/lona_start.S}"
 LINKER_SCRIPT="${LINKER_SCRIPT:-$ASSET_ROOT/runtime/bare_x86_64/lona.ld}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-none-elf}"
+LTO_MODE="${LTO_MODE:-off}"
 KEEP_TEMP=0
 OPT_LEVEL=0
 
@@ -32,6 +33,8 @@ Options:
   -O <0-3>       Forward optimization level to lona-ir
   --target <triple>
                  Target triple for bare builds
+  --lto <off|full>
+                 Link-time optimization mode
   --keep-temp    Keep intermediate .ll/.o files
   -h, --help     Show this help
 EOF
@@ -46,6 +49,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --target)
             TARGET_TRIPLE="$2"
+            shift 2
+            ;;
+        --lto)
+            LTO_MODE="$2"
             shift 2
             ;;
         --keep-temp)
@@ -80,16 +87,21 @@ if [ "${#ARGS[@]}" -ne 2 ]; then
     exit 1
 fi
 
+case "$LTO_MODE" in
+    off|full)
+        ;;
+    *)
+        echo "unknown lto mode: $LTO_MODE" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+
 INPUT="${ARGS[0]}"
 OUTPUT="${ARGS[1]}"
 
 if [ ! -x "$LONA_IR_BIN" ]; then
     echo "lona-ir compiler not found or not executable: $LONA_IR_BIN" >&2
-    exit 1
-fi
-
-if [ -z "$LLC_BIN" ] || [ ! -x "$LLC_BIN" ]; then
-    echo "llc not found; set LLC_BIN or install llc-18" >&2
     exit 1
 fi
 
@@ -103,6 +115,11 @@ if [ ! -f "$LINKER_SCRIPT" ]; then
     exit 1
 fi
 
+if [ -z "$NM_BIN" ] || [ ! -x "$NM_BIN" ]; then
+    echo "nm not found; set NM_BIN or install binutils nm" >&2
+    exit 1
+fi
+
 TMPDIR_LOCAL="$(mktemp -d "${TMPDIR:-/tmp}/lona-native-XXXXXX")"
 cleanup() {
     if [ "$KEEP_TEMP" -eq 0 ]; then
@@ -113,25 +130,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
-IR_PATH="$TMPDIR_LOCAL/program.ll"
-PROGRAM_OBJ="$TMPDIR_LOCAL/program.o"
 STARTUP_OBJ="$TMPDIR_LOCAL/lona_start.o"
+OBJECTS=()
+if [ "$LTO_MODE" = "full" ]; then
+    FINAL_OBJECT="$TMPDIR_LOCAL/program.lto.o"
+    "$LONA_IR_BIN" --emit obj --lto full --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        "$INPUT" "$FINAL_OBJECT"
+    OBJECTS=("$FINAL_OBJECT")
+else
+    MANIFEST_PATH="$TMPDIR_LOCAL/objects.manifest"
+    CACHE_DIR="$TMPDIR_LOCAL/objects"
+    "$LONA_IR_BIN" --emit objects --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        --cache-out "$CACHE_DIR" \
+        "$INPUT" "$MANIFEST_PATH"
 
-"$LONA_IR_BIN" --emit ir --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
-    "$INPUT" "$IR_PATH"
+    while IFS=$'\t' read -r KIND ROLE PATH_VALUE; do
+        if [ "$KIND" = "object" ] && [ -n "${PATH_VALUE:-}" ]; then
+            OBJECTS+=("$PATH_VALUE")
+        fi
+    done < "$MANIFEST_PATH"
+fi
 
-if ! grep -q '^define i32 @__lona_main__()' "$IR_PATH"; then
+if [ "${#OBJECTS[@]}" -eq 0 ]; then
     cat >&2 <<EOF
 cannot build executable from $INPUT
-help: the linked IR does not expose __lona_main__()
+help: lona-ir did not emit any linkable object files
+help: this looks like a compiler multi-object emission bug rather than a user program error
+EOF
+    exit 1
+fi
+
+if ! "$NM_BIN" -g --defined-only "${OBJECTS[@]}" | grep -Eq ' [TW] __lona_main__$'; then
+    cat >&2 <<EOF
+cannot build executable from $INPUT
+help: the emitted object bundle does not expose __lona_main__()
 help: define root-level executable statements in the root module
 EOF
     exit 1
 fi
 
-"$LLC_BIN" -filetype=obj -relocation-model=static -mtriple="$TARGET_TRIPLE" \
-    "$IR_PATH" -o "$PROGRAM_OBJ"
 "$CC_BIN" -c "$STARTUP_SRC" -o "$STARTUP_OBJ"
 mkdir -p "$(dirname "$OUTPUT")"
 "$LD_BIN" -m elf_x86_64 -nostdlib -z noexecstack -T "$LINKER_SCRIPT" \
-    -o "$OUTPUT" "$STARTUP_OBJ" "$PROGRAM_OBJ"
+    -o "$OUTPUT" "$STARTUP_OBJ" "${OBJECTS[@]}"

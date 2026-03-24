@@ -8,12 +8,14 @@
 
 当前 `system` 路线是：
 
-- `lona-ir` 生成最终链接后的 LLVM IR
-- `clang -x ir` 负责把 IR 编成目标码并完成系统链接
+- 默认：`lona-ir` 生成模块 object bundle，再由 `lac` 调系统 linker driver 做多 object 链接
+- 显式 `--lto full`：`lona-ir` 生成每模块 optimized bitcode，做全局链接后优化，再发单最终 object 给系统 linker driver
+- 只有显式 `--emit ir` 时，`lona-ir` 才会把最终 linked module 打印成文本 LLVM IR
 
 第一阶段计划改成：
 
-- `lona-ir` 自己把最终 LLVM module 编成 `.o`
+- 默认快路径：`lona-ir` 自己把每个模块编成 `.o`
+- 显式慢路径：`lona-ir` 自己把 full-LTO 后的最终 LLVM module 编成 `.o`
 - `lona` 继续复用宿主系统 CRT
 - 最终链接先继续交给系统 linker driver
 
@@ -89,19 +91,20 @@
 
 当前仓库已经有两条构建链：
 
-- [scripts/lac.sh](../scripts/lac.sh)
+- [scripts/lac.sh](../../scripts/lac.sh)
   - system 路线
   - 当前默认 target 是 `x86_64-unknown-linux-gnu`
-  - 当前已经走 `lona-ir --emit obj --target ... -> cc`
-- [scripts/lac-native.sh](../scripts/lac-native.sh)
+  - 当前已经走 `lona-ir --emit objects --target ... -> cc`
+  - 显式 `--lto full` 时会切到 `lona-ir --emit obj --lto full -> cc`
+- [scripts/lac-native.sh](../../scripts/lac-native.sh)
   - bare 路线
   - 当前默认 target 是 `x86_64-none-elf`
-  - 当前走 `lona-ir --emit ir --target ... -> llc -> startup.o + ld`
+  - 当前已经走 `lona-ir --emit objects --target ... -> startup.o + ld`
 
 同时仓库已经有一套 bare runtime asset：
 
-- [runtime/bare_x86_64/lona_start.S](../runtime/bare_x86_64/lona_start.S)
-- [runtime/bare_x86_64/lona.ld](../runtime/bare_x86_64/lona.ld)
+- [runtime/bare_x86_64/lona_start.S](../../runtime/bare_x86_64/lona_start.S)
+- [runtime/bare_x86_64/lona.ld](../../runtime/bare_x86_64/lona.ld)
 
 这说明：
 
@@ -116,24 +119,22 @@
 
 ```text
 source
-  -> AST / resolve / HIR
-  -> linked LLVM module
-  -> lona object emission
-  -> program.o
-  -> system linker driver
-  -> executable
+  -> default: per-module object emission -> object bundle + standalone hosted-entry object -> system linker driver -> executable
+  -> full-LTO: per-module optimized bitcode -> post-link optimization -> final object -> system linker driver -> executable
 ```
 
 其中：
 
-- `lona-ir` 负责直到 `program.o`
+- `lona-ir` 负责直到 object bundle 或 full-LTO final object
 - 最终 executable 先仍由系统工具链完成
 
 ### 5.2 object emission
 
-`lona-ir` 需要新增一种输出能力：
+`lona-ir` 当前有两条 object 相关能力：
 
-- 把最终链接后的 LLVM module 直接发射为 object file
+- 默认：`--emit objects` 发模块 object bundle
+- 显式：`--emit entry` 发 standalone hosted entry object
+- 显式 LTO：`--emit obj --lto full` 发最终 object file
 
 实现上建议直接走 LLVM `TargetMachine`：
 
@@ -165,11 +166,13 @@ main(argc, argv) -> store globals -> __lona_main__()
 - 直接调用 `__lona_main__`
 - 直接返回其 `i32` 结果
 
+当前实现里，root 顶层执行体会直接 lower 成 `__lona_main__`。
+
 也就是说，系统 CRT v0 会先保存宿主进程参数，但还不急着把它们设计成语言层公开语法。
 
 ### 5.4 linking
 
-第一阶段建议继续复用系统 linker driver，例如：
+当前阶段继续复用系统 linker driver，例如：
 
 - `cc`
 - `gcc`
@@ -180,10 +183,18 @@ main(argc, argv) -> store globals -> __lona_main__()
 - 它只负责最终链接
 - 不再负责把 LLVM IR 编译成 object
 
-也就是说，允许：
+也就是说，当前允许：
 
 ```text
-lona-ir --emit obj input.lo program.o
+lona-ir --emit objects input.lo program.manifest
+lona-ir --emit entry hosted-entry.o
+cc $(cat program.manifest 中列出的对象) hosted-entry.o -o program
+```
+
+以及显式 slow path：
+
+```text
+lona-ir --emit obj --lto full input.lo program.o
 cc program.o -o program
 ```
 
@@ -215,6 +226,8 @@ cc program.o -o program
 第一阶段建议给 `lona-ir` 新增：
 
 - `--emit obj`
+- `--emit objects`
+- `--lto off|full`
 
 行为：
 
@@ -225,10 +238,12 @@ cc program.o -o program
 配套脚本可以先收口成：
 
 - `lac`
-  - `lona-ir --emit obj`
+  - 默认 `lona-ir --emit objects`
+  - 显式 `--lto full` 时切到 `lona-ir --emit obj --lto full`
   - 然后调用系统 linker driver
 - `lac-native`
-  - 暂时保持现状
+  - 默认 `lona-ir --emit objects`
+  - 显式 `--lto full` 时切到 `lona-ir --emit obj --lto full`
 
 后续如果要继续收口，可再考虑：
 
@@ -241,16 +256,12 @@ cc program.o -o program
 
 ### 8.1 `SessionOptions`
 
-当前 [session_types.hh](../src/lona/driver/session_types.hh) 只有：
-
-- `AstJson`
-- `LLVMIR`
-
-后续建议扩成：
+当前 [session_types.hh](../../src/lona/driver/session_types.hh) 已经支持：
 
 - `AstJson`
 - `LLVMIR`
 - `ObjectFile`
+- `ObjectBundle`
 
 如果未来真的把最终链接也纳入编译器，再考虑：
 
@@ -258,7 +269,7 @@ cc program.o -o program
 
 ### 8.2 pipeline
 
-当前 [compiler_pipeline.md](compiler_pipeline.md) 的默认阶段在 `print-llvm` 结束。
+当前 [compiler_pipeline.md](../compiler/compiler_pipeline.md) 的默认阶段在 `print-llvm` 结束。
 
 引入 object emission 后，建议在逻辑上新增：
 
@@ -279,7 +290,7 @@ cc program.o -o program
 建议把 entry synthesis 明确分两层：
 
 1. language entry synthesis
-   - 目标是补 `__lona_entry__`
+   - 目标是补 `__lona_main__`
 2. hosted entry synthesis
    - 目标是补 C ABI `main`
 
@@ -290,17 +301,20 @@ cc program.o -o program
 第一阶段至少应补三类测试：
 
 1. object emission smoke
-   - `lona-ir --emit obj input.lo output.o`
-   - 检查 object file 可生成
+   - `lona-ir --emit objects input.lo output.manifest`
+   - 检查 object bundle 可生成
+   - `lona-ir --emit obj --lto full input.lo output.o`
+   - 检查 full-LTO 最终 object 可生成
 
 2. hosted system smoke
-   - `lona-ir --emit obj`
+   - 默认 `lona-ir --emit objects`
+   - 再补一条 `--lto full`
    - 再由 `cc` 链接
    - 验证顶层程序入口和 `ret run()` 这种显式顶层调用都能运行
 
 3. symbol contract test
    - 验证最终 object 中存在 hosted `main`
-   - 验证 wrapper 最终调用 `__lona_entry__`
+   - 验证 wrapper 最终调用 `__lona_main__`
 
 ## 10. 风险与后续
 
@@ -335,7 +349,7 @@ cc program.o -o program
 那么最合理的第一步不是引入新的 hosted `_start` 汇编，而是：
 
 - 保留系统 CRT
-- 统一内部入口为 `__lona_entry__`
+- 统一内部入口为 `__lona_main__`
 - 由 hosted profile 自动补 `main`
 - 让 `lona-ir` 直接产 `.o`
 - 最终链接先继续交给系统工具链
