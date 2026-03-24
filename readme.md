@@ -169,6 +169,22 @@ lac-native input.lo output/program
 - [目标模式与执行边界](docs/runtime/target_modes.md)
 - [本地构建与运行](docs/runtime/native_build.md)
 
+## 📄 License
+
+除特别说明外，本仓库中的 `lona` 自有代码可由你任选以下任一协议使用：
+
+- Apache License 2.0
+- MIT License
+
+对应完整文本见：
+
+- [LICENSE-APACHE](LICENSE-APACHE)
+- [LICENSE-MIT](LICENSE-MIT)
+
+仓库中包含的第三方代码仍然保留其原始授权条款。当前已知第三方组件和对应说明见：
+
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
 ## 🙌 致谢
 
 感谢所有提出先进特性、实现建议和工程思路的开发者。
