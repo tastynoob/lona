@@ -66,18 +66,18 @@ all: $(target)
 frontend: $(frontend_target)
 
 acceptance: $(target)
-	bash $(ROOT)/tests/acceptance/run.sh
+	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance/test_*.py
 
 test: acceptance bench_smoke example_smoke incremental_smoke template_random system_smoke native_smoke
 
 bench_smoke: $(target)
-	bash $(ROOT)/tests/smoke/benchmark.sh
+	$(PYTHON) -m pytest -q -s $(ROOT)/tests/smoke/test_benchmark.py
 
 perf: $(target)
 	$(PYTHON) $(ROOT)/tests/perf/profile_large_case.py --compiler $(target)
 
 example_smoke: $(target)
-	bash $(ROOT)/tests/smoke/examples.sh
+	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_examples.py
 
 incremental_smoke: $(session_runner_target)
 	$(PYTHON) $(ROOT)/tests/incremental_smoke.py --runner $(session_runner_target)
@@ -86,15 +86,15 @@ template_random: $(target)
 	$(PYTHON) $(ROOT)/tests/template_random.py --compiler $(target) --clang $(CLANG)
 
 ai_test:
-	bash $(ROOT)/tests/test_agent.sh
+	$(PYTHON) $(ROOT)/tests/test_agent.py
 
 native_smoke: $(target)
-	bash $(ROOT)/tests/smoke/native.sh
+	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_native.py
 
 hosted_smoke: system_smoke
 
 system_smoke: $(target)
-	bash $(ROOT)/tests/smoke/system.sh
+	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_system.py
 
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)

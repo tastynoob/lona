@@ -45,9 +45,9 @@ description: Generate and validate focused Lona compiler test cases from the loc
 ## 验证命令
 
 - 正向样例：
-  - `bash tests/tools/compile_case.sh path/to/case.lo`
+  - `python3 tests/tools/compile_case.py path/to/case.lo`
 - 负向样例：
-  - `bash tests/tools/expect_diag.sh path/to/case.lo 'expected text'`
+  - `python3 tests/tools/expect_diag.py path/to/case.lo 'expected text'`
 - 模板随机样例参考：
   - `python3 tests/template_random.py --compiler build/lona-ir`
 
@@ -55,8 +55,8 @@ description: Generate and validate focused Lona compiler test cases from the loc
 
 1. 先选一个小主题，例如 `tuple + float` 或 `import + struct`。
 2. 在临时目录或指定输出目录里生成 `.lo` 文件。
-3. 每写完一个正向样例，立刻跑 `compile_case.sh`。
-4. 每写完一个负向样例，立刻跑 `expect_diag.sh`。
+3. 每写完一个正向样例，立刻跑 `compile_case.py`。
+4. 每写完一个负向样例，立刻跑 `expect_diag.py`。
 5. 保留最终通过验证的样例，再决定是否纳入仓库。
 
 ## 输出要求

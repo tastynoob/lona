@@ -88,10 +88,19 @@ def nm_contains_symbol(path: Path, symbol: str, *, cwd: Path) -> bool:
 
 
 class CompilerHarness:
-    def __init__(self, *, repo_root: Path, compiler_bin: Path, system_driver: Path, tmp_path: Path):
+    def __init__(
+        self,
+        *,
+        repo_root: Path,
+        compiler_bin: Path,
+        system_driver: Path,
+        native_driver: Path,
+        tmp_path: Path,
+    ):
         self.repo_root = repo_root
         self.compiler_bin = compiler_bin
         self.system_driver = system_driver
+        self.native_driver = native_driver
         self.tmp_path = tmp_path
 
     def write_source(self, name: str, content: str) -> Path:
@@ -116,6 +125,7 @@ class CompilerHarness:
         target: str | None = None,
         optimize: str | None = None,
         debug: bool = False,
+        stats: bool = False,
     ) -> CommandResult:
         args = ["--emit", "ir"]
         if verify_ir:
@@ -126,6 +136,8 @@ class CompilerHarness:
             args.append(optimize)
         if debug:
             args.append("-g")
+        if stats:
+            args.append("--stats")
         args.append(str(input_path))
         return self._run(args)
 
@@ -152,6 +164,17 @@ class CompilerHarness:
         env["LC_ALL"] = "C"
         result = run_command(
             [str(self.system_driver), str(input_path), str(output_path)],
+            cwd=self.repo_root,
+            env=env,
+        )
+        return result, output_path
+
+    def build_native_executable(self, input_path: Path, *, output_name: str) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        env = os.environ.copy()
+        env["LC_ALL"] = "C"
+        result = run_command(
+            [str(self.native_driver), str(input_path), str(output_path)],
             cwd=self.repo_root,
             env=env,
         )

@@ -4,7 +4,6 @@
 
 ## Acceptance
 
-- [acceptance/run.sh](acceptance/run.sh): acceptance 总入口。
 - [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object 语义。
 - [acceptance/test_controlflow.py](acceptance/test_controlflow.py): 基于 `pytest` 的 `for` / `for ... else` / `break` / `continue` JSON、诊断和运行语义。
 - [acceptance/test_functions.py](acceptance/test_functions.py): 基于 `pytest` 的函数指针、C FFI、裸函数限制、方法选择器和调用检查。
@@ -18,10 +17,10 @@
 
 ## Smoke
 
-- [smoke/benchmark.sh](smoke/benchmark.sh): 编译耗时 smoke benchmark。
-- [smoke/examples.sh](smoke/examples.sh): 编译 `example/` 下的主样例，并实际运行 system-level `C FFI` 示例，锁住文档样例可用性。
-- [smoke/system.sh](smoke/system.sh): `lac` system 路线 smoke。
-- [smoke/native.sh](smoke/native.sh): `lac-native` bare 路线 smoke。
+- [smoke/test_benchmark.py](smoke/test_benchmark.py): 基于 `pytest` 的编译耗时 smoke benchmark；打印 wall time 和 `--stats` 输出。
+- [smoke/test_examples.py](smoke/test_examples.py): 基于 `pytest` 的样例编译 smoke，并实际运行 system-level `C FFI` 示例，锁住文档样例可用性。
+- [smoke/test_system.py](smoke/test_system.py): 基于 `pytest` 的 `lac` hosted 路线 smoke，覆盖入口包装、C harness 互调和 system-level C FFI 场景。
+- [smoke/test_native.py](smoke/test_native.py): 基于 `pytest` 的 `lac-native` bare 路线 smoke。
 - [template_random.py](template_random.py): 模板随机拼接测试；生成支持的语法组合并验证 LLVM IR 和 clang object 编译。
 
 ## Perf
@@ -40,7 +39,7 @@
 
 ## Tools
 
-- [tools/compile_case.sh](tools/compile_case.sh): 将 `.lo` 编译成验证过的 LLVM IR，并继续交给 clang 编译成 `.o`。
-- [tools/expect_diag.sh](tools/expect_diag.sh): 断言某个 `.lo` 编译失败并包含指定诊断子串。
+- [tools/compile_case.py](tools/compile_case.py): 将 `.lo` 编译成验证过的 LLVM IR，并继续生成 `.o`。
+- [tools/expect_diag.py](tools/expect_diag.py): 断言某个 `.lo` 编译失败并包含指定诊断子串。
 - [test_skill.md](test_skill.md): AI 生成测试样例时应遵守的约束和工作流。
-- [test_agent.sh](test_agent.sh): 调用 `codex` 按 `test_skill.md` 自动生成并验证测试样例的入口。
+- [test_agent.py](test_agent.py): 调用 `codex` 按 `test_skill.md` 自动生成并验证测试样例的入口。

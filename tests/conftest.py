@@ -38,11 +38,28 @@ def system_driver(repo_root: Path) -> Path:
     return path
 
 
+@pytest.fixture(scope="session")
+def native_driver(repo_root: Path) -> Path:
+    path = repo_root / "scripts" / "lac-native.sh"
+    if not path.is_file():
+        pytest.fail(f"missing native driver: {path}")
+    if not os.access(path, os.X_OK):
+        pytest.fail(f"native driver is not executable: {path}")
+    return path
+
+
 @pytest.fixture
-def compiler(repo_root: Path, compiler_bin: Path, system_driver: Path, tmp_path: Path) -> CompilerHarness:
+def compiler(
+    repo_root: Path,
+    compiler_bin: Path,
+    system_driver: Path,
+    native_driver: Path,
+    tmp_path: Path,
+) -> CompilerHarness:
     return CompilerHarness(
         repo_root=repo_root,
         compiler_bin=compiler_bin,
         system_driver=system_driver,
+        native_driver=native_driver,
         tmp_path=tmp_path,
     )
