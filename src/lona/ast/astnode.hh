@@ -226,17 +226,66 @@ public:
 
 class AstConst : public AstNode {
 public:
-    enum class Type { INT32, FP64, STRING, CHAR, BOOL, NULLPTR };
+    enum class Type {
+        I8,
+        U8,
+        I16,
+        U16,
+        I32,
+        U32,
+        I64,
+        U64,
+        F32,
+        F64,
+        STRING,
+        CHAR,
+        BOOL,
+        NULLPTR,
+    };
 
 private:
     // the type of the constant
     Type vtype;
+    bool explicitNumericType = false;
+    bool requiresUnaryMinusForSignedMin = false;
     void *buf = nullptr;  // never delete
+
+    void setNumericLiteral(Type type, bool explicitType, void *value,
+                           bool unaryMinusOnly = false);
+
 public:
     Type getType() const { return vtype; }
+    bool hasExplicitNumericType() const { return explicitNumericType; }
+    bool isUnaryMinusOnlySignedMinLiteral() const {
+        return requiresUnaryMinusForSignedMin;
+    }
+    bool isDefaultFloatLiteral() const {
+        return vtype == Type::F64 && !explicitNumericType;
+    }
+    bool isIntegerLiteral() const {
+        switch (vtype) {
+        case Type::I8:
+        case Type::U8:
+        case Type::I16:
+        case Type::U16:
+        case Type::I32:
+        case Type::U32:
+        case Type::I64:
+        case Type::U64:
+            return true;
+        default:
+            return false;
+        }
+    }
+    bool isFloatLiteral() const {
+        return vtype == Type::F32 || vtype == Type::F64;
+    }
     template<typename T = char>
     T *getBuf() const {
         return (T *)buf;
+    }
+    std::uint64_t getDeferredSignedMinMagnitude() const {
+        return isUnaryMinusOnlySignedMinLiteral() ? *getBuf<std::uint64_t>() : 0;
     }
 
     AstConst(AstToken &token);

@@ -228,6 +228,29 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
     for needle in ["fptosi double", "sitofp i32", "fptosi float"]:
         assert_contains(numeric_convert_chain_ir, needle, label="numeric convert chain ir")
 
+    explicit_f64_to_f32_ir = _emit_ir(
+        compiler,
+        "explicit_f64_to_f32.lo",
+        """
+        def hold(v f32) f32 {
+            ret v
+        }
+
+        def main() i32 {
+            var x f32 const = 1.5_f64
+            var y f32 = hold(2.5_f64)
+            ret cast[i32](x + y)
+        }
+        """,
+    )
+    for needle in [
+        "store float 1.500000e+00",
+        "call float @hold(float 2.500000e+00)",
+        "fadd float",
+        "fptosi float",
+    ]:
+        assert_contains(explicit_f64_to_f32_ir, needle, label="explicit f64 to f32 ir")
+
     tobits_ir = _emit_ir(
         compiler,
         "tobits.lo",
@@ -366,6 +389,125 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
             }
             """,
             ["initializer type mismatch for `x`: expected i8, got bool"],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
+
+def test_numeric_literal_prefix_suffix_and_separator_forms(compiler: CompilerHarness) -> None:
+    numeric_ir = _emit_ir(
+        compiler,
+        "numeric_literal_forms.lo",
+        """
+        def main() i64 {
+            var dec i32 = 12_345
+            var bin u16 = 0b1010_0101_u16
+            var oct u16 = 0o755_u16
+            var hex i32 = 0x10
+            var wide u64 = 0x1234_5678_u64
+            var sample f32 = 1_234.5_f32
+            var table i32[0x4_u16] = {1, 2, 3, 4}
+            ret cast[i64](wide)
+        }
+        """,
+    )
+    for needle in [
+        "store i32 12345",
+        "store i16 165",
+        "store i16 493",
+        "store i32 16",
+        "store i64 305419896",
+        "store float 1.234500e+03",
+        "alloca [4 x i32]",
+    ]:
+        assert_contains(numeric_ir, needle, label="numeric literal forms ir")
+
+    signed_min_ir = _emit_ir(
+        compiler,
+        "signed_min_literals.lo",
+        """
+        def min_i8() i8 {
+            ret -128_i8
+        }
+
+        def min_i16() i16 {
+            ret -32768_i16
+        }
+
+        def min_i32() i32 {
+            ret -2147483648
+        }
+
+        def min_i64() i64 {
+            ret -9223372036854775808_i64
+        }
+        """,
+    )
+    for needle in [
+        "define i8 @min_i8()",
+        "store i8 -128",
+        "define i16 @min_i16()",
+        "store i16 -32768",
+        "define i32 @min_i32()",
+        "store i32 -2147483648",
+        "define i64 @min_i64()",
+        "store i64 -9223372036854775808",
+    ]:
+        assert_contains(signed_min_ir, needle, label="signed min literal ir")
+
+    failures = [
+        (
+            "binary_literal_digit_bad.lo",
+            """
+            def main() i32 {
+                var x i32 = 0b102
+                ret x
+            }
+            """,
+            [
+                "I couldn't recognize this numeric literal: `0b102`",
+                "Use only `0` and `1` after `0b`",
+            ],
+        ),
+        (
+            "numeric_suffix_separator_bad.lo",
+            """
+            def main() u64 {
+                var x u64 = 123u64
+                ret x
+            }
+            """,
+            [
+                "I couldn't recognize this numeric literal: `123u64`",
+                "Numeric type suffixes must use `_type`",
+            ],
+        ),
+        (
+            "float_integer_suffix_bad.lo",
+            """
+            def main() i32 {
+                var x = 1.5_i32
+                ret 0
+            }
+            """,
+            [
+                "floating-point literal cannot use integer suffix `i32`",
+                "Use `_f32` or `_f64`",
+            ],
+        ),
+        (
+            "positive_signed_min_magnitude_bad.lo",
+            """
+            def main() i32 {
+                var x = 128_i8
+                ret 0
+            }
+            """,
+            [
+                "integer literal magnitude is only valid with unary `-` for `i8`",
+                "Write `-128_i8` if you want the minimum `i8` value.",
+            ],
         ),
     ]
     for name, source, needles in failures:

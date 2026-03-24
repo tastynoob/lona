@@ -91,29 +91,56 @@ AstTagNode::toJson(Json &root) {
 
 void
 AstConst::toJson(Json &root) {
+    root["type"] = "const";
     switch (this->vtype) {
-        case Type::INT32:
-            root["type"] = "const";
-            root["value"] = *(int32_t *)this->buf;
+        case Type::I8:
+            root["value"] = isUnaryMinusOnlySignedMinLiteral()
+                ? getDeferredSignedMinMagnitude()
+                : static_cast<int>(*getBuf<std::int8_t>());
             break;
-        case Type::FP64:
-            root["type"] = "const";
-            root["value"] = *(double *)this->buf;
+        case Type::U8:
+            root["value"] = static_cast<unsigned>(*getBuf<std::uint8_t>());
+            break;
+        case Type::I16:
+            root["value"] = isUnaryMinusOnlySignedMinLiteral()
+                ? getDeferredSignedMinMagnitude()
+                : *getBuf<std::int16_t>();
+            break;
+        case Type::U16:
+            root["value"] = *getBuf<std::uint16_t>();
+            break;
+        case Type::I32:
+            root["value"] = isUnaryMinusOnlySignedMinLiteral()
+                ? getDeferredSignedMinMagnitude()
+                : *getBuf<std::int32_t>();
+            break;
+        case Type::U32:
+            root["value"] = *getBuf<std::uint32_t>();
+            break;
+        case Type::I64:
+            root["value"] = isUnaryMinusOnlySignedMinLiteral()
+                ? getDeferredSignedMinMagnitude()
+                : static_cast<long long>(*getBuf<std::int64_t>());
+            break;
+        case Type::U64:
+            root["value"] = *getBuf<std::uint64_t>();
+            break;
+        case Type::F32:
+            root["value"] = *getBuf<float>();
+            break;
+        case Type::F64:
+            root["value"] = *getBuf<double>();
             break;
         case Type::STRING:
-            root["type"] = "const";
             root["value"] = escapeByteStringForJson(*this->getBuf<string>());
             break;
         case Type::CHAR:
-            root["type"] = "const";
             root["value"] = escapeByteStringForJson(*this->getBuf<string>());
             break;
         case Type::BOOL:
-            root["type"] = "const";
-            root["value"] = *(bool *)this->buf;
+            root["value"] = *getBuf<bool>();
             break;
         case Type::NULLPTR:
-            root["type"] = "const";
             root["value"] = nullptr;
             break;
         default:

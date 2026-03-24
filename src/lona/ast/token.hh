@@ -14,6 +14,7 @@ namespace lona {
 enum class TokenType {
     ConstInt32,
     ConstFP64,
+    ConstNumeric,
     ConstStr,
     ConstChar,
     ConstNull,
@@ -34,6 +35,7 @@ tokenTypeToStr(TokenType type) {
     switch (type) {
         case TokenType::ConstInt32:
         case TokenType::ConstFP64:
+        case TokenType::ConstNumeric:
         case TokenType::ConstStr:
         case TokenType::ConstChar:
         case TokenType::ConstNull:

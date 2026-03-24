@@ -38,6 +38,17 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
     loc->lines(line_num);
     loc->columns(space_num);
 }
+
+static void
+throwInvalidNumericLiteral(lona::Parser::location_type *loc, const char *text,
+                           int length, const std::string &help) {
+    loc->columns(length);
+    throw lona::DiagnosticError(
+        lona::DiagnosticError::Category::Lexical, *loc,
+        "I couldn't recognize this numeric literal: `" +
+            describeLexeme(text, length) + "`",
+        help);
+}
 %}
 
 %option yyclass="lona::Scanner"
@@ -45,6 +56,14 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
 %option nodefault
 %option c++
 %x IMPORT_PATH_STATE
+
+NUM_SUFFIX (_(u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64))
+DEC_DIGITS [0-9](_?[0-9])*
+BIN_DIGITS [01](_?[01])*
+OCT_DIGITS [0-7](_?[0-7])*
+HEX_DIGITS [0-9A-Fa-f](_?[0-9A-Fa-f])*
+DEC_FLOAT {DEC_DIGITS}\.{DEC_DIGITS}
+NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_DIGITS}){NUM_SUFFIX}?)
 
 
 %%
@@ -115,16 +134,40 @@ static void advanceNewlineSpan(lona::Parser::location_type *loc, const char *tex
         "Write imports like `import path/to/file` without quotes or file suffix.");
 }
 
-[0-9]+ {
+{NUMERIC_LITERAL} {
     loc->columns(yyleng);
-    lval->token = new AstToken(TokenType::ConstInt32, yytext, *loc);
+    lval->token = new AstToken(TokenType::ConstNumeric, yytext, *loc);
     return token::CONST;
 }
 
-[0-9]+\.[0-9]+ {
-    loc->columns(yyleng);
-    lval->token = new AstToken(TokenType::ConstFP64, yytext, *loc);
-    return token::CONST;
+0b[0-9A-Za-z_]* {
+    throwInvalidNumericLiteral(
+        loc, yytext, yyleng,
+        "Use only `0` and `1` after `0b`, with optional `_` separators, for example `0b1010_1100_u8`.");
+}
+
+0o[0-9A-Za-z_]* {
+    throwInvalidNumericLiteral(
+        loc, yytext, yyleng,
+        "Use only digits `0` through `7` after `0o`, with optional `_` separators, for example `0o755_u16`.");
+}
+
+0x[0-9A-Za-z_]* {
+    throwInvalidNumericLiteral(
+        loc, yytext, yyleng,
+        "Use hexadecimal digits after `0x`, with optional `_` separators, for example `0x1234_ABCD_u64`.");
+}
+
+{DEC_FLOAT}[A-Za-z][A-Za-z0-9_]* {
+    throwInvalidNumericLiteral(
+        loc, yytext, yyleng,
+        "Numeric type suffixes must use `_type`, for example `1.5_f32` or `42_u64`.");
+}
+
+{DEC_DIGITS}[A-Za-z][A-Za-z0-9_]* {
+    throwInvalidNumericLiteral(
+        loc, yytext, yyleng,
+        "Numeric type suffixes must use `_type`, for example `1.5_f32` or `42_u64`.");
 }
 
 (\"([^\\\"]|\\.)*\") {

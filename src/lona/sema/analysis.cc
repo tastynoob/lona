@@ -14,6 +14,7 @@
 #include "parser.hh"
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -1765,20 +1766,74 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeConst(AstConst *node, TypeClass *expectedType = nullptr) {
+        auto errorUnaryMinusOnlySignedMin = [&](const char *typeName) -> void {
+            error(node->loc,
+                  "integer literal magnitude is only valid with unary `-` for `" +
+                      std::string(typeName) + "`",
+                  "Write `-" + std::to_string(node->getDeferredSignedMinMagnitude()) +
+                      "_" + typeName + "` if you want the minimum `" +
+                      std::string(typeName) + "` value.");
+        };
         switch (node->getType()) {
-        case AstConst::Type::INT32:
+        case AstConst::Type::I8:
+            if (node->isUnaryMinusOnlySignedMinLiteral()) {
+                errorUnaryMinusOnlySignedMin("i8");
+            }
+            return makeHIR<HIRValue>(new ConstVar(i8Ty, *node->getBuf<std::int8_t>()),
+                                     node->loc);
+        case AstConst::Type::U8:
+            return makeHIR<HIRValue>(new ConstVar(u8Ty, *node->getBuf<std::uint8_t>()),
+                                     node->loc);
+        case AstConst::Type::I16:
+            if (node->isUnaryMinusOnlySignedMinLiteral()) {
+                errorUnaryMinusOnlySignedMin("i16");
+            }
+            return makeHIR<HIRValue>(new ConstVar(i16Ty, *node->getBuf<std::int16_t>()),
+                                     node->loc);
+        case AstConst::Type::U16:
+            return makeHIR<HIRValue>(new ConstVar(u16Ty, *node->getBuf<std::uint16_t>()),
+                                     node->loc);
+        case AstConst::Type::I32:
+            if (node->isUnaryMinusOnlySignedMinLiteral()) {
+                errorUnaryMinusOnlySignedMin("i32");
+            }
             return makeHIR<HIRValue>(new ConstVar(i32Ty, *node->getBuf<int32_t>()),
+                                     node->loc);
+        case AstConst::Type::U32:
+            return makeHIR<HIRValue>(new ConstVar(u32Ty, *node->getBuf<std::uint32_t>()),
+                                     node->loc);
+        case AstConst::Type::I64:
+            if (node->isUnaryMinusOnlySignedMinLiteral()) {
+                errorUnaryMinusOnlySignedMin("i64");
+            }
+            return makeHIR<HIRValue>(new ConstVar(i64Ty, *node->getBuf<std::int64_t>()),
+                                     node->loc);
+        case AstConst::Type::U64:
+            return makeHIR<HIRValue>(new ConstVar(u64Ty, *node->getBuf<std::uint64_t>()),
                                      node->loc);
         case AstConst::Type::BOOL:
             return makeHIR<HIRValue>(new ConstVar(boolTy, *node->getBuf<bool>()),
                                      node->loc);
-        case AstConst::Type::FP64: {
+        case AstConst::Type::F32:
+            return makeHIR<HIRValue>(new ConstVar(f32Ty, *node->getBuf<float>()),
+                                     node->loc);
+        case AstConst::Type::F64: {
             auto value = *node->getBuf<double>();
-            if (expectedType == f32Ty) {
+            auto *contextualType = expectedType ? stripTopLevelConst(expectedType)
+                                                : nullptr;
+            auto *contextualBase = asUnqualified<BaseType>(contextualType);
+            const bool expectsF32 =
+                contextualBase && contextualBase->type == BaseType::F32;
+            const bool expectsF64 =
+                contextualBase && contextualBase->type == BaseType::F64;
+            if (!node->hasExplicitNumericType() && expectsF32) {
                 return makeHIR<HIRValue>(new ConstVar(f32Ty, static_cast<float>(value)),
                                          node->loc);
             }
-            if (expectedType == nullptr || expectedType == f64Ty) {
+            if (expectsF32) {
+                return makeHIR<HIRValue>(new ConstVar(f64Ty, value), node->loc);
+            }
+            if (contextualType == nullptr || expectsF64) {
                 return makeHIR<HIRValue>(new ConstVar(f64Ty, value), node->loc);
             }
             error(node->loc,
@@ -2294,14 +2349,14 @@ class FunctionAnalyzer {
         }
         if (left->getType() != right->getType()) {
             auto *leftConst = node->left ? node->left->as<AstConst>() : nullptr;
-            if (leftConst && leftConst->getType() == AstConst::Type::FP64 &&
+            if (leftConst && leftConst->isDefaultFloatLiteral() &&
                 isFloatType(right->getType())) {
                 left = requireNonCallExpr(node->left, right->getType());
             }
         }
         if (left->getType() != right->getType()) {
             auto *rightConst = node->right ? node->right->as<AstConst>() : nullptr;
-            if (rightConst && rightConst->getType() == AstConst::Type::FP64 &&
+            if (rightConst && rightConst->isDefaultFloatLiteral() &&
                 isFloatType(left->getType())) {
                 right = requireNonCallExpr(node->right, left->getType());
             }
@@ -2333,6 +2388,31 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node, TypeClass *expectedType = nullptr) {
+        if (node->op == '-') {
+            auto *constant = node->expr ? node->expr->as<AstConst>() : nullptr;
+            if (constant && constant->isUnaryMinusOnlySignedMinLiteral()) {
+                switch (constant->getType()) {
+                case AstConst::Type::I8:
+                    return makeHIR<HIRValue>(
+                        new ConstVar(i8Ty, std::numeric_limits<std::int8_t>::min()),
+                        node->loc);
+                case AstConst::Type::I16:
+                    return makeHIR<HIRValue>(
+                        new ConstVar(i16Ty, std::numeric_limits<std::int16_t>::min()),
+                        node->loc);
+                case AstConst::Type::I32:
+                    return makeHIR<HIRValue>(
+                        new ConstVar(i32Ty, std::numeric_limits<std::int32_t>::min()),
+                        node->loc);
+                case AstConst::Type::I64:
+                    return makeHIR<HIRValue>(
+                        new ConstVar(i64Ty, std::numeric_limits<std::int64_t>::min()),
+                        node->loc);
+                default:
+                    break;
+                }
+            }
+        }
         TypeClass *contextualOperandType =
             expectedType && isNumericType(expectedType) ? expectedType : nullptr;
         auto *value = requireNonCallExpr(node->expr, contextualOperandType);

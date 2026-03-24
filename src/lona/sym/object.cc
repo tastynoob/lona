@@ -117,30 +117,55 @@ ConstVar::get(Scope *scope) {
         return val;
     }
 
-    if (type == i32Ty) {
-        val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                     std::any_cast<int32_t>(value), true);
-        return val;
-    }
-    if (type == u8Ty) {
-        val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                     std::any_cast<std::uint8_t>(value), false);
-        return val;
-    }
-    if (type == f32Ty) {
-        val = llvm::ConstantFP::get(scope->getLLVMType(type),
-                                    std::any_cast<float>(value));
-        return val;
-    }
-    if (type == f64Ty) {
-        val = llvm::ConstantFP::get(scope->getLLVMType(type),
-                                    std::any_cast<double>(value));
-        return val;
-    }
-    if (type == boolTy) {
-        val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                     std::any_cast<bool>(value));
-        return val;
+    if (auto *base = asUnqualified<BaseType>(type)) {
+        switch (base->type) {
+        case BaseType::I8:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::int8_t>(value), true);
+            return val;
+        case BaseType::U8:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::uint8_t>(value), false);
+            return val;
+        case BaseType::I16:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::int16_t>(value), true);
+            return val;
+        case BaseType::U16:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::uint16_t>(value), false);
+            return val;
+        case BaseType::I32:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::int32_t>(value), true);
+            return val;
+        case BaseType::U32:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::uint32_t>(value), false);
+            return val;
+        case BaseType::I64:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::int64_t>(value), true);
+            return val;
+        case BaseType::U64:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::uint64_t>(value), false);
+            return val;
+        case BaseType::F32:
+            val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                        std::any_cast<float>(value));
+            return val;
+        case BaseType::F64:
+            val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                        std::any_cast<double>(value));
+            return val;
+        case BaseType::BOOL:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<bool>(value));
+            return val;
+        default:
+            break;
+        }
     }
 
     throw "unsupported const type";
