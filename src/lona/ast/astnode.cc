@@ -110,6 +110,10 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
             this->vtype = Type::STRING;
             this->buf = new string(token.text);
             break;
+        case TokenType::ConstChar:
+            this->vtype = Type::CHAR;
+            this->buf = new string(token.text);
+            break;
         case TokenType::ConstBool:
             this->vtype = Type::BOOL;
             this->buf = (char *)new bool(std::strcmp(token.text.tochara(), "true") == 0);

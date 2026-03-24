@@ -666,18 +666,6 @@ class FunctionAnalyzer {
         return typeMgr ? typeMgr->createConstType(u8Ty) : nullptr;
     }
 
-    ArrayType *getByteStringArrayType(std::size_t size, const location &loc) {
-        if (size == 0) {
-            error(loc,
-                  "empty byte-string literals are not implemented yet",
-                  "Zero-sized fixed arrays are still rejected elsewhere in the type system. Use a non-empty literal for now.");
-        }
-        std::vector<AstNode *> dims;
-        dims.push_back(makeStaticDimensionNode(size, loc));
-        return typeMgr ? typeMgr->createArrayType(getConstU8Type(), std::move(dims))
-                       : nullptr;
-    }
-
     std::string getByteStringBytes(AstConst *node) {
         auto *bytes = node ? node->getBuf<string>() : nullptr;
         if (!bytes) {
@@ -686,22 +674,27 @@ class FunctionAnalyzer {
         return std::string(bytes->tochara(), bytes->size());
     }
 
-    HIRExpr *analyzeByteStringLiteral(AstConst *node) {
+    std::uint8_t getAsciiCharByte(AstConst *node) {
         auto bytes = getByteStringBytes(node);
-        auto *type = getByteStringArrayType(bytes.size(), node->loc);
-        return makeHIR<HIRByteStringLiteral>(std::move(bytes), type, false,
-                                             node->loc);
+        if (bytes.size() != 1) {
+            error(node ? node->loc : location(),
+                  "character literal must contain exactly one ASCII byte",
+                  "Use `'A'`, `'\\n'`, or a string literal like \"...\" for UTF-8 or multi-byte text.");
+        }
+        const auto byte = static_cast<unsigned char>(bytes[0]);
+        if (byte > 0x7F) {
+            error(node ? node->loc : location(),
+                  "character literal must be ASCII",
+                  "Only single-byte ASCII characters are allowed here. Use a string literal like \"...\" for UTF-8 text.");
+        }
+        return static_cast<std::uint8_t>(byte);
     }
 
-    HIRExpr *analyzeBorrowedByteStringLiteral(AstConst *node) {
+    HIRExpr *analyzeByteStringLiteral(AstConst *node) {
         auto bytes = getByteStringBytes(node);
-        if (bytes.empty()) {
-            getByteStringArrayType(bytes.size(), node->loc);
-        }
         auto *type = typeMgr ? typeMgr->createIndexablePointerType(getConstU8Type())
                              : nullptr;
-        return makeHIR<HIRByteStringLiteral>(std::move(bytes), type, true,
-                                             node->loc);
+        return makeHIR<HIRByteStringLiteral>(std::move(bytes), type, node->loc);
     }
 
     ObjectPtr requireBoundObject(const ResolvedLocalBinding *binding,
@@ -1794,6 +1787,9 @@ class FunctionAnalyzer {
         }
         case AstConst::Type::STRING:
             return analyzeByteStringLiteral(node);
+        case AstConst::Type::CHAR:
+            return makeHIR<HIRValue>(new ConstVar(u8Ty, getAsciiCharByte(node)),
+                                     node->loc);
         case AstConst::Type::NULLPTR:
             if (expectedType && !isPointerLikeType(expectedType)) {
                 error(node->loc,
@@ -2337,12 +2333,6 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeUnaryOper(AstUnaryOper *node, TypeClass *expectedType = nullptr) {
-        if (node && node->op == '&') {
-            if (auto *constant = node->expr ? node->expr->as<AstConst>() : nullptr;
-                constant && constant->getType() == AstConst::Type::STRING) {
-                return analyzeBorrowedByteStringLiteral(constant);
-            }
-        }
         TypeClass *contextualOperandType =
             expectedType && isNumericType(expectedType) ? expectedType : nullptr;
         auto *value = requireNonCallExpr(node->expr, contextualOperandType);

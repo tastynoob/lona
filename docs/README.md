@@ -25,7 +25,7 @@
 
 - [design/const_qualifier_v0.md](design/const_qualifier_v0.md): `const` 类型修饰符草案；区分类型修饰与定义修饰，收口数组、指针、`u8 const[*]`，以及结构体字段与未来 `readonly` 的边界。
 - [design/pointer_reference.md](design/pointer_reference.md): 指针 / 引用 / 值语义的设计收口；当前已实现 `ref` 局部绑定、`ref` 参数和隐式 `ref self`。
-- [design/string_bytes_v0.md](design/string_bytes_v0.md): “字节串而不是字符串类型”的草案；收口 `u8 const[N]` / `u8 const[*]`，以及字面量复制后得到的 `u8[N]`。
+- [design/string_bytes_v0.md](design/string_bytes_v0.md): 旧版“字节串而不是字符串类型”草案；保留 `u8 const[N]` / `u8 const[*]` 的早期讨论记录，当前实现已收口到 `u8 const[*]` + 自动 NUL 结尾。
 
 ## 编译器与工程结构
 

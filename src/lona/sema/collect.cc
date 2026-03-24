@@ -1664,10 +1664,11 @@ class FunctionCompiler {
 
     llvm::Constant *buildByteStringArrayConstant(const std::string &bytes) {
         std::vector<std::uint8_t> data;
-        data.reserve(bytes.size());
+        data.reserve(bytes.size() + 1);
         for (unsigned char byte : bytes) {
             data.push_back(static_cast<std::uint8_t>(byte));
         }
+        data.push_back(0);
         return llvm::ConstantDataArray::get(context, data);
     }
 
@@ -1915,14 +1916,6 @@ class FunctionCompiler {
         }
         if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
             setLocation(byteString);
-            if (!byteString->isBorrowed()) {
-                auto *globalValue = createByteStringGlobal(byteString->getBytes());
-                auto *result = byteString->getType()->newObj(
-                    Object::VARIABLE | Object::READONLY);
-                result->setllvmValue(globalValue);
-                return result;
-            }
-
             auto *globalValue = createByteStringGlobal(byteString->getBytes());
             auto *llvmArrayType =
                 llvm::cast<llvm::ArrayType>(globalValue->getValueType());

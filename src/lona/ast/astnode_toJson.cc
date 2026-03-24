@@ -71,6 +71,10 @@ AstConst::toJson(Json &root) {
             root["type"] = "const";
             root["value"] = escapeByteStringForJson(*this->getBuf<string>());
             break;
+        case Type::CHAR:
+            root["type"] = "const";
+            root["value"] = escapeByteStringForJson(*this->getBuf<string>());
+            break;
         case Type::BOOL:
             root["type"] = "const";
             root["value"] = *(bool *)this->buf;

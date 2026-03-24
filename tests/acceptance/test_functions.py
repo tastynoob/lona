@@ -261,14 +261,14 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
             extern "C" def inspect(msg u8 const[*]) i32
 
             def main() i32 {
-                ret inspect(&"ok")
+                ret inspect("ok")
             }
             """,
         )
     ).expect_ok().stdout
-    assert_contains(string_ir, 'private constant [2 x i8] c"ok", align 1', label="ffi string ir")
+    assert_contains(string_ir, 'private constant [3 x i8] c"ok\\00", align 1', label="ffi string ir")
     assert_regex(string_ir, r"^declare .*i32 @inspect\(ptr\)", label="ffi string ir")
-    assert_contains(string_ir, "call i32 @inspect(ptr @.lona.bytes.", label="ffi string ir")
+    assert_contains(string_ir, "call i32 @inspect(ptr", label="ffi string ir")
 
     pointer_sig_ir = compiler.emit_ir(
         compiler.write_source(

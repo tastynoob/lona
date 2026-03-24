@@ -372,26 +372,90 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
         _expect_ir_failure(compiler, name, source, needles)
 
 
-def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
-    string_value_ir = _emit_ir(
+def test_char_literal_semantics(compiler: CompilerHarness) -> None:
+    char_ir = _emit_ir(
         compiler,
-        "string_value.lo",
+        "char_literal.lo",
         """
         def main() i32 {
+            var a = 'a'
+            var nl = '\\n'
+            ret a + nl - 10
+        }
+        """,
+    )
+    for needle in ["alloca i8", "store i8 97", "store i8 10", "zext i8"]:
+        assert_contains(char_ir, needle, label="char literal ir")
+
+    failures = [
+        (
+            "char_empty_bad.lo",
+            """
+            def main() i32 {
+                var a = ''
+                ret a
+            }
+            """,
+            ["character literal must contain exactly one ASCII byte"],
+        ),
+        (
+            "char_multi_bad.lo",
+            """
+            def main() i32 {
+                var a = 'ab'
+                ret a
+            }
+            """,
+            ["character literal must contain exactly one ASCII byte"],
+        ),
+        (
+            "char_utf8_bad.lo",
+            """
+            def main() i32 {
+                var a = '你'
+                ret a
+            }
+            """,
+            ["character literal must contain exactly one ASCII byte"],
+        ),
+        (
+            "char_non_ascii_escape_bad.lo",
+            """
+            def main() i32 {
+                var a = '\\x80'
+                ret a
+            }
+            """,
+            ["character literal must be ASCII"],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
+
+def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
+    string_view_ir = _emit_ir(
+        compiler,
+        "string_view.lo",
+        """
+        def second(msg u8 const[*]) u8 {
+            ret msg(1)
+        }
+
+        def main() i32 {
             var msg = "hello"
-            msg(0) = 72
-            ret msg(0)
+            ret second(msg)
         }
         """,
     )
     for needle in [
-        'private constant [5 x i8] c"hello", align 1',
-        "alloca [5 x i8]",
-        "load [5 x i8], ptr @.lona.bytes.",
-        "store [5 x i8] %",
-        "store i8 72",
+        'private constant [6 x i8] c"hello\\00", align 1',
+        "alloca ptr",
+        "call i8 @second(ptr",
     ]:
-        assert_contains(string_value_ir, needle, label="string value ir")
+        assert_contains(string_view_ir, needle, label="string view ir")
+    for needle in ["alloca [5 x i8]", "store [5 x i8]"]:
+        assert_not_contains(string_view_ir, needle, label="string view ir")
 
     literal_index_ir = _emit_ir(
         compiler,
@@ -402,30 +466,12 @@ def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
         }
         """,
     )
-    assert_contains(literal_index_ir, 'private constant [2 x i8] c"hi", align 1', label="string literal index ir")
+    assert_contains(literal_index_ir, 'private constant [3 x i8] c"hi\\00", align 1', label="string literal index ir")
     assert_regex(
         literal_index_ir,
-        r"load i8, ptr getelementptr inbounds \(\[2 x i8\], ptr @\.lona\.bytes\.[0-9]+, i32 0, i32 1\)",
+        r"load i8, ptr getelementptr inbounds \(i8, ptr @\.lona\.bytes\.[0-9]+, i32 1\)",
         label="string literal index ir",
     )
-
-    string_borrow_ir = _emit_ir(
-        compiler,
-        "string_borrow.lo",
-        """
-        def second(msg u8 const[*]) u8 {
-            ret msg(1)
-        }
-
-        def main() i32 {
-            var bytes = &"hi"
-            ret second(bytes)
-        }
-        """,
-    )
-    for needle in [".lona.bytes.", 'private constant [2 x i8] c"hi", align 1', "call i8 @second(ptr"]:
-        assert_contains(string_borrow_ir, needle, label="string borrow ir")
-    assert_not_contains(string_borrow_ir, "unnamed_addr", label="string borrow ir")
 
     string_escape_ir = _emit_ir(
         compiler,
@@ -437,7 +483,22 @@ def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
         }
         """,
     )
-    assert_contains(string_escape_ir, 'private constant [3 x i8] c"AB\\00", align 1', label="string escape ir")
+    assert_contains(string_escape_ir, 'private constant [4 x i8] c"AB\\00\\00", align 1', label="string escape ir")
+
+    empty_string_ir = _emit_ir(
+        compiler,
+        "empty_string.lo",
+        """
+        def main() u8 {
+            ret ""(0)
+        }
+        """,
+    )
+    assert_contains(
+        empty_string_ir,
+        "private constant [1 x i8] zeroinitializer, align 1",
+        label="empty string ir",
+    )
 
     null_ir = _emit_ir(
         compiler,
@@ -447,7 +508,7 @@ def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
             if flag {
                 ret null
             }
-            ret &"ok"
+            ret "ok"
         }
 
         def is_missing(data u8 const[*]) bool {
@@ -483,15 +544,25 @@ def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
 
     failures = [
         (
-            "string_const_borrow_bad.lo",
+            "string_const_view_bad.lo",
             """
             def main() i32 {
-                var bytes = &"hi"
+                var bytes = "hi"
                 bytes(0) = 0
                 ret 0
             }
             """,
             ["assignment target is const-qualified: u8 const"],
+        ),
+        (
+            "string_address_removed.lo",
+            """
+            def main() i32 {
+                var bytes = &"hi"
+                ret bytes(0)
+            }
+            """,
+            ["address-of expects an addressable value"],
         ),
         (
             "string_str_bad.lo",

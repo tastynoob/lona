@@ -15,6 +15,7 @@ enum class TokenType {
     ConstInt32,
     ConstFP64,
     ConstStr,
+    ConstChar,
     ConstNull,
     Operlv0,    // * /
     Operlv1,    // + -
@@ -34,6 +35,7 @@ tokenTypeToStr(TokenType type) {
         case TokenType::ConstInt32:
         case TokenType::ConstFP64:
         case TokenType::ConstStr:
+        case TokenType::ConstChar:
         case TokenType::ConstNull:
         case TokenType::ConstBool:
             return "Const";

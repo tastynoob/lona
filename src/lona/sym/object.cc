@@ -122,6 +122,11 @@ ConstVar::get(Scope *scope) {
                                      std::any_cast<int32_t>(value), true);
         return val;
     }
+    if (type == u8Ty) {
+        val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                     std::any_cast<std::uint8_t>(value), false);
+        return val;
+    }
     if (type == f32Ty) {
         val = llvm::ConstantFP::get(scope->getLLVMType(type),
                                     std::any_cast<float>(value));

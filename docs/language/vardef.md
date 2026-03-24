@@ -14,8 +14,7 @@ var point Point
 
 ```lona
 var count i32 = 1
-var title u8 const[4] = "lona"
-var title_view u8 const[*] = &"lona"
+var title u8 const[*] = "lona"
 var next i32* = null
 var ok bool = true
 ```
@@ -24,14 +23,17 @@ var ok bool = true
 
 ```lona
 var count = 1
+var first = 'A'
 var name = "compiler"
 var point = Point()
 ```
 
 说明：
 
-- `var name = "compiler"` 当前会推断成 `u8 const[8]`，不是 `str`。
-- `var view = &"compiler"` 会推断成 `u8 const[*]`。
+- `var name = "compiler"` 当前会推断成 `u8 const[*]`，不是 `str`。
+- `var first = 'A'` 当前会推断成 `u8`。
+- 字符串字面量按 UTF-8 编码存储，并自动带一个结尾 `0` 字节。
+- `&"compiler"` 旧写法已经移除；直接写 `"compiler"` 即可。
 - `var p = null` 不会做类型推断；需要写成 `var p i32* = null` 这类带显式指针类型的形式。
 
 ## 4. 简写形式 `name := expr`
