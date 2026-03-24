@@ -29,6 +29,11 @@ __pycache__/
 /objects
 /refs
 /.plan
+/lona_cache
+/.pytest_cache
+
+
 tmp*
 draft.md
 plan.md
+
