@@ -15,7 +15,7 @@
 `native ABI v0` 暂时**不**定义：
 
 - C FFI
-- `extern "C"` 风格 ABI
+- `#[extern "C"]` 风格 ABI
 - 其它平台
 - varargs
 - 异常展开
@@ -112,7 +112,7 @@ v0 只冻结 `lona` 内部 ABI。
 
 这类字段的目的不是给链接器理解，而是给 `lona` 工具链后续做 pre-link ABI 检查。
 
-纯 `extern "C"` 对象不需要这个字段。
+纯 `#[extern "C"]` 对象不需要这个字段。
 
 ## 3. ABI 类型分类
 

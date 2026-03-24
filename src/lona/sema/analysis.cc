@@ -519,7 +519,7 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
         return;
     }
     error(node->loc,
-          "opaque extern struct `" + describeStorageType(type, node) +
+          "opaque `#[extern]` struct `" + describeStorageType(type, node) +
               "` cannot be used by value in variable `" +
               toStdString(node->getName()) + "`",
           "Use `" + describeStorageType(type, node) +
@@ -969,11 +969,11 @@ class FunctionAnalyzer {
                 if (structType) {
                     if (structType->isExternDecl()) {
                         error(loc,
-                              "opaque extern struct `" +
+                              "opaque `#[extern]` struct `" +
                                   describeResolvedType(structType) +
                                   "` cannot be constructed by value",
                               "Use `" + describeResolvedType(structType) +
-                                  "*` from an `extern \"C\"` API instead. Opaque C structs do not expose fields or value layout.");
+                                  "*` from a `#[extern \"C\"]` API instead. Opaque C structs do not expose fields or value layout.");
                     }
                     resolution.kind = CallResolutionKind::ConstructorCall;
                     resolution.resultEntity = EntityRef::typedValue(structType);

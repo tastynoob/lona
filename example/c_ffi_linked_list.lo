@@ -1,6 +1,7 @@
 // System-level C FFI sample: malloc/free/puts plus a method-based linked list.
 
-repr("C") struct Node {
+#[repr "C"]
+struct Node {
     value i32
     next Node[*]
 }
@@ -107,9 +108,14 @@ struct List {
     }
 }
 
-extern "C" def malloc(size u64) u8[*]
-extern "C" def free(node u8[*])
-extern "C" def puts(msg u8 const[*]) i32
+#[extern "C"]
+def malloc(size u64) u8[*]
+
+#[extern "C"]
+def free(node u8[*])
+
+#[extern "C"]
+def puts(msg u8 const[*]) i32
 
 def keep_status(status i32, ok bool, code i32) i32 {
     if status != 0 {

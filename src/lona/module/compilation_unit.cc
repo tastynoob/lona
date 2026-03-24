@@ -1,5 +1,6 @@
 #include "compilation_unit.hh"
 #include "lona/ast/array_dim.hh"
+#include "lona/ast/tag_apply.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
 #include "lona/type/type.hh"
@@ -501,7 +502,8 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
 
 void
 CompilationUnit::setSyntaxTree(AstNode *tree) {
-    syntaxTree_ = tree;
+    syntaxTree_ = applyBuiltinTags(tree);
+    validateBuiltinTagResults(syntaxTree_);
     invalidateCaches();
     stage_ = tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;
 }

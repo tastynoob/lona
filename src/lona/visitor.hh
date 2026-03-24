@@ -15,6 +15,7 @@ class AstVisitor {
 public:
     Object *visit(AstNode *node) { return node->accept(*this); }
     DEF_VISIT(AstProgram)
+    DEF_VISIT(AstTagNode)
     DEF_VISIT(AstConst)
     DEF_VISIT(AstField)
     DEF_VISIT(AstFuncRef)
@@ -50,6 +51,7 @@ class AstVisitorAny : public AstVisitor {
 public:
     using AstVisitor::visit;
     DEF_VISIT(AstProgram)
+    DEF_VISIT(AstTagNode)
     DEF_VISIT(AstConst)
     DEF_VISIT(AstField)
     DEF_VISIT(AstFuncRef)

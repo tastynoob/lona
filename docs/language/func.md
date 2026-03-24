@@ -90,21 +90,23 @@ def abs(v i32) i32 {
 }
 ```
 
-## 7. `extern "C"` 顶层函数
+## 7. `#[extern "C"]` 顶层函数
 
 ```lona
-extern "C" def puts(msg u8 const[*]) i32
+#[extern "C"]
+def puts(msg u8 const[*]) i32
 
-extern "C" def lona_add(a i32, b i32) i32 {
+#[extern "C"]
+def lona_add(a i32, b i32) i32 {
     ret a + b
 }
 ```
 
 说明：
 
-- `extern "C"` 现在已经是 parser / sema / codegen 接通的稳定语法入口，不只是草案。
+- `#[extern "C"]` 现在已经是 parser / sema / codegen 接通的稳定语法入口，不只是草案。
 - 没有函数体时表示导入外部 C 符号；有函数体时表示导出一个 C ABI 函数。
-- 当前只支持 `extern "C"`，不支持其它 ABI 名称。
-- FFI v0 只支持顶层函数；`extern "C"` method 虽然可能被 parser 吃下，但会在语义阶段被拒绝。
-- C callback 的用户层函数指针语法还没有开放；当前函数类型内部已经记录 ABI，但语言表面还不能写 `extern "C"` 函数指针。
+- 当前只支持 `#[extern "C"]`，不支持其它 ABI 名称。
+- FFI v0 只支持顶层函数；`#[extern "C"]` method 虽然可能被 parser 吃下，但会在语义阶段被拒绝。
+- C callback 的用户层函数指针语法还没有开放；当前函数类型内部已经记录 ABI，但语言表面还不能写 `#[extern "C"]` 函数指针。
 - 更细的边界，例如禁止 `ref` 参数、callback、普通聚合按值跨 C 边界，见 [../runtime/c_ffi_v0.md](../runtime/c_ffi_v0.md)。

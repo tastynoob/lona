@@ -67,22 +67,24 @@ struct Empty {
 - 因此多行空体目前可解析。
 - 但单行空体 `struct Empty {}` 仍然不在当前 grammar 支持范围内。
 
-## 6. opaque `extern struct`
+## 6. opaque `#[extern] struct`
 
 ```lona
-extern struct FILE
+#[extern]
+struct FILE
 ```
 
 说明：
 
 - 这是当前稳定可用的 opaque C 类型声明入口。
-- `extern struct FILE` 不暴露字段，也不能按值构造或按值定义变量；当前只支持把它放在指针位置上使用，例如 `FILE*`。
-- parser 复用了普通结构体入口，因此还能吃下 `extern struct FILE { ... }` 这类写法；但语义阶段会拒绝，用户应把 `extern struct` 视为“无结构体体的 opaque 声明”。
+- `#[extern] struct FILE` 不暴露字段，也不能按值构造或按值定义变量；当前只支持把它放在指针位置上使用，例如 `FILE*`。
+- parser 复用了普通结构体入口，因此还能吃下 `#[extern]` 标记后的 `struct FILE { ... }` 这类写法；但语义阶段会拒绝，用户应把它视为“无结构体体的 opaque 声明”。
 
-## 7. `repr("C") struct`
+## 7. `#[repr "C"] struct`
 
 ```lona
-repr("C") struct Point {
+#[repr "C"]
+struct Point {
     x i32
     y i32
 }
@@ -91,7 +93,7 @@ repr("C") struct Point {
 说明：
 
 - 这是当前稳定可用的 C-compatible 结构体声明入口。
-- 当前语义层只接受 `repr("C")`，不接受其它 repr 名称。
-- `repr("C") struct` 的字段类型必须也是当前 C FFI v0 支持的那一小部分类型；不兼容字段会在语义阶段报 targeted diagnostic。
-- 当前 FFI v0 里，`repr("C") struct` 主要按指针跨边界使用；按值传参 / 返回仍未开放。
+- 当前语义层只接受 `#[repr "C"]`，不接受其它 repr 名称。
+- `#[repr "C"] struct` 的字段类型必须也是当前 C FFI v0 支持的那一小部分类型；不兼容字段会在语义阶段报 targeted diagnostic。
+- 当前 FFI v0 里，`#[repr "C"] struct` 主要按指针跨边界使用；按值传参 / 返回仍未开放。
 - 更细的 FFI 限制见 [../runtime/c_ffi_v0.md](../runtime/c_ffi_v0.md)。

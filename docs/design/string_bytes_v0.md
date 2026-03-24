@@ -146,8 +146,9 @@ var b u8[4] = "1234"    // ok
 var c u8 const[4] = "1234" // ok
 var q u8 const[*] = &"1234" // ok
 
-extern "C" def write(fd i32, buf u8 const[*], count u64) i64
-write(fd, &"hello", 5)
+#[extern "C"]
+def write(fd i32, buf u8 const[*], count u64) i64
+write(fd, "hello", 5)
 ```
 
 这和 C 世界里的 `char*` / `void* + len` 本质一致，只是 `lona` 明确把它建模为 byte stream，而不是“字符指针”。
@@ -342,10 +343,13 @@ def hash(data u8 const[*], len u64) u64
 因此推荐写法是：
 
 ```lona
-extern "C" def puts(msg u8 const[*]) i32
-extern "C" def memcpy(dst u8[*], src u8 const[*], n u64) u8[*]
+#[extern "C"]
+def puts(msg u8 const[*]) i32
 
-puts(&"ok")
+#[extern "C"]
+def memcpy(dst u8[*], src u8 const[*], n u64) u8[*]
+
+puts("ok")
 ```
 
 这里的含义是：

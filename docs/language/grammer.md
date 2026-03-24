@@ -45,8 +45,6 @@
 - `else`
 - `for`
 - `struct`
-- `extern`
-- `repr`
 - `import`
 - `ref`
 - `const`
@@ -100,7 +98,7 @@
 说明：
 
 - `grammar/main.yacc` 中顶层开始符号名写作 `pragram`。本文统一记作 `program`，仅做可读性修正。
-- `extern`、`repr` 当前只在 FFI 相关声明里有稳定用户语义；更具体的边界见 `docs/runtime/c_ffi_v0.md`。
+- `extern`、`repr` 当前不再是保留关键字；它们作为 tag 名出现在 `#[...]` 里，更具体的 FFI 边界见 `docs/runtime/c_ffi_v0.md`。
 
 ## 3. 语法摘要
 
@@ -126,8 +124,8 @@ import-stat       ::= "import" ImportPath NL
 
 ```ebnf
 stat              ::= stat-expr
-                    | struct-decl
-                    | func-decl
+                    | tagged-struct-decl
+                    | tagged-func-decl
                     | ret-stat
                     | break-stat
                     | continue-stat
@@ -153,7 +151,10 @@ break-stat        ::= "break" NL
 continue-stat     ::= "continue" NL
 
 stat-expr         ::= final-expr NL
-                    | var-def NL
+                    | tagged-var-def NL
+
+tagged-var-def    ::= var-def
+                    | tag-line var-def
 ```
 
 说明：
@@ -165,35 +166,44 @@ stat-expr         ::= final-expr NL
 ### 3.3 结构体与函数声明
 
 ```ebnf
-struct-decl       ::= "struct" IDENT "{"
-                      ( struct-stat | NL )
-                      { NL | struct-stat }
-                      "}"
-                    | "extern" "struct" IDENT NL
-                    | "extern" "struct" IDENT "{"
-                      ( struct-stat | NL )
-                      { NL | struct-stat }
-                      "}"
-                    | "repr" "(" STRING ")" "struct" IDENT "{"
+tag-line          ::= "#" "[" tag-entry-seq "]" NL
+
+tag-entry-seq     ::= tag-entry
+                    | tag-entry-seq "," { NL } tag-entry
+
+tag-entry         ::= IDENT
+                    | IDENT tag-arg-seq
+
+tag-arg-seq       ::= tag-arg
+                    | tag-arg-seq tag-arg
+
+tag-arg           ::= IDENT
+                    | BuiltinType
+                    | CONST
+
+tagged-struct-decl ::= struct-decl
+                     | tag-line struct-decl
+
+struct-decl       ::= "struct" IDENT NL
+                    | "struct" IDENT "{"
                       ( struct-stat | NL )
                       { NL | struct-stat }
                       "}"
 
 struct-stat       ::= var-decl NL
-                    | func-decl
+                    | tagged-func-decl
 
-func-decl         ::= "def" IDENT "(" ")" block
+tagged-func-decl  ::= func-decl
+                    | tag-line func-decl
+
+func-decl         ::= "def" IDENT "(" ")" NL
+                    | "def" IDENT "(" ")" type-name NL
+                    | "def" IDENT "(" param-decl-seq ")" NL
+                    | "def" IDENT "(" param-decl-seq ")" type-name NL
+                    | "def" IDENT "(" ")" block
                     | "def" IDENT "(" ")" type-name block
                     | "def" IDENT "(" param-decl-seq ")" block
                     | "def" IDENT "(" param-decl-seq ")" type-name block
-                    | "extern" STRING "def" IDENT "(" ")" NL
-                    | "extern" STRING "def" IDENT "(" ")" type-name NL
-                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" NL
-                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" type-name NL
-                    | "extern" STRING "def" IDENT "(" ")" block
-                    | "extern" STRING "def" IDENT "(" ")" type-name block
-                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" block
-                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" type-name block
 
 var-decl          ::= IDENT type-name
 param-decl        ::= IDENT type-name
@@ -206,15 +216,19 @@ param-decl-seq    ::= param-decl
 说明：
 
 - 当前稳定的 FFI 表面语法包括：
-  - `extern "C" def foo(...) Ret`
-  - `extern struct FILE`
-  - `repr("C") struct Point { ... }`
-- `extern` / `repr` 之后语法上都要求字符串字面量；当前语义层只接受 `"C"`。
-- parser 复用了普通 `func-decl` / `struct-decl` 入口，因此它还能吃下 `extern struct FILE { ... }`、`extern "C"` method 这类写法；但语义层会拒绝它们，稳定用户语义只包括：
-  - opaque `extern struct`
-  - top-level `extern "C"` 函数
-  - top-level `repr("C") struct`
-- `extern "C"` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 `docs/runtime/c_ffi_v0.md`。
+  - `#[extern "C"]` + 下一行 `def foo(...) Ret`
+  - `#[extern]` + 下一行 `struct FILE`
+  - `#[repr "C"]` + 下一行 `struct Point { ... }`
+- tag line 必须单独占一行，然后紧跟一个函数声明、结构体声明或变量定义。
+- 当前内建 tag 只有 `extern` 和 `repr`。
+- `#[extern]` 只接受零参数，当前用于 opaque foreign struct。
+- `#[extern "C"]` 只接受一个字符串参数 `"C"`，当前用于 C ABI 顶层函数。
+- `#[repr "C"]` 只接受一个字符串参数 `"C"`，当前用于 C-compatible 结构体。
+- parser 复用了普通 `func-decl` / `struct-decl` 入口，因此它还能吃下 `#[extern]` 后接结构体体、`#[extern "C"]` method 这类写法；但语义层会拒绝它们，稳定用户语义只包括：
+  - opaque `#[extern] struct`
+  - top-level `#[extern "C"]` 函数
+  - top-level `#[repr "C"] struct`
+- `#[extern "C"]` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 `docs/runtime/c_ffi_v0.md`。
 
 ### 3.4 变量定义
 

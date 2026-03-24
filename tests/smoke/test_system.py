@@ -56,7 +56,8 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     lona_import_c_program = compiler.write_source(
         "system/import_abs.lo",
         """
-        extern "C" def abs(v i32) i32
+        #[extern "C"]
+        def abs(v i32) i32
 
         def run() i32 {
             ret abs(-9)
@@ -76,7 +77,8 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     ffi_main_program = compiler.write_source(
         "system/ffi_main.lo",
         """
-        extern "C" def main(v i32) i32
+        #[extern "C"]
+        def main(v i32) i32
 
         var seed i32 = main(7)
         """,
@@ -149,7 +151,8 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
     export_add_program = compiler.write_source(
         "system/export_add.lo",
         """
-        extern "C" def lona_add(a i32, b i32) i32 {
+        #[extern "C"]
+        def lona_add(a i32, b i32) i32 {
             ret a + b
         }
         """,
@@ -188,12 +191,14 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
     repr_point_program = compiler.write_source(
         "system/repr_point.lo",
         """
-        repr("C") struct Point {
+        #[repr "C"]
+        struct Point {
             x i32
             y i32
         }
 
-        extern "C" def shift(p Point*) i32 {
+        #[extern "C"]
+        def shift(p Point*) i32 {
             (*p).x = (*p).x + 3
             (*p).y = (*p).y + 4
             ret (*p).x + (*p).y
@@ -241,15 +246,21 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
     list_crud_program = compiler.write_source(
         "system/list_crud.lo",
         """
-        repr("C") struct Slot {
+        #[repr "C"]
+        struct Slot {
             used i32
             value i32
             next i32
         }
 
-        extern "C" def malloc(size u64) Slot*
-        extern "C" def free(p Slot*)
-        extern "C" def puts(msg i8*) i32
+        #[extern "C"]
+        def malloc(size u64) Slot*
+
+        #[extern "C"]
+        def free(p Slot*)
+
+        #[extern "C"]
+        def puts(msg i8*) i32
 
         def list_init(slots Slot[*], ref free_head i32, capacity i32) {
             free_head = 0

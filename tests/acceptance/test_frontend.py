@@ -107,7 +107,8 @@ def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) ->
     input_path = compiler.write_source(
         "c_abi_only.lo",
         """
-        extern "C" def add(a i32, b i32) i32 {
+        #[extern "C"]
+        def add(a i32, b i32) i32 {
             ret a + b
         }
         """,

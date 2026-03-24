@@ -6,7 +6,10 @@
     namespace lona {
         class Driver;
         class AstToken;
+        class AstTag;
         class AstNode;
+        class AstStatList;
+        class AstVarDecl;
         class TypeNode;
     }
 
@@ -26,56 +29,19 @@
     #define yylex driver.token
 
     #define YY_NULLPTR nullptr
-
-    static lona::AbiKind
-    parseExternAbi(lona::AstToken *token) {
-        if (!token || token->type != lona::TokenType::ConstStr) {
-            throw lona::DiagnosticError(
-                lona::DiagnosticError::Category::Semantic,
-                token ? token->loc : lona::location(),
-                "extern ABI name must be a string literal",
-                "Use syntax like `extern \"C\" def foo(...)`.");
-        }
-
-        auto abi = std::string(token->text.tochara(), token->text.size());
-        if (abi == "C") {
-            return lona::AbiKind::C;
-        }
-
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Semantic, token->loc,
-            "unsupported extern ABI `" + abi + "`",
-            "Only `extern \"C\"` is supported right now.");
-    }
-
-    static lona::StructDeclKind
-    parseStructDeclKind(lona::AstToken *token) {
-        if (!token || token->type != lona::TokenType::ConstStr) {
-            throw lona::DiagnosticError(
-                lona::DiagnosticError::Category::Semantic,
-                token ? token->loc : lona::location(),
-                "struct repr name must be a string literal",
-                "Use syntax like `repr(\"C\") struct Point { ... }`.");
-        }
-
-        auto repr = std::string(token->text.tochara(), token->text.size());
-        if (repr == "C") {
-            return lona::StructDeclKind::ReprC;
-        }
-
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Semantic, token->loc,
-            "unsupported struct repr `" + repr + "`",
-            "Only `repr(\"C\")` is supported right now.");
-    }
 }
 
 %union {
     int64_t counter;
 
     AstToken* token;
+    AstTag* tag;
     AstNode* node;
+    AstStatList* stat_list;
+    AstVarDecl* var_decl;
     std::vector<AstNode*>* seq;
+    std::vector<AstTag*>* tags;
+    std::vector<AstToken*>* token_seq;
 
     TypeNode* typeNode;
     std::vector<TypeNode*>* type_seq;
@@ -100,7 +66,7 @@
 %token TRUE "true" FALSE "false" NULL_KW "null"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
-%token DEF "def" STRUCT "struct" EXTERN "extern" REPR "repr"
+%token DEF "def" STRUCT "struct"
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
@@ -127,29 +93,37 @@
 %left '(' ')' '[' ']'
 %right unary
 
-%type <node> pragram pragram_statlist pragram_stat
+%type <node> pragram pragram_stat
 %type <node> struct_decl func_decl import_stat
-%type <node> struct_statlist struct_stat stat_list stat
-%type <node> stat_compound stat_if stat_for stat_ret stat_break stat_continue stat_expr
+%type <node> struct_stat stat
+%type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> field_call cast_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren single_value field_selector func_pointer_expr
 %type <typeNode> type_selector
-%type <node> var_decl param_decl var_def
+%type <node> param_decl var_def
+%type <stat_list> pragram_statlist struct_statlist stat_list stat_compound
+%type <var_decl> var_decl
 
 %type <typeNode> single_type type_primary postfix_type func_ptr_type type_name tuple_type func_param_type
 
 %type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
 %type <type_seq> func_param_type_seq
-%type <counter> opt_newlines extern_abi struct_decl_kind
+%type <counter> opt_newlines
+%type <tag> tag_entry
+%type <tags> tag_line tag_entry_seq
+%type <token_seq> tag_arg_seq
+%type <node> tag_stat
 
 %start pragram
 
 %%
 
 pragram
-    : pragram_statlist { driver.tree = $$ = new AstProgram($1); }
+    : pragram_statlist {
+        driver.tree = $$ = new AstProgram($1);
+    }
     ;
 
 pragram_statlist
@@ -164,7 +138,7 @@ pragram_statlist
     }
     | pragram_statlist pragram_stat {
         $$ = $1;
-        ($$)->as<AstStatList>()->push($2);
+        $$->push($2);
     }
     ;
 
@@ -191,7 +165,7 @@ stat_list
     }
     | stat_list stat {
         $$ = $1;
-        ($$)->as<AstStatList>()->push($2);
+        $$->push($2);
     }
     ;
 
@@ -203,6 +177,9 @@ stat
         $$ = $1;
     }
     | func_decl {
+        $$ = $1;
+    }
+    | tag_stat {
         $$ = $1;
     }
     | stat_ret {
@@ -274,46 +251,14 @@ stat_continue
     ;
 
 func_decl
-    : DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
+    : DEF FIELD '(' ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr); }
+    | DEF FIELD '(' ')' type_name NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, nullptr, $5); }
+    | DEF FIELD '(' param_decl_seq ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, $4); }
+    | DEF FIELD '(' param_decl_seq ')' type_name NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, $4, $6); }
+    | DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
     | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
     | DEF FIELD '(' param_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
     | DEF FIELD '(' param_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
-    | extern_abi DEF FIELD '(' ')' NEWLINE {
-        $$ = new AstFuncDecl(*$3, nullptr, nullptr, nullptr,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' ')' type_name NEWLINE {
-        $$ = new AstFuncDecl(*$3, nullptr, nullptr, $6,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' param_decl_seq ')' NEWLINE {
-        $$ = new AstFuncDecl(*$3, nullptr, $5, nullptr,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' param_decl_seq ')' type_name NEWLINE {
-        $$ = new AstFuncDecl(*$3, nullptr, $5, $7,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' ')' stat_compound {
-        $$ = new AstFuncDecl(*$3, $6, nullptr, nullptr,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' ')' type_name stat_compound {
-        $$ = new AstFuncDecl(*$3, $7, nullptr, $6,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' param_decl_seq ')' stat_compound {
-        $$ = new AstFuncDecl(*$3, $7, $5, nullptr,
-                             static_cast<lona::AbiKind>($1));
-    }
-    | extern_abi DEF FIELD '(' param_decl_seq ')' type_name stat_compound {
-        $$ = new AstFuncDecl(*$3, $8, $5, $7,
-                             static_cast<lona::AbiKind>($1));
-    }
-    ;
-
-extern_abi
-    : EXTERN CONST { $$ = static_cast<int64_t>(parseExternAbi($2)); }
     ;
 
 var_decl
@@ -327,21 +272,10 @@ param_decl
 
 /* struct decl */
 struct_decl
-    : STRUCT FIELD struct_statlist '}' { $$ = new AstStructDecl(*$2, $3); }
-    | EXTERN STRUCT FIELD NEWLINE {
-        $$ = new AstStructDecl(*$3, nullptr, lona::StructDeclKind::Extern);
+    : STRUCT FIELD NEWLINE { $$ = new AstStructDecl(*$2, nullptr); }
+    | STRUCT FIELD struct_statlist '}' {
+        $$ = new AstStructDecl(*$2, $3);
     }
-    | EXTERN STRUCT FIELD struct_statlist '}' {
-        $$ = new AstStructDecl(*$3, $4, lona::StructDeclKind::Extern);
-    }
-    | struct_decl_kind STRUCT FIELD struct_statlist '}' {
-        $$ = new AstStructDecl(*$3, $4,
-                               static_cast<lona::StructDeclKind>($1));
-    }
-    ;
-
-struct_decl_kind
-    : REPR '(' CONST ')' { $$ = static_cast<int64_t>(parseStructDeclKind($3)); }
     ;
 
 struct_statlist
@@ -356,24 +290,25 @@ struct_statlist
     }
     | struct_statlist struct_stat {
         $$ = $1;
-        ($$)->as<AstStatList>()->push($2);
+        $$->push($2);
     }
     ;
 
 struct_stat
-    : var_decl NEWLINE {
+    : var_decl NEWLINE { $$ = $1; }
+    | func_decl {
         $$ = $1;
     }
-    | func_decl {
+    | tag_stat {
         $$ = $1;
     }
     ;
 
 /* var define */
 var_def
-    : VAR var_decl { $$ = new AstVarDef($2->as<AstVarDecl>()); }
-    | VAR var_decl '=' expr { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
-    | VAR var_decl '=' brace_init { $$ = new AstVarDef($2->as<AstVarDecl>(), $4); }
+    : VAR var_decl { $$ = new AstVarDef($2); }
+    | VAR var_decl '=' expr { $$ = new AstVarDef($2, $4); }
+    | VAR var_decl '=' brace_init { $$ = new AstVarDef($2, $4); }
     | REF FIELD type_name '=' expr {
         $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $5);
     }
@@ -390,6 +325,61 @@ var_def
 stat_expr
     : final_expr NEWLINE { $$ = $1; }
     | var_def NEWLINE { $$ = $1; }
+    ;
+
+tag_stat
+    : tag_line { $$ = new AstTagNode($1); }
+    ;
+
+tag_line
+    : '#' '[' tag_entry_seq ']' NEWLINE { $$ = $3; }
+    ;
+
+tag_entry_seq
+    : tag_entry {
+        $$ = new std::vector<AstTag *>;
+        $$->push_back($1);
+    }
+    | tag_entry_seq ',' opt_newlines tag_entry {
+        $$ = $1;
+        $$->push_back($4);
+    }
+    ;
+
+tag_entry
+    : FIELD {
+        $$ = new AstTag(*$1);
+    }
+    | FIELD tag_arg_seq {
+        $$ = new AstTag(*$1, $2);
+    }
+    ;
+
+tag_arg_seq
+    : CONST {
+        $$ = new std::vector<AstToken *>;
+        $$->push_back($1);
+    }
+    | FIELD {
+        $$ = new std::vector<AstToken *>;
+        $$->push_back($1);
+    }
+    | TYPE {
+        $$ = new std::vector<AstToken *>;
+        $$->push_back($1);
+    }
+    | tag_arg_seq CONST {
+        $$ = $1;
+        $$->push_back($2);
+    }
+    | tag_arg_seq FIELD {
+        $$ = $1;
+        $$->push_back($2);
+    }
+    | tag_arg_seq TYPE {
+        $$ = $1;
+        $$->push_back($2);
+    }
     ;
 
 final_expr

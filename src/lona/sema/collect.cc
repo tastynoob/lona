@@ -253,7 +253,7 @@ rejectOpaqueStructByValue(TypeClass *type, TypeNode *typeNode,
     }
     auto typeName = describeExternCType(type, typeNode);
     error(loc,
-          "opaque extern struct `" + typeName +
+          "opaque `#[extern]` struct `" + typeName +
               "` cannot be used by value in " + context,
           "Use `" + typeName +
               "*` instead. Opaque C structs are only supported behind pointers.");
@@ -266,10 +266,10 @@ validateStructDeclShape(AstStructDecl *node) {
     }
     if (node->isExternDecl() && node->body) {
         error(node->loc,
-              "extern struct `" + toStdString(node->name) +
+              "#[extern] struct `" + toStdString(node->name) +
                   "` cannot declare fields or methods",
-              "Use `extern struct " + toStdString(node->name) +
-                  "` for an opaque C type, or drop `extern` and declare a normal struct body.");
+              "Use `#[extern]` on `struct " + toStdString(node->name) +
+                  "` for an opaque C type, or drop the tag and declare a normal struct body.");
     }
 }
 
@@ -287,37 +287,37 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
 
     if (isExternCCallbackType(type)) {
         error(loc,
-              "extern \"C\" function `" + funcName +
+              "#[extern \"C\"] function `" + funcName +
                   "` uses unsupported " + subject + ": " + typeName,
               "Callback support is not implemented in C FFI v0 yet.");
     }
     if (auto *pointerType = asUnqualified<PointerType>(type)) {
         if (!isCCompatiblePointerTarget(pointerType->getPointeeType())) {
             error(loc,
-                  "extern \"C\" function `" + funcName +
+                  "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }
     if (auto *indexableType = asUnqualified<IndexablePointerType>(type)) {
         if (!isCCompatiblePointerTarget(indexableType->getElementType())) {
             error(loc,
-                  "extern \"C\" function `" + funcName +
+                  "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, `extern struct`, or `repr(\"C\") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }
     if (asUnqualified<TupleType>(type)) {
         error(loc,
-              "extern \"C\" function `" + funcName +
+              "#[extern \"C\"] function `" + funcName +
                   "` uses unsupported " + subject + ": " + typeName,
               "Flatten the tuple into scalar parameters or pass a pointer instead.");
     }
     if (isExternCByValueAggregateType(type)) {
         error(loc,
-              "extern \"C\" function `" + funcName +
+              "#[extern \"C\"] function `" + funcName +
                   "` uses unsupported " + subject + ": " + typeName,
               "Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.");
     }
@@ -346,10 +346,10 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
 
     auto fieldTypeName = describeExternCType(fieldType, fieldDecl->typeNode);
     error(fieldDecl->loc,
-          "repr(\"C\") struct `" + toStdString(structDecl->name) +
+          "#[repr \"C\"] struct `" + toStdString(structDecl->name) +
               "` field `" + toStdString(fieldDecl->field) +
               "` uses unsupported type: " + fieldTypeName,
-          "Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `repr(\"C\")` structs.");
+          "Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `#[repr \"C\"]` structs.");
 }
 
 void
@@ -363,7 +363,7 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
     auto funcName = describeExternCFunctionName(node, methodParent);
     if (methodParent) {
         error(node->loc,
-              "extern \"C\" method `" + funcName + "` is not supported",
+              "#[extern \"C\"] method `" + funcName + "` is not supported",
               "Declare a top-level wrapper function instead. C FFI v0 only supports top-level functions.");
     }
 
@@ -376,7 +376,7 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
             }
             if (varDecl->bindingKind == BindingKind::Ref) {
                 error(varDecl->loc,
-                      "extern \"C\" function `" + funcName +
+                      "#[extern \"C\"] function `" + funcName +
                           "` parameter `" + toStdString(varDecl->field) +
                           "` cannot use `ref` binding",
                       "Use an explicit pointer type like `i32*` instead.");

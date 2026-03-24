@@ -297,7 +297,7 @@ public:
         if (auto *func = pointeeType ? pointeeType->as<FuncType>() : nullptr) {
             std::string name;
             if (func->isExternC()) {
-                name += "extern \"C\" ";
+                name += "#[extern \"C\"] ";
             }
             name += "(";
             const auto &argTypes = func->getArgTypes();

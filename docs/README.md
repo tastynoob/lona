@@ -40,7 +40,7 @@
 - [runtime/native_build.md](runtime/native_build.md): `lona-ir`、`lac`、`lac-native` 的构建和运行方式。
 - [runtime/system_crt_build_v0.md](runtime/system_crt_build_v0.md): hosted 可执行文件第一阶段草案；先复用系统 CRT，只把 LLVM object emission 纳入 `lona`。
 - [runtime/native_abi_v0.md](runtime/native_abi_v0.md): `native` 路线第一版内部 ABI 草案。
-- [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md): `lona <-> C` 互操作 v0 的当前已实现子集与剩余限制，收口 `extern "C"`、opaque struct 和 `repr(C)` 的边界。
+- [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md): `lona <-> C` 互操作 v0 的当前已实现子集与剩余限制，收口 `#[extern "C"]`、`#[extern] struct` 和 `#[repr "C"] struct` 的边界。
 - [../example/README.md](../example/README.md): 示例程序索引。
 
 ## 计划与草案
@@ -52,6 +52,6 @@
 
 1. 先看 [compiler/compiler_architecture.md](compiler/compiler_architecture.md) 了解整体结构。
 2. 再看 [language/grammer.md](language/grammer.md)、[language/expr.md](language/expr.md)、[language/type.md](language/type.md) 了解语言表面语法。
-3. 如果涉及 `extern "C"`、`extern struct`、`repr("C")`，继续看 [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md)。
+3. 如果涉及 `#[extern "C"]`、`#[extern] struct`、`#[repr "C"] struct`，继续看 [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md)。
 4. 需要构建或运行时，查 [runtime/native_build.md](runtime/native_build.md)。
 5. 需要区分目标模式时，查 [runtime/target_modes.md](runtime/target_modes.md)。

@@ -170,9 +170,11 @@ def test_imported_c_abi_symbols_keep_global_names(compiler: CompilerHarness) -> 
     compiler.write_source(
         "import_c_abi/dep.lo",
         """
-        extern "C" def abs(v i32) i32
+        #[extern "C"]
+        def abs(v i32) i32
 
-        extern "C" def c_inc(v i32) i32 {
+        #[extern "C"]
+        def c_inc(v i32) i32 {
             ret abs(v) + 1
         }
 
@@ -206,9 +208,11 @@ def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compil
     compiler.write_source(
         "import_c_repr/dep.lo",
         """
-        extern struct FILE
+        #[extern]
+        struct FILE
 
-        repr("C") struct Point {
+        #[repr "C"]
+        struct Point {
             x i32
             y i32
         }
@@ -219,7 +223,8 @@ def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compil
         """
         import dep
 
-        extern "C" def shift(p dep.Point*, fp dep.FILE*) dep.Point*
+        #[extern "C"]
+        def shift(p dep.Point*, fp dep.FILE*) dep.Point*
 
         def main() i32 {
             ret 0
@@ -243,18 +248,19 @@ def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compil
         """
         import dep
 
-        extern "C" def bad(p dep.Pair*) i32
+        #[extern "C"]
+        def bad(p dep.Pair*) i32
         """,
     )
     result = compiler.emit_ir(main_path).expect_failed()
     assert_contains(
         result.stderr,
-        'semantic error: extern "C" function `bad` uses unsupported parameter `p`: dep.Pair*',
+        'semantic error: #[extern "C"] function `bad` uses unsupported parameter `p`: dep.Pair*',
         label="import native struct ptr diagnostic",
     )
     assert_contains(
         result.stderr,
-        'help: Use pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
+        'help: Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
         label="import native struct ptr diagnostic",
     )
 
@@ -704,4 +710,3 @@ def test_large_struct_returns_and_grammar_subset_stay_lowerable(compiler: Compil
     ir = compiler.emit_ir(input_path).expect_ok().stdout
     assert_regex(ir, r"^%.*Name = type \{ i32, i32 \}", label="grammar subset ir")
     assert_regex(ir, r"^define i64 @make_name\(i32 [^,]+, i32 [^)]+\)", label="grammar subset ir")
-

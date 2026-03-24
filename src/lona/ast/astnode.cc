@@ -65,6 +65,7 @@ AstNode::accept(AstVisitor &) {
     }
 
 DEF_ACCEPT(AstProgram)
+DEF_ACCEPT(AstTagNode)
 DEF_ACCEPT(AstStatList)
 DEF_ACCEPT(AstConst)
 DEF_ACCEPT(AstField)

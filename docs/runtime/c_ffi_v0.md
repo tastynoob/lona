@@ -3,15 +3,15 @@
 > 这是一份 `lona <-> C` 互操作 v0 的设计与现状说明。
 > 当前仓库已经接通了 parser / sema / codegen 的最小稳定子集，包括：
 >
-> - top-level `extern "C"` 函数导入 / 导出
-> - `extern struct` opaque type
-> - `repr("C") struct`
+> - top-level `#[extern "C"]` 函数导入 / 导出
+> - `#[extern] struct` opaque type
+> - `#[repr "C"] struct`
 >
 > 目标不是一步做到“完整 C 绑定系统”，而是先冻结一版最小、稳定、可实现的 FFI 契约，优先满足：
 >
 > - `lona` 调用现成 C 库
 > - C 调用 `lona` 导出的普通函数
-> - 后续继续扩展 callback、`repr(C)` 聚合和更复杂链接模型
+> - 后续继续扩展 callback、`#[repr "C"]` 聚合和更复杂链接模型
 
 ## 1. 状态与范围
 
@@ -24,9 +24,9 @@
 
 当前仓库已落地的 v0 子集：
 
-- `extern "C"` 顶层函数导入 / 导出
-- `extern struct` opaque 类型
-- `repr("C") struct`
+- `#[extern "C"]` 顶层函数导入 / 导出
+- `#[extern] struct` opaque 类型
+- `#[repr "C"] struct`
 - C-compatible 指针参数 / 返回值检查
 - native ABI 与 C ABI 的 lowering 分流
 
@@ -88,8 +88,8 @@
 - 标量
 - 裸指针
 - opaque struct pointer
-- `repr(C)` struct pointer
-- top-level `extern "C"` 函数导入 / 导出
+- `#[repr "C"] struct` pointer
+- top-level `#[extern "C"]` 函数导入 / 导出
 
 先不支持：
 
@@ -100,7 +100,7 @@
 
 ### 2.3 ABI 是函数类型的一部分
 
-`extern "C"` 不能只是“声明上的一个修饰词”。
+`#[extern "C"]` 不能只是“声明上的一个修饰词”。
 
 从语义上，ABI 至少要进入：
 
@@ -110,7 +110,7 @@
 - 函数指针类型
 
 当前实现已经把 ABI kind 放进 `FuncType`。
-不过用户层仍未开放 callback / `extern "C"` 函数指针语法；这部分还停留在实现预留，而不是稳定表面语法。
+不过用户层仍未开放 callback / `#[extern "C"]` 函数指针语法；这部分还停留在实现预留，而不是稳定表面语法。
 
 否则后续一旦引入：
 
@@ -121,7 +121,7 @@
 
 ### 2.4 C ABI 对象不携带 `lona native ABI` 版本字段
 
-`extern "C"` 对象的兼容性由目标平台的 C ABI 决定，而不是由 `lona native ABI` 决定。
+`#[extern "C"]` 对象的兼容性由目标平台的 C ABI 决定，而不是由 `lona native ABI` 决定。
 
 因此：
 
@@ -152,14 +152,19 @@ v0 必须把“允许过 FFI 的类型集合”收死。
 当前语法：
 
 ```lona
-extern "C" def puts(msg u8 const[*]) i32
-extern "C" def malloc(size u64) u8[*]
-extern "C" def free(p u8[*])
+#[extern "C"]
+def puts(msg u8 const[*]) i32
+
+#[extern "C"]
+def malloc(size u64) u8[*]
+
+#[extern "C"]
+def free(p u8[*])
 ```
 
 语义：
 
-- 有 `extern "C"`
+- 有 `#[extern "C"]`
 - 没有函数体
 - 表示“引用外部 C 符号”
 
@@ -174,14 +179,15 @@ lowering 结果应是：
 当前语法：
 
 ```lona
-extern "C" def lona_add(a i32, b i32) i32 {
+#[extern "C"]
+def lona_add(a i32, b i32) i32 {
     ret a + b
 }
 ```
 
 语义：
 
-- 有 `extern "C"`
+- 有 `#[extern "C"]`
 - 有函数体
 - 表示“定义一个可供 C 调用的符号”
 
@@ -198,8 +204,11 @@ v0 暂不要求单独的 `export` 关键字。
 当前语法：
 
 ```lona
-extern struct FILE
-extern struct DIR
+#[extern]
+struct FILE
+
+#[extern]
+struct DIR
 ```
 
 语义：
@@ -211,17 +220,23 @@ extern struct DIR
 例如：
 
 ```lona
-extern struct FILE
-extern "C" def fopen(path u8 const[*], mode u8 const[*]) FILE*
-extern "C" def fclose(fp FILE*) i32
+#[extern]
+struct FILE
+
+#[extern "C"]
+def fopen(path u8 const[*], mode u8 const[*]) FILE*
+
+#[extern "C"]
+def fclose(fp FILE*) i32
 ```
 
-### 3.4 `repr(C)` 结构体
+### 3.4 `#[repr "C"]` 结构体
 
 当前语法：
 
 ```lona
-repr("C") struct Point {
+#[repr "C"]
+struct Point {
     x i32
     y i32
 }
@@ -248,7 +263,7 @@ v0 第一阶段建议只支持：
 callback 很重要，但它要求：
 
 - ABI 进入函数类型
-- 函数指针语法可表达 `extern "C"`
+- 函数指针语法可表达 `#[extern "C"]`
 - 语义分析能区分 native/internal 函数指针与 C 函数指针
 
 因此建议：
@@ -256,7 +271,7 @@ callback 很重要，但它要求：
 - v0 第一阶段文法先不开放 callback 表面语法
 - 但实现层要预留 `FuncType.abiKind`
 
-等到 callback 阶段再定义函数指针的 `extern "C"` 写法。
+等到 callback 阶段再定义函数指针的 `#[extern "C"]` 写法。
 
 ## 4. 类型边界
 
@@ -290,7 +305,7 @@ callback 很重要，但它要求：
 - `u8[*]` / `i8[*]`
 - `void*` 的语言映射，建议先用 `u8*` 或保留专门的 `opaque*` 设计到后续讨论
 - 指向 opaque struct 的指针
-- 指向 `repr(C)` struct 的指针
+- 指向 `#[repr "C"] struct` 的指针
 
 以下类型禁止直接过 C FFI：
 
@@ -302,7 +317,7 @@ callback 很重要，但它要求：
 v0 把聚合分成两类：
 
 1. opaque C struct
-2. `repr(C)` struct
+2. `#[repr "C"] struct`
 
 opaque C struct：
 
@@ -311,7 +326,7 @@ opaque C struct：
 - 不能按值作为本地变量
 - 只能出现在 `T*`
 
-`repr(C)` struct：
+`#[repr "C"] struct`：
 
 - 字段类型必须本身 C-compatible
 - 字段顺序按源码声明顺序固定
@@ -321,7 +336,7 @@ v0 暂不允许以下类型直接过 FFI：
 
 - `tuple`
 - 固定数组按值参数 / 返回
-- 非 `repr(C)` 的普通 `struct`
+- 非 `#[repr "C"]` 的普通 `struct`
 
 如果确实需要数组语义，建议在 v0 中改写成：
 
@@ -343,7 +358,7 @@ v0 不定义语言级字符串与 C 字符串自动桥接。
 
 ### 5.1 总原则
 
-所有标记为 `extern "C"` 的函数都必须走单独的 `CAbi` lowering。
+所有标记为 `#[extern "C"]` 的函数都必须走单独的 `CAbi` lowering。
 
 不允许：
 
@@ -357,7 +372,7 @@ v0 建议先把 C FFI 收成下面这组规则：
 - 标量：直接传 / 直接返
 - 指针：直接传 / 直接返
 - opaque struct：只能以指针传
-- `repr(C)` struct：v0 第一阶段只允许以指针传
+- `#[repr "C"] struct`：v0 第一阶段只允许以指针传
 
 也就是说，第一阶段其实可以完全绕开：
 
@@ -382,7 +397,7 @@ v0 建议先把 C FFI 收成下面这组规则：
 
 ### 5.4 名字和调用约定
 
-`extern "C"` 的效果至少包括：
+`#[extern "C"]` 的效果至少包括：
 
 - 不做 `lona` 模块名 mangling
 - LLVM calling convention 使用 C convention
@@ -392,7 +407,7 @@ v0 建议先把 C FFI 收成下面这组规则：
 
 v0 明确禁止：
 
-- `extern "C"` method
+- `#[extern "C"]` method
 
 原因：
 
@@ -403,11 +418,13 @@ v0 明确禁止：
 如果用户需要把方法暴露给 C，应手写 top-level wrapper：
 
 ```lona
-repr("C") struct Counter {
+#[repr "C"]
+struct Counter {
     value i32
 }
 
-extern "C" def counter_bump(self Counter*, step i32) i32 {
+#[extern "C"]
+def counter_bump(self Counter*, step i32) i32 {
     self.value = self.value + step
     ret self.value
 }
@@ -419,8 +436,8 @@ extern "C" def counter_bump(self Counter*, step i32) i32 {
 
 v0 建议先采用最小规则：
 
-- `extern "C"` import：符号名默认等于声明名
-- `extern "C"` definition：导出符号名默认等于声明名
+- `#[extern "C"]` import：符号名默认等于声明名
+- `#[extern "C"]` definition：导出符号名默认等于声明名
 
 暂不引入：
 
@@ -436,7 +453,7 @@ v0 建议先采用最小规则：
 
 - ABI kind
 - 符号名
-- opaque / `repr(C)` 类型身份
+- opaque / `#[repr "C"]` 类型身份
 
 否则会出现这种错误复用：
 
@@ -499,16 +516,16 @@ v0 更适合把下面这些能力放到 CLI / build system：
 
 在语义分析阶段直接拒绝：
 
-- `extern "C"` method
-- `extern "C"` 中的 `ref`
+- `#[extern "C"]` method
+- `#[extern "C"]` 中的 `ref`
 - 非 C-compatible 的聚合
 - opaque struct 按值使用
 
-### 7.4 `repr(C)` 布局
+### 7.4 `#[repr "C"]` 布局
 
-`repr(C)` 的布局建议单独建一个显式分支，不要复用普通 `struct` 的“当前碰巧兼容”布局。
+`#[repr "C"]` 的布局建议单独建一个显式分支，不要复用普通 `struct` 的“当前碰巧兼容”布局。
 
-因为从语言设计上，`repr(C)` 不是“注释”，而是：
+因为从语言设计上，`#[repr "C"]` 不是“注释”，而是：
 
 - 布局承诺
 - FFI 边界承诺
@@ -518,10 +535,10 @@ v0 更适合把下面这些能力放到 CLI / build system：
 
 建议按下面顺序推进：
 
-1. `extern "C"` bodyless 顶层函数导入
-2. `extern "C"` 顶层函数导出
-3. `extern struct` opaque type
-4. `repr(C)` struct 与 `struct*` 传参
+1. `#[extern "C"]` bodyless 顶层函数导入
+2. `#[extern "C"]` 顶层函数导出
+3. `#[extern] struct` opaque type
+4. `#[repr "C"] struct` 与 `struct*` 传参
 5. callback 与 C ABI 函数指针
 6. 按值 struct 传参 / 返回
 7. varargs
@@ -543,26 +560,26 @@ v0 至少补这些回归：
    - 非变参纯标量函数
 
 2. C export
-   - C harness 调用 `lona` 导出的 `extern "C"` 函数
+   - C harness 调用 `lona` 导出的 `#[extern "C"]` 函数
 
 3. opaque type
    - `FILE*`
    - `DIR*`
 
-4. `repr(C)` struct 指针
+4. `#[repr "C"] struct` 指针
    - C 侧写字段，`lona` 侧读字段
    - `lona` 侧写字段，C 侧读字段
 
 5. 诊断
-   - `extern "C"` method 拒绝
+   - `#[extern "C"]` method 拒绝
    - `ref` 拒绝
-   - 非 `repr(C)` struct 拒绝
+   - 非 `#[repr "C"]` struct 拒绝
    - opaque struct 按值拒绝
 
 6. 增量编译
    - ABI kind 变化
    - 符号名变化
-   - `repr(C)` 字段布局变化
+   - `#[repr "C"]` 字段布局变化
 
 ## 10. 明确不进入 v0 的内容
 
@@ -583,10 +600,10 @@ v0 至少补这些回归：
 `C FFI v0` 的核心收口应该是：
 
 - `native ABI` 与 `C ABI` 分层
-- `extern "C"` 只先支持 top-level function
+- `#[extern "C"]` 只先支持 top-level function
 - 只支持 C-compatible 标量与指针
-- opaque struct 和 `repr(C)` struct 分开建模
+- opaque struct 和 `#[repr "C"]` struct 分开建模
 - v0 第一阶段只做指针风格聚合互操作
 - ABI kind 必须进入函数类型和接口哈希
 
-先把这版做实，`lona` 就已经能开始使用大量现成 C 库，同时也为后续 callback、`repr(C)` by-value 和自动绑定生成器打下稳定基础。
+先把这版做实，`lona` 就已经能开始使用大量现成 C 库，同时也为后续 callback、`#[repr "C"]` by-value 和自动绑定生成器打下稳定基础。

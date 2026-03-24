@@ -75,6 +75,18 @@ bindingKindKeyword(BindingKind kind) {
     return kind == BindingKind::Ref ? "ref" : "var";
 }
 
+class AstTag {
+public:
+    AstToken const name;
+    std::vector<AstToken *> *const args = nullptr;
+
+    explicit AstTag(AstToken &name, std::vector<AstToken *> *args = nullptr)
+        : name(name),
+          args(args ? args : new std::vector<AstToken *>) {}
+
+    void toJson(Json &root) const;
+};
+
 struct TypeNode {
     location const loc;
     explicit TypeNode(const location &loc = location()) : loc(loc) {}
@@ -185,6 +197,20 @@ public:
     T *as() {
         return dynamic_cast<T *>(this);
     }
+};
+
+class AstTagNode : public AstNode {
+public:
+    std::vector<AstTag *> *const tags;
+
+    explicit AstTagNode(std::vector<AstTag *> *tags)
+        : AstNode(tags && !tags->empty() && (*tags)[0]
+                      ? (*tags)[0]->name.loc
+                      : location()),
+          tags(tags ? tags : new std::vector<AstTag *>) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
 };
 
 class AstStatList;
@@ -333,7 +359,7 @@ class AstStructDecl : public AstNode {
 public:
     string const name;
     AstNode *const body;
-    StructDeclKind const declKind;
+    StructDeclKind declKind;
 
     AstStructDecl(AstToken &field, AstNode *body,
                   StructDeclKind declKind = StructDeclKind::Native)
@@ -341,6 +367,7 @@ public:
     bool hasBody() const { return body != nullptr; }
     bool isExternDecl() const { return declKind == StructDeclKind::Extern; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
+    void setDeclKind(StructDeclKind kind) { declKind = kind; }
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
@@ -382,8 +409,7 @@ public:
           field(vardecl->field), typeNode(vardecl->typeNode),
           initVal(initVal) {}
 
-    AstVarDef(AstToken &field,
-               AstNode *initVal = nullptr)
+    AstVarDef(AstToken &field, AstNode *initVal = nullptr)
         : AstNode(field.loc), bindingKind(BindingKind::Value), field(field.text),
           typeNode(nullptr), initVal(initVal) {}
 
@@ -429,10 +455,11 @@ public:
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
     TypeNode *const retType;
-    AbiKind const abiKind;
+    AbiKind abiKind;
     bool hasArgs() const { return args != nullptr; }
     bool hasBody() const { return body != nullptr; }
     bool isExternC() const { return abiKind == AbiKind::C; }
+    void setAbiKind(AbiKind kind) { abiKind = kind; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,

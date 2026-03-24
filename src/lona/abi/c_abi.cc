@@ -42,7 +42,7 @@ classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf)
         return signature;
     }
     if (hasImplicitSelf) {
-        throw std::runtime_error("extern \"C\" methods are not supported");
+        throw std::runtime_error("#[extern \"C\"] methods are not supported");
     }
 
     auto *retType = funcType->getRetType();
@@ -53,7 +53,7 @@ classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf)
     signature.sourceArgInfos.reserve(argTypes.size());
     for (std::size_t i = 0; i < argTypes.size(); ++i) {
         if (funcType->getArgBindingKind(i) == BindingKind::Ref) {
-            throw std::runtime_error("extern \"C\" ref parameters are not supported");
+            throw std::runtime_error("#[extern \"C\"] ref parameters are not supported");
         }
         AbiValueInfo info;
         info.passKind = AbiPassKind::Direct;

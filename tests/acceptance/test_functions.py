@@ -242,9 +242,14 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_decl_json.lo",
             """
-            extern "C" def puts(msg i8*) i32
-            extern struct FILE
-            repr("C") struct Point {
+            #[extern "C"]
+            def puts(msg i8*) i32
+
+            #[extern]
+            struct FILE
+
+            #[repr "C"]
+            struct Point {
                 x i32
                 y i32
             }
@@ -258,7 +263,8 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_string.lo",
             """
-            extern "C" def inspect(msg u8 const[*]) i32
+            #[extern "C"]
+            def inspect(msg u8 const[*]) i32
 
             def main() i32 {
                 ret inspect("ok")
@@ -274,14 +280,17 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_pointer_sig.lo",
             """
-            extern struct FILE
+            #[extern]
+            struct FILE
 
-            repr("C") struct Point {
+            #[repr "C"]
+            struct Point {
                 x i32
                 y i32
             }
 
-            extern "C" def shift(p Point*, fp FILE*) Point*
+            #[extern "C"]
+            def shift(p Point*, fp FILE*) Point*
 
             def main() i32 {
                 ret 0
@@ -295,7 +304,8 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_import.lo",
             """
-            extern "C" def abs(v i32) i32
+            #[extern "C"]
+            def abs(v i32) i32
 
             def main() i32 {
                 ret 0
@@ -310,7 +320,8 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_export.lo",
             """
-            extern "C" def lona_add(a i32, b i32) i32 {
+            #[extern "C"]
+            def lona_add(a i32, b i32) i32 {
                 ret a + b
             }
             """,
@@ -322,12 +333,14 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_export_pointer.lo",
             """
-            repr("C") struct Point {
+            #[repr "C"]
+            struct Point {
                 x i32
                 y i32
             }
 
-            extern "C" def passthrough(p Point*) Point* {
+            #[extern "C"]
+            def passthrough(p Point*) Point* {
                 ret p
             }
             """,
@@ -339,7 +352,8 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "self_ptr_struct.lo",
             """
-            repr("C") struct Node {
+            #[repr "C"]
+            struct Node {
                 value i32
                 next Node*
             }
@@ -361,8 +375,11 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_indexable.lo",
             """
-            extern "C" def alloc(size u64) u8[*]
-            extern "C" def fill(buf u8[*], value u8) i32
+            #[extern "C"]
+            def alloc(size u64) u8[*]
+
+            #[extern "C"]
+            def fill(buf u8[*], value u8) i32
             """,
         )
     ).expect_ok().stdout
@@ -374,20 +391,52 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
     cases = [
         (
             "ffi_abi_bad.lo",
-            'extern "Rust" def bad(v i32) i32\n',
-            ['semantic error: unsupported extern ABI `Rust`', 'help: Only `extern "C"` is supported right now.'],
+            '#[extern "Rust"]\ndef bad(v i32) i32\n',
+            ['semantic error: unsupported extern ABI `Rust`', 'help: Only `#[extern "C"]` is supported right now.'],
+        ),
+        (
+            "ffi_extern_arg_count_bad.lo",
+            '#[extern]\ndef bad(v i32) i32\n',
+            [
+                'semantic error: invalid arguments for tag `extern` on function `bad`: expected 1 argument, got 0',
+                'help: Use syntax like `#[extern "C"]`.',
+            ],
+        ),
+        (
+            "ffi_repr_arg_type_bad.lo",
+            '#[repr C]\nstruct Point {\n    x i32\n}\n',
+            [
+                'semantic error: invalid arguments for tag `repr` on struct `Point`: argument 0 must be a string literal',
+                'help: Use syntax like `#[repr "C"]`.',
+            ],
         ),
         (
             "ffi_repr_bad.lo",
-            'repr("Rust") struct Point {\n    x i32\n}\n',
-            ['semantic error: unsupported struct repr `Rust`', 'help: Only `repr("C")` is supported right now.'],
+            '#[repr "Rust"]\nstruct Point {\n    x i32\n}\n',
+            ['semantic error: unsupported struct repr `Rust`', 'help: Only `#[repr "C"]` is supported right now.'],
+        ),
+        (
+            "ffi_repr_func_bad.lo",
+            '#[repr "C"]\ndef bad(v i32) i32\n',
+            [
+                'semantic error: cannot apply tag `repr` to function `bad`',
+                'help: Use `#[extern "C"]` for C ABI functions. The `repr` tag only applies to struct declarations.',
+            ],
+        ),
+        (
+            "ffi_extern_var_bad.lo",
+            '#[extern "C"]\nvar file i32 = 0\n',
+            [
+                'semantic error: cannot apply tag `extern` to variable `file`',
+                'help: The `extern` tag only applies to function and struct declarations right now.',
+            ],
         ),
         (
             "ffi_extern_struct_bad.lo",
-            "extern struct FILE {\n}\n",
+            "#[extern]\nstruct FILE {\n}\n",
             [
-                'semantic error: extern struct `FILE` cannot declare fields or methods',
-                'help: Use `extern struct FILE` for an opaque C type, or drop `extern` and declare a normal struct body.',
+                'semantic error: #[extern] struct `FILE` cannot declare fields or methods',
+                'help: Use `#[extern]` on `struct FILE` for an opaque C type, or drop the tag and declare a normal struct body.',
             ],
         ),
         (
@@ -396,38 +445,54 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             struct Point {
                 x i32
 
-                extern "C" def bad(v i32) i32 {
+                #[extern "C"]
+                def bad(v i32) i32 {
                     ret v
                 }
             }
             """,
             [
-                'semantic error: extern "C" method `',
-                '.Point.bad` is not supported',
-                'help: Declare a top-level wrapper function instead. C FFI v0 only supports top-level functions.',
+                'semantic error: tag `extern` is only allowed on top-level declarations',
+                'help: Move the tagged declaration to module scope. Tags are not supported inside functions, structs, or control-flow blocks.',
+            ],
+        ),
+        (
+            "ffi_nested_local_tag_bad.lo",
+            """
+            def main() i32 {
+                #[extern "C"]
+                def bad(v i32) i32 {
+                    ret v
+                }
+                ret 0
+            }
+            """,
+            [
+                'semantic error: tag `extern` is only allowed on top-level declarations',
+                'help: Move the tagged declaration to module scope. Tags are not supported inside functions, structs, or control-flow blocks.',
             ],
         ),
         (
             "ffi_ref_bad.lo",
-            'extern "C" def bad(ref x i32) i32\n',
+            '#[extern "C"]\ndef bad(ref x i32) i32\n',
             [
-                'semantic error: extern "C" function `bad` parameter `x` cannot use `ref` binding',
+                'semantic error: #[extern "C"] function `bad` parameter `x` cannot use `ref` binding',
                 'help: Use an explicit pointer type like `i32*` instead.',
             ],
         ),
         (
             "ffi_callback_bad.lo",
-            'extern "C" def bad(cb (i32: i32)) i32\n',
+            '#[extern "C"]\ndef bad(cb (i32: i32)) i32\n',
             [
-                'semantic error: extern "C" function `bad` uses unsupported parameter `cb`: (i32: i32)',
+                'semantic error: #[extern "C"] function `bad` uses unsupported parameter `cb`: (i32: i32)',
                 'help: Callback support is not implemented in C FFI v0 yet.',
             ],
         ),
         (
             "ffi_callback_ptr_bad.lo",
-            'extern "C" def bad(slot (i32: i32)*) i32\n',
+            '#[extern "C"]\ndef bad(slot (i32: i32)*) i32\n',
             [
-                'semantic error: extern "C" function `bad` uses unsupported parameter `slot`: (i32: i32)*',
+                'semantic error: #[extern "C"] function `bad` uses unsupported parameter `slot`: (i32: i32)*',
                 'help: Callback support is not implemented in C FFI v0 yet.',
             ],
         ),
@@ -439,10 +504,11 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
                 right i32
             }
 
-            extern "C" def bad(p Pair) i32
+            #[extern "C"]
+            def bad(p Pair) i32
             """,
             [
-                'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair',
+                'semantic error: #[extern "C"] function `bad` uses unsupported parameter `p`: Pair',
                 'help: Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.',
             ],
         ),
@@ -454,17 +520,19 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
                 right i32
             }
 
-            extern "C" def bad(p Pair*) i32
+            #[extern "C"]
+            def bad(p Pair*) i32
             """,
             [
-                'semantic error: extern "C" function `bad` uses unsupported parameter `p`: Pair*',
-                'help: Use pointers to scalars, pointers, `extern struct`, or `repr("C") struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
+                'semantic error: #[extern "C"] function `bad` uses unsupported parameter `p`: Pair*',
+                'help: Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
             ],
         ),
         (
             "ffi_opaque_var_bad.lo",
             """
-            extern struct FILE
+            #[extern]
+            struct FILE
 
             def main() i32 {
                 var file FILE
@@ -472,14 +540,15 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             }
             """,
             [
-                'semantic error: opaque extern struct `FILE` cannot be used by value in variable `file`',
+                'semantic error: opaque `#[extern]` struct `FILE` cannot be used by value in variable `file`',
                 'help: Use `FILE*` instead. Opaque C structs are only supported behind pointers.',
             ],
         ),
         (
             "ffi_opaque_ctor_bad.lo",
             """
-            extern struct FILE
+            #[extern]
+            struct FILE
 
             def main() i32 {
                 var file = FILE()
@@ -487,9 +556,9 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             }
             """,
             [
-                'semantic error: opaque extern struct `',
+                'semantic error: opaque `#[extern]` struct `',
                 'FILE` cannot be constructed by value',
-                'from an `extern "C"` API instead. Opaque C structs do not expose fields or value layout.',
+                'from a `#[extern "C"]` API instead. Opaque C structs do not expose fields or value layout.',
             ],
         ),
         (
@@ -500,13 +569,14 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
                 right i32
             }
 
-            repr("C") struct Wrapper {
+            #[repr "C"]
+            struct Wrapper {
                 pair Pair
             }
             """,
             [
-                'semantic error: repr("C") struct `Wrapper` field `pair` uses unsupported type: Pair',
-                'help: Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `repr("C")` structs.',
+                'semantic error: #[repr "C"] struct `Wrapper` field `pair` uses unsupported type: Pair',
+                'help: Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `#[repr "C"]` structs.',
             ],
         ),
     ]

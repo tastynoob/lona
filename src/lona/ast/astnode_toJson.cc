@@ -50,10 +50,43 @@ escapeByteStringForJson(const string &value) {
 }  // namespace
 
 void
+AstTag::toJson(Json &root) const {
+    root["name"] = name.text.tochara();
+    root["args"] = Json::array();
+    if (!args) {
+        return;
+    }
+    for (auto *arg : *args) {
+        if (!arg) {
+            continue;
+        }
+        Json value = Json::object();
+        value["type"] = tokenTypeToStr(arg->type);
+        value["value"] = arg->text.tochara();
+        root["args"].push_back(value);
+    }
+}
+
+void
 AstProgram::toJson(Json &root) {
     root["type"] = "Program";
     root["body"] = Json::object();
     this->body->toJson(root["body"]);
+}
+
+void
+AstTagNode::toJson(Json &root) {
+    root["type"] = "Tag";
+    root["tags"] = Json::array();
+    if (tags) {
+        for (auto *tag : *tags) {
+            Json item = Json::object();
+            if (tag) {
+                tag->toJson(item);
+            }
+            root["tags"].push_back(item);
+        }
+    }
 }
 
 void
