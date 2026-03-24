@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PYTHON_BIN="${PYTHON:-python3}"
+
+"$PYTHON_BIN" -m pytest -q "$ROOT/tests/acceptance/test_frontend.py"
 
 for script in \
-    frontend.sh \
     controlflow.sh \
     functions.sh \
     references.sh \

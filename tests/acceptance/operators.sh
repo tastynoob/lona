@@ -87,12 +87,14 @@ def mark(ptr i32*, value i32) bool {
     ret true
 }
 
-def main() i32 {
+def run() i32 {
     var state i32 = 0
     false && mark(&state, 1)
     true || mark(&state, 2)
     ret state
 }
+
+ret run()
 EOF
 bash "$ROOT/scripts/lac.sh" "$short_circuit_in" "$short_circuit_bin"
 set +e
@@ -117,7 +119,7 @@ def shift(a i64, b u8) i64 {
     ret a >> b
 }
 
-def main() i32 {
+def run() i32 {
     var a i64 = -1
     var b u8 = 1
     if less(a, b) && divide(a, b) == -1 && shift(a, b) == -1 {
@@ -125,6 +127,8 @@ def main() i32 {
     }
     ret 1
 }
+
+ret run()
 EOF
 "$BIN" --emit ir --verify-ir "$mixed_sign_in" >"$mixed_sign_out"
 grep -Fq 'icmp slt i64' "$mixed_sign_out"

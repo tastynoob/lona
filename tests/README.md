@@ -5,7 +5,7 @@
 ## Acceptance
 
 - [acceptance/run.sh](acceptance/run.sh): acceptance 总入口。
-- [acceptance/frontend.sh](acceptance/frontend.sh): AST/JSON、基础 IR、debug IR、基本语义。
+- [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object 语义。
 - [acceptance/controlflow.sh](acceptance/controlflow.sh): `for` / `for ... else` / `break` / `continue` 的 JSON、诊断和运行语义。
 - [acceptance/functions.sh](acceptance/functions.sh): 函数指针、裸函数类型限制、方法选择器、调用检查。
 - [acceptance/diagnostics.sh](acceptance/diagnostics.sh): 语法和语义错误诊断。
@@ -13,6 +13,8 @@
 - [acceptance/operators.sh](acceptance/operators.sh): 算术、位运算、比较、逻辑短路和非法运算符诊断。
 - [acceptance/syntax_features.sh](acceptance/syntax_features.sh): float、tuple、数组、旧语法拒绝。
 - [acceptance/lib.sh](acceptance/lib.sh): acceptance 公共环境和断言辅助。
+- [harness/compiler.py](harness/compiler.py): `pytest` 测试的编译调用与临时文件辅助。
+- [harness/assertions.py](harness/assertions.py): 更短、更定向的文本/对象断言辅助。
 
 ## Smoke
 

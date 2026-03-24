@@ -44,7 +44,7 @@ grep -q '"type": "Continue"' "$json_out"
 grep -q '"else": {' "$json_out"
 
 cat >"$natural_else_in" <<'EOF'
-def main() i32 {
+def run() i32 {
     var i i32 = 0
     var out i32 = 0
     for i < 3 {
@@ -55,6 +55,8 @@ def main() i32 {
     }
     ret out
 }
+
+ret run()
 EOF
 bash "$ROOT/scripts/lac.sh" "$natural_else_in" "$natural_else_bin"
 set +e
@@ -67,7 +69,7 @@ if [ "$natural_else_status" -ne 7 ]; then
 fi
 
 cat >"$break_else_in" <<'EOF'
-def main() i32 {
+def run() i32 {
     var i i32 = 0
     var out i32 = 0
     for i < 3 {
@@ -77,6 +79,8 @@ def main() i32 {
     }
     ret out
 }
+
+ret run()
 EOF
 bash "$ROOT/scripts/lac.sh" "$break_else_in" "$break_else_bin"
 set +e
@@ -89,7 +93,7 @@ if [ "$break_else_status" -ne 0 ]; then
 fi
 
 cat >"$continue_else_in" <<'EOF'
-def main() i32 {
+def run() i32 {
     var i i32 = 0
     var out i32 = 0
     for i < 3 {
@@ -103,6 +107,8 @@ def main() i32 {
     }
     ret out
 }
+
+ret run()
 EOF
 bash "$ROOT/scripts/lac.sh" "$continue_else_in" "$continue_else_bin"
 set +e
@@ -115,7 +121,7 @@ if [ "$continue_else_status" -ne 7 ]; then
 fi
 
 cat >"$nested_break_in" <<'EOF'
-def main() i32 {
+def run() i32 {
     var outer i32 = 0
     for outer < 1 {
         outer = outer + 1
@@ -131,6 +137,8 @@ def main() i32 {
     }
     ret 2
 }
+
+ret run()
 EOF
 bash "$ROOT/scripts/lac.sh" "$nested_break_in" "$nested_break_bin"
 set +e
