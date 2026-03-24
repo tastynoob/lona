@@ -171,7 +171,7 @@ lac-native input.lo output/program
 
 ## 📄 License
 
-除特别说明外，本仓库中的 `lona` 自有代码可由你任选以下任一协议使用：
+除特别说明外，本仓库中的 `lona` 自有代码根据以下条款分发：
 
 - Apache License 2.0
 - MIT License

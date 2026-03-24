@@ -1,6 +1,12 @@
 # C FFI v0
 
-> 这是一份 `lona <-> C` 互操作的第一版草案。
+> 这是一份 `lona <-> C` 互操作 v0 的设计与现状说明。
+> 当前仓库已经接通了 parser / sema / codegen 的最小稳定子集，包括：
+>
+> - top-level `extern "C"` 函数导入 / 导出
+> - `extern struct` opaque type
+> - `repr("C") struct`
+>
 > 目标不是一步做到“完整 C 绑定系统”，而是先冻结一版最小、稳定、可实现的 FFI 契约，优先满足：
 >
 > - `lona` 调用现成 C 库
@@ -15,6 +21,14 @@
 - `Linux x86_64 SysV`
 - `lona <-> C` 的函数调用边界
 - 显式声明式 FFI，不做自动 header import
+
+当前仓库已落地的 v0 子集：
+
+- `extern "C"` 顶层函数导入 / 导出
+- `extern struct` opaque 类型
+- `repr("C") struct`
+- C-compatible 指针参数 / 返回值检查
+- native ABI 与 C ABI 的 lowering 分流
 
 `C FFI v0` 暂时**不**定义：
 
@@ -95,7 +109,8 @@
 - 函数类型
 - 函数指针类型
 
-即使 v0 第一阶段暂时还不开放 callback 语法，实现层也应该从一开始就把 ABI kind 放进 `FuncType`。
+当前实现已经把 ABI kind 放进 `FuncType`。
+不过用户层仍未开放 callback / `extern "C"` 函数指针语法；这部分还停留在实现预留，而不是稳定表面语法。
 
 否则后续一旦引入：
 
@@ -130,11 +145,11 @@ v0 必须把“允许过 FFI 的类型集合”收死。
 
 不要把错误留到最终链接甚至运行时。
 
-## 3. 表面语法草案
+## 3. 当前已实现的表面语法与语义边界
 
 ### 3.1 导入 C 函数
 
-建议语法：
+当前语法：
 
 ```lona
 extern "C" def puts(msg u8 const[*]) i32
@@ -156,7 +171,7 @@ lowering 结果应是：
 
 ### 3.2 导出 `lona` 函数给 C 调用
 
-建议语法：
+当前语法：
 
 ```lona
 extern "C" def lona_add(a i32, b i32) i32 {
@@ -180,7 +195,7 @@ v0 暂不要求单独的 `export` 关键字。
 
 ### 3.3 opaque C struct
 
-建议语法：
+当前语法：
 
 ```lona
 extern struct FILE
@@ -203,7 +218,7 @@ extern "C" def fclose(fp FILE*) i32
 
 ### 3.4 `repr(C)` 结构体
 
-建议语法：
+当前语法：
 
 ```lona
 repr("C") struct Point {

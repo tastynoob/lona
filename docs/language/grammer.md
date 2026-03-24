@@ -1,6 +1,6 @@
 # Lona 语言语法文档
 
-> 依据 `grammar/lexer.lex` 与 `build/gen.yacc` 当前实现整理。本文描述的是解析器现在实际接通的语法入口，以及已经明确保留为占位的能力。
+> 依据 `grammar/lexer.lex` 与 `grammar/main.yacc` 当前实现整理。本文描述的是解析器现在实际接通的语法入口，以及已经明确保留为占位的能力。
 
 ## 示例索引
 
@@ -37,11 +37,20 @@
 - `var`
 - `def`
 - `ret`
+- `break`
+- `continue`
 - `if`
 - `else`
 - `for`
 - `struct`
+- `extern`
+- `repr`
 - `import`
+- `ref`
+- `const`
+- `cast`
+- `true`
+- `false`
 - `null`
 
 内建类型关键字（词法记号 `BuiltinType`）：
@@ -88,7 +97,8 @@
 
 说明：
 
-- `build/gen.yacc` 中顶层开始符号名写作 `pragram`。本文统一记作 `program`，仅做可读性修正。
+- `grammar/main.yacc` 中顶层开始符号名写作 `pragram`。本文统一记作 `program`，仅做可读性修正。
+- `extern`、`repr` 当前只在 FFI 相关声明里有稳定用户语义；更具体的边界见 `docs/runtime/c_ffi_v0.md`。
 
 ## 3. 语法摘要
 
@@ -157,6 +167,15 @@ struct-decl       ::= "struct" IDENT "{"
                       ( struct-stat | NL )
                       { NL | struct-stat }
                       "}"
+                    | "extern" "struct" IDENT NL
+                    | "extern" "struct" IDENT "{"
+                      ( struct-stat | NL )
+                      { NL | struct-stat }
+                      "}"
+                    | "repr" "(" STRING ")" "struct" IDENT "{"
+                      ( struct-stat | NL )
+                      { NL | struct-stat }
+                      "}"
 
 struct-stat       ::= var-decl NL
                     | func-decl
@@ -165,6 +184,14 @@ func-decl         ::= "def" IDENT "(" ")" block
                     | "def" IDENT "(" ")" type-name block
                     | "def" IDENT "(" param-decl-seq ")" block
                     | "def" IDENT "(" param-decl-seq ")" type-name block
+                    | "extern" STRING "def" IDENT "(" ")" NL
+                    | "extern" STRING "def" IDENT "(" ")" type-name NL
+                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" NL
+                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" type-name NL
+                    | "extern" STRING "def" IDENT "(" ")" block
+                    | "extern" STRING "def" IDENT "(" ")" type-name block
+                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" block
+                    | "extern" STRING "def" IDENT "(" param-decl-seq ")" type-name block
 
 var-decl          ::= IDENT type-name
 param-decl        ::= IDENT type-name
@@ -173,6 +200,19 @@ param-decl        ::= IDENT type-name
 param-decl-seq    ::= param-decl
                     | param-decl-seq "," param-decl
 ```
+
+说明：
+
+- 当前稳定的 FFI 表面语法包括：
+  - `extern "C" def foo(...) Ret`
+  - `extern struct FILE`
+  - `repr("C") struct Point { ... }`
+- `extern` / `repr` 之后语法上都要求字符串字面量；当前语义层只接受 `"C"`。
+- parser 复用了普通 `func-decl` / `struct-decl` 入口，因此它还能吃下 `extern struct FILE { ... }`、`extern "C"` method 这类写法；但语义层会拒绝它们，稳定用户语义只包括：
+  - opaque `extern struct`
+  - top-level `extern "C"` 函数
+  - top-level `repr("C") struct`
+- `extern "C"` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 `docs/runtime/c_ffi_v0.md`。
 
 ### 3.4 变量定义
 

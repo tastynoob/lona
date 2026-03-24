@@ -13,7 +13,7 @@
 ## 语言与语法
 
 - [language/program.md](language/program.md): 程序结构、顶层声明和模块入口。
-- [language/grammer.md](language/grammer.md): 语法总览和文法约定。
+- [language/grammer.md](language/grammer.md): 语法总览、文法约定，以及当前已接通的 FFI 相关声明入口。
 - [language/expr.md](language/expr.md): 表达式、调用、运算符和字面量。
 - [language/type.md](language/type.md): 类型系统、函数类型、数组和元组。
 - [language/func.md](language/func.md): 函数与方法定义。
@@ -40,7 +40,7 @@
 - [runtime/native_build.md](runtime/native_build.md): `lona-ir`、`lac`、`lac-native` 的构建和运行方式。
 - [runtime/system_crt_build_v0.md](runtime/system_crt_build_v0.md): hosted 可执行文件第一阶段草案；先复用系统 CRT，只把 LLVM object emission 纳入 `lona`。
 - [runtime/native_abi_v0.md](runtime/native_abi_v0.md): `native` 路线第一版内部 ABI 草案。
-- [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md): `lona <-> C` 互操作第一版草案，收口 `extern "C"`、opaque struct 和 `repr(C)` 的边界。
+- [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md): `lona <-> C` 互操作 v0 的当前已实现子集与剩余限制，收口 `extern "C"`、opaque struct 和 `repr(C)` 的边界。
 - [../example/README.md](../example/README.md): 示例程序索引。
 
 ## 计划与草案
@@ -52,5 +52,6 @@
 
 1. 先看 [compiler/compiler_architecture.md](compiler/compiler_architecture.md) 了解整体结构。
 2. 再看 [language/grammer.md](language/grammer.md)、[language/expr.md](language/expr.md)、[language/type.md](language/type.md) 了解语言表面语法。
-3. 需要构建或运行时，查 [runtime/native_build.md](runtime/native_build.md)。
-4. 需要区分目标模式时，查 [runtime/target_modes.md](runtime/target_modes.md)。
+3. 如果涉及 `extern "C"`、`extern struct`、`repr("C")`，继续看 [runtime/c_ffi_v0.md](runtime/c_ffi_v0.md)。
+4. 需要构建或运行时，查 [runtime/native_build.md](runtime/native_build.md)。
+5. 需要区分目标模式时，查 [runtime/target_modes.md](runtime/target_modes.md)。
