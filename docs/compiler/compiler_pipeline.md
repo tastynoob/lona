@@ -5,7 +5,7 @@
 - 单模块 compile pipeline
 - 多模块调度与最终链接
 
-完整架构见 `docs/compiler_architecture.md`。本文只描述单模块 pipeline 和它在多模块构建里的位置。
+完整架构见 `docs/compiler/compiler_architecture.md`。本文只描述单模块 pipeline 和它在多模块构建里的位置。
 
 ## 入口
 

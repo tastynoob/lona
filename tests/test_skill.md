@@ -19,10 +19,10 @@ description: Generate and validate focused Lona compiler test cases from the loc
 1. [docs/README.md](../docs/README.md)
 2. [tests/README.md](README.md)
 3. 按需要再读：
-   - [docs/program.md](../docs/program.md)
-   - [docs/expr.md](../docs/expr.md)
-   - [docs/type.md](../docs/type.md)
-   - [docs/grammer.md](../docs/grammer.md)
+   - [docs/language/program.md](../docs/language/program.md)
+   - [docs/language/expr.md](../docs/language/expr.md)
+   - [docs/language/type.md](../docs/language/type.md)
+   - [docs/language/grammer.md](../docs/language/grammer.md)
 
 ## 生成规则
 

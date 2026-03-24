@@ -2,7 +2,7 @@
 
 本文档描述当前 `lona` 编译器的整体架构，以及模块化、增量编译和 LLVM IR 生成在代码中的落点。
 
-关于 `native / managed` 两种目标模式的边界定义，见 [target_modes.md](target_modes.md)。
+关于 `native / managed` 两种目标模式的边界定义，见 [../runtime/target_modes.md](../runtime/target_modes.md)。
 
 ## 1. 设计目标
 
@@ -339,7 +339,7 @@ artifact 可复用的条件是：
 
 ### 4.8 可执行文件环境
 
-当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/native_build.md`：
+当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/runtime/native_build.md`：
 
 - system：复用宿主 ABI 和系统 CRT 启动对象
 - bare：自带最小 `_start` 和 linker script
