@@ -37,6 +37,31 @@ class CommandResult:
         return self
 
 
+@dataclass
+class ExecutableResult:
+    path: Path
+    returncode: int
+    stdout: str
+    stderr: str
+
+    def describe(self) -> str:
+        stdout = self.stdout.strip()
+        stderr = self.stderr.strip()
+        parts = [
+            f"path: {self.path}",
+            f"exit: {self.returncode}",
+            f"stdout:\n{textwrap.indent(stdout or '<empty>', '  ')}",
+            f"stderr:\n{textwrap.indent(stderr or '<empty>', '  ')}",
+        ]
+        return "\n".join(parts)
+
+    def expect_exit_code(self, expected: int) -> "ExecutableResult":
+        assert self.returncode == expected, (
+            f"unexpected executable exit code: expected {expected}, got {self.returncode}\n{self.describe()}"
+        )
+        return self
+
+
 def run_command(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> CommandResult:
     completed = subprocess.run(
         cmd,
@@ -63,9 +88,10 @@ def nm_contains_symbol(path: Path, symbol: str, *, cwd: Path) -> bool:
 
 
 class CompilerHarness:
-    def __init__(self, *, repo_root: Path, compiler_bin: Path, tmp_path: Path):
+    def __init__(self, *, repo_root: Path, compiler_bin: Path, system_driver: Path, tmp_path: Path):
         self.repo_root = repo_root
         self.compiler_bin = compiler_bin
+        self.system_driver = system_driver
         self.tmp_path = tmp_path
 
     def write_source(self, name: str, content: str) -> Path:
@@ -120,8 +146,34 @@ class CompilerHarness:
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
+    def build_system_executable(self, input_path: Path, *, output_name: str) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        env = os.environ.copy()
+        env["LC_ALL"] = "C"
+        result = run_command(
+            [str(self.system_driver), str(input_path), str(output_path)],
+            cwd=self.repo_root,
+            env=env,
+        )
+        return result, output_path
+
+    def run_executable(self, path: Path) -> ExecutableResult:
+        completed = subprocess.run(
+            [str(path)],
+            cwd=self.repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return ExecutableResult(
+            path=path,
+            returncode=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+        )
+
     def _run(self, args: list[str]) -> CommandResult:
         env = os.environ.copy()
         env["LC_ALL"] = "C"
         return run_command([str(self.compiler_bin), *args], cwd=self.repo_root, env=env)
-

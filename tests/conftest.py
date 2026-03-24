@@ -28,7 +28,21 @@ def fixtures_dir(repo_root: Path) -> Path:
     return repo_root / "tests" / "fixtures"
 
 
-@pytest.fixture
-def compiler(repo_root: Path, compiler_bin: Path, tmp_path: Path) -> CompilerHarness:
-    return CompilerHarness(repo_root=repo_root, compiler_bin=compiler_bin, tmp_path=tmp_path)
+@pytest.fixture(scope="session")
+def system_driver(repo_root: Path) -> Path:
+    path = repo_root / "scripts" / "lac.sh"
+    if not path.is_file():
+        pytest.fail(f"missing system driver: {path}")
+    if not os.access(path, os.X_OK):
+        pytest.fail(f"system driver is not executable: {path}")
+    return path
 
+
+@pytest.fixture
+def compiler(repo_root: Path, compiler_bin: Path, system_driver: Path, tmp_path: Path) -> CompilerHarness:
+    return CompilerHarness(
+        repo_root=repo_root,
+        compiler_bin=compiler_bin,
+        system_driver=system_driver,
+        tmp_path=tmp_path,
+    )
