@@ -12,8 +12,7 @@
 - [acceptance/test_modules.py](acceptance/test_modules.py): 基于 `pytest` 的模块导入、结构体返回、顶层执行与跨模块 C ABI 场景。
 - [acceptance/test_operators.py](acceptance/test_operators.py): 基于 `pytest` 的算术、位运算、比较、逻辑短路和运行语义。
 - [acceptance/test_references.py](acceptance/test_references.py): 基于 `pytest` 的 `ref` 局部绑定、参数传递与 const 约束。
-- [acceptance/syntax_features.sh](acceptance/syntax_features.sh): float、tuple、数组、旧语法拒绝。
-- [acceptance/lib.sh](acceptance/lib.sh): acceptance 公共环境和断言辅助。
+- [acceptance/test_syntax_features.py](acceptance/test_syntax_features.py): 基于 `pytest` 的 cast、数值转换、字符串、null、tuple、数组、命名调用等语法/语义覆盖。
 - [harness/compiler.py](harness/compiler.py): `pytest` 测试的编译调用、`lac.sh` 构建和临时文件辅助。
 - [harness/assertions.py](harness/assertions.py): 更短、更定向的文本/对象断言辅助。
 

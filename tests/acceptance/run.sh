@@ -6,10 +6,4 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -m pytest -q "$ROOT"/tests/acceptance/test_*.py
 
-for script in \
-    syntax_features.sh
-do
-    bash "$ROOT/tests/acceptance/$script"
-done
-
 printf 'acceptance checks passed\n'
