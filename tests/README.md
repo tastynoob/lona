@@ -7,10 +7,11 @@
 - [acceptance/run.sh](acceptance/run.sh): acceptance 总入口。
 - [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object 语义。
 - [acceptance/test_controlflow.py](acceptance/test_controlflow.py): 基于 `pytest` 的 `for` / `for ... else` / `break` / `continue` JSON、诊断和运行语义。
-- [acceptance/functions.sh](acceptance/functions.sh): 函数指针、裸函数类型限制、方法选择器、调用检查。
+- [acceptance/test_functions.py](acceptance/test_functions.py): 基于 `pytest` 的函数指针、C FFI、裸函数限制、方法选择器和调用检查。
 - [acceptance/test_diagnostics.py](acceptance/test_diagnostics.py): 基于 `pytest` 的语法和语义错误诊断。
-- [acceptance/modules.sh](acceptance/modules.sh): 模块导入、结构体返回、顶层执行。
-- [acceptance/operators.sh](acceptance/operators.sh): 算术、位运算、比较、逻辑短路和非法运算符诊断。
+- [acceptance/test_modules.py](acceptance/test_modules.py): 基于 `pytest` 的模块导入、结构体返回、顶层执行与跨模块 C ABI 场景。
+- [acceptance/test_operators.py](acceptance/test_operators.py): 基于 `pytest` 的算术、位运算、比较、逻辑短路和运行语义。
+- [acceptance/test_references.py](acceptance/test_references.py): 基于 `pytest` 的 `ref` 局部绑定、参数传递与 const 约束。
 - [acceptance/syntax_features.sh](acceptance/syntax_features.sh): float、tuple、数组、旧语法拒绝。
 - [acceptance/lib.sh](acceptance/lib.sh): acceptance 公共环境和断言辅助。
 - [harness/compiler.py](harness/compiler.py): `pytest` 测试的编译调用、`lac.sh` 构建和临时文件辅助。
