@@ -12,7 +12,16 @@ def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parents[1]
     out_dir = Path(os.environ.get("OUT_DIR", "/tmp/lona-ai-tests"))
     model = os.environ.get("CODEX_MODEL", "")
-    focus = " ".join(argv) if argv else "generate 10 positive cases and 10 diagnostic case that cover different documented syntax areas"
+    focus = (
+        " ".join(argv)
+        if argv
+        else (
+            "generate 8-12 positive cases and 8-12 diagnostic cases that focus on "
+            "edge paths, adversarial syntax combinations, boundary values, and weird "
+            "but documented feature interactions that are not already obviously covered "
+            "by the existing acceptance tests"
+        )
+    )
     result_file = out_dir / "ai_test.result.txt"
     log_file = out_dir / "ai_test.full.log"
 
@@ -28,8 +37,18 @@ Repository root: {root}
 Output directory for generated tests: {out_dir}
 
 Requirements:
-- Read docs/README.md and tests/README.md first.
+- Read docs/README.md, tests/README.md, and skim tests/acceptance/test_*.py first.
 - Generate small Lona test cases under {out_dir}.
+- Prefer cases that are intentionally awkward:
+  - boundary numeric literals, especially signed mins/maxes, mixed prefixes/suffixes, separators
+  - nested pointer/indexable pointer/array/const combinations
+  - odd mixtures of tuple, struct, selector, call, named arg, cast, and control-flow syntax
+  - parse-valid but semantically fragile combinations
+  - multi-feature interactions that a normal hand-written happy-path test would skip
+- Avoid spending budget on plain happy-path duplicates of existing acceptance coverage.
+- Positive cases should still be minimal, but should try to stress edge behavior rather than basic syntax.
+- Negative cases should prefer diagnostics that are easy to assert via stable substrings.
+- If a generated case exposes an unexpected compiler bug, keep the reproducer and clearly label it.
 - Use python3 tests/tools/compile_case.py for every positive case.
 - Use python3 tests/tools/expect_diag.py for every negative case.
 - Do not modify existing tracked source files unless explicitly needed for adding curated tests.
@@ -38,6 +57,7 @@ Requirements:
   - generated test files
   - syntax areas covered
   - diagnostic case result
+  - any unexpected bug reproducers
 - Do not include file editing narration, shell command logs, or intermediate progress.
 
 Additional focus:
@@ -90,4 +110,3 @@ Additional focus:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
