@@ -294,7 +294,7 @@ def main() i32 {
 EOF
 "$BIN" --emit ir --verify-ir "$ffi_string_in" >"$ffi_string_out"
 grep -Fq 'private constant [2 x i8] c"ok", align 1' "$ffi_string_out"
-grep -Fq 'declare i32 @inspect(ptr)' "$ffi_string_out"
+grep -Eq '^declare .*i32 @inspect\(ptr\)' "$ffi_string_out"
 grep -Fq 'call i32 @inspect(ptr @.lona.bytes.' "$ffi_string_out"
 
 cat >"$ffi_pointer_sig_in" <<'EOF'
@@ -312,7 +312,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit ir --verify-ir "$ffi_pointer_sig_in" >"$ffi_pointer_sig_out"
-grep -Fq 'declare ptr @shift(ptr, ptr)' "$ffi_pointer_sig_out"
+grep -Eq '^declare .*ptr @shift\(ptr, ptr\)' "$ffi_pointer_sig_out"
 
 cat >"$ffi_import_in" <<'EOF'
 extern "C" def abs(v i32) i32
@@ -322,7 +322,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit ir --verify-ir "$ffi_import_in" >"$ffi_import_out"
-grep -Eq '^declare i32 @abs\(i32\)$' "$ffi_import_out"
+grep -Eq '^declare .*i32 @abs\(i32\)' "$ffi_import_out"
 ! grep -Eq '^define i32 @abs' "$ffi_import_out"
 
 cat >"$ffi_export_in" <<'EOF'
@@ -414,8 +414,8 @@ extern "C" def alloc(size u64) u8[*]
 extern "C" def fill(buf u8[*], value u8) i32
 EOF
 "$BIN" --emit ir --verify-ir "$ffi_indexable_in" >"$ffi_indexable_out"
-grep -q '^declare ptr @alloc(i64)' "$ffi_indexable_out"
-grep -q '^declare i32 @fill(ptr, i8)' "$ffi_indexable_out"
+grep -Eq '^declare .*ptr @alloc\(i64\)' "$ffi_indexable_out"
+grep -Eq '^declare .*i32 @fill\(ptr, i8\)' "$ffi_indexable_out"
 
 cat >"$ffi_callback_bad_in" <<'EOF'
 extern "C" def bad(cb (i32: i32)) i32

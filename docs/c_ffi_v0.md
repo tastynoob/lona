@@ -104,6 +104,17 @@
 
 就会发现“函数签名相同但 ABI 不同”的情况无法正确表达。
 
+### 2.4 C ABI 对象不携带 `lona native ABI` 版本字段
+
+`extern "C"` 对象的兼容性由目标平台的 C ABI 决定，而不是由 `lona native ABI` 决定。
+
+因此：
+
+- 纯 C ABI 对象不需要写入 `lona native ABI` 版本字段
+- 只有含有 `lona -> lona` 原生调用边界的对象，才需要 native ABI 版本字段
+
+这条规则的目标是避免把“`lona` 编译器生成的对象”与“使用 `lona native ABI` 的对象”混成一个概念。
+
 ### 2.4 C FFI 只接受 C-compatible 类型
 
 不是所有 `lona` 类型都能直接过 C 边界。

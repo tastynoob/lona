@@ -163,7 +163,7 @@ printf 'import math\n\ndef main() i32 {\n    ret math.helper(4)\n}\n' >"$import_
 grep -q '^define i32 @math.inc(i32' "$import_main_out"
 grep -q '^define i32 @math.helper(i32' "$import_main_out"
 grep -q 'call i32 @math.helper(i32 4)' "$import_main_out"
-if grep -q '^declare i32 @math.helper' "$import_main_out"; then
+if grep -q '^declare .*@math.helper' "$import_main_out"; then
     echo 'expected linked module IR to resolve imported function declarations' >&2
     exit 1
 fi
@@ -195,7 +195,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit ir --verify-ir "$import_c_abi_main_in" >"$import_c_abi_out"
-grep -Fq 'declare i32 @abs(i32)' "$import_c_abi_out"
+grep -Eq '^declare .*i32 @abs\(i32\)' "$import_c_abi_out"
 grep -Fq 'define i32 @c_inc(i32 ' "$import_c_abi_out"
 grep -Fq 'define i32 @dep.native_wrap(i32 ' "$import_c_abi_out"
 grep -Fq 'call i32 @dep.native_wrap(i32 -4)' "$import_c_abi_out"
@@ -222,7 +222,7 @@ def main() i32 {
 }
 EOF
 "$BIN" --emit ir --verify-ir "$import_c_repr_main_in" >"$import_c_repr_out"
-grep -Fq 'declare ptr @shift(ptr, ptr)' "$import_c_repr_out"
+grep -Eq '^declare .*ptr @shift\(ptr, ptr\)' "$import_c_repr_out"
 
 cat >"$import_c_repr_dep_in" <<'EOF'
 struct Pair {

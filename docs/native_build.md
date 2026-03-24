@@ -46,6 +46,14 @@
 - LLVM 会把它规范化打印成 `x86_64-none-unknown-elf`
 - `x86_64-unknown-none-elf` 也会按 bare 目标处理
 
+当前 native object 还会额外携带：
+
+- `.lona.native_abi`
+  - 只有对象里实际包含 `lona native ABI` 边界时才写入
+  - 当前 payload 是 `lona.native_abi=v0.0`
+  - ELF 会显式使用 `.lona.native_abi`
+  - Mach-O 会改用 `__TEXT,__lona_abi`
+
 ## 组成
 
 相关文件：

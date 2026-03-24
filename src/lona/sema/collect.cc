@@ -873,6 +873,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         llvm::Function::ExternalLinkage,
         llvm::Twine(llvmName),
         typeMgr->getModule());
+    annotateFunctionAbi(*llfunc, lofuncType->getAbiKind());
     auto *lofunc = new Function(llfunc, lofuncType, extractParamNames(node),
                                 methodParent != nullptr);
 
@@ -1488,6 +1489,7 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType
                                             llvm::Function::ExternalLinkage,
                                             llvm::Twine(llvmName),
                                             typeMgr->getModule());
+    annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
     auto *func = new Function(llvmFunc, funcType, std::move(paramNames),
                               hasImplicitSelf);
     scope.addObj(llvmName, func);
@@ -1553,6 +1555,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
                                                     llvm::Function::ExternalLinkage,
                                                     llvm::Twine(methodName),
                                                     typeMgr->getModule());
+            annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
             std::vector<std::string> paramNames;
             if (const auto *storedParamNames =
                     structType->getMethodParamNames(method.first())) {

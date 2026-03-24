@@ -78,6 +78,42 @@ v0 只冻结 `lona` 内部 ABI。
 
 应额外定义 ABI adapter，而不是把 v0 直接等同于 C ABI。
 
+### 2.4 native ABI 对象版本单独管理
+
+`lona native ABI` 需要独立版本号，不应直接等同于编译器版本号。
+
+当前对象字段版本暂定为：
+
+- `v0.0`
+
+版本规则定义为：
+
+- 大版本号相同，小版本号必须向下兼容
+- 例如 `v0.2` 必须兼容 `v0.1`
+- 但不要求 `v0.1` 兼容 `v0.2`
+- 大版本号不同则直接视为 ABI 不兼容
+
+也就是说：
+
+- `v0.x` 之间允许“新编译器兼容旧对象”
+- `v1.x` 和 `v0.x` 之间不允许直接混链
+
+### 2.5 native ABI 版本字段进入 `.o`
+
+所有包含 `lona native ABI` 边界的 native object，都应写入独立的 ABI 版本字段。
+
+当前实现会在 `.o` 中放入：
+
+- section:
+  - ELF: `.lona.native_abi`
+  - Mach-O: `__TEXT,__lona_abi`
+  - 其它对象格式：允许使用工具链默认只读段
+- payload: `lona.native_abi=v0.0`
+
+这类字段的目的不是给链接器理解，而是给 `lona` 工具链后续做 pre-link ABI 检查。
+
+纯 `extern "C"` 对象不需要这个字段。
+
 ## 3. ABI 类型分类
 
 v0 把语言类型分成三类：

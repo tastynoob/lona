@@ -149,7 +149,8 @@ def run() i32 {
     status = keep_status(status, list.empty(), 39)
 
     if status == 0 {
-        puts(&"linked ok")
+        var msg u8[10] = {108, 105, 110, 107, 101, 100, 32, 111, 107, 0}
+        puts(&msg(0))
     }
 
     ret status

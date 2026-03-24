@@ -2,6 +2,7 @@
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/array_dim.hh"
+#include "lona/abi/abi.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
@@ -577,9 +578,11 @@ getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
         return existing;
     }
 
-    return llvm::Function::Create(
+    auto *entry = llvm::Function::Create(
         typeMgr->getLLVMFunctionType(mainType),
         llvm::Function::ExternalLinkage, llvm::Twine(entryName), global->module);
+    annotateFunctionAbi(*entry, AbiKind::Native);
+    return entry;
 }
 
 class FunctionAnalyzer {

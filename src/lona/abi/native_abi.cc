@@ -1,5 +1,6 @@
 #include "native_abi.hh"
 #include <llvm-18/llvm/IR/DerivedTypes.h>
+#include <string>
 
 namespace lona {
 
@@ -81,6 +82,23 @@ bitcastPointerForLoadStore(llvm::IRBuilder<> &builder, llvm::Value *ptr,
 }
 
 }  // namespace
+
+std::string
+lonaNativeAbiVersionString() {
+    return "v" + std::to_string(kLonaNativeAbiMajorVersion) + "." +
+        std::to_string(kLonaNativeAbiMinorVersion);
+}
+
+std::string
+lonaNativeAbiVersionSymbolName() {
+    return "__lona_native_abi_v" + std::to_string(kLonaNativeAbiMajorVersion) +
+        "_" + std::to_string(kLonaNativeAbiMinorVersion);
+}
+
+std::string
+lonaNativeAbiVersionPayload() {
+    return "lona.native_abi=" + lonaNativeAbiVersionString();
+}
 
 bool
 isNativeAbiAggregateType(TypeClass *type) {

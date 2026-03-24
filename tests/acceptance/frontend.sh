@@ -8,6 +8,7 @@ INPUT="$FIXTURES_DIR/acceptance_main.lo"
 json_out="$(new_tmp_file json)"
 ir_out="$(new_tmp_file ir)"
 obj_out="$(new_tmp_file obj)"
+darwin_obj_out="$(new_tmp_file darwin-obj)"
 opt_ir_out="$(new_tmp_file opt-ir)"
 debug_out="$(new_tmp_file debug)"
 missing_return_in="$(new_tmp_file missing-return)"
@@ -29,6 +30,8 @@ entry_ir_in="$(new_tmp_file entry-ir)"
 entry_bare_ir_out="$(new_tmp_file entry-bare-ir-out)"
 entry_alt_bare_ir_out="$(new_tmp_file entry-alt-bare-ir-out)"
 entry_system_ir_out="$(new_tmp_file entry-system-ir-out)"
+c_abi_only_in="$(new_tmp_file c-abi-only)"
+c_abi_only_obj_out="$(new_tmp_file c-abi-only-obj)"
 
 "$BIN" "$INPUT" >"$json_out"
 grep -q '"type": "Program"' "$json_out"
@@ -48,6 +51,12 @@ if [ "$(od -An -t x1 -N 4 "$obj_out" | tr -d ' \n')" != "7f454c46" ]; then
     echo 'unexpected object file header for --emit obj output' >&2
     exit 1
 fi
+nm -a "$obj_out" | grep -Fq '__lona_native_abi_v0_0'
+strings "$obj_out" | grep -Fq 'lona.native_abi=v0.0'
+
+"$BIN" --emit obj --target x86_64-apple-darwin --verify-ir "$INPUT" "$darwin_obj_out"
+test -s "$darwin_obj_out"
+strings "$darwin_obj_out" | grep -Fq 'lona.native_abi=v0.0'
 
 "$BIN" --emit ir --verify-ir -O3 "$INPUT" >"$opt_ir_out"
 grep -Eq '^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)' "$opt_ir_out"
@@ -90,6 +99,15 @@ grep -q '^define i32 @run()' "$entry_system_ir_out"
 grep -q '^define i32 @main(i32' "$entry_system_ir_out"
 grep -q '^@__lona_argc =' "$entry_system_ir_out"
 grep -q '^@__lona_argv =' "$entry_system_ir_out"
+
+cat >"$c_abi_only_in" <<'EOF'
+extern "C" def add(a i32, b i32) i32 {
+    ret a + b
+}
+EOF
+"$BIN" --emit obj --target x86_64-unknown-linux-gnu --verify-ir "$c_abi_only_in" "$c_abi_only_obj_out"
+! nm -a "$c_abi_only_obj_out" | grep -Fq '__lona_native_abi_'
+! strings "$c_abi_only_obj_out" | grep -Fq 'lona.native_abi='
 
 cat >"$missing_return_in" <<'EOF'
 def bad(a i32) i32 {

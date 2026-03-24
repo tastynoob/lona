@@ -1,4 +1,6 @@
 #include "workspace_builder.hh"
+#include "lona/abi/abi.hh"
+#include "lona/abi/native_abi.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
@@ -8,9 +10,11 @@
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/PassManager.h>
@@ -18,6 +22,7 @@
 #include <llvm-18/llvm/Passes/OptimizationLevel.h>
 #include <llvm-18/llvm/Passes/PassBuilder.h>
 #include <llvm-18/llvm/Target/TargetMachine.h>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -119,6 +124,54 @@ bool
 isLanguageEntryType(llvm::FunctionType *funcType) {
     return funcType && funcType->getNumParams() == 0 &&
         funcType->getReturnType()->isIntegerTy(32);
+}
+
+bool
+moduleUsesNativeAbi(const llvm::Module &module) {
+    for (const auto &func : module) {
+        auto abi = functionAbiAnnotation(func);
+        if (abi && *abi == AbiKind::Native) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::string>
+nativeAbiMarkerSectionFor(llvm::StringRef targetTriple) {
+    llvm::Triple triple(normalizeTargetTriple(targetTriple.str()));
+    if (triple.isOSBinFormatELF()) {
+        return std::string(".lona.native_abi");
+    }
+    if (triple.isOSBinFormatMachO()) {
+        return std::string("__TEXT,__lona_abi");
+    }
+    return std::nullopt;
+}
+
+void
+ensureNativeAbiVersionField(llvm::Module &module, llvm::StringRef targetTriple) {
+    if (!moduleUsesNativeAbi(module)) {
+        return;
+    }
+
+    const auto symbolName = lonaNativeAbiVersionSymbolName();
+    if (module.getGlobalVariable(symbolName)) {
+        return;
+    }
+
+    auto &context = module.getContext();
+    auto payload = lonaNativeAbiVersionPayload();
+    auto *init = llvm::ConstantDataArray::getString(context, payload, true);
+    auto *field = new llvm::GlobalVariable(
+        module, init->getType(), true, llvm::GlobalValue::InternalLinkage, init,
+        symbolName);
+    if (auto section = nativeAbiMarkerSectionFor(targetTriple)) {
+        field->setSection(*section);
+    }
+    field->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    field->setAlignment(llvm::Align(1));
+    llvm::appendToCompilerUsed(module, {field});
 }
 
 llvm::Function *
@@ -501,6 +554,7 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
         return 1;
     }
 
+    ensureNativeAbiVersionField(*linked.module, options.targetTriple);
     emitObjectFile(*linked.module, options.targetTriple, out);
     return 0;
 }

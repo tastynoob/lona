@@ -2,6 +2,7 @@
 
 #include "../type/type.hh"
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace lona {
@@ -41,5 +42,7 @@ AbiFunctionSignature classifyFunctionAbi(TypeTable &types, FuncType *funcType,
                                          bool hasImplicitSelf = false);
 llvm::FunctionType *getFunctionAbiLLVMType(TypeTable &types, FuncType *funcType,
                                            bool hasImplicitSelf = false);
+void annotateFunctionAbi(llvm::Function &func, AbiKind abiKind);
+std::optional<AbiKind> functionAbiAnnotation(const llvm::Function &func);
 
 }  // namespace lona
