@@ -5,13 +5,10 @@
 #endif
 
 #include "parser.hh"
-#include <queue>
 
 namespace lona {
 
 class Scanner : public yyFlexLexer {
-    bool skip_semi = false;
-
 public:
     Scanner(std::istream *in) : yyFlexLexer(in) {}
 

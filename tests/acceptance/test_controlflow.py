@@ -30,6 +30,113 @@ def test_controlflow_json_covers_for_break_continue_else(compiler: CompilerHarne
     assert_contains(result.stdout, '"else": {', label="controlflow json")
 
 
+def test_else_if_chain_parses_and_preserves_nested_if_in_json(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "else_if_json.lo",
+        """
+        def classify(v i32) i32 {
+            if v < 0 {
+                ret -1
+            } else if v == 0 {
+                ret 0
+            } else {
+                ret 1
+            }
+        }
+        """,
+    )
+    result = compiler.emit_json(input_path).expect_ok()
+    assert result.stdout.count('"type": "If"') >= 2
+    assert_contains(result.stdout, '"else": {', label="else-if json")
+
+
+def test_else_if_chain_runs_with_expected_branching(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "else_if_exec.lo",
+        """
+        def classify(v i32) i32 {
+            if v < 0 {
+                ret 1
+            } else if v < 10 {
+                ret 2
+            } else {
+                ret 3
+            }
+        }
+
+        ret classify(7)
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="else_if_exec"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(2)
+
+
+def test_if_else_can_start_on_next_line(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "if_else_next_line.lo",
+        """
+        def choose(flag bool) i32 {
+            if flag {
+                ret 1
+            }
+            else {
+                ret 2
+            }
+        }
+
+        ret choose(false)
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="if_else_next_line"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(2)
+
+
+def test_else_can_follow_blank_lines_and_comment_only_lines(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "else_blank_lines.lo",
+        """
+        def choose(flag bool) i32 {
+            if flag {
+                ret 1
+            }
+
+            // comment before else
+            else {
+                ret 2
+            }
+        }
+
+        def run() i32 {
+            var i i32 = 0
+            for i < 1 {
+                i = i + 1
+            }
+
+            // comment before for-else
+            else {
+                ret 5
+            }
+            ret 0
+        }
+
+        ret choose(false) + run()
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="else_blank_lines"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(7)
+
+
 def test_natural_for_else_runs_else_block(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "natural_else.lo",
@@ -194,4 +301,3 @@ def test_break_inside_for_else_block_is_rejected(compiler: CompilerHarness) -> N
     )
     result = compiler.emit_ir(input_path).expect_failed()
     assert_contains(result.stderr, "`break` can only appear inside `for` loops", label="for-else break diagnostic")
-

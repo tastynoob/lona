@@ -119,6 +119,150 @@ def test_builtin_casts_and_cast_restrictions(compiler: CompilerHarness) -> None:
     for needle in ["define i32 @main", "ptrtoint ptr %", "inttoptr i64 %"]:
         assert_contains(pointer_rebind_ir, needle, label="pointer rebind cast ir")
 
+
+def test_multiline_parentheses_calls_and_operator_continuations(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "multiline_layout.lo",
+        """
+        def add(
+            a i32,
+            b i32
+        ) i32 {
+            ret a +
+                b
+        }
+
+        def ping(
+        ) i32 {
+            ret 1
+        }
+
+        def main() i32 {
+            var grouped i32 =
+                (
+                    1 +
+                    2
+                )
+            var total i32 = add(
+                grouped,
+                ping(
+                )
+            )
+            ret total
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @add(i32", label="multiline layout ir")
+    assert_contains(ir, "define i32 @ping()", label="multiline layout ir")
+    assert_contains(ir, "define i32 @main()", label="multiline layout ir")
+
+
+def test_multiline_bracket_and_tuple_type_layouts(compiler: CompilerHarness) -> None:
+    ir = _emit_ir(
+        compiler,
+        "multiline_types.lo",
+        """
+        def make_pair() <
+            i32,
+            bool
+        > {
+            ret (
+                1,
+                true
+            )
+        }
+
+        def main() usize {
+            var data i32[
+                2
+            ] = {}
+            var pair <
+                i32,
+                bool
+            > = make_pair()
+            var size usize = sizeof[
+                i32[
+                    2
+                ]
+            ]()
+            ret size + cast[usize](pair._1) + cast[usize](data(0))
+        }
+        """,
+    )
+    assert_contains(ir, "define i64 @make_pair()", label="multiline type ir")
+    assert_contains(ir, "alloca { i32, i8 }", label="multiline type ir")
+    assert_contains(ir, "define i64 @main()", label="multiline type ir")
+
+
+def test_controlflow_braces_must_stay_on_same_line_as_if_and_else(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "if_brace_next_line.lo",
+            """
+            def bad(flag bool) i32 {
+                if flag
+                {
+                    ret 1
+                }
+                ret 0
+            }
+            """,
+            ["syntax error:"],
+        ),
+        (
+            "else_brace_next_line.lo",
+            """
+            def bad(flag bool) i32 {
+                if flag {
+                    ret 1
+                }
+                else
+                {
+                    ret 2
+                }
+                ret 0
+            }
+            """,
+            ["syntax error:"],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
+
+def test_unary_operators_cannot_continue_onto_next_line(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "unary_minus_next_line.lo",
+            """
+            def bad() i32 {
+                ret -
+                    1
+            }
+            """,
+            ["syntax error:"],
+        ),
+        (
+            "unary_deref_next_line.lo",
+            """
+            def bad(ptr i32*) i32 {
+                ret *
+                    ptr
+            }
+            """,
+            ["syntax error:"],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
     failures = [
         (
             "cast_pointer_nested_const_bad.lo",

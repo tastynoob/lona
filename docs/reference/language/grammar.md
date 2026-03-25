@@ -69,6 +69,10 @@
 - 单行注释：`// ...`
 - 空格与 Tab 会被忽略。
 - 换行具有语法意义，记为 `NL`，主要用作表达式语句和 `ret` 语句的结束标记。
+- grammar 会在若干明确位置显式接纳额外的 `NL`，例如 `()` / `[]` 内部、逗号分隔序列里，以及赋值或运算符右侧表达式之前，用来支持多行表达式、多行参数列表和多行类型写法。
+- `if expr {` 与 `for expr {` 要求开块 `{` 直接跟在头部表达式后面；这里不能先换行。
+- `else` 既可以和前一个 `}` 写在同一行，也可以在若干空行或仅注释行之后起在下一行。
+- 但 `else` 自己后面不能换行；当前只接受 `else { ... }` 和 `else if ...`。
 
 ### 1.4 词法器可识别的符号
 
@@ -139,6 +143,7 @@ block             ::= "{"
 
 if-stat           ::= "if" expr block
                     | "if" expr block "else" block
+                    | "if" expr block "else" if-stat
 
 for-stat          ::= "for" expr block
                     | "for" expr block "else" block
@@ -160,6 +165,7 @@ tagged-var-def    ::= var-def
 说明：
 
 - `break`、`continue` 当前只允许出现在 `for` 循环体里。
+- `else if ...` 现在作为 `else` 后面紧跟另一个 `if` 的语法糖接通；在 AST / HIR 层等价于 `else { if ... }`。
 - `for ... else ...` 的 `else` 块只在循环条件自然结束时执行；如果循环被 `break` 提前打断，则不会进入 `else`。
 - `continue` 只会跳回下一轮条件检查，不会永久屏蔽后续“自然结束后进入 `else`”这一行为。
 
@@ -185,6 +191,7 @@ tagged-struct-decl ::= struct-decl
                      | tag-line struct-decl
 
 struct-decl       ::= "struct" IDENT NL
+                    | "struct" IDENT "{" "}"
                     | "struct" IDENT "{"
                       ( struct-stat | NL )
                       { NL | struct-stat }

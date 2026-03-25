@@ -49,6 +49,12 @@ throwInvalidNumericLiteral(lona::Parser::location_type *loc, const char *text,
             describeLexeme(text, length) + "`",
         help);
 }
+
+#define RETURN_PLAIN_TOKEN(tok) \
+    do {                        \
+        loc->columns(yyleng);   \
+        return tok;             \
+    } while (0)
 %}
 
 %option yyclass="lona::Scanner"
@@ -68,26 +74,42 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 
 %%
 
-(true) { loc->columns(yyleng); return token::TRUE; }
-(false) { loc->columns(yyleng); return token::FALSE; }
-(null) { loc->columns(yyleng); return token::NULL_KW; }
-(var) { loc->columns(yyleng); return token::VAR; }
-(ref) { loc->columns(yyleng); return token::REF; }
-(const) { loc->columns(yyleng); return token::TYPE_CONST; }
-(cast) { loc->columns(yyleng); return token::CAST; }
-(sizeof) { loc->columns(yyleng); return token::SIZEOF; }
+(true) { RETURN_PLAIN_TOKEN(token::TRUE); }
+(false) { RETURN_PLAIN_TOKEN(token::FALSE); }
+(null) { RETURN_PLAIN_TOKEN(token::NULL_KW); }
+(var) { RETURN_PLAIN_TOKEN(token::VAR); }
+(ref) { RETURN_PLAIN_TOKEN(token::REF); }
+(const) { RETURN_PLAIN_TOKEN(token::TYPE_CONST); }
+(cast) { RETURN_PLAIN_TOKEN(token::CAST); }
+(sizeof) { RETURN_PLAIN_TOKEN(token::SIZEOF); }
 
-(def) { loc->columns(yyleng); return token::DEF; }
-(import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }
-(ret) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::RET; }
-(break) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::BREAK; }
-(continue) { loc->columns(yyleng); lval->token = new AstToken(*loc); return token::CONTINUE; }
+(def) { RETURN_PLAIN_TOKEN(token::DEF); }
+(import) {
+    loc->columns(yyleng);
+    BEGIN(IMPORT_PATH_STATE);
+    return token::IMPORT;
+}
+(ret) {
+    loc->columns(yyleng);
+    lval->token = new AstToken(*loc);
+    return token::RET;
+}
+(break) {
+    loc->columns(yyleng);
+    lval->token = new AstToken(*loc);
+    return token::BREAK;
+}
+(continue) {
+    loc->columns(yyleng);
+    lval->token = new AstToken(*loc);
+    return token::CONTINUE;
+}
 
-(if) { loc->columns(yyleng); return token::IF; }
-(else) { loc->columns(yyleng); return token::ELSE; }
-(for) { loc->columns(yyleng); return token::FOR; }
+(if) { RETURN_PLAIN_TOKEN(token::IF); }
+(else) { RETURN_PLAIN_TOKEN(token::ELSE); }
+(for) { RETURN_PLAIN_TOKEN(token::FOR); }
 
-(struct) { loc->columns(yyleng); return token::STRUCT; }
+(struct) { RETURN_PLAIN_TOKEN(token::STRUCT); }
 (type|u8|i8|u16|i16|u32|i32|u64|i64|usize|int|uint|f32|f64|bool) {
     loc->columns(yyleng);
     lval->token = new AstToken(TokenType::Field, yytext, *loc);
@@ -196,120 +218,118 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 }
 
 (&<) {
-    loc->columns(yyleng);
-    return token::FUNC_PTR_OPEN;
+    RETURN_PLAIN_TOKEN(token::FUNC_PTR_OPEN);
 }
 
 (\+=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_ADD;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_ADD);
 }
 
 (\*=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_MUL;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_MUL);
 }
 
 (\/=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_DIV;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_DIV);
 }
 
 (%=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_MOD;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_MOD);
 }
 
 (-=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_SUB;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_SUB);
 }
 
 (<<=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_SHL;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_SHL);
 }
 
 (>>=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_SHR;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_SHR);
 }
 
 (&=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_AND;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_AND);
 }
 
 (\^=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_XOR;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_XOR);
 }
 
 (\|=) {
-    loc->columns(yyleng);
-    return token::ASSIGN_OR;
+    RETURN_PLAIN_TOKEN(token::ASSIGN_OR);
 }
 
 (==) {
-    loc->columns(yyleng);
-    return token::LOGIC_EQUAL;
+    RETURN_PLAIN_TOKEN(token::LOGIC_EQUAL);
 }
 
 (!=) {
-    loc->columns(yyleng);
-    return token::LOGIC_NOT_EQUAL;
+    RETURN_PLAIN_TOKEN(token::LOGIC_NOT_EQUAL);
 }
 
 (&&) {
-    loc->columns(yyleng);
-    return token::LOGIC_AND;
+    RETURN_PLAIN_TOKEN(token::LOGIC_AND);
 }
 
 (\<=) {
-    loc->columns(yyleng);
-    return token::LOGIC_LE;
+    RETURN_PLAIN_TOKEN(token::LOGIC_LE);
 }
 
 (\>=) {
-    loc->columns(yyleng);
-    return token::LOGIC_GE;
+    RETURN_PLAIN_TOKEN(token::LOGIC_GE);
 }
 
 (\<\<) {
-    loc->columns(yyleng);
-    return token::SHIFT_LEFT;
+    RETURN_PLAIN_TOKEN(token::SHIFT_LEFT);
 }
 
 (\>\>) {
-    loc->columns(yyleng);
-    return token::SHIFT_RIGHT;
+    RETURN_PLAIN_TOKEN(token::SHIFT_RIGHT);
 }
 
 (\|\|) {
-    // ||
-    loc->columns(yyleng);
-    return token::LOGIC_OR;
+    RETURN_PLAIN_TOKEN(token::LOGIC_OR);
 }
 
 (\+|-|\*|\/|%|!|~|<|>|\||&|^) {
-    // + - * / % ! ~ < > | & ^
-    loc->columns(yyleng);
-    return yytext[0];
+    RETURN_PLAIN_TOKEN(yytext[0]);
 }
 
 (\{|\}) {
-    // { }
-    loc->columns(yyleng);
-    return yytext[0];
+    RETURN_PLAIN_TOKEN(yytext[0]);
 }
 
-(:|=|\(|\)|\[|\]|@|#|,|\.) {
-    // : = ( ) [ ] @ # , .
-    loc->columns(yyleng);
-    return yytext[0];
+(:|=|@|#) {
+    RETURN_PLAIN_TOKEN(yytext[0]);
 }
 
-([ ]*\n[ \t]*)/(else) {
+(\() {
+    RETURN_PLAIN_TOKEN('(');
+}
+
+(\)) {
+    RETURN_PLAIN_TOKEN(')');
+}
+
+(\[) {
+    RETURN_PLAIN_TOKEN('[');
+}
+
+(\]) {
+    RETURN_PLAIN_TOKEN(']');
+}
+
+(,) {
+    RETURN_PLAIN_TOKEN(',');
+}
+
+(\.) {
+    RETURN_PLAIN_TOKEN('.');
+}
+
+([ \t]*(\/\/[^\n]*)?\n)+[ \t]*/(else) {
     advanceNewlineSpan(loc, yytext, yyleng);
 }
 

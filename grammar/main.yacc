@@ -218,6 +218,9 @@ stat_if
     | IF expr stat_compound ELSE stat_compound {
         $$ = new AstIf($2, $3, $5);
     }
+    | IF expr stat_compound ELSE stat_if {
+        $$ = new AstIf($2, $3, new AstStatList($5));
+    }
     ;
 
 stat_for
@@ -251,14 +254,26 @@ stat_continue
     ;
 
 func_decl
-    : DEF FIELD '(' ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr); }
-    | DEF FIELD '(' ')' type_name NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, nullptr, $5); }
-    | DEF FIELD '(' param_decl_seq ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, $4); }
-    | DEF FIELD '(' param_decl_seq ')' type_name NEWLINE { $$ = new AstFuncDecl(*$2, nullptr, $4, $6); }
-    | DEF FIELD '(' ')' stat_compound { $$ = new AstFuncDecl(*$2, $5); }
-    | DEF FIELD '(' ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $6, nullptr, $5); }
-    | DEF FIELD '(' param_decl_seq ')' stat_compound { $$ = new AstFuncDecl(*$2, $6, $4); }
-    | DEF FIELD '(' param_decl_seq ')' type_name stat_compound { $$ = new AstFuncDecl(*$2, $7, $4, $6); }
+    : DEF FIELD '(' opt_newlines ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr); }
+    | DEF FIELD '(' opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$2, nullptr, nullptr, $6);
+    }
+    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' NEWLINE {
+        $$ = new AstFuncDecl(*$2, nullptr, $5);
+    }
+    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$2, nullptr, $5, $8);
+    }
+    | DEF FIELD '(' opt_newlines ')' stat_compound { $$ = new AstFuncDecl(*$2, $6); }
+    | DEF FIELD '(' opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$2, $7, nullptr, $6);
+    }
+    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' stat_compound {
+        $$ = new AstFuncDecl(*$2, $8, $5);
+    }
+    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$2, $9, $5, $8);
+    }
     ;
 
 var_decl
@@ -273,6 +288,9 @@ param_decl
 /* struct decl */
 struct_decl
     : STRUCT FIELD NEWLINE { $$ = new AstStructDecl(*$2, nullptr); }
+    | STRUCT FIELD '{' '}' {
+        $$ = new AstStructDecl(*$2, new AstStatList());
+    }
     | STRUCT FIELD struct_statlist '}' {
         $$ = new AstStructDecl(*$2, $3);
     }
@@ -307,18 +325,18 @@ struct_stat
 /* var define */
 var_def
     : VAR var_decl { $$ = new AstVarDef($2); }
-    | VAR var_decl '=' expr { $$ = new AstVarDef($2, $4); }
-    | VAR var_decl '=' brace_init { $$ = new AstVarDef($2, $4); }
-    | REF FIELD type_name '=' expr {
-        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $5);
+    | VAR var_decl '=' opt_newlines expr { $$ = new AstVarDef($2, $5); }
+    | VAR var_decl '=' opt_newlines brace_init { $$ = new AstVarDef($2, $5); }
+    | REF FIELD type_name '=' opt_newlines expr {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $6);
     }
-    | REF FIELD type_name '=' brace_init {
-        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $5);
+    | REF FIELD type_name '=' opt_newlines brace_init {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $6);
     }
-    | VAR FIELD '=' expr { $$ = new AstVarDef(*$2, $4); }
-    | VAR FIELD '=' brace_init { $$ = new AstVarDef(*$2, $4); }
-    | FIELD ':' '=' expr { $$ = new AstVarDef(*$1, $4); }
-    | FIELD ':' '=' brace_init { $$ = new AstVarDef(*$1, $4); }
+    | VAR FIELD '=' opt_newlines expr { $$ = new AstVarDef(*$2, $5); }
+    | VAR FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5); }
+    | FIELD ':' '=' opt_newlines expr { $$ = new AstVarDef(*$1, $5); }
+    | FIELD ':' '=' opt_newlines brace_init { $$ = new AstVarDef(*$1, $5); }
     ;
 
 /* expression */
@@ -332,7 +350,7 @@ tag_stat
     ;
 
 tag_line
-    : '#' '[' tag_entry_seq ']' NEWLINE { $$ = $3; }
+    : '#' '[' opt_newlines tag_entry_seq opt_newlines ']' NEWLINE { $$ = $4; }
     ;
 
 tag_entry_seq
@@ -400,20 +418,36 @@ expr
     ;
 
 expr_assign
-    : expr_assign_left '=' expr { $$ = new AstAssign($1, $3); }
-    | expr_assign_left ASSIGN_ADD expr { $$ = new AstAssign($1, new AstBinOper($1, '+', $3)); }
-    | expr_assign_left ASSIGN_SUB expr { $$ = new AstAssign($1, new AstBinOper($1, '-', $3)); }
-    | expr_assign_left ASSIGN_MUL expr { $$ = new AstAssign($1, new AstBinOper($1, '*', $3)); }
-    | expr_assign_left ASSIGN_DIV expr { $$ = new AstAssign($1, new AstBinOper($1, '/', $3)); }
-    | expr_assign_left ASSIGN_MOD expr { $$ = new AstAssign($1, new AstBinOper($1, '%', $3)); }
-    | expr_assign_left ASSIGN_AND expr { $$ = new AstAssign($1, new AstBinOper($1, '&', $3)); }
-    | expr_assign_left ASSIGN_XOR expr { $$ = new AstAssign($1, new AstBinOper($1, '^', $3)); }
-    | expr_assign_left ASSIGN_OR expr { $$ = new AstAssign($1, new AstBinOper($1, '|', $3)); }
-    | expr_assign_left ASSIGN_SHL expr {
-        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_LEFT, $3));
+    : expr_assign_left '=' opt_newlines expr { $$ = new AstAssign($1, $4); }
+    | expr_assign_left ASSIGN_ADD opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '+', $4));
     }
-    | expr_assign_left ASSIGN_SHR expr {
-        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_RIGHT, $3));
+    | expr_assign_left ASSIGN_SUB opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '-', $4));
+    }
+    | expr_assign_left ASSIGN_MUL opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '*', $4));
+    }
+    | expr_assign_left ASSIGN_DIV opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '/', $4));
+    }
+    | expr_assign_left ASSIGN_MOD opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '%', $4));
+    }
+    | expr_assign_left ASSIGN_AND opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '&', $4));
+    }
+    | expr_assign_left ASSIGN_XOR opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '^', $4));
+    }
+    | expr_assign_left ASSIGN_OR opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, '|', $4));
+    }
+    | expr_assign_left ASSIGN_SHL opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_LEFT, $4));
+    }
+    | expr_assign_left ASSIGN_SHR opt_newlines expr {
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_RIGHT, $4));
     }
     ;
 
@@ -425,24 +459,32 @@ expr_assign_left
     ;
 
 expr_binOp
-    : expr '*' expr { $$ = new AstBinOper($1, '*', $3); }
-    | expr '/' expr { $$ = new AstBinOper($1, '/', $3); }
-    | expr '+' expr { $$ = new AstBinOper($1, '+', $3); }
-    | expr '-' expr { $$ = new AstBinOper($1, '-', $3); }
-    | expr '%' expr { $$ = new AstBinOper($1, '%', $3); }
-    | expr SHIFT_LEFT expr { $$ = new AstBinOper($1, token::SHIFT_LEFT, $3); }
-    | expr SHIFT_RIGHT expr { $$ = new AstBinOper($1, token::SHIFT_RIGHT, $3); }
-    | expr '<' expr { $$ = new AstBinOper($1, '<', $3); }
-    | expr '>' expr { $$ = new AstBinOper($1, '>', $3); }
-    | expr LOGIC_LE expr { $$ = new AstBinOper($1, token::LOGIC_LE, $3); }
-    | expr LOGIC_GE expr { $$ = new AstBinOper($1, token::LOGIC_GE, $3); }
-    | expr '&' expr { $$ = new AstBinOper($1, '&', $3); }
-    | expr '^' expr { $$ = new AstBinOper($1, '^', $3); }
-    | expr '|' expr { $$ = new AstBinOper($1, '|', $3); }
-    | expr LOGIC_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_EQUAL, $3); }
-    | expr LOGIC_NOT_EQUAL expr { $$ = new AstBinOper($1, token::LOGIC_NOT_EQUAL, $3); }
-    | expr LOGIC_AND expr { $$ = new AstBinOper($1, token::LOGIC_AND, $3); }
-    | expr LOGIC_OR expr { $$ = new AstBinOper($1, token::LOGIC_OR, $3); }
+    : expr '*' opt_newlines expr { $$ = new AstBinOper($1, '*', $4); }
+    | expr '/' opt_newlines expr { $$ = new AstBinOper($1, '/', $4); }
+    | expr '+' opt_newlines expr { $$ = new AstBinOper($1, '+', $4); }
+    | expr '-' opt_newlines expr { $$ = new AstBinOper($1, '-', $4); }
+    | expr '%' opt_newlines expr { $$ = new AstBinOper($1, '%', $4); }
+    | expr SHIFT_LEFT opt_newlines expr {
+        $$ = new AstBinOper($1, token::SHIFT_LEFT, $4);
+    }
+    | expr SHIFT_RIGHT opt_newlines expr {
+        $$ = new AstBinOper($1, token::SHIFT_RIGHT, $4);
+    }
+    | expr '<' opt_newlines expr { $$ = new AstBinOper($1, '<', $4); }
+    | expr '>' opt_newlines expr { $$ = new AstBinOper($1, '>', $4); }
+    | expr LOGIC_LE opt_newlines expr { $$ = new AstBinOper($1, token::LOGIC_LE, $4); }
+    | expr LOGIC_GE opt_newlines expr { $$ = new AstBinOper($1, token::LOGIC_GE, $4); }
+    | expr '&' opt_newlines expr { $$ = new AstBinOper($1, '&', $4); }
+    | expr '^' opt_newlines expr { $$ = new AstBinOper($1, '^', $4); }
+    | expr '|' opt_newlines expr { $$ = new AstBinOper($1, '|', $4); }
+    | expr LOGIC_EQUAL opt_newlines expr {
+        $$ = new AstBinOper($1, token::LOGIC_EQUAL, $4);
+    }
+    | expr LOGIC_NOT_EQUAL opt_newlines expr {
+        $$ = new AstBinOper($1, token::LOGIC_NOT_EQUAL, $4);
+    }
+    | expr LOGIC_AND opt_newlines expr { $$ = new AstBinOper($1, token::LOGIC_AND, $4); }
+    | expr LOGIC_OR opt_newlines expr { $$ = new AstBinOper($1, token::LOGIC_OR, $4); }
     ;
 
 expr_unary
@@ -459,7 +501,7 @@ expr_getpointee
     ;
 
 expr_paren
-    : '(' expr ')' { $$ = $2; }
+    : '(' opt_newlines expr opt_newlines ')' { $$ = $3; }
     ;
 
 atom_expr
@@ -482,24 +524,24 @@ postfix_expr
     ;
 
 cast_expr
-    : CAST '[' type_name ']' '(' expr ')' {
-        $$ = new AstCastExpr($3, $6, @$);
+    : CAST '[' opt_newlines type_name opt_newlines ']' opt_newlines '(' opt_newlines expr opt_newlines ')' {
+        $$ = new AstCastExpr($4, $10, @$);
     }
     ;
 
 sizeof_expr
-    : SIZEOF '(' expr ')' {
-        $$ = new AstSizeofExpr(nullptr, $3, @$);
+    : SIZEOF opt_newlines '(' opt_newlines expr opt_newlines ')' {
+        $$ = new AstSizeofExpr(nullptr, $5, @$);
     }
-    | SIZEOF '[' type_name ']' '(' ')' {
-        $$ = new AstSizeofExpr($3, nullptr, @$);
+    | SIZEOF '[' opt_newlines type_name opt_newlines ']' opt_newlines '(' opt_newlines ')' {
+        $$ = new AstSizeofExpr($4, nullptr, @$);
     }
     ;
 
 tuple_literal
-    : '(' expr ',' expr_seq ')' {
-        auto *items = $4;
-        items->insert(items->begin(), $2);
+    : '(' opt_newlines expr opt_newlines ',' opt_newlines expr_seq opt_newlines ')' {
+        auto *items = $7;
+        items->insert(items->begin(), $3);
         $$ = new AstTupleLiteral(@$, items);
     }
     ;
@@ -547,14 +589,14 @@ call_arg
     ;
 
 named_call_arg
-    : FIELD '=' expr {
-        $$ = new AstNamedCallArg(*$1, $3);
+    : FIELD '=' opt_newlines expr {
+        $$ = new AstNamedCallArg(*$1, $4);
     }
-    | REF FIELD '=' expr {
-        $$ = new AstNamedCallArg(*$2, new AstRefExpr(@$, $4));
+    | REF FIELD '=' opt_newlines expr {
+        $$ = new AstNamedCallArg(*$2, new AstRefExpr(@$, $5));
     }
-    | FIELD '=' brace_init {
-        $$ = new AstNamedCallArg(*$1, $3);
+    | FIELD '=' opt_newlines brace_init {
+        $$ = new AstNamedCallArg(*$1, $4);
     }
     ;
 
@@ -592,13 +634,15 @@ opt_newlines
     ;
 
 func_pointer_expr
-    : FIELD FUNC_PTR_OPEN '>' { $$ = new AstFuncRef(*$1, new std::vector<TypeNode*>); }
-    | FIELD FUNC_PTR_OPEN func_param_type_seq '>' { $$ = new AstFuncRef(*$1, $3); }
+    : FIELD FUNC_PTR_OPEN opt_newlines '>' { $$ = new AstFuncRef(*$1, new std::vector<TypeNode*>); }
+    | FIELD FUNC_PTR_OPEN opt_newlines func_param_type_seq opt_newlines '>' {
+        $$ = new AstFuncRef(*$1, $4);
+    }
     ;
 
 call_like
-    : postfix_expr '(' ')' { $$ = new AstFieldCall($1); }
-    | postfix_expr '(' call_arg_seq ')' { $$ = new AstFieldCall($1, $3); }
+    : postfix_expr '(' opt_newlines ')' { $$ = new AstFieldCall($1); }
+    | postfix_expr '(' opt_newlines call_arg_seq opt_newlines ')' { $$ = new AstFieldCall($1, $4); }
     ;
 
 variable
@@ -606,12 +650,12 @@ variable
     ;
 
 dot_like
-    : postfix_expr '.' FIELD { $$ = new AstDotLike($1, $3); }
+    : postfix_expr '.' opt_newlines FIELD { $$ = new AstDotLike($1, $4); }
     ;
 
 dot_like_name
     : FIELD { $$ = new AstField(*$1); }
-    | dot_like_name '.' FIELD { $$ = new AstDotLike($1, $3); }
+    | dot_like_name '.' opt_newlines FIELD { $$ = new AstDotLike($1, $4); }
     ;
 
 %include type.sub.yacc

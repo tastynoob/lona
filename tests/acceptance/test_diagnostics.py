@@ -15,9 +15,9 @@ def test_syntax_error_diagnostic_shows_location_and_help(compiler: CompilerHarne
         """,
     )
     result = compiler.emit_ir(input_path).expect_failed()
-    assert_contains(result.stderr, "syntax error: I couldn't parse this statement: unexpected newline.", label="syntax diagnostic")
-    assert_contains(result.stderr, f" --> {input_path}:2:16", label="syntax diagnostic")
-    assert_contains(result.stderr, " 2 |     var x i32 =", label="syntax diagnostic")
+    assert_contains(result.stderr, "syntax error: I couldn't parse this statement: unexpected ret.", label="syntax diagnostic")
+    assert_contains(result.stderr, f" --> {input_path}:3:5", label="syntax diagnostic")
+    assert_contains(result.stderr, " 3 |     ret 0", label="syntax diagnostic")
     assert_contains(
         result.stderr,
         "help: Check for a missing separator, unmatched delimiter, or mistyped keyword near here.",

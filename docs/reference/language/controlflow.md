@@ -45,6 +45,49 @@ if a < b {
 }
 ```
 
+`else` 也可以写到下一行：
+
+```lona
+if a < b {
+    ret a
+}
+else {
+    ret b
+}
+```
+
+这里的换行规则是：
+
+- `if cond {` 里的 `{` 必须和条件表达式写在同一行。
+- `else` 可以放到下一行，也可以和前一个 `}` 之间夹空行或仅注释行。
+- 但 `else` 后面不能再换行；要么直接写 `else {`，要么直接写 `else if`。
+
+## 5.1 `else if` 链
+
+```lona
+if score > 90 {
+    ret 1
+} else if score > 60 {
+    ret 2
+} else {
+    ret 3
+}
+```
+
+当前 `else if` 是 `else` 后面继续跟一个 `if` 的语法糖；语义上等价于：
+
+```lona
+if score > 90 {
+    ret 1
+} else {
+    if score > 60 {
+        ret 2
+    } else {
+        ret 3
+    }
+}
+```
+
 ## 6. `for` 语句
 
 ```lona
@@ -97,6 +140,11 @@ else {
     ret 1
 }
 ```
+
+`for ... else ...` 也遵循同样的规则：
+
+- `for cond {` 里的 `{` 必须和循环条件写在同一行。
+- `else` 可以晚几行出现，但 `else` 后面必须直接跟 `{`。
 
 说明：
 

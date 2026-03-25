@@ -423,6 +423,23 @@ def test_json_covers_controlflow_and_cast_nodes(compiler: CompilerHarness) -> No
     assert_contains(cast_json, '"targetType": "<i32, i32>"', label="cast json")
 
 
+def test_single_line_empty_struct_parses_and_lowers(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "empty_struct_single_line.lo",
+        """
+        struct Empty {}
+
+        def main() i32 {
+            var e Empty
+            ret 0
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_ok()
+    assert_regex(result.stdout, r"%.*Empty = type \{\}", label="empty struct ir")
+    assert_contains(result.stdout, "define i32 @main()", label="empty struct ir")
+
+
 def test_json_preserves_function_pointer_null_and_byte_literals(compiler: CompilerHarness) -> None:
     func_ptr_input = compiler.write_source(
         "func_ptr_json.lo",
