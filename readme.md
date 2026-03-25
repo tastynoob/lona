@@ -152,6 +152,13 @@ make test
 make install
 ```
 
+说明：
+
+- `make install` 只安装 `lona-ir`、`lac`、`lac-native`
+- bare runtime 资产不安装进系统目录
+- system 路径直接复用系统 CRT
+- bare 路径如果使用安装后的 `lac-native`，需要用户自己提供 `STARTUP_SRC` 和 `LINKER_SCRIPT`，或者直接在仓库 checkout 里运行 `scripts/lac-native.sh`
+
 ### 常用命令
 
 ```bash
@@ -161,6 +168,22 @@ lona-ir --emit obj --lto full --target x86_64-unknown-linux-gnu input.lo output.
 lac input.lo output/program
 lac-native input.lo output/program
 ```
+
+### AI Skill 生成
+
+仓库提供了一个 skill 生成器，用来把当前语言语法 / 语义文档整理成一份适合 Codex 使用的 skill：
+
+```bash
+python3 scripts/build_lona_skill.py
+```
+
+agent安装提示词：
+
+```
+将build/skills下的lona-author skill安装到本地
+```
+
+
 
 ## 📚 更多文档
 

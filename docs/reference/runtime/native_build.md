@@ -1,8 +1,10 @@
 # 本地可执行文件构建
 
-当前仓库已经提供两条可执行文件构建路径，可以把 `lona` 程序继续编成可运行程序。
+如果你先想知道三个命令各自怎么调用，先看 [commands.md](commands.md)。
 
-当前支持的平台是：
+工具链提供两条把 `lona` 程序继续编成可执行文件的路径。
+
+支持的平台是：
 
 - Linux x86_64
 
@@ -10,7 +12,7 @@
 
 ### 1. System 模式
 
-这是当前更推荐的系统级可执行文件方案。
+这是更推荐的系统级可执行文件方案。
 
 思路：
 
@@ -22,11 +24,6 @@
 - hosted wrapper 使用标准 `main(argc, argv)` 形态
 - 默认 target triple 是 `x86_64-unknown-linux-gnu`
 
-相关文件：
-
-- [scripts/lac.sh](../../../scripts/lac.sh)
-- [tests/smoke/test_system.py](../../../tests/smoke/test_system.py)
-
 这条路径的优点是：
 
 - 不需要自己接管宿主进程初始化
@@ -35,7 +32,7 @@
 
 ### 2. Bare 模式
 
-这是当前保留的一版最小裸启动环境。
+这是最小裸启动环境。
 
 思路：
 
@@ -47,7 +44,7 @@
 - LLVM 会把它规范化打印成 `x86_64-none-unknown-elf`
 - `x86_64-unknown-none-elf` 也会按 bare 目标处理
 
-当前 native object 还会额外携带：
+native object 还会额外携带：
 
 - `.lona.native_abi`
   - 只有对象里实际包含 `lona native ABI` 边界时才写入
@@ -57,40 +54,31 @@
 
 ## 组成
 
-相关文件：
-
-- [scripts/lac-native.sh](../../../scripts/lac-native.sh)
-- [tests/smoke/test_native.py](../../../tests/smoke/test_native.py)
-- [runtime/bare_x86_64/lona_start.S](../../../runtime/bare_x86_64/lona_start.S)
-- [runtime/bare_x86_64/lona.ld](../../../runtime/bare_x86_64/lona.ld)
-
 职责分工：
 
-- `lac.sh`
-  - 调用 `lona-ir --emit objects --cache-dir ... --target x86_64-unknown-linux-gnu`
-  - 读取 manifest，收集模块 object
-  - 再单独调用 `lona-ir --emit entry --target ...` 生成 hosted entry object
-  - 检查 object bundle 里是否存在语言入口 `__lona_main__`
-  - 调用系统 linker driver 做多 object 链接
-  - 如果显式传 `--lto full`，则改走 `lona-ir --emit obj --lto full`
 - `lac`
-  - 这是推荐的安装入口，先产出 object bundle，再调用系统 linker driver 生成二进制文件
-- `lac-native.sh`
-  - 调用 `lona-ir --emit objects --target x86_64-none-elf` 生成 bare object bundle
-  - 汇编启动代码
-  - 使用自定义 linker script 把 startup object 和多 object bundle 链接成 ELF 可执行文件
+  - 调用 `lona-ir --emit objects`
+  - 读取 manifest，收集模块 object
+  - 额外生成 hosted entry object
+  - 检查 object bundle 中是否存在 `__lona_main__`
+  - 调用系统 linker driver 生成最终程序
   - 如果显式传 `--lto full`，则改走 `lona-ir --emit obj --lto full`
-- `lona_start.S`
+- `lac-native`
+  - 调用 `lona-ir --emit objects --target x86_64-none-elf`
+  - 汇编启动代码
+  - 使用 linker script 把 startup object 和多 object bundle 链接成 ELF 可执行文件
+  - 如果显式传 `--lto full`，则改走 `lona-ir --emit obj --lto full`
+- bare startup assembly
   - 提供 `_start`
   - 调用稳定入口 `__lona_main__`
   - 把返回值作为进程退出码传给 `exit` syscall
-- `lona.ld`
+- bare linker script
   - 提供最小 ELF 链接布局
   - 设定 `ENTRY(_start)`
 
 ## 程序入口约定
 
-为了让启动代码和 hosted wrapper 都不依赖带路径的内部符号名，当前实现把入口分成两层：
+为了让启动代码和 hosted wrapper 都不依赖路径相关的内部约定，入口分成两层：
 
 - 语言入口：`__lona_main__() -> i32`
 - hosted system wrapper：`main(i32 argc, ptr argv) -> i32`
@@ -98,29 +86,23 @@
 入口选择规则：
 
 1. 如果 root 模块存在顶层可执行语句，它们会直接 lower 到 `__lona_main__() -> i32`。
-2. `def main() i32` 现在只是普通函数名，不再自动提升成入口。
+2. `def main() i32` 只是普通函数名，不会自动提升成入口。
 3. hosted target（例如 `x86_64-unknown-linux-gnu`）会额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
 4. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
 5. 如果连 `__lona_main__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
 
 ## 使用方式
 
-先确保编译器已经构建完成：
+走 system 路径构建一个可执行文件：
 
 ```bash
-make -j4 all
-```
-
-然后走 system 路径构建一个可执行文件：
-
-```bash
-bash scripts/lac.sh input.lo output/program
+lac input.lo output/program
 ```
 
 如果你要走 bare 路径：
 
 ```bash
-bash scripts/lac-native.sh input.lo output/program
+lac-native input.lo output/program
 ```
 
 如果要覆盖默认 target：
@@ -129,11 +111,11 @@ bash scripts/lac-native.sh input.lo output/program
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
 lona-ir --emit objects --target x86_64-unknown-linux-gnu input.lo output.manifest
 lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
-lona-ir --emit objects --cache-dir build/cache --target x86_64-unknown-linux-gnu input.lo output.manifest
-bash scripts/lac.sh --lto full input.lo output/program
-bash scripts/lac-native.sh --lto full input.lo output/program
-bash scripts/lac.sh --target x86_64-unknown-linux-gnu input.lo output/program
-bash scripts/lac-native.sh --target x86_64-none-elf input.lo output/program
+lona-ir --emit objects --cache-dir cache/objects --target x86_64-unknown-linux-gnu input.lo output.manifest
+lac --lto full input.lo output/program
+lac-native --lto full input.lo output/program
+lac --target x86_64-unknown-linux-gnu input.lo output/program
+lac-native --target x86_64-none-elf input.lo output/program
 ```
 
 其中：
@@ -147,7 +129,7 @@ bash scripts/lac-native.sh --target x86_64-none-elf input.lo output/program
 带优化级别：
 
 ```bash
-bash scripts/lac.sh -O 2 input.lo output/program
+lac -O 2 input.lo output/program
 ```
 
 显式开启 full LTO：
@@ -155,10 +137,12 @@ bash scripts/lac.sh -O 2 input.lo output/program
 ```bash
 lona-ir --emit ir --lto full -O3 input.lo output.ll
 lona-ir --emit obj --lto full -O3 input.lo output.o
-bash scripts/lac.sh --lto full -O 3 input.lo output/program
+lac --lto full -O 3 input.lo output/program
 ```
 
-如果你通过 `make install` 安装了工具链，还会得到：
+## 安装后的行为
+
+执行 `make install` 后，会得到：
 
 - `lona-ir`
 - `lac`
@@ -169,13 +153,18 @@ bash scripts/lac.sh --lto full -O 3 input.lo output/program
 - `lac` 对应 system 路径
 - `lac-native` 对应 bare 路径
 
-`lac` 会优先查找同目录下的 `lona-ir`。`lac-native` 会自动从安装目录下的 `share/lona/runtime/bare_x86_64` 查找启动汇编和链接脚本。
+`lac` 会优先查找同目录下的 `lona-ir`。
+
+`make install` 不把 bare runtime 资产安装进系统目录。这意味着：
+
+- system 路径不受影响，继续直接复用系统 CRT
+- bare 路径如果使用安装后的 `lac-native`，需要用户自己提供 `STARTUP_SRC` 和 `LINKER_SCRIPT`
 
 ## 工具依赖
 
-当前脚本默认依赖：
+默认依赖：
 
-- `build/lona-ir`
+- `lona-ir`
 - `cc`
 - `ld`
 - `nm`
@@ -191,32 +180,13 @@ bash scripts/lac.sh --lto full -O 3 input.lo output/program
 - `LINKER_SCRIPT`
 - `TARGET_TRIPLE`
 
-## 测试
+## 边界
 
-仓库内置了 native smoke：
-
-```bash
-make native_smoke
-```
-
-以及 system smoke：
-
-```bash
-make system_smoke
-```
-
-它会验证两种情况：
-
-- 顶层语句程序能成功包装成可执行文件
-- 通过顶层 `ret run()` 调用普通函数也能作为可执行入口运行
-
-## 当前边界
-
-这套环境当前是“最小可用”实现，边界比较明确：
+这套环境的边界是：
 
 - 只覆盖 Linux x86_64
-- system 路径当前直接复用宿主 ABI 和系统 CRT 启动对象
-- bare 路径当前已经不再依赖外部 `llc`，但仍然只支持无 libc 的最小裸链接路径
+- system 路径直接复用宿主 ABI 和系统 CRT 启动对象
+- bare 路径只支持无 libc 的最小裸链接路径
 - bare 启动代码只处理 `i32` 退出码，不处理参数和环境变量
-- system 路径当前只把 `argc/argv` 存进 `@__lona_argc` / `@__lona_argv`，还没有对应的语言层访问语法
-- `--lto full` 当前只提供 full-LTO 慢路径原型，还没有 ThinLTO
+- system 路径只把 `argc/argv` 存进 `@__lona_argc` / `@__lona_argv`，还没有对应的语言层访问语法
+- `--lto full` 只提供 full-LTO 慢路径，还没有 ThinLTO

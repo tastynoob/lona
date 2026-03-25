@@ -2,6 +2,7 @@
 
 这里收纳当前可直接使用的构建、运行和互操作参考。
 
+- [commands.md](commands.md): `lona-ir`、`lac`、`lac-native` 的命令行入口、参数和常用调用方式。
 - [native_build.md](native_build.md): `lona-ir`、`lac`、`lac-native` 的构建与运行方式。
 - [c_ffi.md](c_ffi.md): 当前 `lona <-> C` 互操作的稳定子集与限制。
 

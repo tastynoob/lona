@@ -1,8 +1,6 @@
 ROOT ?= .
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
-DATADIR ?= $(PREFIX)/share/lona
-RUNTIMEDIR ?= $(DATADIR)/runtime/bare_x86_64
 INSTALL ?= install
 PYTHON ?= python3
 CLANG ?= clang-18
@@ -98,19 +96,14 @@ system_smoke: $(target)
 
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -d $(DESTDIR)$(RUNTIMEDIR)
 	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona-ir
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac.sh $(DESTDIR)$(BINDIR)/lac
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac-native.sh $(DESTDIR)$(BINDIR)/lac-native
-	$(INSTALL) -m 644 $(ROOT)/runtime/bare_x86_64/lona_start.S $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
-	$(INSTALL) -m 644 $(ROOT)/runtime/bare_x86_64/lona.ld $(DESTDIR)$(RUNTIMEDIR)/lona.ld
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/lona-ir
 	rm -f $(DESTDIR)$(BINDIR)/lac
 	rm -f $(DESTDIR)$(BINDIR)/lac-native
-	rm -f $(DESTDIR)$(RUNTIMEDIR)/lona_start.S
-	rm -f $(DESTDIR)$(RUNTIMEDIR)/lona.ld
 
 $(target): $(OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
