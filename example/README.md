@@ -5,10 +5,10 @@
 ## Core Language
 
 - [algorithms_suite.lo](algorithms_suite.lo): 递归、循环、分支、布尔值和基础整数运算。
-- [c_ffi_linked_list.lo](c_ffi_linked_list.lo): `#[extern "C"]`、`malloc/free/puts`、`u8 const[*]` 字符串视图、结构体方法与链表增删改查。
+- [c_ffi_linked_list.lo](c_ffi_linked_list.lo): `#[extern "C"]`、`malloc/free/puts`、`usize`、`sizeof[T]()`、`u8 const[*]` 字符串视图、结构体方法与链表增删改查。
 - [data_model_suite.lo](data_model_suite.lo): 结构体、字段、方法、构造函数、普通指针读写和 `null` 空指针。
 - [function_pointer_suite.lo](function_pointer_suite.lo): `(Args: Ret)` 函数指针、显式函数取指针、已初始化的函数指针存储和间接调用。
-- [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
+- [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`sizeof(expr)` / `sizeof[T]()`、`usize`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
 
 ## Modules
 

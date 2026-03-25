@@ -1,6 +1,5 @@
 // System-level C FFI sample: malloc/free/puts plus a method-based linked list.
 
-#[repr "C"]
 struct Node {
     value i32
     next Node[*]
@@ -25,7 +24,7 @@ struct List {
 
     def append(value i32) {
         var guard = self.guard_ptr()
-        var node Node[*] = cast[Node[*]](malloc(16))
+        var node Node[*] = cast[Node[*]](malloc(sizeof[Node]()))
         node(0).value = value
         node(0).next = guard
 
@@ -109,7 +108,7 @@ struct List {
 }
 
 #[extern "C"]
-def malloc(size u64) u8[*]
+def malloc(size usize) u8[*]
 
 #[extern "C"]
 def free(node u8[*])

@@ -41,12 +41,14 @@ def run() i32 {
     sample = blend(sample, 1.0)
     var sample_bits u8[4] = sample.tobits()
     sample = sample_bits.tof32()
+    var pair_layout usize = sizeof[Pair]()
+    var bits_layout usize = sizeof(sample_bits)
     var pair_value = Pair(right = 5, left = 3)
     var pair <i32, bool> = pack(11, sample >= 2.0)
     var kept <i32, bool> = keep(pair)
     kept._1 = kept._1 + 1
     var score i32 = use_matrix(pair_value.left + pair_value.right)
-    if kept._2 && ((sample >= 2.0) || (score < 0)) {
+    if kept._2 && (pair_layout == 8_usize) && (bits_layout == 4_usize) && ((sample >= 2.0) || (score < 0)) {
         ret score + kept._1
     }
     kept = pair
