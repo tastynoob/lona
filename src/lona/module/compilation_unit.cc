@@ -49,6 +49,49 @@ toStdString(const string &value) {
     return {value.tochara(), value.size()};
 }
 
+std::string
+baseTypeName(const BaseTypeNode *node) {
+    if (!node) {
+        return {};
+    }
+    if (node->hasSyntax()) {
+        return describeDotLikeSyntax(node->syntax);
+    }
+    return toStdString(node->name);
+}
+
+bool
+splitBaseTypeName(const BaseTypeNode *node, std::string &moduleName,
+                  std::string &memberName) {
+    if (!node) {
+        return false;
+    }
+    if (node->hasSyntax()) {
+        std::vector<std::string> segments;
+        if (!collectDotLikeSegments(node->syntax, segments) || segments.size() < 2) {
+            return false;
+        }
+
+        moduleName = segments.front();
+        memberName.clear();
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            if (!memberName.empty()) {
+                memberName += ".";
+            }
+            memberName += segments[i];
+        }
+        return true;
+    }
+    auto rawName = baseTypeName(node);
+    auto separator = rawName.find('.');
+    if (separator == std::string::npos) {
+        return false;
+    }
+    moduleName = rawName.substr(0, separator);
+    memberName = rawName.substr(separator + 1);
+    return true;
+}
+
 [[noreturn]] void
 errorInvalidArrayDimension(const location &loc) {
     throw DiagnosticError(
@@ -265,7 +308,7 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
     }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         hashText(seed, "base");
-        hashText(seed, toStdString(base->name));
+        hashText(seed, baseTypeName(base));
         return;
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
@@ -340,9 +383,10 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         return cached;
     }
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        auto rawName = std::string(base->name.tochara(), base->name.size());
-        auto separator = rawName.find('.');
-        if (separator == std::string::npos) {
+        auto rawName = baseTypeName(base);
+        std::string moduleName;
+        std::string memberName;
+        if (!splitBaseTypeName(base, moduleName, memberName)) {
             auto lookup = unit.lookupTopLevelName(rawName);
             if (lookup.isType()) {
                 auto *type = typeTable->getType(llvm::StringRef(lookup.resolvedName));
@@ -350,8 +394,6 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
                 return type;
             }
         } else {
-            auto moduleName = rawName.substr(0, separator);
-            auto memberName = rawName.substr(separator + 1);
             const auto *imported = unit.findImportedModule(moduleName);
             if (!imported) {
                 unit.cacheResolvedType(node, nullptr);
@@ -363,7 +405,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
                 return nullptr;
             }
         }
-        resolved = typeTable->getType(base->name);
+        resolved = typeTable->getType(llvm::StringRef(rawName));
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }

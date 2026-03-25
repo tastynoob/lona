@@ -40,7 +40,7 @@ public:
     DEF_VISIT(AstFor)
     DEF_VISIT(AstCastExpr)
     DEF_VISIT(AstFieldCall)
-    DEF_VISIT(AstSelector)
+    DEF_VISIT(AstDotLike)
 };
 
 class AstVisitorAny : public AstVisitor {
@@ -76,7 +76,7 @@ public:
     DEF_VISIT(AstFor)
     DEF_VISIT(AstCastExpr)
     DEF_VISIT(AstFieldCall)
-    DEF_VISIT(AstSelector)
+    DEF_VISIT(AstDotLike)
 };
 
 class Scope;

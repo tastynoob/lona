@@ -166,6 +166,37 @@ def test_import_links_functions_types_and_constructors(compiler: CompilerHarness
     compiler.emit_ir(main_path).expect_ok()
 
 
+def test_imported_type_annotations_accept_dot_like_names(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "import_type_annotations/dep.lo",
+        """
+        struct Pair {
+            left i32
+            right i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "import_type_annotations/main.lo",
+        """
+        import dep
+
+        def bounce(v dep.Pair) dep.Pair {
+            ret v
+        }
+
+        def main() i32 {
+            var pair dep.Pair = dep.Pair(left = 1, right = 2)
+            ret bounce(pair).right
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@bounce", label="imported type annotation ir")
+
+
 def test_imported_c_abi_symbols_keep_global_names(compiler: CompilerHarness) -> None:
     compiler.write_source(
         "import_c_abi/dep.lo",

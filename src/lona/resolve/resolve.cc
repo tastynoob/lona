@@ -66,14 +66,14 @@ class FunctionResolver {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             return resolved_.field(field);
         }
-        if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
-            return resolved_.selector(selector);
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            return resolved_.dotLike(dotLike);
         }
         return nullptr;
     }
 
     void
-    resolveSelector(const AstSelector *node) {
+    resolveDotLike(const AstDotLike *node) {
         if (!unit_ || !node) {
             return;
         }
@@ -94,11 +94,11 @@ class FunctionResolver {
         auto memberName = toStdString(node->field->text);
         auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
         if (lookup.isFunction()) {
-            resolved_.bindSelector(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
+            resolved_.bindDotLike(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
             return;
         }
         if (lookup.isType()) {
-            resolved_.bindSelector(node, ResolvedEntityRef::type(lookup.resolvedName));
+            resolved_.bindDotLike(node, ResolvedEntityRef::type(lookup.resolvedName));
             return;
         }
 
@@ -298,9 +298,9 @@ class FunctionResolver {
             }
             return;
         }
-        if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
-            resolveExpr(selector->parent);
-            resolveSelector(selector);
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            resolveExpr(dotLike->parent);
+            resolveDotLike(dotLike);
             return;
         }
         if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
@@ -529,9 +529,9 @@ ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
 }
 
 const ResolvedEntityRef *
-ResolvedFunction::selector(const AstSelector *node) const {
-    auto found = selectors_.find(node);
-    if (found == selectors_.end()) {
+ResolvedFunction::dotLike(const AstDotLike *node) const {
+    auto found = dotLikes_.find(node);
+    if (found == dotLikes_.end()) {
         return nullptr;
     }
     return &found->second;

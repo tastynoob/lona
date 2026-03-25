@@ -97,10 +97,9 @@
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_stat stat
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
-%type <node> field_call cast_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
+%type <node> call_like cast_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
-%type <node> expr_paren single_value field_selector func_pointer_expr
-%type <typeNode> type_selector
+%type <node> expr_paren atom_expr postfix_expr dot_like func_pointer_expr dot_like_name
 %type <node> param_decl var_def
 %type <stat_list> pragram_statlist struct_statlist stat_list stat_compound
 %type <var_decl> var_decl
@@ -390,7 +389,7 @@ final_expr
 expr
     : expr_binOp { $$ = $1; }
     | expr_unary { $$ = $1; }
-    | single_value { $$ = $1; }
+    | postfix_expr { $$ = $1; }
     | error {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
@@ -419,8 +418,9 @@ expr_assign
 
 expr_assign_left
     : variable { $$ = $1; }
+    | dot_like { $$ = $1; }
     | expr_getpointee { $$ = $1; }
-    | field_call { $$ = $1; }
+    | call_like { $$ = $1; }
     ;
 
 expr_binOp
@@ -445,23 +445,23 @@ expr_binOp
     ;
 
 expr_unary
-    : '!' single_value %prec unary { $$ = new AstUnaryOper('!', $2); }
-    | '~' single_value %prec unary { $$ = new AstUnaryOper('~', $2); }
-    | '+' single_value %prec unary { $$ = new AstUnaryOper('+', $2); }
-    | '-' single_value %prec unary { $$ = new AstUnaryOper('-', $2); }
-    | '&' single_value %prec unary { $$ = new AstUnaryOper('&', $2); }
+    : '!' postfix_expr %prec unary { $$ = new AstUnaryOper('!', $2); }
+    | '~' postfix_expr %prec unary { $$ = new AstUnaryOper('~', $2); }
+    | '+' postfix_expr %prec unary { $$ = new AstUnaryOper('+', $2); }
+    | '-' postfix_expr %prec unary { $$ = new AstUnaryOper('-', $2); }
+    | '&' postfix_expr %prec unary { $$ = new AstUnaryOper('&', $2); }
     | expr_getpointee { $$ = $1; }
     ;
 
 expr_getpointee
-    : '*' single_value %prec unary { $$ = new AstUnaryOper('*', $2); }
+    : '*' postfix_expr %prec unary { $$ = new AstUnaryOper('*', $2); }
     ;
 
 expr_paren
     : '(' expr ')' { $$ = $2; }
     ;
 
-single_value
+atom_expr
     : variable { $$ = $1; }
     | CONST { $$ = new AstConst(*$1); }
     | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
@@ -469,9 +469,14 @@ single_value
     | NULL_KW { $$ = new AstConst(*new AstToken(TokenType::ConstNull, "null", @$)); }
     | cast_expr { $$ = $1; }
     | func_pointer_expr { $$ = $1; }
-    | field_call { $$ = $1; }
     | expr_paren { $$ = $1; }
     | tuple_literal { $$ = $1; }
+    ;
+
+postfix_expr
+    : atom_expr { $$ = $1; }
+    | call_like { $$ = $1; }
+    | dot_like { $$ = $1; }
     ;
 
 cast_expr
@@ -580,35 +585,22 @@ func_pointer_expr
     | FIELD FUNC_PTR_OPEN func_param_type_seq '>' { $$ = new AstFuncRef(*$1, $3); }
     ;
 
-field_call
-    : single_value '(' ')' { $$ = new AstFieldCall($1); }
-    | single_value '(' call_arg_seq ')' { $$ = new AstFieldCall($1, $3); }
+call_like
+    : postfix_expr '(' ')' { $$ = new AstFieldCall($1); }
+    | postfix_expr '(' call_arg_seq ')' { $$ = new AstFieldCall($1, $3); }
     ;
 
 variable
     : FIELD { $$ = new AstField(*$1); }
-    | field_selector { $$ = $1; }
     ;
 
-field_selector
-    : single_value '.' FIELD { $$ = new AstSelector($1, $3); }
+dot_like
+    : postfix_expr '.' FIELD { $$ = new AstDotLike($1, $3); }
     ;
 
-type_selector
-    : FIELD '.' FIELD {
-        string name = $1->text;
-        name += ".";
-        name += $3->text;
-        $$ = new BaseTypeNode(name, @$);
-    }
-    | type_selector '.' FIELD {
-        auto *base = dynamic_cast<BaseTypeNode *>($1);
-        assert(base);
-        string name = base->name;
-        name += ".";
-        name += $3->text;
-        $$ = new BaseTypeNode(name, @$);
-    }
+dot_like_name
+    : FIELD { $$ = new AstField(*$1); }
+    | dot_like_name '.' FIELD { $$ = new AstDotLike($1, $3); }
     ;
 
 %include type.sub.yacc

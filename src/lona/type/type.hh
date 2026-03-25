@@ -822,6 +822,10 @@ public:
         }
 
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+            if (base->hasSyntax()) {
+                auto rawName = describeDotLikeSyntax(base->syntax);
+                return getType(llvm::StringRef(rawName));
+            }
             return getType(base->name);
         }
 

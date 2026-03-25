@@ -19,6 +19,11 @@ tokenText(const AstToken &token) {
     return std::string(token.text.tochara(), token.text.size());
 }
 
+std::string
+toStdString(const string &value) {
+    return std::string(value.tochara(), value.size());
+}
+
 [[noreturn]] void
 errorInvalidNumericLiteral(const AstToken &token, const std::string &message,
                           const std::string &help) {
@@ -275,7 +280,7 @@ DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstCastExpr)
 DEF_ACCEPT(AstFieldCall)
-DEF_ACCEPT(AstSelector)
+DEF_ACCEPT(AstDotLike)
 
 AstProgram::AstProgram(AstNode *body)
     : AstNode(body ? body->loc : location()), body(body->as<AstStatList>()) {
@@ -497,5 +502,43 @@ AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : AstNode(value ? value->loc : location()), value(value), args(args) {}
+
+std::string
+describeDotLikeSyntax(const AstNode *node, std::string_view nullDescription) {
+    if (!node) {
+        return std::string(nullDescription);
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        return toStdString(field->name);
+    }
+    if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+        auto parent = describeDotLikeSyntax(dotLike->parent, nullDescription);
+        auto fieldName = tokenText(*dotLike->field);
+        if (parent.empty()) {
+            return fieldName;
+        }
+        return parent + "." + fieldName;
+    }
+    return std::string(nullDescription);
+}
+
+bool
+collectDotLikeSegments(const AstNode *node, std::vector<std::string> &segments) {
+    if (!node) {
+        return false;
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        segments.push_back(toStdString(field->name));
+        return true;
+    }
+    if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+        if (!collectDotLikeSegments(dotLike->parent, segments)) {
+            return false;
+        }
+        segments.push_back(tokenText(*dotLike->field));
+        return true;
+    }
+    return false;
+}
 
 }  // namespace lona

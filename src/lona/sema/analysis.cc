@@ -128,16 +128,8 @@ describeMemberOwnerSyntax(const AstNode *node) {
     if (!node) {
         return "";
     }
-    if (auto *field = dynamic_cast<const AstField *>(node)) {
-        return toStdString(field->name);
-    }
-    if (auto *selector = dynamic_cast<const AstSelector *>(node)) {
-        auto parent = describeMemberOwnerSyntax(selector->parent);
-        auto fieldName = toStdString(selector->field->text);
-        if (parent.empty()) {
-            return fieldName;
-        }
-        return parent + "." + fieldName;
+    if (node->is<AstField>() || node->is<AstDotLike>()) {
+        return describeDotLikeSyntax(node);
     }
     return "";
 }
@@ -295,6 +287,9 @@ isReservedInitialListTypeNode(TypeNode *node) {
     auto *base = dynamic_cast<BaseTypeNode *>(node);
     if (!base) {
         return false;
+    }
+    if (base->hasSyntax()) {
+        return describeDotLikeSyntax(base->syntax) == "initial_list";
     }
     return toStdString(base->name) == "initial_list";
 }
@@ -1753,8 +1748,8 @@ class FunctionAnalyzer {
         if (auto *braceInit = node->as<AstBraceInit>()) {
             return analyzeBraceInit(braceInit, expectedType);
         }
-        if (auto *selector = node->as<AstSelector>()) {
-            return analyzeSelector(selector);
+        if (auto *dotLike = node->as<AstDotLike>()) {
+            return analyzeDotLike(dotLike);
         }
         if (auto *castExpr = node->as<AstCastExpr>()) {
             return analyzeCastExpr(castExpr);
@@ -2221,8 +2216,8 @@ class FunctionAnalyzer {
         return materializeResolvedEntity(binding, node->loc, toStdString(node->name));
     }
 
-    HIRExpr *analyzeResolvedSelector(AstSelector *node) {
-        auto *binding = resolved.selector(node);
+    HIRExpr *analyzeResolvedDotLike(AstDotLike *node) {
+        auto *binding = resolved.dotLike(node);
         if (!binding || !binding->valid()) {
             return nullptr;
         }
@@ -2579,9 +2574,9 @@ class FunctionAnalyzer {
         return makeHIR<HIRFor>(cond, body, elseBlock, node->loc);
     }
 
-    HIRExpr *analyzeSelector(AstSelector *node) {
-        if (auto *resolvedSelector = analyzeResolvedSelector(node)) {
-            return resolvedSelector;
+    HIRExpr *analyzeDotLike(AstDotLike *node) {
+        if (auto *resolvedDotLike = analyzeResolvedDotLike(node)) {
+            return resolvedDotLike;
         }
 
         auto *parent = requireExpr(node->parent);
@@ -2603,12 +2598,12 @@ class FunctionAnalyzer {
                 diagnoseModuleNamespaceCall(toStdString(fieldNode->name), node->loc);
             }
         }
-        if (auto *selectorNode = node->value ? node->value->as<AstSelector>() : nullptr) {
-            if (auto *resolvedSelector = analyzeResolvedSelector(selectorNode)) {
-                callee = resolvedSelector;
+        if (auto *dotLikeNode = node->value ? node->value->as<AstDotLike>() : nullptr) {
+            if (auto *resolvedDotLike = analyzeResolvedDotLike(dotLikeNode)) {
+                callee = resolvedDotLike;
             } else {
-                auto *receiver = requireExpr(selectorNode->parent);
-                auto fieldName = toStdString(selectorNode->field->text);
+                auto *receiver = requireExpr(dotLikeNode->parent);
+                auto fieldName = toStdString(dotLikeNode->field->text);
                 auto lookup = lookupMember(receiver, fieldName, node->loc);
                 if (lookup.result.kind == LookupResultKind::InjectedMember) {
                     assert(lookup.injectedMember.has_value());
@@ -2626,12 +2621,12 @@ class FunctionAnalyzer {
                 }
                 if (auto *resolvedCallee =
                         materializeMemberExpr(receiver, fieldName, lookup,
-                                              selectorNode->loc, true)) {
+                                              dotLikeNode->loc, true)) {
                     callee = resolvedCallee;
                 } else {
                     diagnoseMemberLookupFailure(
-                        lookup, fieldName, selectorNode->loc,
-                        describeMemberOwnerSyntax(selectorNode->parent));
+                        lookup, fieldName, dotLikeNode->loc,
+                        describeMemberOwnerSyntax(dotLikeNode->parent));
                 }
             }
         }

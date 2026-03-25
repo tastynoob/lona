@@ -117,7 +117,7 @@ class ResolvedFunction {
     const ResolvedLocalBinding *selfBinding_ = nullptr;
     std::unordered_map<const AstVarDef *, const ResolvedLocalBinding *> variables_;
     std::unordered_map<const AstField *, ResolvedEntityRef> fields_;
-    std::unordered_map<const AstSelector *, ResolvedEntityRef> selectors_;
+    std::unordered_map<const AstDotLike *, ResolvedEntityRef> dotLikes_;
     std::unordered_map<const AstFuncRef *, ResolvedEntityRef> functionRefs_;
 
 public:
@@ -160,10 +160,10 @@ public:
     }
     const ResolvedEntityRef *field(const AstField *node) const;
 
-    void bindSelector(const AstSelector *node, ResolvedEntityRef binding) {
-        selectors_[node] = std::move(binding);
+    void bindDotLike(const AstDotLike *node, ResolvedEntityRef binding) {
+        dotLikes_[node] = std::move(binding);
     }
-    const ResolvedEntityRef *selector(const AstSelector *node) const;
+    const ResolvedEntityRef *dotLike(const AstDotLike *node) const;
 
     void bindFunctionRef(const AstFuncRef *node, ResolvedEntityRef binding) {
         functionRefs_[node] = std::move(binding);

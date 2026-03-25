@@ -404,8 +404,8 @@ AstFieldCall::toJson(Json &root) {
 }
 
 void
-AstSelector::toJson(Json &root) {
-    root["type"] = "Selector";
+AstDotLike::toJson(Json &root) {
+    root["type"] = "DotLike";
     root["parent"] = Json::object();
     this->parent->toJson(root["parent"]);
     root["field"] = this->field->text.tochara();

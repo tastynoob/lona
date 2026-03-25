@@ -5,6 +5,7 @@
 #include <list>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -94,9 +95,15 @@ struct TypeNode {
 };
 
 struct BaseTypeNode : public TypeNode {
-    string const name;
+    string name;
+    AstNode *syntax = nullptr;
+
     BaseTypeNode(string name, const location &loc = location())
         : TypeNode(loc), name(name) {}
+    BaseTypeNode(AstNode *syntax, const location &loc = location())
+        : TypeNode(loc), syntax(syntax) {}
+
+    bool hasSyntax() const { return syntax != nullptr; }
 };
 
 struct ConstTypeNode : public TypeNode {
@@ -615,15 +622,20 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
-class AstSelector : public AstNode {
+class AstDotLike : public AstNode {
 public:
     AstNode *const parent;
     AstToken *const field;
-    AstSelector(AstNode *parent, AstToken *field)
+    AstDotLike(AstNode *parent, AstToken *field)
         : AstNode(field->loc), parent(parent), field(field) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
+
+std::string describeDotLikeSyntax(const AstNode *node,
+                                  std::string_view nullDescription = "");
+bool collectDotLikeSegments(const AstNode *node,
+                            std::vector<std::string> &segments);
 
 }  // namespace lona

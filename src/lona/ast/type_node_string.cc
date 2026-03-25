@@ -26,6 +26,9 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
         return name;
     }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        if (base->hasSyntax()) {
+            return describeDotLikeSyntax(base->syntax, nullDescription);
+        }
         return toStdString(base->name);
     }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {

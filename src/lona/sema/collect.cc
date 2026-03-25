@@ -40,6 +40,49 @@ toStdString(const string &value) {
     return std::string(value.tochara(), value.size());
 }
 
+std::string
+baseTypeName(const BaseTypeNode *node) {
+    if (!node) {
+        return {};
+    }
+    if (node->hasSyntax()) {
+        return describeDotLikeSyntax(node->syntax);
+    }
+    return toStdString(node->name);
+}
+
+bool
+splitBaseTypeName(const BaseTypeNode *node, std::string &moduleName,
+                  std::string &memberName) {
+    if (!node) {
+        return false;
+    }
+    if (node->hasSyntax()) {
+        std::vector<std::string> segments;
+        if (!collectDotLikeSegments(node->syntax, segments) || segments.size() < 2) {
+            return false;
+        }
+
+        moduleName = segments.front();
+        memberName.clear();
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            if (!memberName.empty()) {
+                memberName += ".";
+            }
+            memberName += segments[i];
+        }
+        return true;
+    }
+    auto rawName = baseTypeName(node);
+    auto separator = rawName.find('.');
+    if (separator == std::string::npos) {
+        return false;
+    }
+    moduleName = rawName.substr(0, separator);
+    memberName = rawName.substr(separator + 1);
+    return true;
+}
+
 [[noreturn]] void
 error(const std::string &message);
 
@@ -663,7 +706,8 @@ resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node)
         return nullptr;
     }
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        auto rawName = llvm::StringRef(base->name.tochara(), base->name.size());
+        auto rawStorage = baseTypeName(base);
+        auto rawName = llvm::StringRef(rawStorage);
         if (isReservedInitialListTypeName(rawName)) {
             errorReservedInitialListType(base->loc);
         }
@@ -1196,9 +1240,10 @@ class InterfaceCollector {
             return baseType ? interface_->getOrCreateConstType(baseType) : nullptr;
         }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-            auto rawName = toStdString(base->name);
-            auto separator = rawName.find('.');
-            if (separator == std::string::npos) {
+            auto rawName = baseTypeName(base);
+            std::string moduleName;
+            std::string typeName;
+            if (!splitBaseTypeName(base, moduleName, typeName)) {
                 if (isReservedInitialListTypeName(
                         llvm::StringRef(rawName.c_str(), rawName.size()))) {
                     errorReservedInitialListType(base->loc);
@@ -1214,8 +1259,6 @@ class InterfaceCollector {
                 return nullptr;
             }
 
-            auto moduleName = rawName.substr(0, separator);
-            auto typeName = rawName.substr(separator + 1);
             const auto *imported = unit_.findImportedModule(moduleName);
             if (!imported || !imported->interface) {
                 return nullptr;

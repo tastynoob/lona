@@ -1,7 +1,6 @@
 single_type
-    : FIELD { $$ = new BaseTypeNode($1->text, @$); }
+    : dot_like_name { $$ = new BaseTypeNode($1, @$); }
     | TYPE { $$ = new BaseTypeNode($1->text, @$); }
-    | type_selector { $$ = $1; }
     ;
 
 tuple_type
