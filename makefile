@@ -55,7 +55,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke system_smoke template_random ai_test install uninstall
+.PHONY: clean format default gram_check frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke system_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -144,9 +144,14 @@ $(GENERATED_PARSER_SOURCES) &: $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
 	mkdir -p $(OUT_DIR)
 	python3 scripts/multi_yacc.py
 	echo "Generating parser.cc"
-	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -rall --report-file=report.txt
+	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -Werror -rall --report-file=report.txt
 
-gram_check: $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc
+gram_check:
+	mkdir -p $(OUT_DIR)
+	flex -o $(GENERATED_LEXER_SOURCE) $(LEX_FILE)
+	python3 scripts/multi_yacc.py
+	echo "Generating parser.cc"
+	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -Werror -rall --report-file=report.txt
 
 clean:
 	rm -rf $(OUT_DIR)
