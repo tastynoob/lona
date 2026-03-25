@@ -1,120 +1,121 @@
-// System-level C FFI sample: malloc/free/puts plus a method-based linked list.
+// System-level C FFI sample: malloc/free/puts plus a method-based singly linked list.
 
-struct Node {
+struct ListNode {
     value i32
-    next Node[*]
+    next ListNode*
 }
 
 struct List {
-    guard Node
-
-    def guard_ptr() Node[*] {
-        ret &self.guard
-    }
-
-    def init() {
-        var guard = self.guard_ptr()
-        self.guard.value = -1
-        self.guard.next = guard
-    }
+    head ListNode*
+    length i32
 
     def empty() bool {
-        ret self.guard.next == self.guard_ptr()
+        ret self.length == 0
     }
 
     def append(value i32) {
-        var guard = self.guard_ptr()
-        var node Node[*] = cast[Node[*]](malloc(sizeof[Node]()))
-        node(0).value = value
-        node(0).next = guard
+        var node = makeNode(value)
 
-        var tail = guard
-        for tail(0).next != guard {
-            tail = tail(0).next
+        if self.head == null {
+            self.head = node
+            self.length = self.length + 1
+            ret
         }
-        tail(0).next = node
+
+        var tail = self.head
+        for (*tail).next != null {
+            tail = (*tail).next
+        }
+        (*tail).next = node
+        self.length = self.length + 1
     }
 
-    def find(value i32) Node[*] {
-        var guard = self.guard_ptr()
-        var cur = self.guard.next
-        for cur != guard {
-            if cur(0).value == value {
+    def find(value i32) ListNode* {
+        var cur = self.head
+        for cur != null {
+            if (*cur).value == value {
                 ret cur
             }
-            cur = cur(0).next
+            cur = (*cur).next
         }
-        ret guard
+        ret null
     }
 
     def update(old_value i32, new_value i32) bool {
-        var guard = self.guard_ptr()
         var node = self.find(old_value)
-        if node == guard {
+        if node == null {
             ret false
         }
-        node(0).value = new_value
+        (*node).value = new_value
         ret true
     }
 
     def remove(value i32) bool {
-        var guard = self.guard_ptr()
-        var prev = guard
-        var cur = self.guard.next
-        for cur != guard {
-            if cur(0).value == value {
-                prev(0).next = cur(0).next
-                free(cast[u8[*]](cur))
+        var prev ListNode* = null
+        var cur = self.head
+        for cur != null {
+            if (*cur).value == value {
+                var next = (*cur).next
+                if prev == null {
+                    self.head = next
+                } else {
+                    (*prev).next = next
+                }
+                free(cast[u8*](cur))
+                self.length = self.length - 1
                 ret true
             }
             prev = cur
-            cur = cur(0).next
+            cur = (*cur).next
         }
         ret false
     }
 
     def len() i32 {
-        var guard = self.guard_ptr()
-        var cur = self.guard.next
-        var count i32 = 0
-        for cur != guard {
-            count = count + 1
-            cur = cur(0).next
-        }
-        ret count
+        ret self.length
     }
 
     def sum() i32 {
-        var guard = self.guard_ptr()
-        var cur = self.guard.next
+        var cur = self.head
         var total i32 = 0
-        for cur != guard {
-            total = total + cur(0).value
-            cur = cur(0).next
+        for cur != null {
+            total = total + (*cur).value
+            cur = (*cur).next
         }
         ret total
     }
 
     def clear() {
-        var guard = self.guard_ptr()
-        var cur = self.guard.next
-        self.guard.next = guard
-        for cur != guard {
-            var next = cur(0).next
-            free(cast[u8[*]](cur))
+        var cur = self.head
+        self.head = null
+        self.length = 0
+        for cur != null {
+            var next = (*cur).next
+            free(cast[u8*](cur))
             cur = next
         }
     }
 }
 
 #[extern "C"]
-def malloc(size usize) u8[*]
+def malloc(size usize) u8*
 
 #[extern "C"]
-def free(node u8[*])
+def free(node u8*)
 
 #[extern "C"]
 def puts(msg u8 const[*]) i32
+
+def makeNode(value i32) ListNode* {
+    var node ListNode* = cast[ListNode*](malloc(sizeof[ListNode]()))
+    (*node).value = value
+    (*node).next = null
+    ret node
+}
+
+def makeList() List {
+    ret List(head = null, length = 0)
+}
 
 def keep_status(status i32, ok bool, code i32) i32 {
     if status != 0 {
@@ -127,21 +128,19 @@ def keep_status(status i32, ok bool, code i32) i32 {
 }
 
 def run() i32 {
-    var list List
-    var guard = list.guard_ptr()
+    var list = makeList()
     var status i32 = 0
 
-    list.init()
     list.append(10)
     list.append(20)
     list.append(30)
 
     status = keep_status(status, list.len() == 3, 31)
-    status = keep_status(status, list.find(20) != guard, 32)
+    status = keep_status(status, list.find(20) != null, 32)
     status = keep_status(status, list.update(20, 25), 33)
-    status = keep_status(status, list.find(25) != guard, 34)
+    status = keep_status(status, list.find(25) != null, 34)
     status = keep_status(status, list.remove(10), 35)
-    status = keep_status(status, list.find(10) == guard, 36)
+    status = keep_status(status, list.find(10) == null, 36)
 
     if status == 0 {
         list.append(40)
@@ -154,7 +153,7 @@ def run() i32 {
     status = keep_status(status, list.empty(), 39)
 
     if status == 0 {
-        puts("linked ok")
+        puts("test ok")
     }
 
     ret status
