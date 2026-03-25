@@ -110,7 +110,7 @@
 %type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
 %type <type_seq> func_param_type_seq
-%type <counter> opt_newlines
+%type <counter> opt_newlines opt_brace_line_comma
 %type <tag> tag_entry
 %type <tags> tag_line tag_entry_seq
 %type <token_seq> tag_arg_seq
@@ -556,6 +556,9 @@ brace_init
     | '{' brace_inline_body '}' {
         $$ = new AstBraceInit(@$, $2);
     }
+    | '{' brace_inline_body ',' opt_newlines '}' {
+        $$ = new AstBraceInit(@$, $2);
+    }
     | '{' NEWLINE brace_line_body '}' {
         $$ = new AstBraceInit(@$, $3);
     }
@@ -618,14 +621,19 @@ brace_line_body
     ;
 
 brace_line_entry_seq
-    : brace_init_item NEWLINE opt_newlines {
+    : brace_init_item opt_brace_line_comma NEWLINE opt_newlines {
         $$ = new std::vector<AstNode *>;
         $$->emplace_back($1);
     }
-    | brace_line_entry_seq brace_init_item NEWLINE opt_newlines {
+    | brace_line_entry_seq brace_init_item opt_brace_line_comma NEWLINE opt_newlines {
         $$ = $1;
         $$->emplace_back($2);
     }
+    ;
+
+opt_brace_line_comma
+    : /* empty */ { $$ = 0; }
+    | ',' { $$ = 0; }
     ;
 
 opt_newlines

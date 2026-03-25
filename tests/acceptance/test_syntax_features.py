@@ -1395,6 +1395,42 @@ def test_array_forms_views_and_array_diagnostics(compiler: CompilerHarness) -> N
             [("store [4 x i32] [i32 1, i32 2, i32 0, i32 0]", False)],
         ),
         (
+            "array_value_init_trailing_comma_inline.lo",
+            """
+            def main() i32 {
+                var row i32[4] = {1, 2,}
+                ret row(0) + row(1) + row(2) + row(3)
+            }
+            """,
+            [("store [4 x i32] [i32 1, i32 2, i32 0, i32 0]", False)],
+        ),
+        (
+            "array_value_init_trailing_comma_multiline.lo",
+            """
+            def main() i32 {
+                var row i32[4] = {
+                    1,
+                    2,
+                }
+                ret row(0) + row(1) + row(2) + row(3)
+            }
+            """,
+            [("store [4 x i32] [i32 1, i32 2, i32 0, i32 0]", False)],
+        ),
+        (
+            "array_value_init_multiline_legacy.lo",
+            """
+            def main() i32 {
+                var row i32[4] = {
+                    1
+                    2
+                }
+                ret row(0) + row(1) + row(2) + row(3)
+            }
+            """,
+            [("store [4 x i32] [i32 1, i32 2, i32 0, i32 0]", False)],
+        ),
+        (
             "array_infer.lo",
             """
             def main() i32 {
@@ -1614,6 +1650,48 @@ def test_array_forms_views_and_array_diagnostics(compiler: CompilerHarness) -> N
             }
             """,
             ["array initializer nesting is deeper than the array shape"],
+        ),
+        (
+            "call_trailing_comma_bad.lo",
+            """
+            def foo(a i32, b i32) i32 {
+                ret a + b
+            }
+
+            def main() i32 {
+                ret foo(1, 2,)
+            }
+            """,
+            ["unexpected ')'"],
+        ),
+        (
+            "tuple_literal_trailing_comma_bad.lo",
+            """
+            def main() i32 {
+                var pair <i32, bool> = (1, true,)
+                ret 0
+            }
+            """,
+            ["unexpected ')'"],
+        ),
+        (
+            "param_trailing_comma_bad.lo",
+            """
+            def sum(a i32, b i32,) i32 {
+                ret a + b
+            }
+            """,
+            ["unexpected ')'; expected identifier, ref, newline."],
+        ),
+        (
+            "array_dim_trailing_comma_bad.lo",
+            """
+            def main() i32 {
+                var row i32[4,] = {1, 2, 3, 4}
+                ret row(0)
+            }
+            """,
+            ["unexpected ']'"],
         ),
     ]
     for name, source, needles in failures:

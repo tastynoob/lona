@@ -75,6 +75,8 @@
 - `if expr {` 与 `for expr {` 要求开块 `{` 直接跟在头部表达式后面；这里不能先换行。
 - `else` 既可以和前一个 `}` 写在同一行，也可以在若干空行或仅注释行之后起在下一行。
 - 但 `else` 自己后面不能换行；当前只接受 `else { ... }` 和 `else if ...`。
+- `def name(...) Ret` 如果这一行已经以换行结束，就形成 bodyless declaration；如果要写函数体，开块 `{` 必须和函数头在同一行。
+- `struct Name` 如果这一行已经以换行结束，就形成无结构体体声明；如果要写结构体体，开块 `{` 必须和 `struct Name` 在同一行。
 
 ### 1.4 词法器可识别的符号
 
@@ -238,6 +240,9 @@ param-decl-seq    ::= param-decl
   - top-level `#[extern "C"]` 函数
   - top-level `#[repr "C"] struct`
 - `#[extern "C"]` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+- `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
+- `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示“无结构体体”的声明形式。
+- `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为 bodyless declaration。
 
 ### 3.4 变量定义
 
@@ -365,6 +370,7 @@ brace-init        ::= "{ }"
                       "}"
                     | "{"
                       brace-inline-body
+                      [ "," NL* ]
                       "}"
                     | "{"
                       NL
@@ -376,8 +382,10 @@ brace-inline-body ::= brace-init-item
 
 brace-line-body   ::= NL* brace-line-seq NL*
 
-brace-line-seq    ::= brace-init-item
-                    | brace-line-seq NL NL* brace-init-item
+brace-line-seq    ::= brace-line-entry
+                    | brace-line-seq brace-line-entry
+
+brace-line-entry  ::= brace-init-item [ "," ] NL NL*
 
 brace-init-item   ::= expr
                     | brace-init
@@ -393,11 +401,14 @@ brace-init-item   ::= expr
 - 普通函数调用和构造函数调用共用同一套参数语法；`Vec2(x=1, y=2)` 与 `mix(x=1, y=2)` 在 parser 层没有分成两套节点。
 - 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；隐式 `ref self` 方法接收者不要求在调用点额外写这个标记。
 - 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
+- 普通 `()` / `[]` 里的逗号序列当前都不支持尾逗号；例如 `foo(1, 2,)`、`(1, 2,)`、`i32[4,]` 都会在 parser 阶段报错。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
 - 元组成员访问沿用 `field-selector` 规则，字段名按 `_1`、`_2`、`_3` 这种自动生成名称访问。
 - 固定维度数组现在已经支持花括号显式初始化、零补齐与 `()` 索引 lowering。
 - 花括号初始化当前用于数组。
 - 花括号初始化在内部会先形成一个 `initial_list` 风格抽象，再按目标数组类型物化；`initial_list` 当前不是用户可写类型。
+- 只有花括号初始化列表支持尾逗号；例如 `{1, 2,}` 与多行 `{\n  1,\n  2,\n}` 都合法。
+- 多行花括号初始化当前同时接受两种风格：逐行分组 `{\n  1\n  2\n}`，以及逗号分隔风格 `{\n  1,\n  2,\n}`。
 - 结构体类型名可以直接作为默认构造函数调用目标，例如 `var c = Complex(real = 1, img = 2)`。
 - 普通顶层函数不能与结构体同名，因为 `Type(...)` 语法保留给该类型的构造函数集合。
 - 命名实参与位置实参可以混排，但顺序必须与 Python 类似：先位置、后命名。
