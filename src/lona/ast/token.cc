@@ -57,12 +57,19 @@ strEscape(const string &str) {
                         appendByte('\"');
                         break;
                     case 'x':
-                        if (i + 3 < str.size()) {
-                            const int hi = hexValue(str[i + 2]);
-                            const int lo = hexValue(str[i + 3]);
-                            if (hi >= 0 && lo >= 0) {
-                                appendByte(static_cast<unsigned>((hi << 4) | lo));
-                                i += 2;
+                        if (i + 2 < str.size()) {
+                            const int first = hexValue(str[i + 2]);
+                            if (first >= 0) {
+                                if (i + 3 < str.size()) {
+                                    const int second = hexValue(str[i + 3]);
+                                    if (second >= 0) {
+                                        appendByte(static_cast<unsigned>((first << 4) | second));
+                                        i += 2;
+                                        break;
+                                    }
+                                }
+                                appendByte(static_cast<unsigned>(first));
+                                i += 1;
                                 break;
                             }
                         }

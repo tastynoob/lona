@@ -792,11 +792,12 @@ def test_char_literal_semantics(compiler: CompilerHarness) -> None:
         def main() i32 {
             var a = 'a'
             var nl = '\\n'
-            ret a + nl - 10
+            var ctrl = '\\x4'
+            ret a + nl + ctrl - 14
         }
         """,
     )
-    for needle in ["alloca i8", "store i8 97", "store i8 10", "zext i8"]:
+    for needle in ["alloca i8", "store i8 97", "store i8 10", "store i8 4", "zext i8"]:
         assert_contains(char_ir, needle, label="char literal ir")
 
     failures = [
@@ -890,12 +891,12 @@ def test_string_and_null_semantics(compiler: CompilerHarness) -> None:
         "string_escape.lo",
         """
         def main() i32 {
-            var bytes = "A\\x42\\0"
+            var bytes = "A\\x42\\x4\\0"
             ret bytes(1)
         }
         """,
     )
-    assert_contains(string_escape_ir, 'private constant [4 x i8] c"AB\\00\\00", align 1', label="string escape ir")
+    assert_contains(string_escape_ir, 'private constant [5 x i8] c"AB\\04\\00\\00", align 1', label="string escape ir")
 
     empty_string_ir = _emit_ir(
         compiler,

@@ -32,7 +32,8 @@ var point = Point()
 
 - `var name = "compiler"` 当前会推断成 `u8 const[*]`，不是 `str`。
 - `var first = 'A'` 当前会推断成 `u8`。
-- 字符串字面量按 UTF-8 编码存储，并自动带一个结尾 `0` 字节。
+- 字符串字面量的未转义文本按 UTF-8 编码存储，并自动带一个结尾 `0` 字节。
+- 字符与字符串都支持 `\xN` / `\xNN` 这类原始字节转义；例如 `var word = "\xE4\xB8\xAD"` 与 `var word = "中"` 得到的底层 UTF-8 字节序列一致，而 `"\x4"` 会按 `"\x04"` 处理。字符串整体允许包含非法 UTF-8 字节。
 - `&"compiler"` 旧写法已经移除；直接写 `"compiler"` 即可。
 - `var p = null` 不会做类型推断；需要写成 `var p i32* = null` 这类带显式指针类型的形式。
 
