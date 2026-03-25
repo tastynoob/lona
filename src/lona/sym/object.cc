@@ -151,6 +151,10 @@ ConstVar::get(Scope *scope) {
             val = llvm::ConstantInt::get(scope->getLLVMType(type),
                                          std::any_cast<std::uint64_t>(value), false);
             return val;
+        case BaseType::USIZE:
+            val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                         std::any_cast<std::uint64_t>(value), false);
+            return val;
         case BaseType::F32:
             val = llvm::ConstantFP::get(scope->getLLVMType(type),
                                         std::any_cast<float>(value));

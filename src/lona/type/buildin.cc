@@ -105,6 +105,7 @@ IntType* u32Ty = nullptr;
 IntType* i32Ty = nullptr;
 IntType* u64Ty = nullptr;
 IntType* i64Ty = nullptr;
+IntType* usizeTy = nullptr;
 FLoatType* f32Ty = nullptr;
 FLoatType* f64Ty = nullptr;
 BoolType* boolTy = nullptr;
@@ -125,6 +126,7 @@ initBuildinType(Scope* scope) {
         i32Ty = new IntType(BaseType::I32, "i32");
         u64Ty = new IntType(BaseType::U64, "u64");
         i64Ty = new IntType(BaseType::I64, "i64");
+        usizeTy = new IntType(BaseType::USIZE, "usize");
         f32Ty = new FLoatType(BaseType::F32, "f32");
         f64Ty = new FLoatType(BaseType::F64, "f64");
         boolTy = new BoolType();
@@ -138,6 +140,7 @@ initBuildinType(Scope* scope) {
     typeTable->addType(string("i32"), i32Ty);
     typeTable->addType(string("u64"), u64Ty);
     typeTable->addType(string("i64"), i64Ty);
+    typeTable->addType(string("usize"), usizeTy);
     typeTable->addType(string("int"), i32Ty);
     typeTable->addType(string("uint"), u32Ty);
     typeTable->addType(string("f32"), f32Ty);

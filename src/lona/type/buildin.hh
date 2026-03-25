@@ -47,6 +47,7 @@ extern IntType* u32Ty;
 extern IntType* i32Ty;
 extern IntType* u64Ty;
 extern IntType* i64Ty;
+extern IntType* usizeTy;
 extern FLoatType* f32Ty;
 extern FLoatType* f64Ty;
 extern BoolType* boolTy;

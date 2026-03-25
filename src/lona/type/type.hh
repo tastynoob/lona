@@ -69,7 +69,7 @@ public:
 
 class BaseType : public TypeClass {
 public:
-    enum Type { U8, I8, U16, I16, U32, I32, U64, I64, F32, F64, BOOL } type;
+    enum Type { U8, I8, U16, I16, U32, I32, U64, I64, USIZE, F32, F64, BOOL } type;
     BaseType(Type type, string full_name)
         : TypeClass(full_name), type(type) {}
 
@@ -528,6 +528,11 @@ public:
         if (!type || type->as<FuncType>()) {
             return 0;
         }
+        if (auto *base = type->as<BaseType>();
+            base && base->type == BaseType::USIZE) {
+            return static_cast<std::uint64_t>(
+                module.getDataLayout().getPointerSize(0));
+        }
         if (type->typeSize > 0) {
             return static_cast<std::uint64_t>(type->typeSize);
         }
@@ -939,6 +944,7 @@ isNumericStorageType(TypeClass *type) {
     case BaseType::I32:
     case BaseType::U64:
     case BaseType::I64:
+    case BaseType::USIZE:
     case BaseType::F32:
     case BaseType::F64:
         return true;

@@ -1239,6 +1239,64 @@ class FunctionAnalyzer {
                   bitCopyHint());
     }
 
+    std::uint64_t requireSizeofByteCount(TypeClass *type, const location &loc,
+                                         const std::string &context) {
+        auto *storageType = materializeValueType(typeMgr, type);
+        if (!storageType) {
+            error(loc, context,
+                  "Use a concrete type like `sizeof[i32]()` or a typed runtime value like `sizeof(x)`.");
+        }
+        if (storageType->as<FuncType>()) {
+            error(loc,
+                  "`sizeof` does not support function types",
+                  "Use an explicit function pointer type such as `sizeof[(i32:)]()` or a function pointer value if you need pointer size.");
+        }
+
+        const auto byteCount = typeMgr->getTypeAllocSize(storageType);
+        if (byteCount == 0) {
+            error(loc,
+                  "`sizeof` requires a concrete type with known layout",
+                  "Opaque extern structs, bare functions, and untyped `null` do not have a compile-time size here.");
+        }
+        return byteCount;
+    }
+
+    HIRExpr *analyzeSizeofExpr(AstSizeofExpr *node) {
+        if (!node || (!node->hasTypeOperand() && !node->hasValueOperand())) {
+            error(node ? node->loc : location(),
+                  "builtin `sizeof` requires exactly one operand");
+        }
+
+        TypeClass *operandType = nullptr;
+        if (node->hasTypeOperand()) {
+            operandType = requireType(node->targetType, node->targetType->loc,
+                                      "unknown `sizeof` target type");
+        } else {
+            auto *value = requireNonCallExpr(node->value);
+            operandType = value ? value->getType() : nullptr;
+            if (!operandType) {
+                error(node->loc,
+                      "`sizeof` value operand must have a concrete type",
+                      "Use `sizeof[T]()` for a type, or pass a typed runtime value.");
+            }
+        }
+
+        const auto byteCount = requireSizeofByteCount(
+            operandType, node->loc,
+            node->hasTypeOperand() ? "`sizeof` target type is not sized"
+                                   : "`sizeof` value operand does not have a known size");
+        const auto usizeBytes = typeMgr->getTypeAllocSize(usizeTy);
+        const auto usizeBits = static_cast<unsigned>(usizeBytes * 8);
+        if (usizeBits < 64 &&
+            byteCount > ((std::uint64_t{1} << usizeBits) - 1)) {
+            error(node->loc,
+                  "`sizeof` result does not fit in `usize` for the active target",
+                  "Use a target with a wider pointer size, or avoid requesting layouts this large.");
+        }
+
+        return makeHIR<HIRValue>(new ConstVar(usizeTy, byteCount), node->loc);
+    }
+
     HIRExpr *requireNonCallExpr(AstNode *node, TypeClass *expectedType = nullptr) {
         auto *expr = requireExpr(node, expectedType);
         rejectNonCallMethodSelector(typeMgr, expr);
@@ -1754,6 +1812,9 @@ class FunctionAnalyzer {
         if (auto *castExpr = node->as<AstCastExpr>()) {
             return analyzeCastExpr(castExpr);
         }
+        if (auto *sizeofExpr = node->as<AstSizeofExpr>()) {
+            return analyzeSizeofExpr(sizeofExpr);
+        }
         if (auto *call = node->as<AstFieldCall>()) {
             return analyzeCall(call, expectedType);
         }
@@ -1806,6 +1867,18 @@ class FunctionAnalyzer {
         case AstConst::Type::U64:
             return makeHIR<HIRValue>(new ConstVar(u64Ty, *node->getBuf<std::uint64_t>()),
                                      node->loc);
+        case AstConst::Type::USIZE: {
+            const auto value = *node->getBuf<std::uint64_t>();
+            const auto usizeBytes = typeMgr->getTypeAllocSize(usizeTy);
+            const auto usizeBits = static_cast<unsigned>(usizeBytes * 8);
+            if (usizeBits < 64 &&
+                value > ((std::uint64_t{1} << usizeBits) - 1)) {
+                error(node->loc,
+                      "integer literal is out of range for `usize` on the active target",
+                      "Use a smaller `usize` literal, or switch to a wider target pointer size.");
+            }
+            return makeHIR<HIRValue>(new ConstVar(usizeTy, value), node->loc);
+        }
         case AstConst::Type::BOOL:
             return makeHIR<HIRValue>(new ConstVar(boolTy, *node->getBuf<bool>()),
                                      node->loc);
@@ -1932,7 +2005,7 @@ class FunctionAnalyzer {
             if (!next || current == next) {
                 return current;
             }
-            if (auto *common = commonNumericType(current, next)) {
+            if (auto *common = commonNumericType(owner.typeMgr, current, next)) {
                 return common;
             }
             if (canImplicitPointerViewConversion(current, next)) {
@@ -2357,7 +2430,8 @@ class FunctionAnalyzer {
             }
         }
         if (left->getType() != right->getType()) {
-            if (auto *commonType = commonNumericType(left->getType(), right->getType())) {
+            if (auto *commonType = commonNumericType(typeMgr, left->getType(),
+                                                     right->getType())) {
                 left = coerceNumericExpr(left, commonType, node->left->loc, false);
                 right = coerceNumericExpr(right, commonType, node->right->loc, false);
             }

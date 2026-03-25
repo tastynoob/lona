@@ -39,6 +39,7 @@ public:
     DEF_VISIT(AstIf)
     DEF_VISIT(AstFor)
     DEF_VISIT(AstCastExpr)
+    DEF_VISIT(AstSizeofExpr)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstDotLike)
 };
@@ -75,6 +76,7 @@ public:
     DEF_VISIT(AstIf)
     DEF_VISIT(AstFor)
     DEF_VISIT(AstCastExpr)
+    DEF_VISIT(AstSizeofExpr)
     DEF_VISIT(AstFieldCall)
     DEF_VISIT(AstDotLike)
 };

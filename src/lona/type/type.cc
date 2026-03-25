@@ -309,6 +309,10 @@ BaseType::buildLLVMType(TypeTable& types) {
         case Type::U64:
         case Type::I64:
             return llvm::Type::getInt64Ty(types.getContext());
+        case Type::USIZE:
+            return llvm::IntegerType::get(types.getContext(),
+                                          types.getModule().getDataLayout()
+                                              .getPointerSizeInBits(0));
         case Type::F32:
             return llvm::Type::getFloatTy(types.getContext());
         case Type::F64:

@@ -125,6 +125,9 @@ AstConst::toJson(Json &root) {
         case Type::U64:
             root["value"] = *getBuf<std::uint64_t>();
             break;
+        case Type::USIZE:
+            root["value"] = *getBuf<std::uint64_t>();
+            break;
         case Type::F32:
             root["value"] = *getBuf<float>();
             break;
@@ -384,6 +387,22 @@ AstCastExpr::toJson(Json &root) {
     root["targetType"] = describeTypeNode(this->targetType);
     root["value"] = Json::object();
     this->value->toJson(root["value"]);
+}
+
+void
+AstSizeofExpr::toJson(Json &root) {
+    root["type"] = "SizeofExpr";
+    if (this->targetType) {
+        root["targetType"] = describeTypeNode(this->targetType);
+    } else {
+        root["targetType"] = "none";
+    }
+    if (this->value) {
+        root["value"] = Json::object();
+        this->value->toJson(root["value"]);
+    } else {
+        root["value"] = "none";
+    }
 }
 
 void

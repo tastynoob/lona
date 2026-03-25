@@ -183,6 +183,132 @@ def test_builtin_casts_and_cast_restrictions(compiler: CompilerHarness) -> None:
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_sizeof_keyword_and_usize_follow_target_pointer_width(
+    compiler: CompilerHarness,
+) -> None:
+    x64_ir = compiler.emit_ir(
+        compiler.write_source(
+            "sizeof_x64.lo",
+            """
+            struct Pair {
+                left i32
+                right i32
+            }
+
+            def make_pair() Pair {
+                ret Pair(left = 1, right = 2)
+            }
+
+            def main() usize {
+                var value i32 = 7
+                var tiny i8 = 0
+                var literal usize = 1_usize
+                var from_value usize = sizeof(value)
+                var from_builtin_type usize = sizeof[i16]()
+                var from_array_type usize = sizeof[i16[4]]()
+                var from_small_value usize = sizeof(tiny)
+                var from_pointer_type usize = sizeof[i32*]()
+                var from_call usize = sizeof(make_pair())
+                ret literal + from_value + from_builtin_type + from_array_type + from_small_value + from_pointer_type + from_call
+            }
+            """,
+        ),
+        target="x86_64-unknown-linux-gnu",
+    ).expect_ok().stdout
+    assert_contains(x64_ir, "define i64 @main()", label="sizeof x64 ir")
+    for needle in [
+        "store i64 4",
+        "store i64 2",
+        "store i64 8",
+        "store i64 1",
+    ]:
+        assert_contains(x64_ir, needle, label="sizeof x64 ir")
+
+    x86_ir = compiler.emit_ir(
+        compiler.write_source(
+            "sizeof_x86.lo",
+            """
+            def main() usize {
+                ret sizeof[i32*]()
+            }
+            """,
+        ),
+        target="i686-unknown-linux-gnu",
+    ).expect_ok().stdout
+    assert_contains(x86_ir, "define i32 @main()", label="sizeof x86 ir")
+    assert_contains(x86_ir, "store i32 4", label="sizeof x86 ir")
+
+    x86_mixed_ir = compiler.emit_ir(
+        compiler.write_source(
+            "sizeof_x86_mixed.lo",
+            """
+            def main() usize {
+                var mixed usize = (sizeof[i32*]() - 5_u32) / 2_u32
+                var literal usize = 1_usize
+                ret mixed + literal
+            }
+            """,
+        ),
+        target="i686-unknown-linux-gnu",
+    ).expect_ok().stdout
+    assert_contains(x86_mixed_ir, "define i32 @main()", label="sizeof x86 mixed ir")
+    assert_contains(x86_mixed_ir, "store i32 2147483647", label="sizeof x86 mixed ir")
+    assert_contains(x86_mixed_ir, "store i32 1", label="sizeof x86 mixed ir")
+    assert_contains(x86_mixed_ir, "add i32", label="sizeof x86 mixed ir")
+    assert_not_contains(x86_mixed_ir, "udiv i64", label="sizeof x86 mixed ir")
+    assert_not_contains(x86_mixed_ir, "trunc i64", label="sizeof x86 mixed ir")
+
+    _expect_ir_failure(
+        compiler,
+        "sizeof_null_bad.lo",
+        """
+        def main() usize {
+            ret sizeof(null)
+        }
+        """,
+        [
+            "`sizeof` value operand must have a concrete type",
+            "Use `sizeof[T]()` for a type, or pass a typed runtime value.",
+        ],
+    )
+
+    usize_range = compiler.emit_ir(
+        compiler.write_source(
+            "usize_literal_range_bad.lo",
+            """
+            def main() usize {
+                ret 4294967296_usize
+            }
+            """,
+        ),
+        target="i686-unknown-linux-gnu",
+    ).expect_failed()
+    assert_contains(
+        usize_range.stderr,
+        "integer literal is out of range for `usize` on the active target",
+        label="usize literal range diagnostic",
+    )
+
+    _expect_ir_failure(
+        compiler,
+        "sizeof_type_in_value_form_bad.lo",
+        """
+        struct Pair {
+            left i32
+            right i32
+        }
+
+        def main() usize {
+            ret sizeof(Pair)
+        }
+        """,
+        [
+            "`sizeof` value operand must have a concrete type",
+            "Use `sizeof[T]()` for a type, or pass a typed runtime value.",
+        ],
+    )
+
+
 def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
     float_ir = _emit_ir(
         compiler,

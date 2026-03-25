@@ -197,6 +197,34 @@ def test_imported_type_annotations_accept_dot_like_names(
     assert_contains(ir, "@bounce", label="imported type annotation ir")
 
 
+def test_imported_type_name_works_in_sizeof(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "sizeof_import/dep.lo",
+        """
+        struct Pair {
+            left i32
+            right i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "sizeof_import/main.lo",
+        """
+        import dep
+
+        def main() usize {
+            var from_named_type usize = sizeof[dep.Pair]()
+            var from_named_pointer_type usize = sizeof[dep.Pair*]()
+            ret from_named_type + from_named_pointer_type
+        }
+        """,
+    )
+    ir = compiler.emit_ir(
+        main_path, target="x86_64-unknown-linux-gnu"
+    ).expect_ok().stdout
+    assert_contains(ir, "store i64 8", label="import sizeof ir")
+
+
 def test_imported_c_abi_symbols_keep_global_names(compiler: CompilerHarness) -> None:
     compiler.write_source(
         "import_c_abi/dep.lo",

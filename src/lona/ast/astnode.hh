@@ -242,6 +242,7 @@ public:
         U32,
         I64,
         U64,
+        USIZE,
         F32,
         F64,
         STRING,
@@ -279,6 +280,7 @@ public:
         case Type::U32:
         case Type::I64:
         case Type::U64:
+        case Type::USIZE:
             return true;
         default:
             return false;
@@ -604,6 +606,22 @@ public:
     AstCastExpr(TypeNode *targetType, AstNode *value,
                 const location &loc = location())
         : AstNode(loc), targetType(targetType), value(value) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstSizeofExpr : public AstNode {
+public:
+    TypeNode *const targetType = nullptr;
+    AstNode *const value = nullptr;
+
+    AstSizeofExpr(TypeNode *targetType, AstNode *value,
+                  const location &loc = location())
+        : AstNode(loc), targetType(targetType), value(value) {}
+
+    bool hasTypeOperand() const { return targetType != nullptr; }
+    bool hasValueOperand() const { return value != nullptr; }
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;

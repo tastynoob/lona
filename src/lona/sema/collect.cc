@@ -557,6 +557,7 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
         case BaseType::U16:
         case BaseType::U32:
         case BaseType::U64:
+        case BaseType::USIZE:
             encoding = llvm::dwarf::DW_ATE_unsigned;
             break;
         default:
@@ -1096,6 +1097,7 @@ lookupBuiltinType(llvm::StringRef name) {
     if (name == "i32") return i32Ty;
     if (name == "u64") return u64Ty;
     if (name == "i64") return i64Ty;
+    if (name == "usize") return usizeTy;
     if (name == "int") return i32Ty;
     if (name == "uint") return u32Ty;
     if (name == "f32") return f32Ty;

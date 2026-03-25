@@ -39,6 +39,7 @@ struct NumericSuffixSpec {
 constexpr NumericSuffixSpec kNumericSuffixes[] = {
     {"uint", AstConst::Type::U32},
     {"int", AstConst::Type::I32},
+    {"usize", AstConst::Type::USIZE},
     {"u64", AstConst::Type::U64},
     {"i64", AstConst::Type::I64},
     {"u32", AstConst::Type::U32},
@@ -279,6 +280,7 @@ DEF_ACCEPT(AstContinue)
 DEF_ACCEPT(AstIf)
 DEF_ACCEPT(AstFor)
 DEF_ACCEPT(AstCastExpr)
+DEF_ACCEPT(AstSizeofExpr)
 DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstDotLike)
 
@@ -395,6 +397,10 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
                 break;
             case Type::U64:
                 setNumericLiteral(Type::U64, literal.explicitType,
+                                  new std::uint64_t(literal.integerValue));
+                break;
+            case Type::USIZE:
+                setNumericLiteral(Type::USIZE, literal.explicitType,
                                   new std::uint64_t(literal.integerValue));
                 break;
             case Type::F32:

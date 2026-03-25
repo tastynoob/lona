@@ -76,6 +76,14 @@ tryExtractArrayDimension(const AstNode *node, std::int64_t &value) {
         value = static_cast<std::int64_t>(raw);
         return true;
     }
+    case AstConst::Type::USIZE: {
+        const auto raw = *constant->getBuf<std::uint64_t>();
+        if (raw > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return false;
+        }
+        value = static_cast<std::int64_t>(raw);
+        return true;
+    }
     default:
         return false;
     }

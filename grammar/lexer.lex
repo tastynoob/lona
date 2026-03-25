@@ -57,7 +57,7 @@ throwInvalidNumericLiteral(lona::Parser::location_type *loc, const char *text,
 %option c++
 %x IMPORT_PATH_STATE
 
-NUM_SUFFIX (_(u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64))
+NUM_SUFFIX (_(u8|i8|u16|i16|u32|i32|u64|i64|usize|int|uint|f32|f64))
 DEC_DIGITS [0-9](_?[0-9])*
 BIN_DIGITS [01](_?[01])*
 OCT_DIGITS [0-7](_?[0-7])*
@@ -75,6 +75,7 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 (ref) { loc->columns(yyleng); return token::REF; }
 (const) { loc->columns(yyleng); return token::TYPE_CONST; }
 (cast) { loc->columns(yyleng); return token::CAST; }
+(sizeof) { loc->columns(yyleng); return token::SIZEOF; }
 
 (def) { loc->columns(yyleng); return token::DEF; }
 (import) { loc->columns(yyleng); BEGIN(IMPORT_PATH_STATE); return token::IMPORT; }
@@ -87,7 +88,7 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 (for) { loc->columns(yyleng); return token::FOR; }
 
 (struct) { loc->columns(yyleng); return token::STRUCT; }
-(type|u8|i8|u16|i16|u32|i32|u64|i64|int|uint|f32|f64|bool) {
+(type|u8|i8|u16|i16|u32|i32|u64|i64|usize|int|uint|f32|f64|bool) {
     loc->columns(yyleng);
     lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::TYPE;

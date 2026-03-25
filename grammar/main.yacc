@@ -63,6 +63,7 @@
 %token REF "ref"
 %token TYPE_CONST "const"
 %token CAST "cast"
+%token SIZEOF "sizeof"
 %token TRUE "true" FALSE "false" NULL_KW "null"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
@@ -97,7 +98,7 @@
 %type <node> struct_decl func_decl import_stat
 %type <node> struct_stat stat
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
-%type <node> call_like cast_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
+%type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren atom_expr postfix_expr dot_like func_pointer_expr dot_like_name
 %type <node> param_decl var_def
@@ -468,6 +469,7 @@ atom_expr
     | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
     | NULL_KW { $$ = new AstConst(*new AstToken(TokenType::ConstNull, "null", @$)); }
     | cast_expr { $$ = $1; }
+    | sizeof_expr { $$ = $1; }
     | func_pointer_expr { $$ = $1; }
     | expr_paren { $$ = $1; }
     | tuple_literal { $$ = $1; }
@@ -482,6 +484,15 @@ postfix_expr
 cast_expr
     : CAST '[' type_name ']' '(' expr ')' {
         $$ = new AstCastExpr($3, $6, @$);
+    }
+    ;
+
+sizeof_expr
+    : SIZEOF '(' expr ')' {
+        $$ = new AstSizeofExpr(nullptr, $3, @$);
+    }
+    | SIZEOF '[' type_name ']' '(' ')' {
+        $$ = new AstSizeofExpr($3, nullptr, @$);
     }
     ;
 

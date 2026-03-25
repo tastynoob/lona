@@ -17,7 +17,7 @@ bool isIntegerFamily(TypeClass *type) {
     return isIntegerType(type);
 }
 
-unsigned numericBitWidth(TypeClass *type) {
+unsigned numericBitWidth(TypeTable *typeTable, TypeClass *type) {
     auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return 0;
@@ -37,6 +37,18 @@ unsigned numericBitWidth(TypeClass *type) {
     case BaseType::I64:
     case BaseType::F64:
         return 64;
+    case BaseType::USIZE: {
+        if (typeTable) {
+            const auto byteCount = typeTable->getTypeAllocSize(type);
+            if (byteCount > 0) {
+                return static_cast<unsigned>(byteCount * 8);
+            }
+        }
+        if (type->typeSize > 0) {
+            return static_cast<unsigned>(type->typeSize * 8);
+        }
+        return 0;
+    }
     default:
         return 0;
     }
@@ -148,14 +160,15 @@ bool canExplicitBitCopy(TypeClass *targetType, TypeClass *sourceType) {
     return sourceBitsArray || targetBitsArray;
 }
 
-TypeClass *commonNumericType(TypeClass *leftType, TypeClass *rightType) {
+TypeClass *commonNumericType(TypeTable *typeTable, TypeClass *leftType,
+                             TypeClass *rightType) {
     if (!leftType || !rightType || leftType == rightType) {
         return leftType;
     }
 
     if (isFloatFamily(leftType) && isFloatFamily(rightType)) {
-        return floatTypeForWidth(std::max(numericBitWidth(leftType),
-                                          numericBitWidth(rightType)));
+        return floatTypeForWidth(std::max(numericBitWidth(typeTable, leftType),
+                                          numericBitWidth(typeTable, rightType)));
     }
 
     if (isIntegerFamily(leftType) && isIntegerFamily(rightType)) {
@@ -163,8 +176,8 @@ TypeClass *commonNumericType(TypeClass *leftType, TypeClass *rightType) {
             isSignedIntegerType(leftType) && isSignedIntegerType(rightType);
         const bool bothUnsigned =
             isUnsignedIntegerType(leftType) && isUnsignedIntegerType(rightType);
-        const auto leftWidth = numericBitWidth(leftType);
-        const auto rightWidth = numericBitWidth(rightType);
+        const auto leftWidth = numericBitWidth(typeTable, leftType);
+        const auto rightWidth = numericBitWidth(typeTable, rightType);
         const auto width = std::max(leftWidth, rightWidth);
         if (bothSigned) {
             return signedIntegerTypeForWidth(width);
@@ -174,8 +187,8 @@ TypeClass *commonNumericType(TypeClass *leftType, TypeClass *rightType) {
         }
         auto *signedType = isSignedIntegerType(leftType) ? leftType : rightType;
         auto *unsignedType = isUnsignedIntegerType(leftType) ? leftType : rightType;
-        const auto signedWidth = numericBitWidth(signedType);
-        const auto unsignedWidth = numericBitWidth(unsignedType);
+        const auto signedWidth = numericBitWidth(typeTable, signedType);
+        const auto unsignedWidth = numericBitWidth(typeTable, unsignedType);
         if (signedWidth > unsignedWidth) {
             return signedIntegerTypeForWidth(signedWidth);
         }

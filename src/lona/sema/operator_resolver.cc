@@ -229,6 +229,7 @@ isUnsignedIntegerType(TypeClass *type) {
     case BaseType::U16:
     case BaseType::U32:
     case BaseType::U64:
+    case BaseType::USIZE:
         return true;
     default:
         return false;

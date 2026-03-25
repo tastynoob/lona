@@ -307,6 +307,12 @@ class FunctionResolver {
             resolveExpr(castExpr->value);
             return;
         }
+        if (auto *sizeofExpr = dynamic_cast<const AstSizeofExpr *>(node)) {
+            if (sizeofExpr->value) {
+                resolveExpr(sizeofExpr->value);
+            }
+            return;
+        }
         if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
             resolveExpr(call->value);
             if (call->args) {
