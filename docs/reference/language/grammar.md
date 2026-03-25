@@ -98,7 +98,7 @@
 说明：
 
 - `grammar/main.yacc` 中顶层开始符号名写作 `pragram`。本文统一记作 `program`，仅做可读性修正。
-- `extern`、`repr` 当前不再是保留关键字；它们作为 tag 名出现在 `#[...]` 里，更具体的 FFI 边界见 `docs/runtime/c_ffi_v0.md`。
+- `extern`、`repr` 当前不再是保留关键字；它们作为 tag 名出现在 `#[...]` 里，更具体的 FFI 边界见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ## 3. 语法摘要
 
@@ -228,7 +228,7 @@ param-decl-seq    ::= param-decl
   - opaque `#[extern] struct`
   - top-level `#[extern "C"]` 函数
   - top-level `#[repr "C"] struct`
-- `#[extern "C"]` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 `docs/runtime/c_ffi_v0.md`。
+- `#[extern "C"]` 的更细边界，例如不支持 callback、`ref` 参数、普通 `struct` 按值跨边界，见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ### 3.4 变量定义
 

@@ -24,8 +24,8 @@
 
 相关文件：
 
-- [scripts/lac.sh](../../scripts/lac.sh)
-- [tests/smoke/test_system.py](../../tests/smoke/test_system.py)
+- [scripts/lac.sh](../../../scripts/lac.sh)
+- [tests/smoke/test_system.py](../../../tests/smoke/test_system.py)
 
 这条路径的优点是：
 
@@ -59,10 +59,10 @@
 
 相关文件：
 
-- [scripts/lac-native.sh](../../scripts/lac-native.sh)
-- [tests/smoke/test_native.py](../../tests/smoke/test_native.py)
-- [runtime/bare_x86_64/lona_start.S](../../runtime/bare_x86_64/lona_start.S)
-- [runtime/bare_x86_64/lona.ld](../../runtime/bare_x86_64/lona.ld)
+- [scripts/lac-native.sh](../../../scripts/lac-native.sh)
+- [tests/smoke/test_native.py](../../../tests/smoke/test_native.py)
+- [runtime/bare_x86_64/lona_start.S](../../../runtime/bare_x86_64/lona_start.S)
+- [runtime/bare_x86_64/lona.ld](../../../runtime/bare_x86_64/lona.ld)
 
 职责分工：
 

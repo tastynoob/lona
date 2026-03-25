@@ -348,7 +348,7 @@ artifact 可复用的条件是：
 
 ### 4.8 可执行文件环境
 
-当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/runtime/native_build.md`：
+当前仓库已经额外提供了两条本地可执行文件环境，见 `docs/reference/runtime/native_build.md`：
 
 - system：复用宿主 ABI 和系统 CRT 启动对象
 - bare：自带最小 `_start` 和 linker script

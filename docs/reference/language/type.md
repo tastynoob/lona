@@ -1,6 +1,6 @@
 # 类型写法示例
 
-> 对应 `grammer.md` 的“3.6 类型语法”。
+> 对应 `grammar.md` 的“3.6 类型语法”。
 
 ## 1. 内建类型
 
@@ -53,7 +53,7 @@ var rows i8[8]*[*]
 - 除显式指针外，数值、结构体、tuple 和固定维数组都按值处理；赋值、传参、返回默认都会复制该值本身。
 - `ref` 不是类型语法，而是绑定 / 参数修饰符；例如 `ref a i32 = x`、`def inc(ref x i32)`。
 - 如果需要共享可变状态或在多个位置观察同一份对象，可以使用 `ref` 绑定 / 参数，或显式使用 `T*`。
-- 关于 `ref`、指针和默认值语义的边界，见 [../design/pointer_reference.md](../design/pointer_reference.md)。
+- 关于 `ref`、指针和默认值语义的边界，见 [pointer_reference.md](pointer_reference.md)。
 
 ## 4. 数组类型
 

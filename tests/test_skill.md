@@ -29,10 +29,10 @@ description: Generate and validate focused Lona compiler test cases from the loc
    - [acceptance/test_operators.py](acceptance/test_operators.py)
    - [acceptance/test_diagnostics.py](acceptance/test_diagnostics.py)
 4. 按需要再读：
-   - [docs/language/program.md](../docs/language/program.md)
-   - [docs/language/expr.md](../docs/language/expr.md)
-   - [docs/language/type.md](../docs/language/type.md)
-   - [docs/language/grammer.md](../docs/language/grammer.md)
+   - [docs/reference/language/program.md](../docs/reference/language/program.md)
+   - [docs/reference/language/expr.md](../docs/reference/language/expr.md)
+   - [docs/reference/language/type.md](../docs/reference/language/type.md)
+   - [docs/reference/language/grammar.md](../docs/reference/language/grammar.md)
 
 ## 生成规则
 

@@ -54,7 +54,7 @@
 
 ### 2.1 内部 ABI 与 C ABI 必须分离
 
-当前仓库已经有一套 `lona -> lona` 的内部 ABI 草案，见 [native_abi_v0.md](native_abi_v0.md)。
+当前仓库已经有一套 `lona -> lona` 的内部 ABI 草案，见 [../../internals/runtime/native_abi_v0.md](../../internals/runtime/native_abi_v0.md)。
 
 `C FFI` 不应复用这套内部 ABI 规则，也不应让它们在实现层混成同一套分类器。
 

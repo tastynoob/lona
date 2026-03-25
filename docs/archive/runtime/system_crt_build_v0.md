@@ -91,20 +91,20 @@
 
 当前仓库已经有两条构建链：
 
-- [scripts/lac.sh](../../scripts/lac.sh)
+- [scripts/lac.sh](../../../scripts/lac.sh)
   - system 路线
   - 当前默认 target 是 `x86_64-unknown-linux-gnu`
   - 当前已经走 `lona-ir --emit objects --target ... -> cc`
   - 显式 `--lto full` 时会切到 `lona-ir --emit obj --lto full -> cc`
-- [scripts/lac-native.sh](../../scripts/lac-native.sh)
+- [scripts/lac-native.sh](../../../scripts/lac-native.sh)
   - bare 路线
   - 当前默认 target 是 `x86_64-none-elf`
   - 当前已经走 `lona-ir --emit objects --target ... -> startup.o + ld`
 
 同时仓库已经有一套 bare runtime asset：
 
-- [runtime/bare_x86_64/lona_start.S](../../runtime/bare_x86_64/lona_start.S)
-- [runtime/bare_x86_64/lona.ld](../../runtime/bare_x86_64/lona.ld)
+- [runtime/bare_x86_64/lona_start.S](../../../runtime/bare_x86_64/lona_start.S)
+- [runtime/bare_x86_64/lona.ld](../../../runtime/bare_x86_64/lona.ld)
 
 这说明：
 
@@ -256,7 +256,7 @@ cc program.o -o program
 
 ### 8.1 `SessionOptions`
 
-当前 [session_types.hh](../../src/lona/driver/session_types.hh) 已经支持：
+当前 [session_types.hh](../../../src/lona/driver/session_types.hh) 已经支持：
 
 - `AstJson`
 - `LLVMIR`
@@ -269,7 +269,7 @@ cc program.o -o program
 
 ### 8.2 pipeline
 
-当前 [compiler_pipeline.md](../compiler/compiler_pipeline.md) 的默认阶段在 `print-llvm` 结束。
+当前 [compiler_pipeline.md](../../internals/compiler/compiler_pipeline.md) 的默认阶段在 `print-llvm` 结束。
 
 引入 object emission 后，建议在逻辑上新增：
 

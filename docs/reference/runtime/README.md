@@ -1,0 +1,11 @@
+# Runtime Reference
+
+这里收纳当前可直接使用的构建、运行和互操作参考。
+
+- [native_build.md](native_build.md): `lona-ir`、`lac`、`lac-native` 的构建与运行方式。
+- [c_ffi.md](c_ffi.md): 当前 `lona <-> C` 互操作的稳定子集与限制。
+
+说明：
+
+- 这里只放“现在怎么用”。
+- 像目标模式分层、内部 ABI 版本和早期 hosted build 方案，移到了 `docs/internals/` 或 `docs/archive/`。

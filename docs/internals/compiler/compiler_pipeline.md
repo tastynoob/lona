@@ -5,16 +5,16 @@
 - 单模块 compile pipeline
 - 多模块调度与最终链接
 
-完整架构见 `docs/compiler/compiler_architecture.md`。本文只描述单模块 pipeline 和它在多模块构建里的位置。
+完整架构见 `docs/internals/compiler/compiler_architecture.md`。本文只描述单模块 pipeline 和它在多模块构建里的位置。
 
 ## 入口
 
 - `CompilerSession` 会初始化 `WorkspaceBuilder`
 - `WorkspaceBuilder` 内部初始化一个 `CompilePipeline`
 - `WorkspaceBuilder` 同时持有默认的串行 `ModuleExecutor`
-- 默认 stage 定义在 [workspace_builder.cc](../src/lona/workspace/workspace_builder.cc)
-- pipeline 基础结构在 [compile_pipeline.hh](../src/lona/pass/compile_pipeline.hh)
-- 模块执行器接口在 [module_executor.hh](../src/lona/module/module_executor.hh)
+- 默认 stage 定义在 [workspace_builder.cc](../../../src/lona/workspace/workspace_builder.cc)
+- pipeline 基础结构在 [compile_pipeline.hh](../../../src/lona/pass/compile_pipeline.hh)
+- 模块执行器接口在 [module_executor.hh](../../../src/lona/module/module_executor.hh)
 
 ## 当前默认阶段
 

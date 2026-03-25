@@ -1,6 +1,6 @@
 # 结构体声明示例
 
-> 对应 `grammer.md` 的“3.3 结构体与函数声明”。
+> 对应 `grammar.md` 的“3.3 结构体与函数声明”。
 
 ## 1. 只有字段的结构体
 
@@ -96,4 +96,4 @@ struct Point {
 - 当前语义层只接受 `#[repr "C"]`，不接受其它 repr 名称。
 - `#[repr "C"] struct` 的字段类型必须也是当前 C FFI v0 支持的那一小部分类型；不兼容字段会在语义阶段报 targeted diagnostic。
 - 当前 FFI v0 里，`#[repr "C"] struct` 主要按指针跨边界使用；按值传参 / 返回仍未开放。
-- 更细的 FFI 限制见 [../runtime/c_ffi_v0.md](../runtime/c_ffi_v0.md)。
+- 更细的 FFI 限制见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。

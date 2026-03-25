@@ -474,7 +474,7 @@ ref p u8 const[*]
 
 ## 8. 与字节串的关系
 
-这份草案和 [string_bytes_v0.md](string_bytes_v0.md) 是配套的。
+这份草案和 [../archive/design/string_bytes_v0.md](../archive/design/string_bytes_v0.md) 是配套的。
 
 字节串字面量本身仍然是：
 
