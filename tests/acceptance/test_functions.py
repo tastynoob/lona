@@ -355,7 +355,7 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
             #[repr "C"]
             struct Node {
                 value i32
-                next Node*
+                set next Node*
             }
 
             def main() i32 {

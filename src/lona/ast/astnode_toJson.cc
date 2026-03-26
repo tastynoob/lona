@@ -276,6 +276,7 @@ void
 AstVarDecl::toJson(Json &root) {
     root["type"] = "VarDecl";
     root["bindingKind"] = bindingKindKeyword(this->bindingKind);
+    root["accessKind"] = accessKindKeyword(this->accessKind);
     root["field"] = this->field.tochara();
     if (typeNode) {
         root["declaredType"] = describeTypeNode(typeNode);
@@ -316,6 +317,7 @@ AstFuncDecl::toJson(Json &root) {
     root["type"] = "FuncDecl";
     root["name"] = this->name.tochara();
     root["abiKind"] = abiKindKeyword(this->abiKind);
+    root["receiverAccess"] = accessKindKeyword(this->receiverAccess);
     // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {
         root["args"] = Json::array();

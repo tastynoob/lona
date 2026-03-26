@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
-GENERATOR_VERSION = 3
+GENERATOR_VERSION = 4
 FEATURE_BLOCK_COUNT = 3_124
 EXPECTED_LINE_COUNT = 100_000
 BLOCK_LINE_COUNT = 32
@@ -34,7 +34,7 @@ def render_arithmetic_block(index: int) -> list[str]:
             "    left i32",
             "    right i32",
             "",
-            "    def bump(delta i32) i32 {",
+            "    set def bump(delta i32) i32 {",
             "        self.left = self.left + delta",
             "        self.right = self.right + delta",
             "        ret self.left + self.right",
@@ -77,7 +77,7 @@ def render_loop_block(index: int) -> list[str]:
             "    left i32",
             "    right i32",
             "",
-            "    def mix(scale i32) i32 {",
+            "    set def mix(scale i32) i32 {",
             "        self.left = self.left + scale",
             "        self.right = self.right ^ scale",
             "        ret self.left | self.right",
@@ -118,9 +118,9 @@ def render_pointer_block(index: int) -> list[str]:
         type_name,
         [
             f"struct {type_name} {{",
-            "    value i32",
+            "    set value i32",
             "",
-            "    def store(next i32) i32 {",
+            "    set def store(next i32) i32 {",
             "        self.value = next",
             "        ret self.value",
             "    }",
@@ -164,7 +164,7 @@ def render_conversion_block(index: int) -> list[str]:
             "    left i32",
             "    right i32",
             "",
-            "    def fold(extra i32) i32 {",
+            "    set def fold(extra i32) i32 {",
             "        self.left = self.left + extra",
             "        ret self.left + self.right",
             "    }",

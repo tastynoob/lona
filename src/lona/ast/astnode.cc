@@ -470,9 +470,11 @@ AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
     : AstNode(expr ? expr->loc : location()), op(op), expr(expr) {}
 
 AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
-                       TypeNode *typeNode, AstNode *right)
+                       TypeNode *typeNode, AstNode *right,
+                       AccessKind accessKind)
     : AstNode(field.loc),
       bindingKind(bindingKind),
+      accessKind(accessKind),
       field(field.text),
       typeNode(typeNode),
       right(right) {}
@@ -489,13 +491,14 @@ AstStatList::AstStatList(AstNode *node)
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstNode *> *args, TypeNode *retType,
-                         AbiKind abiKind)
+                         AbiKind abiKind, AccessKind receiverAccess)
     : AstNode(name.loc),
       name(name.text),
       args(args),
       body(body),
       retType(retType),
-      abiKind(abiKind) {}
+      abiKind(abiKind),
+      receiverAccess(receiverAccess) {}
 
 AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
 

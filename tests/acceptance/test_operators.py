@@ -114,9 +114,9 @@ def test_pointer_dot_and_call_auto_deref_runtime(compiler: CompilerHarness) -> N
         "pointer_auto_deref.lo",
         """
         struct Counter {
-            value i32
+            set value i32
 
-            def bump(step i32) i32 {
+            set def bump(step i32) i32 {
                 self.value = self.value + step
                 ret self.value
             }

@@ -267,6 +267,7 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         hashText(seed, "func");
         hashText(seed, toStdString(funcDecl->name));
         hashText(seed, abiKindKeyword(funcDecl->abiKind));
+        hashText(seed, accessKindKeyword(funcDecl->receiverAccess));
         if (funcDecl->args) {
             seed = combineHash(seed, funcDecl->args->size());
             for (auto *arg : *funcDecl->args) {
@@ -283,6 +284,7 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
     if (auto *varDecl = dynamic_cast<AstVarDecl *>(node)) {
         hashText(seed, "field");
         hashText(seed, toStdString(varDecl->field));
+        hashText(seed, accessKindKeyword(varDecl->accessKind));
         hashTypeNode(seed, varDecl->typeNode);
         return;
     }

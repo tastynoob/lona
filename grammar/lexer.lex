@@ -84,6 +84,7 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 (sizeof) { RETURN_PLAIN_TOKEN(token::SIZEOF); }
 
 (def) { RETURN_PLAIN_TOKEN(token::DEF); }
+(set) { RETURN_PLAIN_TOKEN(token::SET); }
 (import) {
     loc->columns(yyleng);
     BEGIN(IMPORT_PATH_STATE);

@@ -52,6 +52,16 @@ abiKindKeyword(AbiKind kind) {
     return kind == AbiKind::C ? "c" : "native";
 }
 
+enum class AccessKind {
+    GetOnly,
+    GetSet,
+};
+
+inline const char *
+accessKindKeyword(AccessKind kind) {
+    return kind == AccessKind::GetSet ? "set" : "get";
+}
+
 enum class StructDeclKind {
     Native,
     Extern,
@@ -445,12 +455,14 @@ public:
 class AstVarDecl : public AstNode {
 public:
     BindingKind const bindingKind;
+    AccessKind const accessKind;
     string const field;
     TypeNode *const typeNode;
     AstNode *const right;
 
     AstVarDecl(BindingKind bindingKind, AstToken &field, TypeNode *typeNode,
-               AstNode *right = nullptr);
+               AstNode *right = nullptr,
+               AccessKind accessKind = AccessKind::GetOnly);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;
@@ -514,6 +526,7 @@ public:
     AstNode *const body;
     TypeNode *const retType;
     AbiKind abiKind;
+    AccessKind receiverAccess = AccessKind::GetOnly;
     bool hasArgs() const { return args != nullptr; }
     bool hasBody() const { return body != nullptr; }
     bool isExternC() const { return abiKind == AbiKind::C; }
@@ -522,7 +535,8 @@ public:
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,
                 TypeNode *retType = nullptr,
-                AbiKind abiKind = AbiKind::Native);
+                AbiKind abiKind = AbiKind::Native,
+                AccessKind receiverAccess = AccessKind::GetOnly);
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;

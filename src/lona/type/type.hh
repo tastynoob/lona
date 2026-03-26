@@ -110,6 +110,7 @@ public:
 
 private:
     llvm::StringMap<ValueTy> members;
+    llvm::StringMap<AccessKind> memberAccess;
     llvm::StringMap<FuncType *> methodTypes;
     llvm::StringMap<std::vector<std::string>> methodParamNames;
 
@@ -134,8 +135,10 @@ public:
     bool isNativeDecl() const { return declKind == StructDeclKind::Native; }
     void setDeclKind(StructDeclKind kind) { declKind = kind; }
 
-    void complete(const llvm::StringMap<ValueTy> &newMembers) {
+    void complete(const llvm::StringMap<ValueTy> &newMembers,
+                  const llvm::StringMap<AccessKind> &newMemberAccess = {}) {
         members = newMembers;
+        memberAccess = newMemberAccess;
         opaque = false;
     }
 
@@ -151,6 +154,14 @@ public:
             return nullptr;
         }
         return &it->second;
+    }
+
+    AccessKind getMemberAccess(llvm::StringRef name) const {
+        auto it = memberAccess.find(name);
+        if (it == memberAccess.end()) {
+            return AccessKind::GetOnly;
+        }
+        return it->second;
     }
 
     FuncType *getMethodType(llvm::StringRef name) {
@@ -170,6 +181,9 @@ public:
     }
 
     const llvm::StringMap<ValueTy> &getMembers() const { return members; }
+    const llvm::StringMap<AccessKind> &getMemberAccesses() const {
+        return memberAccess;
+    }
     const llvm::StringMap<FuncType *> &getMethodTypes() const { return methodTypes; }
     std::vector<ValueTy> getMembersInOrder() const {
         std::vector<ValueTy> ordered(members.size(), {nullptr, -1});
@@ -677,7 +691,8 @@ public:
                 if (existingStruct) {
                     existingStruct->setDeclKind(structType->getDeclKind());
                     if (existingStruct->isOpaque() && !structType->isOpaque()) {
-                        existingStruct->complete(structType->getMembers());
+                        existingStruct->complete(structType->getMembers(),
+                                                 structType->getMemberAccesses());
                     }
                     for (const auto &method : structType->getMethodTypes()) {
                         if (!existingStruct->getMethodType(method.first())) {

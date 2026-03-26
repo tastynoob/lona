@@ -67,7 +67,7 @@
 %token TRUE "true" FALSE "false" NULL_KW "null"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
-%token DEF "def" STRUCT "struct"
+%token DEF "def" SET "set" STRUCT "struct"
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
@@ -103,14 +103,14 @@
 %type <node> expr_paren atom_expr postfix_expr dot_like func_pointer_expr dot_like_name
 %type <node> param_decl var_def
 %type <stat_list> pragram_statlist struct_statlist stat_list stat_compound
-%type <var_decl> var_decl
+%type <var_decl> field_decl var_decl
 
 %type <typeNode> single_type type_primary postfix_type func_ptr_type type_name tuple_type func_param_type
 
 %type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq
 %type <type_seq> type_name_seq
 %type <type_seq> func_param_type_seq
-%type <counter> opt_newlines opt_brace_line_comma
+%type <counter> opt_newlines opt_brace_line_comma opt_set_prefix
 %type <tag> tag_entry
 %type <tags> tag_line tag_entry_seq
 %type <token_seq> tag_arg_seq
@@ -253,26 +253,53 @@ stat_continue
     }
     ;
 
+opt_set_prefix
+    : %empty { $$ = 0; }
+    | SET { $$ = 1; }
+    ;
+
 func_decl
-    : DEF FIELD '(' opt_newlines ')' NEWLINE { $$ = new AstFuncDecl(*$2, nullptr); }
-    | DEF FIELD '(' opt_newlines ')' type_name NEWLINE {
-        $$ = new AstFuncDecl(*$2, nullptr, nullptr, $6);
+    : opt_set_prefix DEF FIELD '(' opt_newlines ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
     }
-    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' NEWLINE {
-        $$ = new AstFuncDecl(*$2, nullptr, $5);
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, $7, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
     }
-    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name NEWLINE {
-        $$ = new AstFuncDecl(*$2, nullptr, $5, $8);
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $6, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
     }
-    | DEF FIELD '(' opt_newlines ')' stat_compound { $$ = new AstFuncDecl(*$2, $6); }
-    | DEF FIELD '(' opt_newlines ')' type_name stat_compound {
-        $$ = new AstFuncDecl(*$2, $7, nullptr, $6);
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $6, $9, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
     }
-    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' stat_compound {
-        $$ = new AstFuncDecl(*$2, $8, $5);
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $7, nullptr, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
     }
-    | DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
-        $$ = new AstFuncDecl(*$2, $9, $5, $8);
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $8, nullptr, $7, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $9, $6, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $10, $6, $9, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    ;
+
+field_decl
+    : FIELD type_name {
+        $$ = new AstVarDecl(BindingKind::Value, *$1, $2);
+    }
+    | SET FIELD type_name {
+        $$ = new AstVarDecl(BindingKind::Value, *$2, $3, nullptr,
+                            AccessKind::GetSet);
     }
     ;
 
@@ -313,7 +340,7 @@ struct_statlist
     ;
 
 struct_stat
-    : var_decl NEWLINE { $$ = $1; }
+    : field_decl NEWLINE { $$ = $1; }
     | func_decl {
         $$ = $1;
     }
@@ -632,12 +659,12 @@ brace_line_entry_seq
     ;
 
 opt_brace_line_comma
-    : /* empty */ { $$ = 0; }
+    : %empty { $$ = 0; }
     | ',' { $$ = 0; }
     ;
 
 opt_newlines
-    : /* empty */ { $$ = 0; }
+    : %empty { $$ = 0; }
     | opt_newlines NEWLINE { $$ = 0; }
     ;
 

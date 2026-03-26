@@ -205,7 +205,7 @@ def test_method_call_on_temporary_still_uses_pointer_receiver(compiler: Compiler
         struct Counter {
             value i32
 
-            def bump() i32 {
+            set def bump() i32 {
                 self.value = self.value + 1
                 ret self.value
             }
@@ -219,4 +219,3 @@ def test_method_call_on_temporary_still_uses_pointer_receiver(compiler: Compiler
     ir = compiler.emit_ir(input_path).expect_ok().stdout
     assert_regex(ir, r"^define i32 @.*Counter\.bump\(ptr ", label="method temp ir")
     assert_regex(ir, r"call i32 @.*Counter\.bump\(ptr ", label="method temp ir")
-

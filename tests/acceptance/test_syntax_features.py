@@ -104,7 +104,7 @@ def test_builtin_casts_and_cast_restrictions(compiler: CompilerHarness) -> None:
         "cast_pointer_rebind.lo",
         """
         struct Box {
-            value i32
+            set value i32
         }
 
         def main() i32 {
@@ -1704,7 +1704,7 @@ def test_addressing_struct_init_named_calls_and_struct_field_types(compiler: Com
         "address_field.lo",
         """
         struct Counter {
-            value i32
+            set value i32
         }
 
         def main() i32 {
@@ -1782,7 +1782,7 @@ def test_addressing_struct_init_named_calls_and_struct_field_types(compiler: Com
         struct Mixed {
             flag bool
             ratio f32
-            bits u8[4]
+            set bits u8[4]
             pair <i32, bool>
             ptr i32*
             cb (i32: i32)

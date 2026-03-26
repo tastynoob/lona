@@ -7,7 +7,5 @@ def inc(v i32) i32 {
 }
 
 def fill(v i32) Point {
-    var out Point
-    out.x = inc(v)
-    ret out
+    ret Point(x = inc(v))
 }

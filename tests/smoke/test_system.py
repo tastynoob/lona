@@ -193,8 +193,8 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
         """
         #[repr "C"]
         struct Point {
-            x i32
-            y i32
+            set x i32
+            set y i32
         }
 
         #[extern "C"]
@@ -248,9 +248,9 @@ def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo
         """
         #[repr "C"]
         struct Slot {
-            used i32
-            value i32
-            next i32
+            set used i32
+            set value i32
+            set next i32
         }
 
         #[extern "C"]

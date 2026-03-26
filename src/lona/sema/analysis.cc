@@ -431,8 +431,11 @@ getMethodCallArgOffset(HIRSelector *selector, FuncType *type) {
 
     auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
     const auto &argTypes = type->getArgTypes();
-    if (!argTypes.empty() && parentType != nullptr &&
-        getRawPointerPointeeType(argTypes.front()) == parentType) {
+    auto *selfPointeeType = !argTypes.empty() ? getRawPointerPointeeType(argTypes.front())
+                                              : nullptr;
+    if (selfPointeeType && parentType &&
+        asUnqualified<StructType>(selfPointeeType) ==
+            asUnqualified<StructType>(parentType)) {
         return 1;
     }
     return 0;
@@ -761,6 +764,99 @@ class FunctionAnalyzer {
         return type;
     }
 
+    StructType *currentMethodParentType() {
+        if (!resolved.isMethod()) {
+            return nullptr;
+        }
+        return requireStructTypeByName(resolved.methodParentTypeName(),
+                                       resolved.loc(), "method parent type");
+    }
+
+    bool hasInternalFieldAccess(StructType *ownerType) {
+        auto *methodParent = currentMethodParentType();
+        return ownerType && methodParent == ownerType;
+    }
+
+    TypeClass *applySlotConst(TypeClass *type) {
+        if (!type) {
+            return nullptr;
+        }
+        if (isConstQualifiedType(type)) {
+            return type;
+        }
+        return typeMgr->createConstType(type);
+    }
+
+    TypeClass *projectStructFieldType(StructType *ownerStructType,
+                                      TypeClass *ownerValueType,
+                                      llvm::StringRef fieldName,
+                                      TypeClass *fieldType) {
+        if (!fieldType) {
+            return nullptr;
+        }
+        if (!ownerStructType) {
+            return fieldType;
+        }
+
+        bool requiresConstView = isConstQualifiedType(ownerValueType);
+        if (!requiresConstView &&
+            ownerStructType->getMemberAccess(fieldName) == AccessKind::GetOnly &&
+            !hasInternalFieldAccess(ownerStructType)) {
+            requiresConstView = true;
+        }
+        return requiresConstView ? applySlotConst(fieldType) : fieldType;
+    }
+
+    TypeClass *projectArrayElementType(TypeClass *containerType,
+                                       TypeClass *elementType) {
+        if (!elementType) {
+            return nullptr;
+        }
+        return isConstQualifiedType(containerType) ? applySlotConst(elementType)
+                                                   : elementType;
+    }
+
+    TypeClass *projectTupleMemberType(TypeClass *tupleType,
+                                      TypeClass *memberType) {
+        if (!memberType) {
+            return nullptr;
+        }
+        return isConstQualifiedType(tupleType) ? applySlotConst(memberType)
+                                               : memberType;
+    }
+
+    TypeClass *getMethodReceiverPointee(FuncType *funcType) {
+        if (!funcType || funcType->getArgTypes().empty()) {
+            return nullptr;
+        }
+        return getRawPointerPointeeType(funcType->getArgTypes().front());
+    }
+
+    void requireMethodReceiverCompatible(HIRSelector *selector, FuncType *funcType,
+                                         const location &loc) {
+        if (!selector || !funcType) {
+            return;
+        }
+
+        auto *parentType =
+            selector->getParent() ? selector->getParent()->getType() : nullptr;
+        auto *receiverPointeeType = getMethodReceiverPointee(funcType);
+        if (!parentType || !receiverPointeeType) {
+            internalError(loc,
+                          "method call is missing its receiver type information",
+                          "This looks like a compiler pipeline bug.");
+        }
+        if (isConstQualificationConvertible(receiverPointeeType, parentType)) {
+            return;
+        }
+
+        error(loc,
+              "set method `" + selector->getFieldName() +
+                  "` requires a writable receiver, got " +
+                  describeResolvedType(parentType),
+              "Call it on a writable value, or use a non-`set` method here.");
+    }
+
     EntityRef classifyEntity(HIRExpr *expr) {
         if (!expr) {
             return EntityRef::invalid();
@@ -835,7 +931,8 @@ class FunctionAnalyzer {
             TupleType::ValueTy member;
             if (owner.tupleType->getMember(llvm::StringRef(fieldName), member)) {
                 result.kind = LookupResultKind::ValueField;
-                result.resultEntity = EntityRef::typedValue(member.first);
+                result.resultEntity = EntityRef::typedValue(
+                    projectTupleMemberType(owner.valueType, member.first));
                 return result;
             }
             result.kind = LookupResultKind::NotFound;
@@ -845,7 +942,10 @@ class FunctionAnalyzer {
         if (owner.structType) {
             if (auto *member = owner.structType->getMember(llvm::StringRef(fieldName))) {
                 result.kind = LookupResultKind::ValueField;
-                result.resultEntity = EntityRef::typedValue(member->first);
+                result.resultEntity = EntityRef::typedValue(
+                    projectStructFieldType(owner.structType, owner.valueType,
+                                           llvm::StringRef(fieldName),
+                                           member->first));
                 return result;
             }
             if (auto *methodType =
@@ -1047,6 +1147,7 @@ class FunctionAnalyzer {
             if (!funcType) {
                 internalError(loc, "unknown struct method");
             }
+            requireMethodReceiverCompatible(selector, funcType, loc);
             resolution.kind = CallResolutionKind::FunctionCall;
             resolution.callType = funcType;
             resolution.paramNames =
@@ -1088,7 +1189,9 @@ class FunctionAnalyzer {
                 asUnqualified<ArrayType>(callee->getType())) {
             resolution.kind = CallResolutionKind::ArrayIndex;
             resolution.resultEntity =
-                EntityRef::typedValue(arrayType->getElementType());
+                EntityRef::typedValue(
+                    projectArrayElementType(callee->getType(),
+                                            arrayType->getElementType()));
             return resolution;
         }
         if (auto *indexableType =
@@ -2826,10 +2929,7 @@ class FunctionAnalyzer {
                     asUnqualified<IndexablePointerType>(callee->getType());
                 const auto indexArity = arrayType ? arrayType->indexArity()
                                                   : (indexableType ? 1u : 0u);
-                auto *elementType = arrayType ? arrayType->getElementType()
-                                              : (indexableType
-                                                     ? indexableType->getElementType()
-                                                     : nullptr);
+                auto *elementType = resolution.resultEntity.valueType();
                 if (!arrayType && !indexableType) {
                     internalError(node->loc,
                                   "array index resolution is missing its indexable type",
@@ -2947,7 +3047,12 @@ private:
             }
             auto *methodParent = requireStructTypeByName(
                 resolved.methodParentTypeName(), resolved.loc(), "method parent type");
-            auto *selfType = typeMgr->createPointerType(methodParent);
+            auto *decl = resolved.decl();
+            auto *receiverPointee =
+                decl && decl->receiverAccess == AccessKind::GetSet
+                ? static_cast<TypeClass *>(methodParent)
+                : static_cast<TypeClass *>(typeMgr->createConstType(methodParent));
+            auto *selfType = typeMgr->createPointerType(receiverPointee);
             auto *selfObj = selfType->newObj(Object::VARIABLE);
             bindObject(resolved.selfBinding(), selfObj);
             hirFunc->setSelfBinding(

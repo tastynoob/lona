@@ -17,8 +17,7 @@ def test_method_self_lowering_uses_struct_gep(compiler: CompilerHarness) -> None
         }
 
         def main() i32 {
-            var c Counter
-            c.value = 2
+            var c = Counter(value = 2)
             ret c.bump(3)
         }
         """,
@@ -35,15 +34,14 @@ def test_mutating_method_lowers_to_pointer_receiver(compiler: CompilerHarness) -
         struct Counter {
             value i32
 
-            def bump(step i32) i32 {
+            set def bump(step i32) i32 {
                 self.value = self.value + step
                 ret self.value
             }
         }
 
         def main() i32 {
-            var c Counter
-            c.value = 2
+            var c = Counter(value = 2)
             c.bump(3)
             ret c.value
         }
@@ -64,7 +62,7 @@ def test_method_self_can_be_used_as_pointer_value(
         struct Counter {
             value i32
 
-            def bump(step i32) i32 {
+            set def bump(step i32) i32 {
                 var self_ptr Counter* = self
                 self_ptr.value = self_ptr.value + step
                 ret self_ptr.value
@@ -80,6 +78,163 @@ def test_method_self_can_be_used_as_pointer_value(
     ir = compiler.emit_ir(input_path).expect_ok().stdout
     assert_regex(ir, r"^define i32 @.*Counter\.bump\(ptr ", label="method self pointer ir")
     assert_regex(ir, r"call i32 @.*Counter\.bump\(ptr ", label="method self pointer ir")
+
+
+def test_set_field_allows_external_assignment(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "set_field_external.lo",
+        """
+        struct Counter {
+            set value i32
+        }
+
+        def main() i32 {
+            var c Counter
+            c.value = 3
+            ret c.value
+        }
+        """,
+    )
+    compiler.emit_ir(input_path).expect_ok()
+
+
+def test_non_set_method_cannot_write_even_set_fields(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "non_set_method_write_bad.lo",
+        """
+        struct Counter {
+            set value i32
+
+            def bump() i32 {
+                self.value = self.value + 1
+                ret self.value
+            }
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "assignment target is const-qualified: i32 const",
+        label="non-set method write diagnostic",
+    )
+
+
+def test_get_only_field_projection_blocks_set_method_calls(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "get_only_field_method_bad.lo",
+        """
+        struct Counter {
+            set value i32
+
+            def read() i32 {
+                ret self.value
+            }
+
+            set def bump() i32 {
+                self.value = self.value + 1
+                ret self.value
+            }
+        }
+
+        struct Wrapper {
+            counter Counter
+        }
+
+        def main() i32 {
+            var w = Wrapper(counter = Counter(value = 4))
+            ret w.counter.bump()
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "set method `bump` requires a writable receiver, got get_only_field_method_bad.Counter const",
+        label="get-only field method diagnostic",
+    )
+
+
+def test_get_only_pointer_field_only_freezes_the_slot(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "get_only_pointer_field_slot.lo",
+        """
+        struct Box {
+            ptr i32*
+        }
+
+        def main() i32 {
+            var x i32 = 1
+            var b = Box(ptr = &x)
+            *b.ptr = 7
+            ret x
+        }
+        """,
+    )
+    compiler.emit_ir(input_path).expect_ok()
+
+
+def test_non_set_method_cannot_write_tuple_projection(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "non_set_method_tuple_write_bad.lo",
+        """
+        struct Box {
+            set pair <i32, bool>
+
+            def rewrite() i32 {
+                self.pair._1 = 7
+                ret self.pair._1
+            }
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "assignment target is const-qualified: i32 const",
+        label="non-set tuple write diagnostic",
+    )
+
+
+def test_get_only_tuple_field_projection_blocks_set_method_calls(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "get_only_tuple_method_bad.lo",
+        """
+        struct Counter {
+            set value i32
+
+            set def bump() i32 {
+                self.value = self.value + 1
+                ret self.value
+            }
+        }
+
+        struct Box {
+            pair <Counter, bool>
+        }
+
+        def main() i32 {
+            var box = Box(pair = (Counter(value = 1), true))
+            ret box.pair._1.bump()
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "set method `bump` requires a writable receiver, got get_only_tuple_method_bad.Counter const",
+        label="get-only tuple method diagnostic",
+    )
 
 
 def test_top_level_mix_emits_language_entry(compiler: CompilerHarness) -> None:
@@ -170,8 +325,7 @@ def test_import_links_functions_types_and_constructors(compiler: CompilerHarness
         import math
 
         def main() i32 {
-            var p math.Point
-            p.x = math.inc(4)
+            var p = math.Point(x = math.inc(4))
             ret p.x
         }
         """,
@@ -508,7 +662,7 @@ def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: Compiler
         struct Counter {
             value i32
 
-            def bump(step i32) i32 {
+            set def bump(step i32) i32 {
                 self.value = self.value + step
                 ret self.value
             }
@@ -521,8 +675,7 @@ def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: Compiler
         import dep
 
         def main() i32 {
-            var c dep.Counter
-            c.value = 4
+            var c = dep.Counter(value = 4)
             c.bump(3)
             ret c.value
         }
@@ -784,10 +937,7 @@ def test_large_struct_returns_and_grammar_subset_stay_lowerable(compiler: Compil
         }
 
         def make_name(a i32, b i32) Name {
-            var out Name
-            out.a = a
-            out.b = b
-            ret out
+            ret Name(a = a, b = b)
         }
 
         var sample = make_name(1, 2)

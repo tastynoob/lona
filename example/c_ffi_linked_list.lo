@@ -1,8 +1,8 @@
 // System-level C FFI sample: malloc/free/puts plus a method-based singly linked list.
 
 struct ListNode {
-    value i32
-    next ListNode*
+    set value i32
+    set next ListNode*
 }
 
 struct List {
@@ -13,7 +13,7 @@ struct List {
         ret self.length == 0
     }
 
-    def append(value i32) {
+    set def append(value i32) {
         var node = makeNode(value)
 
         if self.head == null {
@@ -50,7 +50,7 @@ struct List {
         ret true
     }
 
-    def remove(value i32) bool {
+    set def remove(value i32) bool {
         var prev ListNode* = null
         var cur = self.head
         for cur != null {
@@ -85,7 +85,7 @@ struct List {
         ret total
     }
 
-    def clear() {
+    set def clear() {
         var cur = self.head
         self.head = null
         self.length = 0

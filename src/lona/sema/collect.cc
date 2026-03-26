@@ -165,6 +165,41 @@ extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false) {
     return kinds;
 }
 
+TypeClass *
+methodReceiverPointeeType(TypeTable *typeMgr, StructType *methodParent,
+                          AccessKind receiverAccess) {
+    if (!typeMgr || !methodParent) {
+        return nullptr;
+    }
+    if (receiverAccess == AccessKind::GetSet) {
+        return methodParent;
+    }
+    return typeMgr->createConstType(methodParent);
+}
+
+TypeClass *
+interfaceMethodReceiverPointeeType(ModuleInterface *interface,
+                                   StructType *methodParent,
+                                   AccessKind receiverAccess) {
+    if (!interface || !methodParent) {
+        return nullptr;
+    }
+    if (receiverAccess == AccessKind::GetSet) {
+        return methodParent;
+    }
+    return interface->getOrCreateConstType(methodParent);
+}
+
+void
+validateFunctionReceiverAccess(AstFuncDecl *node, StructType *methodParent) {
+    if (!node || methodParent || node->receiverAccess == AccessKind::GetOnly) {
+        return;
+    }
+    error(node->loc,
+          "`set def` is only valid on struct methods",
+          "Move this declaration into a struct, or remove the `set` receiver modifier.");
+}
+
 std::string
 describeExternCFunctionName(AstFuncDecl *node, StructType *methodParent) {
     if (!node) {
@@ -799,6 +834,7 @@ Function *
 declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 StructType *methodParent, CompilationUnit *unit = nullptr,
                 bool exportNamespace = false) {
+    validateFunctionReceiverAccess(node, methodParent);
     auto &func_name = node->name;
     auto resolvedFunctionName = resolveFunctionSymbolName(
         unit, func_name, node ? node->abiKind : AbiKind::Native, exportNamespace);
@@ -862,7 +898,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     if (methodParent) {
-        loargs.push_back(typeMgr->createPointerType(methodParent));
+        loargs.push_back(typeMgr->createPointerType(
+            methodReceiverPointeeType(typeMgr, methodParent, node->receiverAccess)));
     }
 
     if (node->args) {
@@ -941,6 +978,7 @@ class StructVisitor : public AstVisitorAny {
     AstStructDecl *structDecl = nullptr;
 
     llvm::StringMap<StructType::ValueTy> members;
+    llvm::StringMap<AccessKind> memberAccess;
     int nextMemberIndex = 0;
 
     using AstVisitorAny::visit;
@@ -975,6 +1013,8 @@ class StructVisitor : public AstVisitorAny {
 
         members.insert({llvm::StringRef(name.tochara(), name.size()),
                         {type, nextMemberIndex++}});
+        memberAccess[llvm::StringRef(name.tochara(), name.size())] =
+            node->accessKind;
 
         return nullptr;
     }
@@ -997,7 +1037,7 @@ public:
         }
 
         this->visit(node->body);
-        lostructTy->complete(members);
+        lostructTy->complete(members, memberAccess);
     }
 };
 
@@ -1369,6 +1409,7 @@ class InterfaceCollector {
             }
 
             llvm::StringMap<StructType::ValueTy> members;
+            llvm::StringMap<AccessKind> memberAccess;
             int index = 0;
             for (auto *stmt : body->getBody()) {
                 auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
@@ -1397,17 +1438,23 @@ class InterfaceCollector {
                 members.insert({llvm::StringRef(varDecl->field.tochara(),
                                                 varDecl->field.size()),
                                 {fieldType, index++}});
+                memberAccess[llvm::StringRef(varDecl->field.tochara(),
+                                             varDecl->field.size())] =
+                    varDecl->accessKind;
             }
 
-            structType->complete(members);
+            structType->complete(members, memberAccess);
         }
     }
 
     FuncType *buildFunctionType(AstFuncDecl *node, StructType *methodParent) {
+        validateFunctionReceiverAccess(node, methodParent);
         std::vector<TypeClass *> argTypes;
         auto argBindingKinds = extractParamBindingKinds(node, methodParent != nullptr);
         if (methodParent) {
-            argTypes.push_back(interface_->getOrCreatePointerType(methodParent));
+            argTypes.push_back(interface_->getOrCreatePointerType(
+                interfaceMethodReceiverPointeeType(interface_, methodParent,
+                                                   node->receiverAccess)));
         }
         if (node->args) {
             for (auto *arg : *node->args) {
@@ -2058,7 +2105,9 @@ class FunctionCompiler {
                     ? funcType->getArgTypes().front()
                     : nullptr;
                 auto *selfPointeeType = getRawPointerPointeeType(selfType);
-                if (!selfType || selfPointeeType != structType) {
+                if (!selfType || !selfPointeeType ||
+                    !isConstQualificationConvertible(selfPointeeType,
+                                                     parent->getType())) {
                     error("method lowering expected an implicit self pointer");
                 }
                 args.push_back(makeReadonlyValue(selfType, parent->getllvmValue()));

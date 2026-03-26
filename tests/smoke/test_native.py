@@ -77,15 +77,14 @@ def test_native_smoke_programs_run(compiler: CompilerHarness) -> None:
             struct Counter {
                 value i32
 
-                def bump(step i32) i32 {
+                set def bump(step i32) i32 {
                     self.value = self.value + step
                     ret self.value
                 }
             }
 
             def run() i32 {
-                var c Counter
-                c.value = 2
+                var c = Counter(value = 2)
                 c.bump(3)
                 ret c.value
             }
@@ -100,7 +99,7 @@ def test_native_smoke_programs_run(compiler: CompilerHarness) -> None:
             struct Counter {
                 value i32
 
-                def bump(step i32) i32 {
+                set def bump(step i32) i32 {
                     self.value = self.value + step
                     ret self.value
                 }
@@ -124,7 +123,7 @@ def test_native_smoke_programs_run(compiler: CompilerHarness) -> None:
             struct Mixed {
                 flag bool
                 ratio f32
-                bits u8[4]
+                set bits u8[4]
                 pair <i32, bool>
                 ptr i32*
                 cb (i32: i32)
