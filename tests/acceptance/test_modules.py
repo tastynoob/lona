@@ -55,6 +55,33 @@ def test_mutating_method_lowers_to_pointer_receiver(compiler: CompilerHarness) -
     assert_regex(ir, r"store i32 .*ptr %", label="mutating method ir")
 
 
+def test_method_self_can_be_used_as_pointer_value(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "method_self_pointer.lo",
+        """
+        struct Counter {
+            value i32
+
+            def bump(step i32) i32 {
+                var self_ptr Counter* = self
+                self_ptr.value = self_ptr.value + step
+                ret self_ptr.value
+            }
+        }
+
+        def main() i32 {
+            var c = Counter(value = 2)
+            ret c.bump(3)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_regex(ir, r"^define i32 @.*Counter\.bump\(ptr ", label="method self pointer ir")
+    assert_regex(ir, r"call i32 @.*Counter\.bump\(ptr ", label="method self pointer ir")
+
+
 def test_top_level_mix_emits_language_entry(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "top_level_mix.lo",
@@ -506,7 +533,7 @@ def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: Compiler
     assert_contains(ir, "call i32 @dep.Counter.bump(ptr ", label="mutating imported method ir")
     assert_regex(
         ir,
-        r"getelementptr inbounds %dep.Counter, ptr %0, i32 0, i32 0",
+        r"(?s)define i32 @dep\.Counter\.bump\(ptr %0, i32 %1\).*?getelementptr inbounds %dep\.Counter, ptr %\d+, i32 0, i32 0",
         label="mutating imported method ir",
     )
 

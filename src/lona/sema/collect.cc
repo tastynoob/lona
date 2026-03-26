@@ -152,7 +152,7 @@ std::vector<BindingKind>
 extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false) {
     std::vector<BindingKind> kinds;
     if (withImplicitSelf) {
-        kinds.push_back(BindingKind::Ref);
+        kinds.push_back(BindingKind::Value);
     }
     if (!node || !node->args) {
         return kinds;
@@ -862,7 +862,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     }
 
     if (methodParent) {
-        loargs.push_back(methodParent);
+        loargs.push_back(typeMgr->createPointerType(methodParent));
     }
 
     if (node->args) {
@@ -1407,7 +1407,7 @@ class InterfaceCollector {
         std::vector<TypeClass *> argTypes;
         auto argBindingKinds = extractParamBindingKinds(node, methodParent != nullptr);
         if (methodParent) {
-            argTypes.push_back(methodParent);
+            argTypes.push_back(interface_->getOrCreatePointerType(methodParent));
         }
         if (node->args) {
             for (auto *arg : *node->args) {
@@ -2050,13 +2050,18 @@ class FunctionCompiler {
                 }
                 funcType = callee->getType()->as<FuncType>();
                 calleeValue = callee->getllvmValue();
-                if (funcType && !funcType->getArgTypes().empty() &&
-                    funcType->getArgBindingKind(0) == BindingKind::Ref &&
-                    (!parent->isVariable() || parent->isRegVal() ||
-                     !parent->getllvmValue())) {
+                if (!parent->isVariable() || parent->isRegVal() ||
+                    !parent->getllvmValue()) {
                     parent = materializeLocal(parent->getType(), parent);
                 }
-                args.push_back(parent);
+                auto *selfType = funcType && !funcType->getArgTypes().empty()
+                    ? funcType->getArgTypes().front()
+                    : nullptr;
+                auto *selfPointeeType = getRawPointerPointeeType(selfType);
+                if (!selfType || selfPointeeType != structType) {
+                    error("method lowering expected an implicit self pointer");
+                }
+                args.push_back(makeReadonlyValue(selfType, parent->getllvmValue()));
                 hasImplicitSelf = true;
             } else if (auto *callee = getDirectFunctionCallee(call->getCallee())) {
                 funcType = callee->getType()->as<FuncType>();
@@ -2761,8 +2766,8 @@ public:
         returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
-            scope->structTy =
-                asUnqualified<StructType>(hirFunc->getSelfBinding().object->getType());
+            scope->structTy = asUnqualified<StructType>(
+                getRawPointerPointeeType(hirFunc->getSelfBinding().object->getType()));
         }
 
         if (debug) {
@@ -2784,9 +2789,19 @@ public:
             auto &binding = hirFunc->getSelfBinding();
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
-            auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
-            incomingSelf->setllvmValue(&*argIt);
-            auto *selfObj = materializeBinding(binding.object, incomingSelf);
+            Object *selfObj = nullptr;
+            const auto &argInfo = abiSignature.argInfo(0);
+            auto passKind = argInfo.passKind;
+            if (passKind == AbiPassKind::IndirectRef) {
+                auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
+                incomingSelf->setllvmValue(&*argIt);
+                selfObj = materializeBinding(binding.object, incomingSelf);
+            } else if (passKind == AbiPassKind::IndirectValue) {
+                selfObj = materializeIndirectValueBinding(binding.object, &*argIt);
+            } else {
+                selfObj = materializeDirectValueBinding(binding.object, &*argIt,
+                                                        argInfo.packedRegisterAggregate);
+            }
             scope->addObj(llvm::StringRef(binding.name), selfObj);
             emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
                              selfObj->getType(), binding.loc, 1);

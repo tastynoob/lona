@@ -431,7 +431,8 @@ getMethodCallArgOffset(HIRSelector *selector, FuncType *type) {
 
     auto *parentType = selector->getParent() ? selector->getParent()->getType() : nullptr;
     const auto &argTypes = type->getArgTypes();
-    if (!argTypes.empty() && parentType != nullptr && argTypes.front() == parentType) {
+    if (!argTypes.empty() && parentType != nullptr &&
+        getRawPointerPointeeType(argTypes.front()) == parentType) {
         return 1;
     }
     return 0;
@@ -2946,7 +2947,8 @@ private:
             }
             auto *methodParent = requireStructTypeByName(
                 resolved.methodParentTypeName(), resolved.loc(), "method parent type");
-            auto *selfObj = methodParent->newObj(Object::VARIABLE | Object::REF_ALIAS);
+            auto *selfType = typeMgr->createPointerType(methodParent);
+            auto *selfObj = selfType->newObj(Object::VARIABLE);
             bindObject(resolved.selfBinding(), selfObj);
             hirFunc->setSelfBinding(
                 {resolved.selfBinding()->name(), resolved.selfBinding()->bindingKind(),

@@ -211,8 +211,7 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
     signature.sourceArgInfos.reserve(argTypes.size());
     for (std::size_t i = 0; i < argTypes.size(); ++i) {
         AbiValueInfo info;
-        if ((hasImplicitSelf && i == 0) ||
-            funcType->getArgBindingKind(i) == BindingKind::Ref) {
+        if (funcType->getArgBindingKind(i) == BindingKind::Ref) {
             info.passKind = AbiPassKind::IndirectRef;
         } else if (isNativeAbiAggregateType(argTypes[i])) {
             if (usesNativeAbiPackedRegisterAggregate(types, argTypes[i])) {
@@ -239,8 +238,7 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
 
     std::size_t startIndex = 0;
     if (hasImplicitSelf && !argTypes.empty()) {
-        llvmArgTypes.push_back(
-            types.getLLVMType(types.createPointerType(argTypes.front())));
+        llvmArgTypes.push_back(signature.sourceArgInfos.front().llvmType);
         startIndex = 1;
     }
 

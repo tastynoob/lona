@@ -372,7 +372,8 @@ class ModuleResolver {
             topLevelEntry, guaranteedReturn);
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
-                ResolvedLocalBinding::Kind::Self, BindingKind::Ref, "self", decl, loc));
+                ResolvedLocalBinding::Kind::Self, BindingKind::Value, "self", decl,
+                loc));
         }
         if (decl && decl->args) {
             for (auto *arg : *decl->args) {
