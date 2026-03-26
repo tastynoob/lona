@@ -793,6 +793,31 @@ class FunctionAnalyzer {
         std::optional<InjectedMemberBinding> injectedMember;
     };
 
+    struct MemberLookupAttempt {
+        HIRExpr *parent = nullptr;
+        MemberLookup lookup;
+    };
+
+    struct CallResolutionAttempt {
+        HIRExpr *callee = nullptr;
+        CallResolution resolution;
+    };
+
+    static bool
+    isExplicitDerefSyntax(const AstNode *node) {
+        auto *unary = dynamic_cast<const AstUnaryOper *>(node);
+        return unary && unary->op == '*';
+    }
+
+    HIRExpr *implicitDeref(HIRExpr *expr, const location &loc) {
+        if (!expr || !asUnqualified<PointerType>(expr->getType())) {
+            return nullptr;
+        }
+        auto binding = operatorResolver.resolveUnary(
+            '*', expr->getType(), isAddressable(expr), loc);
+        return makeHIR<HIRUnaryOper>(binding, expr, binding.resultType, loc);
+    }
+
     MemberLookupOwner classifyMemberOwner(HIRExpr *parent) {
         MemberLookupOwner owner;
         owner.entity = classifyEntity(parent);
@@ -853,6 +878,28 @@ class FunctionAnalyzer {
 
         lookup.result = lookupValueMember(lookup.owner, fieldName);
         return lookup;
+    }
+
+    MemberLookupAttempt
+    lookupMemberWithImplicitDeref(HIRExpr *parent, const std::string &fieldName,
+                                  const location &loc,
+                                  bool allowImplicitDeref) {
+        MemberLookupAttempt attempt;
+        attempt.parent = parent;
+        attempt.lookup = lookupMember(parent, fieldName, loc);
+        if (!allowImplicitDeref ||
+            attempt.lookup.result.kind != LookupResultKind::NotFound) {
+            return attempt;
+        }
+
+        auto *derefParent = implicitDeref(parent, loc);
+        if (!derefParent) {
+            return attempt;
+        }
+
+        attempt.parent = derefParent;
+        attempt.lookup = lookupMember(derefParent, fieldName, loc);
+        return attempt;
     }
 
     HIRExpr *materializeMemberExpr(HIRExpr *parent, const std::string &fieldName,
@@ -1053,6 +1100,28 @@ class FunctionAnalyzer {
 
         resolution.kind = CallResolutionKind::NotCallable;
         return resolution;
+    }
+
+    CallResolutionAttempt
+    resolveCallWithImplicitDeref(HIRExpr *callee, const CallArgList &callArgs,
+                                 const location &loc,
+                                 bool allowImplicitDeref) {
+        CallResolutionAttempt attempt;
+        attempt.callee = callee;
+        attempt.resolution = resolveCall(callee, callArgs, loc);
+        if (!allowImplicitDeref ||
+            attempt.resolution.kind != CallResolutionKind::NotCallable) {
+            return attempt;
+        }
+
+        auto *derefCallee = implicitDeref(callee, loc);
+        if (!derefCallee) {
+            return attempt;
+        }
+
+        attempt.callee = derefCallee;
+        attempt.resolution = resolveCall(derefCallee, callArgs, loc);
+        return attempt;
     }
 
     [[noreturn]] void diagnoseCallFailure(HIRExpr *callee, const location &loc,
@@ -2655,11 +2724,13 @@ class FunctionAnalyzer {
 
         auto *parent = requireExpr(node->parent);
         auto fieldName = toStdString(node->field->text);
-        auto lookup = lookupMember(parent, fieldName, node->loc);
-        if (auto *expr = materializeMemberExpr(parent, fieldName, lookup, node->loc)) {
+        auto attempt = lookupMemberWithImplicitDeref(
+            parent, fieldName, node->loc, !isExplicitDerefSyntax(node->parent));
+        if (auto *expr = materializeMemberExpr(
+                attempt.parent, fieldName, attempt.lookup, node->loc)) {
             return expr;
         }
-        diagnoseMemberLookupFailure(lookup, fieldName, node->loc,
+        diagnoseMemberLookupFailure(attempt.lookup, fieldName, node->loc,
                                     describeMemberOwnerSyntax(node->parent));
     }
 
@@ -2678,28 +2749,32 @@ class FunctionAnalyzer {
             } else {
                 auto *receiver = requireExpr(dotLikeNode->parent);
                 auto fieldName = toStdString(dotLikeNode->field->text);
-                auto lookup = lookupMember(receiver, fieldName, node->loc);
-                if (lookup.result.kind == LookupResultKind::InjectedMember) {
-                    assert(lookup.injectedMember.has_value());
-                    if (lookup.injectedMember->kind == InjectedMemberKind::BitCopy) {
+                auto attempt = lookupMemberWithImplicitDeref(
+                    receiver, fieldName, node->loc,
+                    !isExplicitDerefSyntax(dotLikeNode->parent));
+                if (attempt.lookup.result.kind == LookupResultKind::InjectedMember) {
+                    assert(attempt.lookup.injectedMember.has_value());
+                    if (attempt.lookup.injectedMember->kind ==
+                        InjectedMemberKind::BitCopy) {
                         if (node->args && !node->args->empty()) {
                             error(node->loc,
                                   "raw bit-copy member `" + fieldName +
                                       "` does not take arguments",
                                   "Call it as `<expr>." + fieldName + "()`.");
                         }
-                        return coerceBitCopyExpr(receiver,
-                                                 lookup.injectedMember->resultType,
+                        return coerceBitCopyExpr(attempt.parent,
+                                                 attempt.lookup.injectedMember->resultType,
                                                  node->loc);
                     }
                 }
                 if (auto *resolvedCallee =
-                        materializeMemberExpr(receiver, fieldName, lookup,
+                        materializeMemberExpr(attempt.parent, fieldName,
+                                              attempt.lookup,
                                               dotLikeNode->loc, true)) {
                     callee = resolvedCallee;
                 } else {
                     diagnoseMemberLookupFailure(
-                        lookup, fieldName, dotLikeNode->loc,
+                        attempt.lookup, fieldName, dotLikeNode->loc,
                         describeMemberOwnerSyntax(dotLikeNode->parent));
                 }
             }
@@ -2708,7 +2783,11 @@ class FunctionAnalyzer {
         if (!callee) {
             callee = requireExpr(node->value);
         }
-        auto resolution = resolveCall(callee, std::move(normalizedArgs), node->loc);
+        auto callAttempt = resolveCallWithImplicitDeref(
+            callee, normalizedArgs, node->loc,
+            !isExplicitDerefSyntax(node->value));
+        callee = callAttempt.callee;
+        auto resolution = std::move(callAttempt.resolution);
         switch (resolution.kind) {
             case CallResolutionKind::ConstructorCall: {
                 auto *structType = resolution.callee.asType()

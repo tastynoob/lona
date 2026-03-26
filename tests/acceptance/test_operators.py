@@ -109,6 +109,131 @@ def test_short_circuit_runtime_skips_side_effects(compiler: CompilerHarness) -> 
     compiler.run_executable(exe_path).expect_exit_code(0)
 
 
+def test_pointer_dot_and_call_auto_deref_runtime(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "pointer_auto_deref.lo",
+        """
+        struct Counter {
+            value i32
+
+            def bump(step i32) i32 {
+                self.value = self.value + step
+                ret self.value
+            }
+        }
+
+        def one() i32 {
+            ret 1
+        }
+
+        def run() i32 {
+            var counter = Counter(4)
+            var counter_ptr Counter* = &counter
+            var cb (: i32) = one&<>
+            var cb_ptr (: i32)* = &cb
+
+            counter_ptr.value = counter_ptr.value + 2
+            if counter_ptr.bump(3) != 9 {
+                ret 1
+            }
+            if cb_ptr() != 1 {
+                ret 2
+            }
+            if counter.value != 9 {
+                ret 3
+            }
+            ret 0
+        }
+
+        ret run()
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="pointer_auto_deref"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(0)
+
+
+def test_pointer_assignment_does_not_auto_deref(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "pointer_assign_no_auto_deref.lo",
+        """
+        struct Counter {
+            value i32
+        }
+
+        def bad() i32 {
+            var counter = Counter(1)
+            var ptr Counter* = &counter
+            ptr = Counter(2)
+            ret 0
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "assignment type mismatch: expected",
+        label="pointer assignment diagnostic",
+    )
+    assert_contains(
+        result.stderr, "Counter*", label="pointer assignment diagnostic"
+    )
+    assert_contains(result.stderr, "got", label="pointer assignment diagnostic")
+    assert_contains(
+        result.stderr, "Counter", label="pointer assignment diagnostic"
+    )
+
+
+def test_explicit_deref_does_not_trigger_extra_implicit_deref(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "pointer_explicit_deref_depth.lo",
+        """
+        struct Counter {
+            value i32
+        }
+
+        def bad(pp Counter**) i32 {
+            ret (*pp).value
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr, "unknown member `", label="explicit deref depth diagnostic"
+    )
+    assert_contains(
+        result.stderr,
+        "Counter*.value`",
+        label="explicit deref depth diagnostic",
+    )
+
+
+def test_explicit_deref_call_does_not_trigger_extra_implicit_deref(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "pointer_explicit_deref_call_depth.lo",
+        """
+        def one() i32 {
+            ret 1
+        }
+
+        def bad() i32 {
+            var cb (: i32) = one&<>
+            var cb_ptr (: i32)* = &cb
+            var cb_pp (: i32)** = &cb_ptr
+            ret (*cb_pp)()
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "this expression does not support call syntax",
+        label="explicit deref call depth diagnostic",
+    )
+
+
 def test_mixed_signedness_uses_signed_lowering_and_runs(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "mixed_sign.lo",
@@ -145,4 +270,3 @@ def test_mixed_signedness_uses_signed_lowering_and_runs(compiler: CompilerHarnes
     build_result, exe_path = compiler.build_system_executable(input_path, output_name="mixed_sign")
     build_result.expect_ok()
     compiler.run_executable(exe_path).expect_exit_code(0)
-
