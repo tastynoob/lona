@@ -24,21 +24,47 @@ struct Line {
 
 ```lona
 struct Counter {
-    value i32
+    set value i32
 
-    def inc(step i32) i32 {
-        ret self.value + step
+    def read() i32 {
+        ret self.value
+    }
+
+    set def inc(step i32) i32 {
+        self.value = self.value + step
+        ret self.value
     }
 }
 ```
 
 说明：
 
-- 当前方法接收者 `self` 隐式按指针传递，语义上等价于隐藏的 `self Counter*`。
-- 在方法体里修改 `self` 的字段，会直接修改调用方对象。
+- `set` 的本质不是“给结构体额外发明一套权限系统”，而是把结构体自身各个内存槽位的可写性显式写出来。
+- 这样做的根因是：`const` 不能只停留在最外层 `=` 上，而必须沿着结构体字段访问继续传播；否则 `const Demo` 仍然可能通过 `obj.field = ...` 或 `obj.field.bump()` 改写自身内存。
+- 因此，未标 `set` 的字段表示“这个槽位对结构体外部只读”；`set field` 才表示“这个槽位对结构体外部可写”。
+- 对值字段，外部访问未标 `set` 的 `obj.field` 时，结果会按 `FieldType const` 看待，所以后续既不能直接赋值，也不能在其上调用需要可写接收者的方法。
+- 对指针字段，未标 `set` 只冻结这个指针槽位本身，语义更接近 `P* const`，而不是 `Pointee const*`；也就是说它不自动承诺深层不可变。
+- 当前方法接收者 `self` 仍然隐式按指针传递，但默认方法等价于隐藏的 `self Counter const*`。
+- `set def` 方法的 hidden receiver 才是 `self Counter*`。因此普通 `def` 不能改写 `self`，根因不是“某个字段没标 `set`”，而是整个 receiver 已经是 `Self const*`。
+- 即使某个字段本身写成 `set field`，普通 `def` 里也仍然不能写 `self.field = ...`；因为通过 `self` 看到的是整对象只读视图。
+- 反过来，`set def` 拿到的是 `Self*`，所以它可以改写当前对象本身；这里字段是否标 `set` 不再限制结构体内部通过 writable receiver 修改自身。
 - 指针上的 dot-like / call-like 自动解引用同样适用于 `self`，所以方法体里仍然直接写 `self.value`、`self.next()`。
 - 方法调用语法不要求在接收者位置额外写 `&` 或 `ref`。
-- 如果接收者本身是临时值，编译器会在调用点先物化一个临时槽位，再把它的地址作为隐藏 `self` 传入；因此 `Vec2(1, 2).normalize()` 这类写法是允许的。
+- 如果接收者本身是临时值，编译器会在调用点先物化一个临时槽位，再把它的地址作为隐藏 `self` 传入；因此 `Vec2(1, 2).normalize()` 和 `Vec2(1, 2).normalize_mut()` 这类写法都允许。
+
+例如：
+
+```lona
+struct Holder {
+    inner Counter
+    link Counter*
+    set current Counter
+}
+```
+
+- 结构体外部的 `obj.inner` 按 `Counter const` 看待，因此 `obj.inner.inc(1)` 不允许。
+- 结构体外部的 `obj.current` 保持可写投影，因此 `obj.current.inc(1)` 允许。
+- 结构体外部的 `obj.link` 如果未标 `set`，只表示这个指针槽位本身只读；`obj.link = other` 不允许，但它不自动把 pointee 升级成 `Counter const*`。
 
 ## 4. 字段与方法可以混合出现
 

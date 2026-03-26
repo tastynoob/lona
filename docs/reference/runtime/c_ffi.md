@@ -52,7 +52,7 @@ v0 不覆盖：
 原因是两者建模目标不同：
 
 - `native ABI` 允许语言语义驱动的特殊规则
-  - 隐式 `self`
+  - 结构体方法调用规则
   - `T[*]`
   - `ref`
   - 小聚合直接返回
@@ -290,7 +290,7 @@ v0 不定义语言级字符串与 C 字符串的自动桥接。
 不允许：
 
 - 把 `native ABI` 的小聚合直返规则直接沿用到 C 函数
-- 把 `self`、`ref`、`T[*]` 的语言语义直接带到 C ABI
+- 把结构体方法规则、`ref`、`T[*]` 的语言语义直接带到 C ABI
 
 ### 5.2 v0 的保守调用规则
 
@@ -331,22 +331,22 @@ v0 明确禁止：
 
 原因：
 
-- method 带隐式 `self`
-- 它更接近带 receiver 的语言函数
-- 直接暴露成 C 容易泄漏语言调用约定
+- method 属于语言内部的结构体语法
+- C ABI 只接受显式 top-level 函数边界
+- 需要导出时应改写成显式 wrapper
 
 如果需要把方法暴露给 C，应手写 top-level wrapper：
 
 ```lona
 #[repr "C"]
 struct Counter {
-    value i32
+    set value i32
 }
 
 #[extern "C"]
-def counter_bump(self Counter*, step i32) i32 {
-    (*self).value = (*self).value + step
-    ret (*self).value
+def counter_bump(p Counter*, step i32) i32 {
+    (*p).value = (*p).value + step
+    ret (*p).value
 }
 ```
 

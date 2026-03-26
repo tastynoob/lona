@@ -40,6 +40,7 @@
 
 - `var`
 - `def`
+- `set`
 - `ret`
 - `break`
 - `continue`
@@ -201,20 +202,23 @@ struct-decl       ::= "struct" IDENT NL
                       { NL | struct-stat }
                       "}"
 
-struct-stat       ::= var-decl NL
+struct-stat       ::= field-decl NL
                     | tagged-func-decl
 
 tagged-func-decl  ::= func-decl
                     | tag-line func-decl
 
-func-decl         ::= "def" IDENT "(" ")" NL
-                    | "def" IDENT "(" ")" type-name NL
-                    | "def" IDENT "(" param-decl-seq ")" NL
-                    | "def" IDENT "(" param-decl-seq ")" type-name NL
-                    | "def" IDENT "(" ")" block
-                    | "def" IDENT "(" ")" type-name block
-                    | "def" IDENT "(" param-decl-seq ")" block
-                    | "def" IDENT "(" param-decl-seq ")" type-name block
+func-decl         ::= [ "set" ] "def" IDENT "(" ")" NL
+                    | [ "set" ] "def" IDENT "(" ")" type-name NL
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" NL
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name NL
+                    | [ "set" ] "def" IDENT "(" ")" block
+                    | [ "set" ] "def" IDENT "(" ")" type-name block
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" block
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name block
+
+field-decl        ::= IDENT type-name
+                    | "set" IDENT type-name
 
 var-decl          ::= IDENT type-name
 param-decl        ::= IDENT type-name
@@ -243,6 +247,7 @@ param-decl-seq    ::= param-decl
 - `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
 - `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示“无结构体体”的声明形式。
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为 bodyless declaration。
+- `set` 当前只对结构体体内的字段声明和方法声明有稳定语义；具体规则见 [struct.md](./struct.md)。
 
 ### 3.4 变量定义
 
@@ -399,7 +404,7 @@ brace-init-item   ::= expr
 - 但语义阶段只接受“解析成数组索引”的那部分 `field-call` 作为左值；普通函数调用、构造函数调用仍然不是可赋值目标。
 - 当前 `aaa.bbb(...)` 除了结构体方法，也可以命中“成员函数注入”入口；位模式视图 `aaa.tobits()` 和 `u8[N].toXXX()` 都走这条路径，但后端会直接 lower 成高效 byte-copy，不生成真实函数调用。
 - 普通函数调用和构造函数调用共用同一套参数语法；`Vec2(x=1, y=2)` 与 `mix(x=1, y=2)` 在 parser 层没有分成两套节点。
-- 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；方法接收者 `self` 则走隐藏指针参数，不要求在调用点额外写标记。
+- 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；结构体方法继续使用普通成员调用语法，具体规则见 [struct.md](./struct.md)。
 - 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
 - 普通 `()` / `[]` 里的逗号序列当前都不支持尾逗号；例如 `foo(1, 2,)`、`(1, 2,)`、`i32[4,]` 都会在 parser 阶段报错。
 - 元组字面量当前已经支持“显式 tuple 目标类型 + 构造/传递”这一最小闭环。
@@ -413,8 +418,8 @@ brace-init-item   ::= expr
 - 普通顶层函数不能与结构体同名，因为 `Type(...)` 语法保留给该类型的构造函数集合。
 - 命名实参与位置实参可以混排，但顺序必须与 Python 类似：先位置、后命名。
 - 数组初始化按容器层级递归匹配；例如 `i32[4][5]` 适合写成 `{{1}, {2}}`，缺失元素会自动补零。
-- 当前语言没有单独的“引用”类型；结构体、tuple、固定维数组等仍默认按值参与赋值与传递，但现在支持 `ref a T = x` 局部别名绑定、`def f(ref x T)` 引用参数，以及隐式 `self T*` 方法接收者。
-- 普通 `ref` 形参要求调用点同步写出 `ref` 标记；方法调用里的 `self` 仍保持接收者风格语法，不额外暴露 `&`、`*` 或 `ref`。
+- 当前语言没有单独的“引用”类型；结构体、tuple、固定维数组等仍默认按值参与赋值与传递，但现在支持 `ref a T = x` 局部别名绑定与 `def f(ref x T)` 引用参数。结构体字段、方法和 `set` 规则见 [struct.md](./struct.md)。
+- 普通 `ref` 形参要求调用点同步写出 `ref` 标记；结构体方法继续使用成员调用语法，不额外暴露 `&`、`*` 或 `ref`。
 
 ### 3.6 类型语法
 

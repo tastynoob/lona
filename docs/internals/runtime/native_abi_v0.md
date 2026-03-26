@@ -346,7 +346,7 @@ i32 @inc(ptr)
 
 成员函数在语义上带有一个隐式：
 
-- `ref self`
+- `self`
 
 因此，method lowering 到 ABI 时，需要先把隐藏参数顺序冻结下来。
 
@@ -362,17 +362,19 @@ v0 规定成员函数的参数顺序为：
 
 其中：
 
-- `self` 总是按引用接收
+- `self` 总是按指针接收
 - ABI 上表现为一个 `ptr`
 - `self` 不做值拷贝
+- 普通 `def` 的 hidden `self` 是 `Self const*`
+- `set def` 的 hidden `self` 是 `Self*`
 
 例如：
 
 ```lona
 struct Counter {
-    value i32
+    set value i32
 
-    def bump(step i32) i32 {
+    set def bump(step i32) i32 {
         self.value = self.value + step
         ret self.value
     }
