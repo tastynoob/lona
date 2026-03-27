@@ -130,7 +130,7 @@ public:
 
     bool isOpaque() const { return opaque; }
     StructDeclKind getDeclKind() const { return declKind; }
-    bool isExternDecl() const { return declKind == StructDeclKind::Extern; }
+    bool isOpaqueDecl() const { return declKind == StructDeclKind::Opaque; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
     bool isNativeDecl() const { return declKind == StructDeclKind::Native; }
     void setDeclKind(StructDeclKind kind) { declKind = kind; }

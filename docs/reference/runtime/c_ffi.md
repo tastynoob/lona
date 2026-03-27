@@ -6,7 +6,7 @@ v0 覆盖的稳定子集：
 
 - top-level `#[extern "C"]` 函数导入
 - top-level `#[extern "C"]` 函数导出
-- `#[extern] struct` opaque 类型
+- bodyless `struct Name` opaque 类型
 - `#[repr "C"] struct`
 - C-compatible 标量与指针的参数 / 返回值检查
 
@@ -140,10 +140,8 @@ def lona_add(a i32, b i32) i32 {
 ### 3.3 opaque C struct
 
 ```lona
-#[extern]
 struct FILE
 
-#[extern]
 struct DIR
 ```
 
@@ -156,7 +154,6 @@ struct DIR
 例如：
 
 ```lona
-#[extern]
 struct FILE
 
 #[extern "C"]
@@ -413,5 +410,5 @@ v0 不包含：
 - `native ABI` 与 `C ABI` 分层
 - `#[extern "C"]` 只支持 top-level function
 - 只支持 C-compatible 标量与指针
-- opaque struct 和 `#[repr "C"] struct` 分开建模
+- bodyless opaque `struct` 和 `#[repr "C"] struct` 分开建模
 - 聚合只走指针风格互操作

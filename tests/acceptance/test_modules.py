@@ -465,7 +465,6 @@ def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compil
     compiler.write_source(
         "import_c_repr/dep.lo",
         """
-        #[extern]
         struct FILE
 
         #[repr "C"]
@@ -517,7 +516,7 @@ def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compil
     )
     assert_contains(
         result.stderr,
-        'help: Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
+        'help: Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
         label="import native struct ptr diagnostic",
     )
 

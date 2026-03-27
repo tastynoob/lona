@@ -265,7 +265,7 @@ isExternCByValueAggregateType(TypeClass *type) {
 
 bool
 isCCompatibleStructIdentity(StructType *type) {
-    return type && (type->isExternDecl() || type->isReprC());
+    return type && (type->isOpaque() || type->isReprC());
 }
 
 bool
@@ -326,15 +326,15 @@ void
 rejectOpaqueStructByValue(TypeClass *type, TypeNode *typeNode,
                           const location &loc, const std::string &context) {
     auto *structType = asUnqualified<StructType>(type);
-    if (!structType || !structType->isExternDecl()) {
+    if (!structType || !structType->isOpaque()) {
         return;
     }
     auto typeName = describeExternCType(type, typeNode);
     error(loc,
-          "opaque `#[extern]` struct `" + typeName +
-              "` cannot be used by value in " + context,
+          "opaque struct `" + typeName + "` cannot be used by value in " +
+              context,
           "Use `" + typeName +
-              "*` instead. Opaque C structs are only supported behind pointers.");
+              "*` instead. Opaque structs are only supported behind pointers.");
 }
 
 void
@@ -342,12 +342,12 @@ validateStructDeclShape(AstStructDecl *node) {
     if (!node) {
         return;
     }
-    if (node->isExternDecl() && node->body) {
+    if (node->isOpaqueDecl() && node->body) {
         error(node->loc,
-              "#[extern] struct `" + toStdString(node->name) +
+              "opaque struct `" + toStdString(node->name) +
                   "` cannot declare fields or methods",
-              "Use `#[extern]` on `struct " + toStdString(node->name) +
-                  "` for an opaque C type, or drop the tag and declare a normal struct body.");
+              "Use `struct " + toStdString(node->name) +
+                  "` for an opaque declaration, or add a body without the opaque form.");
     }
 }
 
@@ -374,7 +374,7 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
             error(loc,
                   "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }
@@ -383,7 +383,7 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
             error(loc,
                   "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }

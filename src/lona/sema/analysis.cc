@@ -515,15 +515,15 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
         return;
     }
     auto *structType = asUnqualified<StructType>(type);
-    if (!structType || !structType->isExternDecl()) {
+    if (!structType || !structType->isOpaque()) {
         return;
     }
     error(node->loc,
-          "opaque `#[extern]` struct `" + describeStorageType(type, node) +
+          "opaque struct `" + describeStorageType(type, node) +
               "` cannot be used by value in variable `" +
               toStdString(node->getName()) + "`",
           "Use `" + describeStorageType(type, node) +
-              "*` instead. Opaque C structs are only supported behind pointers.");
+              "*` instead. Opaque structs are only supported behind pointers.");
 }
 
 void
@@ -1128,13 +1128,13 @@ class FunctionAnalyzer {
                 auto *declaredType = typeObject->declaredType();
                 auto *structType = asUnqualified<StructType>(declaredType);
                 if (structType) {
-                    if (structType->isExternDecl()) {
+                    if (structType->isOpaque()) {
                         error(loc,
-                              "opaque `#[extern]` struct `" +
+                              "opaque struct `" +
                                   describeResolvedType(structType) +
                                   "` cannot be constructed by value",
                               "Use `" + describeResolvedType(structType) +
-                                  "*` from a `#[extern \"C\"]` API instead. Opaque C structs do not expose fields or value layout.");
+                                  "*` from an API that owns the storage instead. Opaque structs do not expose fields or value layout.");
                     }
                     resolution.kind = CallResolutionKind::ConstructorCall;
                     resolution.resultEntity = EntityRef::typedValue(structType);

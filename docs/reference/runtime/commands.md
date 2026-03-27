@@ -264,4 +264,4 @@ lac-native --target x86_64-none-elf input.lo output/program
 
 如果你只是想“把一个 `.lo` 跑起来”，默认优先走 `lac`。
 
-如果任务涉及 `#[extern "C"]`、`#[extern] struct` 或 `#[repr "C"]`，再继续看 [c_ffi.md](c_ffi.md)。
+如果任务涉及 `#[extern "C"]`、bodyless opaque `struct` 或 `#[repr "C"]`，再继续看 [c_ffi.md](c_ffi.md)。

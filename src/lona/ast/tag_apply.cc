@@ -123,25 +123,18 @@ applyExternTag(AstNode *target, const AstTag *tag) {
     }
 
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(target)) {
-        if (structDecl->declKind != StructDeclKind::Native) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Semantic,
-                tag ? tag->name.loc : structDecl->loc,
-                "conflicting declaration tags on " +
-                    describeTagTarget(structDecl),
-                "Choose exactly one of `#[extern]` or `#[repr \"C\"]`.");
-        }
-        requireTagArgCount(
-            tag, 0, structDecl,
-            "Use syntax like `#[extern]` for opaque foreign structs.");
-        structDecl->setDeclKind(StructDeclKind::Extern);
-        return;
+        errorCannotApplyTag(
+            tag, target,
+            "Write `struct " + toStdString(structDecl->name) +
+                "` for an opaque type, or use `#[repr \"C\"] struct " +
+                toStdString(structDecl->name) +
+                " { ... }` for a C-compatible layout. The `extern` tag only applies to function declarations.");
     }
 
     if (dynamic_cast<AstVarDef *>(target)) {
         errorCannotApplyTag(
             tag, target,
-            "The `extern` tag only applies to function and struct declarations right now.");
+            "The `extern` tag only applies to function declarations right now.");
     }
 
     errorCannotApplyTag(
@@ -158,7 +151,7 @@ applyReprTag(AstNode *target, const AstTag *tag) {
                 tag ? tag->name.loc : structDecl->loc,
                 "conflicting declaration tags on " +
                     describeTagTarget(structDecl),
-                "Choose exactly one of `#[extern]` or `#[repr \"C\"]`.");
+                "Choose exactly one struct declaration kind.");
         }
         requireTagArgCount(tag, 1, structDecl, "Use syntax like `#[repr \"C\"]`.");
         auto repr =
@@ -333,25 +326,31 @@ validateBuiltinTagResults(AstNode *node) {
         return;
     }
     if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
-        if (!funcDecl->hasBody() && !funcDecl->isExternC()) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Semantic, funcDecl->loc,
-                "function `" + toStdString(funcDecl->name) +
-                    "` declaration requires `#[extern \"C\"]`",
-                "Bodyless functions are only supported for external declarations right now.");
-        }
         if (funcDecl->body) {
             validateBuiltinTagResults(funcDecl->body);
         }
         return;
     }
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
-        if (!structDecl->hasBody() && !structDecl->isExternDecl()) {
+        if (!structDecl->hasBody()) {
+            if (structDecl->isReprC()) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Semantic, structDecl->loc,
+                    "#[repr \"C\"] struct `" + toStdString(structDecl->name) +
+                        "` requires a body",
+                    "Use `struct " + toStdString(structDecl->name) +
+                        "` for an opaque type, or add fields to `#[repr \"C\"] struct " +
+                        toStdString(structDecl->name) + " { ... }`.");
+            }
+            structDecl->setDeclKind(StructDeclKind::Opaque);
+        }
+        if (structDecl->hasBody() && structDecl->isOpaqueDecl()) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, structDecl->loc,
-                "struct `" + toStdString(structDecl->name) +
-                    "` declaration requires a body",
-                "Use `struct Name { ... }` for a normal struct, or `#[extern]` for an opaque foreign struct.");
+                "opaque struct `" + toStdString(structDecl->name) +
+                    "` cannot declare fields or methods",
+                "Use `struct " + toStdString(structDecl->name) +
+                    "` for an opaque declaration, or drop the opaque form and keep the body.");
         }
         if (structDecl->body) {
             validateBuiltinTagResults(structDecl->body);

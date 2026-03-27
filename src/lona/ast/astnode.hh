@@ -64,15 +64,15 @@ accessKindKeyword(AccessKind kind) {
 
 enum class StructDeclKind {
     Native,
-    Extern,
+    Opaque,
     ReprC,
 };
 
 inline const char *
 structDeclKindKeyword(StructDeclKind kind) {
     switch (kind) {
-    case StructDeclKind::Extern:
-        return "extern";
+    case StructDeclKind::Opaque:
+        return "opaque";
     case StructDeclKind::ReprC:
         return "repr_c";
     case StructDeclKind::Native:
@@ -433,7 +433,7 @@ public:
                   StructDeclKind declKind = StructDeclKind::Native)
         : AstNode(field.loc), name(field.text), body(body), declKind(declKind) {}
     bool hasBody() const { return body != nullptr; }
-    bool isExternDecl() const { return declKind == StructDeclKind::Extern; }
+    bool isOpaqueDecl() const { return declKind == StructDeclKind::Opaque; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
     void setDeclKind(StructDeclKind kind) { declKind = kind; }
     void toJson(Json &root) override;

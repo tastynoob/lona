@@ -1,7 +1,7 @@
 # 结构体声明示例
 
 > 对应 `grammar.md` 的“3.3 结构体与函数声明”。
-> 本文只讲普通 `struct` 语义。C 边界上的 `#[extern] struct` 与 `#[repr "C"] struct` 统一见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+> 本文讲普通 `struct` 语义，以及 bodyless `struct Name` 这种 opaque 声明。`#[repr "C"] struct` 的 C 边界规则见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ## 1. 只有字段的结构体
 
@@ -113,4 +113,18 @@ struct Marker {}
 - 空结构体会形成一个零字段的普通结构体类型。
 - 多行空体和单行空体现在都可解析。
 - 后续如果需要字段或方法，仍然按普通结构体体语法扩展即可。
-- `struct Name` 与后面的 `{` 必须在同一行；如果 `struct Name` 已经单独成行，它就表示“无结构体体”的声明形式，而不是下一行 `{ ... }` 的开头。
+- `struct Name` 与后面的 `{` 必须在同一行；如果 `struct Name` 已经单独成行，它就表示 opaque struct declaration，而不是下一行 `{ ... }` 的开头。
+
+## 7. Opaque Struct
+
+```lona
+struct FILE
+struct Handle
+```
+
+说明：
+
+- bodyless `struct Name` 表示“只知道类型名存在，但不知道字段和布局”的 opaque struct。
+- opaque struct 不能按值构造、不能按值做局部变量，也不能访问字段。
+- 如果需要持有或传递它，写成 `FILE*`、`Handle*` 这类指针形式。
+- 这条语义不只用于 C FFI；它本身就是语言里的明确类型边界。

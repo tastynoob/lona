@@ -73,8 +73,8 @@
 - `if expr {` 与 `for expr {` 要求开块 `{` 直接跟在头部表达式后面；这里不能先换行。
 - `else` 既可以和前一个 `}` 写在同一行，也可以在若干空行或仅注释行之后起在下一行。
 - 但 `else` 自己后面不能换行；当前只接受 `else { ... }` 和 `else if ...`。
-- `def name(...) Ret` 如果这一行已经以换行结束，就形成 bodyless declaration；如果要写函数体，开块 `{` 必须和函数头在同一行。
-- `struct Name` 如果这一行已经以换行结束，就形成无结构体体声明；如果要写结构体体，开块 `{` 必须和 `struct Name` 在同一行。
+- `def name(...) Ret` 如果这一行已经以换行结束，就形成 bodyless function declaration；如果要写函数体，开块 `{` 必须和函数头在同一行。
+- `struct Name` 如果这一行已经以换行结束，就形成 opaque struct declaration；如果要写结构体体，开块 `{` 必须和 `struct Name` 在同一行。
 
 ### 1.4 词法器可识别的符号
 
@@ -228,13 +228,13 @@ param-decl-seq    ::= param-decl
 
 - tag line 必须单独占一行，然后紧跟一个函数声明、结构体声明或变量定义。
 - 当前内建 tag 只有 `extern` 和 `repr`。
-- `#[extern]` 只接受零参数，当前用于 opaque foreign struct。
 - `#[extern "C"]` 只接受一个字符串参数 `"C"`，当前用于 C ABI 顶层函数。
+- `#[extern] struct Name` 已移除；opaque 类型统一写成 bodyless `struct Name`。
 - `#[repr "C"]` 只接受一个字符串参数 `"C"`，当前用于 C-compatible 结构体。
 - `val name = expr` 是变量定义语法，不是类型后缀；它会先推断 `expr` 的值类型，再在最外层补一层 `const`。
 - `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
-- `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示“无结构体体”的声明形式。
-- `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为 bodyless declaration。
+- `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示 opaque struct declaration。
+- `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为函数声明。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ### 3.4 变量定义

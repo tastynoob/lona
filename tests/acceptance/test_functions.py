@@ -245,7 +245,6 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
             #[extern "C"]
             def puts(msg i8*) i32
 
-            #[extern]
             struct FILE
 
             #[repr "C"]
@@ -256,8 +255,24 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
             """,
         )
     ).expect_ok().stdout
-    for needle in ['"abiKind": "c"', '"declKind": "extern"', '"declKind": "repr_c"', '"body": null']:
+    for needle in ['"abiKind": "c"', '"declKind": "opaque"', '"declKind": "repr_c"', '"body": null']:
         assert_contains(json_result, needle, label="ffi decl json")
+
+    native_decl_ir = compiler.emit_ir(
+        compiler.write_source(
+            "native_decl.lo",
+            """
+            def add_decl(a i32, b i32) i32
+
+            def main() i32 {
+                ret add_decl(1, 2)
+            }
+            """,
+        )
+    ).expect_ok().stdout
+    assert_regex(native_decl_ir, r"^declare .*i32 @add_decl\(i32, i32\)", label="native decl ir")
+    assert_contains(native_decl_ir, "call i32 @add_decl(i32 1, i32 2)", label="native decl ir")
+    assert_not_contains(native_decl_ir, "define i32 @add_decl", label="native decl ir")
 
     string_ir = compiler.emit_ir(
         compiler.write_source(
@@ -280,7 +295,6 @@ def test_ffi_json_and_valid_signatures_lower_correctly(compiler: CompilerHarness
         compiler.write_source(
             "ffi_pointer_sig.lo",
             """
-            #[extern]
             struct FILE
 
             #[repr "C"]
@@ -428,15 +442,23 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             '#[extern "C"]\nvar file i32 = 0\n',
             [
                 'semantic error: cannot apply tag `extern` to variable `file`',
-                'help: The `extern` tag only applies to function and struct declarations right now.',
+                'help: The `extern` tag only applies to function declarations right now.',
             ],
         ),
         (
             "ffi_extern_struct_bad.lo",
-            "#[extern]\nstruct FILE {\n}\n",
+            "#[extern]\nstruct FILE\n",
             [
-                'semantic error: #[extern] struct `FILE` cannot declare fields or methods',
-                'help: Use `#[extern]` on `struct FILE` for an opaque C type, or drop the tag and declare a normal struct body.',
+                'semantic error: cannot apply tag `extern` to struct `FILE`',
+                'help: Write `struct FILE` for an opaque type, or use `#[repr "C"] struct FILE { ... }` for a C-compatible layout. The `extern` tag only applies to function declarations.',
+            ],
+        ),
+        (
+            "ffi_repr_opaque_bad.lo",
+            '#[repr "C"]\nstruct FILE\n',
+            [
+                'semantic error: #[repr "C"] struct `FILE` requires a body',
+                'help: Use `struct FILE` for an opaque type, or add fields to `#[repr "C"] struct FILE { ... }`.',
             ],
         ),
         (
@@ -525,13 +547,12 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             """,
             [
                 'semantic error: #[extern "C"] function `bad` uses unsupported parameter `p`: Pair*',
-                'help: Use pointers to scalars, pointers, `#[extern] struct`, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
+                'help: Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr "C"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.',
             ],
         ),
         (
             "ffi_opaque_var_bad.lo",
             """
-            #[extern]
             struct FILE
 
             def main() i32 {
@@ -540,14 +561,13 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             }
             """,
             [
-                'semantic error: opaque `#[extern]` struct `FILE` cannot be used by value in variable `file`',
-                'help: Use `FILE*` instead. Opaque C structs are only supported behind pointers.',
+                'semantic error: opaque struct `FILE` cannot be used by value in variable `file`',
+                'help: Use `FILE*` instead. Opaque structs are only supported behind pointers.',
             ],
         ),
         (
             "ffi_opaque_ctor_bad.lo",
             """
-            #[extern]
             struct FILE
 
             def main() i32 {
@@ -556,9 +576,9 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             }
             """,
             [
-                'semantic error: opaque `#[extern]` struct `',
+                'semantic error: opaque struct `',
                 'FILE` cannot be constructed by value',
-                'from a `#[extern "C"]` API instead. Opaque C structs do not expose fields or value layout.',
+                'from an API that owns the storage instead. Opaque structs do not expose fields or value layout.',
             ],
         ),
         (
