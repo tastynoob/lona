@@ -78,6 +78,9 @@ native object 还会额外携带：
 
 ## 程序入口约定
 
+语言层关于 root 模块和顶层可执行语句的规则见 [../language/program.md](../language/program.md)。
+这一节只描述构建路径如何消费语言入口。
+
 为了让启动代码和 hosted wrapper 都不依赖路径相关的内部约定，入口分成两层：
 
 - 语言入口：`__lona_main__() -> i32`
@@ -85,11 +88,9 @@ native object 还会额外携带：
 
 入口选择规则：
 
-1. 如果 root 模块存在顶层可执行语句，它们会直接 lower 到 `__lona_main__() -> i32`。
-2. `def main() i32` 只是普通函数名，不会自动提升成入口。
-3. hosted target（例如 `x86_64-unknown-linux-gnu`）会额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
-4. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
-5. 如果连 `__lona_main__` 都无法建立，则两条构建路径都会报错并提示当前程序缺少可执行入口。
+1. hosted target（例如 `x86_64-unknown-linux-gnu`）会额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
+2. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
+3. 如果当前程序没有建立 `__lona_main__`，两条构建路径都会报错并提示缺少可执行入口。
 
 ## 使用方式
 

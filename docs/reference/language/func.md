@@ -1,6 +1,7 @@
 # 函数声明示例
 
 > 对应 `grammar.md` 的“3.3 结构体与函数声明”。
+> 本文只讲顶层 `def`。结构体方法见 [struct.md](struct.md)，C ABI 顶层函数见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ## 1. 无参数、无显式返回类型
 
@@ -52,7 +53,7 @@ def apply_ref(f (ref i32: i32), x i32) i32 {
 
 - 当前函数参数和返回值默认按值处理；这条规则同样适用于结构体、tuple 和固定维数组。
 - 如果需要共享并原地修改同一份对象，可以显式使用引用参数 `ref x T`，或显式传递指针类型 `T*`。
-- 裸函数签名本身不是可传递的用户类型；如果要把函数当作值传入，必须写成显式函数指针。
+- 裸函数签名本身不是可传递的用户类型；如果要把函数当作值传入，必须写成显式函数指针，具体写法见 [type.md](type.md)。
 - 在参数类型位置里，parser 只接受显式函数指针，例如 `(:)`、`(i32: i32)`、`(ref i32: i32)`。
 - 参数列表当前不支持尾逗号；例如 `def add(a i32, b i32,) i32` 会在 parser 阶段报错。
 
@@ -93,26 +94,5 @@ def abs(v i32) i32 {
 
 说明：
 
-- `def name(...) Ret` 这一行如果已经以换行结束，就表示 bodyless declaration，例如 `#[extern "C"]` 后面的 `def puts(msg u8 const[*]) i32`。
+- `def name(...) Ret` 这一行如果已经以换行结束，就表示 bodyless declaration。
 - 因此如果要写函数体，开块 `{` 必须和函数头写在同一行；`def add(a i32, b i32) i32` 下一行再写 `{` 当前不会被当成同一个函数体头。
-
-## 7. `#[extern "C"]` 顶层函数
-
-```lona
-#[extern "C"]
-def puts(msg u8 const[*]) i32
-
-#[extern "C"]
-def lona_add(a i32, b i32) i32 {
-    ret a + b
-}
-```
-
-说明：
-
-- `#[extern "C"]` 现在已经是 parser / sema / codegen 接通的稳定语法入口，不只是草案。
-- 没有函数体时表示导入外部 C 符号；有函数体时表示导出一个 C ABI 函数。
-- 当前只支持 `#[extern "C"]`，不支持其它 ABI 名称。
-- FFI v0 只支持顶层函数；`#[extern "C"]` method 虽然可能被 parser 吃下，但会在语义阶段被拒绝。
-- C callback 的用户层函数指针语法还没有开放；当前函数类型内部已经记录 ABI，但语言表面还不能写 `#[extern "C"]` 函数指针。
-- 更细的边界，例如禁止 `ref` 参数、callback、普通聚合按值跨 C 边界，见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。

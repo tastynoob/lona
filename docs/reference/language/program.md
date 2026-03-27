@@ -79,15 +79,10 @@ var answer = 41
 answer = answer + 1
 ```
 
-当前实现会把 root 模块的顶层可执行语句收进一个内部语言入口：
-
-- `__lona_main__() -> i32`
-
 规则是：
 
 - 只有 root 模块允许顶层可执行语句。
 - imported 模块仍然只能包含声明，不能包含顶层执行语句。
-- root 模块如果要构成可执行程序，必须直接提供顶层可执行语句。
+- root 模块如果存在顶层可执行语句，语言内部会建立 `__lona_main__() -> i32` 作为入口。
 - `def main() i32` 现在只是普通函数名，不再自动提升成程序入口。
-- root 模块的顶层执行体会直接 lower 到 `__lona_main__`。
-- `__lona_main__` 是语言内部入口，不直接等同于宿主系统里的 `main(argc, argv)`。
+- 宿主系统的 `main(argc, argv)` wrapper、bare `_start` 和可执行文件构建路径见 [../runtime/native_build.md](../runtime/native_build.md)。

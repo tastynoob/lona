@@ -12,7 +12,8 @@
 
 - [program.md](program.md): 程序结构、顶层项和入口约定。
 - [vardef.md](vardef.md): 变量定义与初始化规则。
-- [func.md](func.md): 函数、方法、参数和返回值。
-- [struct.md](struct.md): 结构体、字段和默认构造函数语义。
+- [func.md](func.md): 顶层函数、参数和返回值。
+- [struct.md](struct.md): 普通结构体、字段、call-like 初始化和方法语义。
 - [controlflow.md](controlflow.md): `if`、`for`、`break`、`continue`、`ret`。
-- [pointer_reference.md](pointer_reference.md): 当前值 / 指针 / `ref` 语义边界。
+- [pointer.md](pointer.md): 显式指针、取地址、解引用和 `T[*]`。
+- [ref.md](ref.md): 显式 `ref` 绑定与 `ref` 参数。
