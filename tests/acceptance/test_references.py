@@ -185,7 +185,7 @@ def test_ref_parameter_cannot_drop_constness(compiler: CompilerHarness) -> None:
         }
 
         def main() i32 {
-            var x i32 const = 3
+            const x = 3
             ret bump(ref x)
         }
         """,

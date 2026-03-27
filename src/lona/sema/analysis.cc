@@ -527,6 +527,23 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
 }
 
 void
+rejectConstVariableStorage(TypeClass *type, AstVarDef *node) {
+    if (!node || !type || node->isRefBinding() || node->isConstBinding()) {
+        return;
+    }
+    auto *typeNode = node->getTypeNode();
+    if (!typeNode || dynamic_cast<ConstTypeNode *>(typeNode) == nullptr) {
+        return;
+    }
+    error(node->loc,
+          "variable `" + toStdString(node->getName()) +
+              "` cannot use a top-level const storage type: " +
+              describeStorageType(type, node),
+          "Use `const " + toStdString(node->getName()) +
+              " = ...` for a read-only binding, or move `const` behind a pointer like `T const*` / `T const[*]` when you only want a read-only pointee view.");
+}
+
+void
 rejectUninitializedFunctionPointerValueStorage(TypeClass *type, AstVarDef *node) {
     if (!node || node->withInitVal() || !type) {
         return;
@@ -2675,6 +2692,7 @@ class FunctionAnalyzer {
             type = requireType(typeNode, typeNode->loc, "unknown variable type");
             rejectBareFunctionStorage(type, node);
             rejectOpaqueStructStorage(type, node);
+            rejectConstVariableStorage(type, node);
             rejectUninitializedFunctionPointerValueStorage(type, node);
         } else if (isRefBinding) {
             error(node->loc,

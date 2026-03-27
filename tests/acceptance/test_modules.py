@@ -212,7 +212,7 @@ def test_const_pointer_slots_stay_shallow_for_indexed_writes(
         """
         def main() i32 {
             var data i32[2] = {1, 2}
-            var view i32[*] const = &data(0)
+            const view = cast[i32[*]](&data(0))
             view(0) = 7
             ret data(0)
         }

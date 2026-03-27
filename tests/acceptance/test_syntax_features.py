@@ -507,7 +507,7 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
         }
 
         def main() i32 {
-            var x f32 const = 1.5_f64
+            const x = 1.5_f32
             var y f32 = hold(2.5_f64)
             ret cast[i32](x + y)
         }
@@ -1060,7 +1060,7 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
             var copy = bytes
             copy(0) = 7
 
-            var ptr u8* const = &copy(0)
+            const ptr = &copy(0)
             var next = ptr
             next = &copy(1)
 
@@ -1111,15 +1111,24 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
             ["assignment target contains read-only storage: i32 const"],
         ),
         (
-            "const_assign_bad.lo",
+            "var_top_level_const_bad.lo",
             """
             def main() i32 {
                 var value u8 const = 1
-                value = 2
                 ret 0
             }
             """,
-            ["assignment target contains read-only storage: u8 const"],
+            ["variable `value` cannot use a top-level const storage type: u8 const"],
+        ),
+        (
+            "var_top_level_const_ptr_bad.lo",
+            """
+            def main() i32 {
+                var raw u8* const = null
+                ret 0
+            }
+            """,
+            ["variable `raw` cannot use a top-level const storage type: u8* const"],
         ),
         (
             "const_array_assign_bad.lo",

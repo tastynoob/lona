@@ -256,6 +256,7 @@ var-def           ::= "var" var-decl
 说明：
 
 - 当前 array init 先收口为“初始化语法”，而不是任意位置都可用的裸表达式。
+- `var` 显式类型绑定只接受可变存储；像 `var x i32 const = 1`、`var p T* const = ...` 这类最外层 `const` 写法会在语义阶段报错。只读绑定改用 `const name = expr`。
 - 变量定义、推断和初始化语义见 [vardef.md](./vardef.md)。
 
 ### 3.5 表达式
