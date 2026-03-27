@@ -36,7 +36,22 @@ var point = Point()
 - `var p = null` 不会做类型推断；需要写成 `var p i32* = null` 这类带显式指针类型的形式。
 - 字面量转义、字符串底层字节语义和 `null` 的表达式边界见 [expr.md](expr.md)。
 
-## 4. 简写形式 `name := expr`
+## 4. 只读简写 `const name = expr`
+
+```lona
+const count = 1
+const title = "lona"
+const pair = (1, true)
+```
+
+说明：
+
+- `const name = expr` 会先按 `var name = expr` 那样推断初始化器的值类型，再在最外层补一层 `const`。
+- 因此 `const count = 1` 会得到 `i32 const`，`const pair = (1, true)` 会得到 `<i32, bool> const`。
+- 如果推断出来的类型顶层已经是 `const`，这里不会重复叠加第二层同级 `const`。
+- 这条语法仍然要求初始化器可推断；例如 `const p = null` 会因为 `null` 缺少具体指针类型而报错。
+
+## 5. 简写形式 `name := expr`
 
 ```lona
 count := 1
@@ -52,7 +67,7 @@ IDENT ":" "=" expr
 
 因此当前只接受简单标识符，不是成员访问或解引用左值。
 
-## 5. 当前采用值语义与拷贝赋值
+## 6. 当前采用值语义与拷贝赋值
 
 说明：
 
@@ -61,7 +76,7 @@ IDENT ":" "=" expr
 - `ref a T = x` 会把 `a` 绑定成 `x` 的别名；后续 `a = y` 会写入被绑定对象。
 - 更完整的指针与 `ref` 语义边界见 [pointer.md](./pointer.md) 与 [ref.md](./ref.md)；结构体字段、方法和 `set` 规则见 [struct.md](./struct.md)。
 
-## 6. 变量声明中也可以直接使用复杂类型
+## 7. 变量声明中也可以直接使用复杂类型
 
 ```lona
 var p i32*

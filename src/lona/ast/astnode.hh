@@ -470,23 +470,28 @@ public:
 
 class AstVarDef : public AstNode {
     BindingKind const bindingKind;
+    bool const constBinding;
     string const field;
     TypeNode *const typeNode;
     AstNode *const initVal;
 public:
-    AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr)
+    AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr,
+              bool constBinding = false)
         : AstNode(vardecl->loc), bindingKind(vardecl->bindingKind),
-          field(vardecl->field), typeNode(vardecl->typeNode),
+          constBinding(constBinding), field(vardecl->field), typeNode(vardecl->typeNode),
           initVal(initVal) {}
 
-    AstVarDef(AstToken &field, AstNode *initVal = nullptr)
-        : AstNode(field.loc), bindingKind(BindingKind::Value), field(field.text),
-          typeNode(nullptr), initVal(initVal) {}
+    AstVarDef(AstToken &field, AstNode *initVal = nullptr,
+              bool constBinding = false)
+        : AstNode(field.loc), bindingKind(BindingKind::Value),
+          constBinding(constBinding), field(field.text), typeNode(nullptr),
+          initVal(initVal) {}
 
 
     auto& getName() const { return field; }
     BindingKind getBindingKind() const { return bindingKind; }
     bool isRefBinding() const { return bindingKind == BindingKind::Ref; }
+    bool isConstBinding() const { return constBinding; }
     TypeNode *getTypeNode() const { return typeNode; }
     AstNode *getInitVal() const { return initVal; }
 

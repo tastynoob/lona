@@ -1038,6 +1038,19 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
     for needle in ['"declaredType": "u8 const[4]"', '"declaredType": "u8 const[*]"', '"declaredType": "u8[*] const"', '"declaredType": "u8* const"']:
         assert_contains(const_json, needle, label="const type json")
 
+    const_binding_json = _emit_json(
+        compiler,
+        "const_binding_json.lo",
+        """
+        def main() i32 {
+            const value = 1
+            ret value
+        }
+        """,
+    )
+    for needle in ['"type": "VarDef"', '"constBinding": true', '"field": "value"']:
+        assert_contains(const_binding_json, needle, label="const binding json")
+
     const_materialize_ir = _emit_ir(
         compiler,
         "const_materialize.lo",
@@ -1074,6 +1087,29 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
     assert_contains(struct_const_ptr_field_ir, "define i32 @main", label="struct const ptr field ir")
 
     failures = [
+        (
+            "const_binding_assign_bad.lo",
+            """
+            def main() i32 {
+                const value = 1
+                value = 2
+                ret 0
+            }
+            """,
+            ["assignment target contains read-only storage: i32 const"],
+        ),
+        (
+            "const_binding_rewrap_once_bad.lo",
+            """
+            def main() i32 {
+                const a = 1
+                const b = a
+                b = 2
+                ret 0
+            }
+            """,
+            ["assignment target contains read-only storage: i32 const"],
+        ),
         (
             "const_assign_bad.lo",
             """

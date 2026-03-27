@@ -2747,7 +2747,16 @@ class FunctionAnalyzer {
             error(node->loc,
                   "cannot infer the type of `" + toStdString(node->getName()) +
                       "` without an initializer",
-                  "Add an explicit type annotation or provide an initializer.");
+                      "Add an explicit type annotation or provide an initializer.");
+        }
+
+        if (node->isConstBinding()) {
+            if (isRefBinding) {
+                internalError(node->loc,
+                              "const variable binding unexpectedly used with `ref`",
+                              "Keep `const name = expr` as a value binding only.");
+            }
+            type = typeMgr->createConstType(type);
         }
 
         auto *binding = resolved.variable(node);
