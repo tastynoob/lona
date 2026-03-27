@@ -77,9 +77,10 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 (true) { RETURN_PLAIN_TOKEN(token::TRUE); }
 (false) { RETURN_PLAIN_TOKEN(token::FALSE); }
 (null) { RETURN_PLAIN_TOKEN(token::NULL_KW); }
-(var) { RETURN_PLAIN_TOKEN(token::VAR); }
-(ref) { RETURN_PLAIN_TOKEN(token::REF); }
-(const) { RETURN_PLAIN_TOKEN(token::TYPE_CONST); }
+	(var) { RETURN_PLAIN_TOKEN(token::VAR); }
+	(val) { RETURN_PLAIN_TOKEN(token::VAL); }
+	(ref) { RETURN_PLAIN_TOKEN(token::REF); }
+	(const) { RETURN_PLAIN_TOKEN(token::TYPE_CONST); }
 (cast) { RETURN_PLAIN_TOKEN(token::CAST); }
 (sizeof) { RETURN_PLAIN_TOKEN(token::SIZEOF); }
 

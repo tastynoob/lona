@@ -528,7 +528,7 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
 
 void
 rejectConstVariableStorage(TypeClass *type, AstVarDef *node) {
-    if (!node || !type || node->isRefBinding() || node->isConstBinding()) {
+    if (!node || !type || node->isRefBinding() || node->isReadOnlyBinding()) {
         return;
     }
     auto *typeNode = node->getTypeNode();
@@ -539,7 +539,7 @@ rejectConstVariableStorage(TypeClass *type, AstVarDef *node) {
           "variable `" + toStdString(node->getName()) +
               "` cannot use a top-level const storage type: " +
               describeStorageType(type, node),
-          "Use `const " + toStdString(node->getName()) +
+          "Use `val " + toStdString(node->getName()) +
               " = ...` for a read-only binding, or move `const` behind a pointer like `T const*` / `T const[*]` when you only want a read-only pointee view.");
 }
 
@@ -2768,11 +2768,11 @@ class FunctionAnalyzer {
                       "Add an explicit type annotation or provide an initializer.");
         }
 
-        if (node->isConstBinding()) {
+        if (node->isReadOnlyBinding()) {
             if (isRefBinding) {
                 internalError(node->loc,
-                              "const variable binding unexpectedly used with `ref`",
-                              "Keep `const name = expr` as a value binding only.");
+                              "read-only variable binding unexpectedly used with `ref`",
+                              "Keep `val name = expr` as a value binding only.");
             }
             type = typeMgr->createConstType(type);
         }

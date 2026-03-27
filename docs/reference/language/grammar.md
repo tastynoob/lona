@@ -215,8 +215,8 @@ field-decl        ::= IDENT type-name
                     | "set" IDENT type-name
 
 var-decl          ::= IDENT type-name
-const-var-def     ::= "const" IDENT "=" expr
-                    | "const" IDENT "=" brace-init
+val-var-def       ::= "val" IDENT "=" expr
+                    | "val" IDENT "=" brace-init
 param-decl        ::= IDENT type-name
                     | "ref" IDENT type-name
 
@@ -231,7 +231,7 @@ param-decl-seq    ::= param-decl
 - `#[extern]` 只接受零参数，当前用于 opaque foreign struct。
 - `#[extern "C"]` 只接受一个字符串参数 `"C"`，当前用于 C ABI 顶层函数。
 - `#[repr "C"]` 只接受一个字符串参数 `"C"`，当前用于 C-compatible 结构体。
-- `const name = expr` 是变量定义语法，不是类型后缀；它会先推断 `expr` 的值类型，再在最外层补一层 `const`。
+- `val name = expr` 是变量定义语法，不是类型后缀；它会先推断 `expr` 的值类型，再在最外层补一层 `const`。
 - `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
 - `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示“无结构体体”的声明形式。
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为 bodyless declaration。
@@ -243,8 +243,8 @@ param-decl-seq    ::= param-decl
 var-def           ::= "var" var-decl
                     | "var" var-decl "=" expr
                     | "var" var-decl "=" array-init
-                    | "const" IDENT "=" expr
-                    | "const" IDENT "=" array-init
+                    | "val" IDENT "=" expr
+                    | "val" IDENT "=" array-init
                     | "ref" IDENT type-name "=" expr
                     | "ref" IDENT type-name "=" array-init
                     | "var" IDENT "=" expr
@@ -256,7 +256,7 @@ var-def           ::= "var" var-decl
 说明：
 
 - 当前 array init 先收口为“初始化语法”，而不是任意位置都可用的裸表达式。
-- `var` 显式类型绑定只接受可变存储；像 `var x i32 const = 1`、`var p T* const = ...` 这类最外层 `const` 写法会在语义阶段报错。只读绑定改用 `const name = expr`。
+- `var` 显式类型绑定只接受可变存储；像 `var x i32 const = 1`、`var p T* const = ...` 这类最外层 `const` 写法会在语义阶段报错。只读绑定改用 `val name = expr`。
 - 变量定义、推断和初始化语义见 [vardef.md](./vardef.md)。
 
 ### 3.5 表达式

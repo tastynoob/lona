@@ -507,7 +507,7 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
         }
 
         def main() i32 {
-            const x = 1.5_f32
+            val x = 1.5_f32
             var y f32 = hold(2.5_f64)
             ret cast[i32](x + y)
         }
@@ -1038,18 +1038,18 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
     for needle in ['"declaredType": "u8 const[4]"', '"declaredType": "u8 const[*]"', '"declaredType": "u8[*] const"', '"declaredType": "u8* const"']:
         assert_contains(const_json, needle, label="const type json")
 
-    const_binding_json = _emit_json(
+    val_binding_json = _emit_json(
         compiler,
-        "const_binding_json.lo",
+        "val_binding_json.lo",
         """
         def main() i32 {
-            const value = 1
+            val value = 1
             ret value
         }
         """,
     )
-    for needle in ['"type": "VarDef"', '"constBinding": true', '"field": "value"']:
-        assert_contains(const_binding_json, needle, label="const binding json")
+    for needle in ['"type": "VarDef"', '"readOnlyBinding": true', '"field": "value"']:
+        assert_contains(val_binding_json, needle, label="val binding json")
 
     const_materialize_ir = _emit_ir(
         compiler,
@@ -1060,7 +1060,7 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
             var copy = bytes
             copy(0) = 7
 
-            const ptr = &copy(0)
+            val ptr = &copy(0)
             var next = ptr
             next = &copy(1)
 
@@ -1088,10 +1088,10 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
 
     failures = [
         (
-            "const_binding_assign_bad.lo",
+            "val_binding_assign_bad.lo",
             """
             def main() i32 {
-                const value = 1
+                val value = 1
                 value = 2
                 ret 0
             }
@@ -1099,16 +1099,26 @@ def test_const_types_materialization_and_const_rejections(compiler: CompilerHarn
             ["assignment target contains read-only storage: i32 const"],
         ),
         (
-            "const_binding_rewrap_once_bad.lo",
+            "val_binding_rewrap_once_bad.lo",
             """
             def main() i32 {
-                const a = 1
-                const b = a
+                val a = 1
+                val b = a
                 b = 2
                 ret 0
             }
             """,
             ["assignment target contains read-only storage: i32 const"],
+        ),
+        (
+            "const_binding_syntax_removed.lo",
+            """
+            def main() i32 {
+                const value = 1
+                ret value
+            }
+            """,
+            ["syntax error:"],
         ),
         (
             "var_top_level_const_bad.lo",

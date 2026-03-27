@@ -60,6 +60,7 @@
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
 %token LOGIC_LE "<=" LOGIC_GE ">=" SHIFT_LEFT "<<" SHIFT_RIGHT ">>"
 %token VAR "var"
+%token VAL "val"
 %token REF "ref"
 %token TYPE_CONST "const"
 %token CAST "cast"
@@ -354,8 +355,8 @@ var_def
     : VAR var_decl { $$ = new AstVarDef($2); }
     | VAR var_decl '=' opt_newlines expr { $$ = new AstVarDef($2, $5); }
     | VAR var_decl '=' opt_newlines brace_init { $$ = new AstVarDef($2, $5); }
-    | TYPE_CONST FIELD '=' opt_newlines expr { $$ = new AstVarDef(*$2, $5, true); }
-    | TYPE_CONST FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5, true); }
+    | VAL FIELD '=' opt_newlines expr { $$ = new AstVarDef(*$2, $5, true); }
+    | VAL FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5, true); }
     | REF FIELD type_name '=' opt_newlines expr {
         $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $6);
     }

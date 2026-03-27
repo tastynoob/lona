@@ -34,23 +34,23 @@ var point = Point()
 - `var name = "compiler"` 当前会推断成 `u8 const[*]`，不是 `str`。
 - `var first = 'A'` 当前会推断成 `u8`。
 - `var p = null` 不会做类型推断；需要写成 `var p i32* = null` 这类带显式指针类型的形式。
-- `var` 绑定不接受最外层 `const` 类型；例如 `var p u8* const = ...`、`var x i32 const = ...` 都会报错。需要只读绑定时改写成 `const p = ...`；如果只是想让 pointee 只读，则写成 `var p u8 const* = ...` 或 `var p u8 const[*] = ...`。
+- `var` 绑定不接受最外层 `const` 类型；例如 `var p u8* const = ...`、`var x i32 const = ...` 都会报错。需要只读绑定时改写成 `val p = ...`；如果只是想让 pointee 只读，则写成 `var p u8 const* = ...` 或 `var p u8 const[*] = ...`。
 - 字面量转义、字符串底层字节语义和 `null` 的表达式边界见 [expr.md](expr.md)。
 
-## 4. 只读简写 `const name = expr`
+## 4. 只读简写 `val name = expr`
 
 ```lona
-const count = 1
-const title = "lona"
-const pair = (1, true)
+val count = 1
+val title = "lona"
+val pair = (1, true)
 ```
 
 说明：
 
-- `const name = expr` 会先按 `var name = expr` 那样推断初始化器的值类型，再在最外层补一层 `const`。
-- 因此 `const count = 1` 会得到 `i32 const`，`const pair = (1, true)` 会得到 `<i32, bool> const`。
+- `val name = expr` 会先按 `var name = expr` 那样推断初始化器的值类型，再在最外层补一层 `const`。
+- 因此 `val count = 1` 会得到 `i32 const`，`val pair = (1, true)` 会得到 `<i32, bool> const`。
 - 如果推断出来的类型顶层已经是 `const`，这里不会重复叠加第二层同级 `const`。
-- 这条语法仍然要求初始化器可推断；例如 `const p = null` 会因为 `null` 缺少具体指针类型而报错。
+- 这条语法仍然要求初始化器可推断；例如 `val p = null` 会因为 `null` 缺少具体指针类型而报错。
 
 ## 5. 简写形式 `name := expr`
 

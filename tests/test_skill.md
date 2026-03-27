@@ -36,8 +36,8 @@ description: Generate and validate focused Lona compiler test cases from the loc
 
 ## 生成规则
 
-- 单个测试尽量控制在 `10-40` 行。
-- 默认每个文件只聚焦 `1-3` 个语法点。
+- 单个测试尽量控制在100行以内。
+- 每个文件尽量使用多种语法特性的混合测试。
 - 如果需要模块测试，可以生成同目录的多个 `.lo` 文件。
 - 优先选这些更容易漏掉的问题形态：
   - 边界数值：signed min/max、不同进制、分隔符、显式后缀和上下文类型交互

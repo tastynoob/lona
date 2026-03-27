@@ -210,7 +210,7 @@ hashParamSignature(std::uint64_t &seed, AstNode *node) {
     if (auto *def = dynamic_cast<AstVarDef *>(node)) {
         hashText(seed, "param");
         hashText(seed, bindingKindKeyword(def->getBindingKind()));
-        hashText(seed, def->isConstBinding() ? "const-binding" : "mutable-binding");
+        hashText(seed, def->isReadOnlyBinding() ? "readonly-binding" : "mutable-binding");
         hashText(seed, toStdString(def->getName()));
         hashTypeNode(seed, def->getTypeNode());
         return;

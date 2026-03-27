@@ -291,7 +291,7 @@ void
 AstVarDef::toJson(Json &root) {
     root["type"] = "VarDef";
     root["bindingKind"] = bindingKindKeyword(this->bindingKind);
-    root["constBinding"] = this->isConstBinding();
+    root["readOnlyBinding"] = this->isReadOnlyBinding();
     root["field"] = this->field.tochara();
     if (this->typeNode != nullptr) {
         root["declaredType"] = describeTypeNode(this->typeNode);
