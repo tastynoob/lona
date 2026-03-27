@@ -253,7 +253,7 @@ isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
 }
 
 bool
-isFullyWritableStructFieldType(TypeClass *type) {
+isFullyWritableValueType(TypeClass *type) {
     if (!type) {
         return false;
     }
@@ -276,6 +276,11 @@ isFullyWritableStructFieldType(TypeClass *type) {
         return true;
     }
     return false;
+}
+
+bool
+isFullyWritableStructFieldType(TypeClass *type) {
+    return isFullyWritableValueType(type);
 }
 
 bool

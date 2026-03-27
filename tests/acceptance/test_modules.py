@@ -117,7 +117,7 @@ def test_non_set_method_cannot_write_even_set_fields(
     result = compiler.emit_ir(input_path).expect_failed()
     assert_contains(
         result.stderr,
-        "assignment target is const-qualified: i32 const",
+        "assignment target contains read-only storage: i32 const",
         label="non-set method write diagnostic",
     )
 
@@ -199,9 +199,26 @@ def test_non_set_method_cannot_write_tuple_projection(
     result = compiler.emit_ir(input_path).expect_failed()
     assert_contains(
         result.stderr,
-        "assignment target is const-qualified: i32 const",
+        "assignment target contains read-only storage: i32 const",
         label="non-set tuple write diagnostic",
     )
+
+
+def test_const_pointer_slots_stay_shallow_for_indexed_writes(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "const_pointer_slot_shallow.lo",
+        """
+        def main() i32 {
+            var data i32[2] = {1, 2}
+            var view i32[*] const = &data(0)
+            view(0) = 7
+            ret data(0)
+        }
+        """,
+    )
+    compiler.emit_ir(input_path).expect_ok()
 
 
 def test_get_only_tuple_field_projection_blocks_set_method_calls(

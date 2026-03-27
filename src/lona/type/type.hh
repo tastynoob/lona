@@ -431,6 +431,7 @@ asUnqualified(TypeClass *type) {
 bool isConstQualifiedType(TypeClass *type);
 bool isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType);
 TypeClass *materializeValueType(TypeTable *typeTable, TypeClass *type);
+bool isFullyWritableValueType(TypeClass *type);
 bool isFullyWritableStructFieldType(TypeClass *type);
 
 

@@ -636,12 +636,12 @@ class FunctionAnalyzer {
             isConstQualificationConvertible(targetType, sourceType);
     }
 
-    [[noreturn]] void errorConstAssignmentTarget(const location &loc,
-                                                 TypeClass *type) {
+    [[noreturn]] void errorReadOnlyAssignmentTarget(const location &loc,
+                                                    TypeClass *type) {
         error(loc,
-              "assignment target is const-qualified: " +
+              "assignment target contains read-only storage: " +
                   describeResolvedType(type),
-              "Write through a mutable value instead, or copy into a new `var` binding if you need a writable value.");
+              "Only fully writable values can appear on the left side of `=`. Write through a mutable projection instead, or copy into a new `var` binding if you need a writable whole value.");
     }
 
     template<typename T, typename... Args>
@@ -2537,9 +2537,9 @@ class FunctionAnalyzer {
                   "assignment expects an addressable value on the left side",
                   "You can assign to variables, struct fields, dereferenced pointers, or array indexing expressions.");
         }
-        if (left && isConstQualifiedType(left->getType())) {
-            errorConstAssignmentTarget(node->left ? node->left->loc : node->loc,
-                                       left->getType());
+        if (left && !isFullyWritableValueType(left->getType())) {
+            errorReadOnlyAssignmentTarget(
+                node->left ? node->left->loc : node->loc, left->getType());
         }
         auto *right = requireNonCallExpr(node->right, left ? left->getType() : nullptr);
         right = coerceNumericExpr(right, left ? left->getType() : nullptr, node->loc,
