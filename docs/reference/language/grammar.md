@@ -33,9 +33,10 @@
 
 ### 1.2 关键字
 
-语句与声明关键字：
+绑定、语句与声明关键字：
 
 - `var`
+- `val`
 - `def`
 - `set`
 - `ret`
@@ -47,11 +48,14 @@
 - `struct`
 - `import`
 - `ref`
-- `const`
 - `cast`
 - `true`
 - `false`
 - `null`
+
+类型修饰关键字：
+
+- `const`
 
 内建类型关键字（词法记号 `BuiltinType`）：
 
@@ -479,6 +483,5 @@ type-name-seq     ::= type-name
 ### 5.1 仍保留为占位的能力
 
 - 未定长数组语义 (`T[]`)
-- string runtime semantics
 
 这些路径当前不会再落入模糊的 generic unsupported，而是给出明确的面向用户的占位诊断。
