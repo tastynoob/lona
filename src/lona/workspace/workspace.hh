@@ -17,7 +17,7 @@ class CompilerWorkspace {
     ModuleCache moduleCache_;
     ModuleGraph moduleGraph_;
     ModuleBuildQueue buildQueue_;
-    std::unordered_map<std::string, ModuleArtifact> moduleArtifacts_;
+    std::unordered_map<string, ModuleArtifact> moduleArtifacts_;
 
 public:
     CompilerWorkspace();
@@ -37,19 +37,34 @@ public:
     ModuleBuildQueue &buildQueue() { return buildQueue_; }
     const ModuleBuildQueue &buildQueue() const { return buildQueue_; }
 
-    std::unordered_map<std::string, ModuleArtifact> &moduleArtifacts() {
+    std::unordered_map<string, ModuleArtifact> &moduleArtifacts() {
         return moduleArtifacts_;
     }
-    const std::unordered_map<std::string, ModuleArtifact> &moduleArtifacts() const {
+    const std::unordered_map<string, ModuleArtifact> &moduleArtifacts() const {
         return moduleArtifacts_;
     }
 
-    const SourceBuffer &loadSource(const std::string &path);
-    CompilationUnit &loadUnit(const std::string &path);
-    CompilationUnit &loadRootUnit(const std::string &path);
+    const SourceBuffer &loadSource(const string &path);
+    const SourceBuffer &loadSource(const std::string &path) {
+        return loadSource(string(path));
+    }
+    CompilationUnit &loadUnit(const string &path);
+    CompilationUnit &loadUnit(const std::string &path) {
+        return loadUnit(string(path));
+    }
+    CompilationUnit &loadRootUnit(const string &path);
+    CompilationUnit &loadRootUnit(const std::string &path) {
+        return loadRootUnit(string(path));
+    }
 
-    ModuleArtifact *findArtifact(const std::string &path);
-    const ModuleArtifact *findArtifact(const std::string &path) const;
+    ModuleArtifact *findArtifact(const string &path);
+    ModuleArtifact *findArtifact(const std::string &path) {
+        return findArtifact(string(path));
+    }
+    const ModuleArtifact *findArtifact(const string &path) const;
+    const ModuleArtifact *findArtifact(const std::string &path) const {
+        return findArtifact(string(path));
+    }
     void storeArtifact(ModuleArtifact artifact);
 };
 

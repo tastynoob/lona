@@ -215,7 +215,7 @@ getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     }
 
     auto *func = typeMgr ? typeMgr->getMethodFunction(
-        structType, llvm::StringRef(selector->getFieldName())) : nullptr;
+        structType, toStringRef(selector->getFieldName())) : nullptr;
     return func && func->getType() ? func->getType()->as<FuncType>() : nullptr;
 }
 
@@ -564,12 +564,12 @@ class FunctionAnalyzer {
         return typeMgr ? typeMgr->createConstType(u8Ty) : nullptr;
     }
 
-    std::string getByteStringBytes(AstConst *node) {
+    string getByteStringBytes(AstConst *node) {
         auto *bytes = node ? node->getBuf<string>() : nullptr;
         if (!bytes) {
             return {};
         }
-        return std::string(bytes->tochara(), bytes->size());
+        return *bytes;
     }
 
     std::uint8_t getAsciiCharByte(AstConst *node) {
@@ -604,58 +604,58 @@ class FunctionAnalyzer {
         auto found = bindingObjects.find(binding);
         if (found == bindingObjects.end()) {
             internalError(loc,
-                          "resolved local binding `" + binding->name() +
+                          "resolved local binding `" + toStdString(binding->name()) +
                               "` was not materialized before use",
                           "This looks like a compiler pipeline bug.");
         }
         return found->second;
     }
 
-    ObjectPtr requireGlobalObject(const std::string &name, const location &loc,
+    ObjectPtr requireGlobalObject(const ::string &name, const location &loc,
                                   const std::string &context) {
-        auto *obj = global->getObj(llvm::StringRef(name));
+        auto *obj = global->getObj(name);
         if (!obj) {
             internalError(loc,
-                          "resolved " + context + " `" + name +
+                          "resolved " + context + " `" + toStdString(name) +
                               "` is missing from the current global scope",
                           "Rebuild declarations before reusing this resolved module.");
         }
         return obj;
     }
 
-    Function *requireGlobalFunction(const std::string &name, const location &loc,
+    Function *requireGlobalFunction(const ::string &name, const location &loc,
                                     const std::string &context) {
         auto *obj = requireGlobalObject(name, loc, context);
         auto *func = obj->as<Function>();
         if (!func) {
             internalError(loc,
-                          "resolved " + context + " `" + name +
+                          "resolved " + context + " `" + toStdString(name) +
                               "` no longer refers to a function",
                           "Rebuild declarations before reusing this resolved module.");
         }
         return func;
     }
 
-    StructType *requireStructTypeByName(const std::string &name,
+    StructType *requireStructTypeByName(const ::string &name,
                                         const location &loc,
                                         const std::string &context) {
-        auto *type = typeMgr->getType(llvm::StringRef(name));
+        auto *type = typeMgr->getType(name);
         auto *structType = type ? type->as<StructType>() : nullptr;
         if (!structType) {
             internalError(loc,
-                          "resolved " + context + " `" + name +
+                          "resolved " + context + " `" + toStdString(name) +
                               "` is missing from the current type table",
                           "Rebuild declarations before reusing this resolved module.");
         }
         return structType;
     }
 
-    TypeClass *requireTypeByName(const std::string &name, const location &loc,
+    TypeClass *requireTypeByName(const ::string &name, const location &loc,
                                  const std::string &context) {
-        auto *type = typeMgr->getType(llvm::StringRef(name));
+        auto *type = typeMgr->getType(name);
         if (!type) {
             internalError(loc,
-                          "resolved " + context + " `" + name +
+                          "resolved " + context + " `" + toStdString(name) +
                               "` is missing from the current type table",
                           "Rebuild declarations before reusing this resolved module.");
         }
@@ -749,7 +749,7 @@ class FunctionAnalyzer {
         }
 
         error(loc,
-              "set method `" + selector->getFieldName() +
+              "set method `" + toStdString(selector->getFieldName()) +
                   "` requires a writable receiver, got " +
                   describeResolvedType(parentType),
               "Call it on a writable value, or use a non-`set` method here.");
@@ -1037,11 +1037,11 @@ class FunctionAnalyzer {
             }
             auto *methodFunc =
                 typeMgr->getMethodFunction(structType,
-                                           llvm::StringRef(selector->getFieldName()));
+                                           toStringRef(selector->getFieldName()));
             auto *funcType =
                 methodFunc ? methodFunc->getType()->as<FuncType>()
                            : structType->getMethodType(
-                                 llvm::StringRef(selector->getFieldName()));
+                                 toStringRef(selector->getFieldName()));
             if (!funcType) {
                 internalError(loc, "unknown struct method");
             }
@@ -1052,7 +1052,7 @@ class FunctionAnalyzer {
                 methodFunc && !methodFunc->paramNames().empty()
                 ? &methodFunc->paramNames()
                 : structType->getMethodParamNames(
-                      llvm::StringRef(selector->getFieldName()));
+                      toStringRef(selector->getFieldName()));
             resolution.argOffset = getMethodCallArgOffset(selector, funcType);
             if (auto *retType = funcType->getRetType()) {
                 resolution.resultEntity = EntityRef::typedValue(retType);
@@ -1153,11 +1153,12 @@ class FunctionAnalyzer {
                 resolved.methodParentTypeName(), loc, "method parent type");
             auto *func =
                 typeMgr->getMethodFunction(structType,
-                                           llvm::StringRef(resolved.functionName()));
+                                           toStringRef(resolved.functionName()));
             if (!func) {
                 internalError(loc,
-                              "resolved method `" + resolved.methodParentTypeName() +
-                                  "." + resolved.functionName() +
+                              "resolved method `" +
+                                  toStdString(resolved.methodParentTypeName()) +
+                                  "." + toStdString(resolved.functionName()) +
                                   "` is missing from the current type table",
                               "Rebuild declarations before reusing this resolved module.");
             }
@@ -1441,7 +1442,7 @@ class FunctionAnalyzer {
     };
 
     struct FormalCallArg {
-        const std::string *name = nullptr;
+        const string *name = nullptr;
         TypeClass *type = nullptr;
         BindingKind bindingKind = BindingKind::Value;
         FormalCallArgKind kind = FormalCallArgKind::FunctionParameter;
@@ -1469,7 +1470,7 @@ class FunctionAnalyzer {
         std::size_t index = 0;
     };
 
-    static const std::string *
+    static const string *
     formalCallArgName(const FormalCallArg &formal) {
         return formal.name;
     }
@@ -1478,10 +1479,11 @@ class FunctionAnalyzer {
     describeFormalCallArg(const FormalCallArg &formal) {
         switch (formal.kind) {
             case FormalCallArgKind::ConstructorField:
-                return "field `" + (formal.name ? *formal.name : std::string()) + "`";
+                return "field `" +
+                    (formal.name ? toStdString(*formal.name) : std::string()) + "`";
             case FormalCallArgKind::FunctionParameter:
                 if (formal.name && !formal.name->empty()) {
-                    return "parameter `" + *formal.name + "`";
+                    return "parameter `" + toStdString(*formal.name) + "`";
                 }
                 return "parameter at index " + std::to_string(formal.index);
             case FormalCallArgKind::ArrayIndex:
@@ -1495,7 +1497,7 @@ class FunctionAnalyzer {
         switch (formal.kind) {
             case FormalCallArgKind::ConstructorField:
                 return "constructor field type mismatch for `" +
-                       (formal.name ? *formal.name : std::string()) + "`";
+                       (formal.name ? toStdString(*formal.name) : std::string()) + "`";
             case FormalCallArgKind::FunctionParameter:
                 return "call argument type mismatch at index " +
                        std::to_string(formal.index);
@@ -1510,7 +1512,7 @@ class FunctionAnalyzer {
     formalCallArgMissingRefHint(const FormalCallArg &formal) {
         if (formal.kind == FormalCallArgKind::FunctionParameter &&
             formal.name && !formal.name->empty()) {
-            return "Pass it as `ref " + *formal.name +
+            return "Pass it as `ref " + toStdString(*formal.name) +
                    " = value` for named calls, or `ref value` positionally.";
         }
         return "Pass it as `ref value`.";
@@ -1592,7 +1594,7 @@ class FunctionAnalyzer {
         std::vector<std::string> names;
         names.reserve(formals.size());
         for (const auto &formal : formals) {
-            names.push_back(formal.name ? *formal.name : std::string());
+            names.push_back(formal.name ? toStdString(*formal.name) : std::string());
         }
         return formatAvailableNames(names, callBindingNameKind(options));
     }
@@ -1628,7 +1630,7 @@ class FunctionAnalyzer {
         indexByName.reserve(formals.size());
         for (std::size_t i = 0; i < formals.size(); ++i) {
             if (const auto *name = formalCallArgName(formals[i])) {
-                indexByName.emplace(*name, i);
+                indexByName.emplace(toStdString(*name), i);
             }
         }
 
@@ -1677,7 +1679,7 @@ class FunctionAnalyzer {
                 auto *requiredName = formalCallArgName(formals[i]);
                 error(options.callLoc,
                       "missing " + std::string(callBindingNameKind(options)) + " `" +
-                          (requiredName ? *requiredName : std::string()) +
+                          (requiredName ? toStdString(*requiredName) : std::string()) +
                           "` for " + describeCallTarget(options),
                       formatAvailableFormalNames(formals, options));
             }
@@ -1747,9 +1749,9 @@ class FunctionAnalyzer {
         return boundArgs;
     }
 
-    std::vector<std::pair<std::string, TypeClass *>> orderedStructMembers(
+    std::vector<std::pair<string, TypeClass *>> orderedStructMembers(
         StructType *structType, const location &loc) {
-        std::vector<std::pair<std::string, TypeClass *>> members(
+        std::vector<std::pair<string, TypeClass *>> members(
             structType ? structType->getMembers().size() : 0);
         if (!structType) {
             return members;
@@ -1762,7 +1764,7 @@ class FunctionAnalyzer {
                                   describeResolvedType(structType) + "`",
                               "This looks like a type layout bug.");
             }
-            members[index] = {entry.first().str(), entry.second.first};
+            members[index] = {entry.first(), entry.second.first};
         }
         return members;
     }
@@ -2880,7 +2882,7 @@ class FunctionAnalyzer {
                 std::vector<FormalCallArg> formals;
                 formals.reserve(paramTypes.size() - resolution.argOffset);
                 for (size_t i = 0; i + resolution.argOffset < paramTypes.size(); ++i) {
-                    const std::string *paramName =
+                    const string *paramName =
                         resolution.paramNames && i < resolution.paramNames->size()
                         ? &resolution.paramNames->at(i)
                         : nullptr;
@@ -2963,9 +2965,12 @@ private:
             auto *selfType = typeMgr->createPointerType(receiverPointee);
             auto *selfObj = selfType->newObj(Object::VARIABLE);
             bindObject(resolved.selfBinding(), selfObj);
-            hirFunc->setSelfBinding(
-                {resolved.selfBinding()->name(), resolved.selfBinding()->bindingKind(),
-                 selfObj, resolved.selfBinding()->loc()});
+            hirFunc->setSelfBinding(HIRBinding{
+                resolved.selfBinding()->name(),
+                resolved.selfBinding()->bindingKind(),
+                selfObj,
+                resolved.selfBinding()->loc(),
+            });
         }
     }
 
@@ -2980,14 +2985,19 @@ private:
             auto *type = requireType(
                 decl->typeNode,
                 decl->typeNode ? decl->typeNode->loc : paramBinding->loc(),
-                "unknown function argument type for `" + paramBinding->name() + "`");
+                "unknown function argument type for `" +
+                    toStdString(paramBinding->name()) + "`");
             auto *argObj = type->newObj(Object::VARIABLE |
                                         (paramBinding->isRefBinding()
                                              ? Object::REF_ALIAS
                                              : Object::EMPTY));
             bindObject(paramBinding, argObj);
-            hirFunc->addParam({paramBinding->name(), paramBinding->bindingKind(),
-                               argObj, paramBinding->loc()});
+            hirFunc->addParam(HIRBinding{
+                paramBinding->name(),
+                paramBinding->bindingKind(),
+                argObj,
+                paramBinding->loc(),
+            });
         }
     }
 

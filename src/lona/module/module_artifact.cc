@@ -3,8 +3,8 @@
 
 namespace lona {
 
-ModuleArtifact::ModuleArtifact(std::string path, std::string moduleKey,
-                               std::string moduleName, std::uint64_t sourceHash,
+ModuleArtifact::ModuleArtifact(string path, string moduleKey,
+                               string moduleName, std::uint64_t sourceHash,
                                std::uint64_t interfaceHash,
                                std::uint64_t implementationHash)
     : path_(std::move(path)),
@@ -16,12 +16,12 @@ ModuleArtifact::ModuleArtifact(std::string path, std::string moduleKey,
 
 void
 ModuleArtifact::setDependencyInterfaceHashes(
-    std::unordered_map<std::string, std::uint64_t> dependencyInterfaceHashes) {
+    std::unordered_map<string, std::uint64_t> dependencyInterfaceHashes) {
     dependencyInterfaceHashes_ = std::move(dependencyInterfaceHashes);
 }
 
 void
-ModuleArtifact::setCompileProfile(std::string targetTriple, int optLevel,
+ModuleArtifact::setCompileProfile(string targetTriple, int optLevel,
                                   bool debugInfo) {
     targetTriple_ = std::move(targetTriple);
     optLevel_ = optLevel;

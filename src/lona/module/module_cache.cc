@@ -4,8 +4,8 @@
 namespace lona {
 
 std::shared_ptr<ModuleInterface>
-ModuleCache::getOrCreate(const SourceBuffer &source, const std::string &moduleKey,
-                         const std::string &moduleName) {
+ModuleCache::getOrCreate(const SourceBuffer &source, const string &moduleKey,
+                         const string &moduleName) {
     auto inserted = interfaces_.emplace(
         source.path(),
         std::make_shared<ModuleInterface>(source.path(), moduleKey, moduleName,
@@ -18,7 +18,7 @@ ModuleCache::getOrCreate(const SourceBuffer &source, const std::string &moduleKe
 }
 
 const ModuleInterface *
-ModuleCache::find(const std::string &path) const {
+ModuleCache::find(const string &path) const {
     auto found = interfaces_.find(path);
     if (found == interfaces_.end()) {
         return nullptr;

@@ -5,7 +5,6 @@
 #include "lona/sema/operator_resolver.hh"
 #include "lona/support/arena.hh"
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -19,7 +18,7 @@ class ResolvedModule;
 class CompilationUnit;
 
 struct HIRBinding {
-    std::string name;
+    string name;
     BindingKind bindingKind = BindingKind::Value;
     ObjectPtr object = nullptr;
     location loc;
@@ -90,14 +89,14 @@ public:
 };
 
 class HIRByteStringLiteral : public HIRExpr {
-    std::string bytes_;
+    string bytes_;
 
 public:
-    HIRByteStringLiteral(std::string bytes, TypeClass *type = nullptr,
+    HIRByteStringLiteral(string bytes, TypeClass *type = nullptr,
                          const location &loc = location())
         : HIRExpr(type, loc), bytes_(std::move(bytes)) {}
 
-    const std::string &getBytes() const { return bytes_; }
+    const string &getBytes() const { return bytes_; }
 };
 
 class HIRNullLiteral : public HIRExpr {
@@ -188,11 +187,11 @@ enum class HIRSelectorKind {
 
 class HIRSelector : public HIRExpr {
     HIRExpr *parent;
-    std::string fieldName;
+    string fieldName;
     HIRSelectorKind kind_;
 
 public:
-    HIRSelector(HIRExpr *parent, std::string fieldName, TypeClass *type = nullptr,
+    HIRSelector(HIRExpr *parent, string fieldName, TypeClass *type = nullptr,
                 const location &loc = location(),
                 HIRSelectorKind kind = HIRSelectorKind::ValueField)
         : HIRExpr(type, loc),
@@ -201,7 +200,7 @@ public:
           kind_(kind) {}
 
     HIRExpr *getParent() const { return parent; }
-    const std::string &getFieldName() const { return fieldName; }
+    const string &getFieldName() const { return fieldName; }
     HIRSelectorKind getKind() const { return kind_; }
     bool isValueFieldSelector() const {
         return kind_ == HIRSelectorKind::ValueField;
@@ -236,16 +235,16 @@ public:
 };
 
 class HIRVarDef : public HIRNode {
-    std::string name;
+    string name;
     ObjectPtr object;
     HIRExpr *init = nullptr;
 
 public:
-    HIRVarDef(std::string name, ObjectPtr object, HIRExpr *init = nullptr,
+    HIRVarDef(string name, ObjectPtr object, HIRExpr *init = nullptr,
               const location &loc = location())
         : HIRNode(loc), name(std::move(name)), object(object), init(init) {}
 
-    const std::string &getName() const { return name; }
+    const string &getName() const { return name; }
     ObjectPtr getObject() const { return object; }
     HIRExpr *getInit() const { return init; }
 };

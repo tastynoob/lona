@@ -93,7 +93,8 @@ parseArtifactBitcodeModule(const ModuleArtifact &artifact, llvm::LLVMContext &co
     llvm::StringRef bytes(
         reinterpret_cast<const char *>(artifact.bitcode().data()),
         artifact.bitcode().size());
-    auto buffer = llvm::MemoryBuffer::getMemBufferCopy(bytes, artifact.path() + ".bc");
+    auto buffer = llvm::MemoryBuffer::getMemBufferCopy(
+        bytes, toStdString(artifact.path() + ".bc"));
     auto module = llvm::parseBitcodeFile(buffer->getMemBufferRef(), context);
     if (module) {
         return std::move(*module);
@@ -101,7 +102,7 @@ parseArtifactBitcodeModule(const ModuleArtifact &artifact, llvm::LLVMContext &co
 
     throw DiagnosticError(DiagnosticError::Category::Internal,
                           "failed to parse cached LLVM bitcode for module `" +
-                              artifact.path() + "`",
+                              toStdString(artifact.path()) + "`",
                           llvm::toString(module.takeError()));
 }
 
@@ -419,7 +420,8 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
     pipeline_.addStage("emit-llvm", [](IRPipelineContext &context) {
         auto start = Clock::now();
         emitHIRModule(&context.build.global, &context.programHIR,
-                      context.options.debugInfo, context.entryUnit.path());
+                      context.options.debugInfo,
+                      toStdString(context.entryUnit.path()));
         context.stats.codegenMs += elapsedMillis(start, Clock::now());
         return 0;
     });
@@ -454,9 +456,9 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
     });
 }
 
-std::unordered_map<std::string, std::uint64_t>
+std::unordered_map<string, std::uint64_t>
 WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) const {
-    std::unordered_map<std::string, std::uint64_t> hashes;
+    std::unordered_map<string, std::uint64_t> hashes;
     for (const auto &dependencyPath : workspace_.moduleGraph().dependenciesOf(unit.path())) {
         auto *dependency = workspace_.moduleGraph().find(dependencyPath);
         if (dependency == nullptr) {
@@ -471,7 +473,8 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) 
 
 std::string
 WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
-    std::string stem = artifact.moduleName().empty() ? "module" : artifact.moduleName();
+    std::string stem =
+        artifact.moduleName().empty() ? "module" : toStdString(artifact.moduleName());
     for (char &ch : stem) {
         const unsigned char byte = static_cast<unsigned char>(ch);
         if (!(std::isalnum(byte) || ch == '_' || ch == '-')) {
@@ -479,7 +482,7 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
         }
     }
 
-    std::vector<std::pair<std::string, std::uint64_t>> dependencies(
+    std::vector<std::pair<string, std::uint64_t>> dependencies(
         artifact.dependencyInterfaceHashes().begin(),
         artifact.dependencyInterfaceHashes().end());
     std::sort(dependencies.begin(), dependencies.end(),
@@ -520,7 +523,8 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
         artifact.implementationHash() != unit.implementationHash()) {
         return false;
     }
-    if (artifact.targetTriple() != normalizeTargetTriple(options.targetTriple) ||
+    if (toStdString(artifact.targetTriple()) !=
+            normalizeTargetTriple(options.targetTriple) ||
         artifact.optLevel() != options.optLevel ||
         artifact.debugInfo() != options.debugInfo) {
         return false;
@@ -596,7 +600,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  SessionStats &stats,
                                  std::ostream &out) const {
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
-    return executor_->execute(workspace_.buildQueue(), [&](const std::string &path) -> int {
+    return executor_->execute(workspace_.buildQueue(), [&](const string &path) -> int {
         auto *queuedUnit = workspace_.moduleGraph().find(path);
         if (queuedUnit == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
@@ -703,15 +707,15 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
         if (artifact == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
                                   "linked module is missing dependency artifact `" +
-                                      path + "`",
+                                      toStdString(path) + "`",
                                   "This looks like a compiler module scheduling bug.");
         }
         auto dependencyModule = parseArtifactBitcodeModule(*artifact, *context);
         if (linker.linkInModule(std::move(dependencyModule))) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
-                "failed to link module `" + artifact->path() +
-                    "` into root module `" + rootUnit.path() + "`",
+                "failed to link module `" + toStdString(artifact->path()) +
+                    "` into root module `" + toStdString(rootUnit.path()) + "`",
                 "Check for duplicate IR symbols or incompatible LLVM module state.");
         }
     }
@@ -886,13 +890,13 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
         if (artifact == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
                                   "bundle emission is missing module artifact `" +
-                                      path + "`",
+                                      toStdString(path) + "`",
                                   "This looks like a compiler module scheduling bug.");
         }
         if (!artifact->hasObjectCode()) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
                                   "bundle emission is missing module object code for `" +
-                                      artifact->path() + "`",
+                                      toStdString(artifact->path()) + "`",
                                   "This looks like a compiler object emission bug.");
         }
 

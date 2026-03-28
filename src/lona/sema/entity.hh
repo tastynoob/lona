@@ -157,7 +157,7 @@ struct CallResolution {
     EntityRef resultEntity;
     CallArgList args;
     FuncType *callType = nullptr;
-    const std::vector<std::string> *paramNames = nullptr;
+    const std::vector<string> *paramNames = nullptr;
     std::size_t argOffset = 0;
 
     bool valid() const { return kind != CallResolutionKind::Invalid; }

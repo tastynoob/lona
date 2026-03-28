@@ -27,7 +27,7 @@ class WorkspaceBuilder {
     std::unique_ptr<ModuleExecutor> executor_;
     CompilePipeline pipeline_;
 
-    std::unordered_map<std::string, std::uint64_t>
+    std::unordered_map<string, std::uint64_t>
     collectDependencyInterfaceHashes(const CompilationUnit &unit) const;
     std::string bundleObjectFileName(const ModuleArtifact &artifact) const;
     std::filesystem::path bundleObjectPath(

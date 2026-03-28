@@ -264,7 +264,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         if (!splitBaseTypeName(base, moduleName, memberName)) {
             auto lookup = unit.lookupTopLevelName(rawName);
             if (lookup.isType()) {
-                auto *type = typeTable->getType(llvm::StringRef(lookup.resolvedName));
+                auto *type = typeTable->getType(lookup.resolvedName);
                 unit.cacheResolvedType(node, type);
                 return type;
             }
@@ -367,7 +367,8 @@ CompilationUnit::source() const {
 AstNode *
 CompilationUnit::requireSyntaxTree() const {
     if (syntaxTree_ == nullptr) {
-        internalError("compilation unit `" + path_ + "` is missing its parsed syntax tree",
+        internalError("compilation unit `" + toStdString(path_) +
+                          "` is missing its parsed syntax tree",
                       "Parse the unit before lowering or emission.");
     }
     return syntaxTree_;
@@ -470,14 +471,14 @@ CompilationUnit::clearLocalBindings() {
 }
 
 bool
-CompilationUnit::addImportedModule(std::string alias, const CompilationUnit &unit) {
+CompilationUnit::addImportedModule(string alias, const CompilationUnit &unit) {
     ImportedModule imported = {unit.path(), unit.moduleKey(), unit.moduleName(),
                                unit.interface()};
     return importedModules_.emplace(std::move(alias), std::move(imported)).second;
 }
 
 const CompilationUnit::ImportedModule *
-CompilationUnit::findImportedModule(const std::string &alias) const {
+CompilationUnit::findImportedModule(const ::string &alias) const {
     auto found = importedModules_.find(alias);
     if (found == importedModules_.end()) {
         return nullptr;
@@ -486,12 +487,12 @@ CompilationUnit::findImportedModule(const std::string &alias) const {
 }
 
 bool
-CompilationUnit::importsModule(const std::string &alias) const {
+CompilationUnit::importsModule(const ::string &alias) const {
     return findImportedModule(alias) != nullptr;
 }
 
 CompilationUnit::TopLevelLookup
-CompilationUnit::lookupTopLevelName(const std::string &name) const {
+CompilationUnit::lookupTopLevelName(const ::string &name) const {
     TopLevelLookup lookup;
 
     if (const auto *typeName = findLocalType(name)) {
@@ -524,7 +525,7 @@ CompilationUnit::lookupTopLevelName(const std::string &name) const {
 
 CompilationUnit::TopLevelLookup
 CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
-                                    const std::string &name) const {
+                                    const ::string &name) const {
     TopLevelLookup lookup;
     if (!moduleNamespace.interface) {
         return lookup;
@@ -535,7 +536,7 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.kind = TopLevelLookupKind::Type;
         lookup.importedModule = &moduleNamespace;
         lookup.typeDecl = member.typeDecl;
-        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : std::string();
+        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : string();
         return lookup;
     }
     if (member.isFunction()) {
@@ -543,7 +544,7 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.importedModule = &moduleNamespace;
         lookup.functionDecl = member.functionDecl;
         lookup.resolvedName =
-            member.functionDecl ? member.functionDecl->symbolName : std::string();
+            member.functionDecl ? member.functionDecl->symbolName : string();
         return lookup;
     }
     return lookup;
@@ -579,21 +580,21 @@ CompilationUnit::ensureHashes() const {
 }
 
 bool
-CompilationUnit::bindLocalType(std::string localName, std::string resolvedName) {
+CompilationUnit::bindLocalType(string localName, string resolvedName) {
     return localTypeBindings_
         .emplace(std::move(localName), std::move(resolvedName))
         .second;
 }
 
 bool
-CompilationUnit::bindLocalFunction(std::string localName, std::string resolvedName) {
+CompilationUnit::bindLocalFunction(string localName, string resolvedName) {
     return localFunctionBindings_
         .emplace(std::move(localName), std::move(resolvedName))
         .second;
 }
 
-const std::string *
-CompilationUnit::findLocalType(const std::string &localName) const {
+const string *
+CompilationUnit::findLocalType(const ::string &localName) const {
     auto found = localTypeBindings_.find(localName);
     if (found == localTypeBindings_.end()) {
         return nullptr;
@@ -601,8 +602,8 @@ CompilationUnit::findLocalType(const std::string &localName) const {
     return &found->second;
 }
 
-const std::string *
-CompilationUnit::findLocalFunction(const std::string &localName) const {
+const string *
+CompilationUnit::findLocalFunction(const ::string &localName) const {
     auto found = localFunctionBindings_.find(localName);
     if (found == localFunctionBindings_.end()) {
         return nullptr;

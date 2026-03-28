@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <llvm-18/llvm/ADT/StringRef.h>
 #include <sys/types.h>
 #include <charconv>
@@ -71,6 +73,23 @@ public:
         ref = string_data::create(s ? s : "", len);
     }
 
+    string(std::string_view view)
+        : ref(nullptr)
+    {
+        if (view.empty()) {
+            return;
+        }
+        ref = string_data::create(view.data(), static_cast<uint32_t>(view.size()));
+    }
+
+    string(const std::string &value)
+        : string(std::string_view(value))
+    {}
+
+    string(llvm::StringRef value)
+        : string(std::string_view(value.data(), value.size()))
+    {}
+
     string(const string& other)
     {
         ref = other.ref;
@@ -114,6 +133,28 @@ public:
         return *this;
     }
 
+    string& operator=(const std::string &value)
+    {
+        dec_ref();
+        if (value.empty()) {
+            ref = nullptr;
+            return *this;
+        }
+        ref = string_data::create(value.data(), static_cast<uint32_t>(value.size()));
+        return *this;
+    }
+
+    string& operator=(llvm::StringRef value)
+    {
+        dec_ref();
+        if (value.empty()) {
+            ref = nullptr;
+            return *this;
+        }
+        ref = string_data::create(value.data(), static_cast<uint32_t>(value.size()));
+        return *this;
+    }
+
     const char* tochara() const
     {
         return ref ? ref->data : "";
@@ -122,6 +163,16 @@ public:
     uint32_t size() const
     {
         return ref ? ref->size : 0;
+    }
+
+    bool empty() const
+    {
+        return size() == 0;
+    }
+
+    std::string_view view() const
+    {
+        return {tochara(), size()};
     }
 
     char operator[](size_t index) const
@@ -152,6 +203,32 @@ public:
         ref = new_ref;
 
         return *this;
+    }
+
+    string& operator+=(std::string_view view)
+    {
+        if (view.empty()) {
+            return *this;
+        }
+
+        uint32_t old_size = size();
+        uint32_t new_size = old_size + static_cast<uint32_t>(view.size());
+        string_data* new_ref = string_data::create(new_size);
+
+        if (ref) {
+            std::memcpy(new_ref->data, ref->data, old_size);
+            ref->dec_ref();
+        }
+        std::memcpy(new_ref->data + old_size, view.data(), view.size());
+        new_ref->data[new_size] = '\0';
+        ref = new_ref;
+
+        return *this;
+    }
+
+    string& operator+=(const std::string &value)
+    {
+        return (*this += std::string_view(value));
     }
 
     template<typename T>
@@ -247,6 +324,88 @@ public:
 
 extern std::ostream& operator<<(std::ostream& os, const string& str);
 
+inline bool
+operator==(const string &lhs, const string &rhs) {
+    return lhs.view() == rhs.view();
+}
+
+inline bool
+operator!=(const string &lhs, const string &rhs) {
+    return !(lhs == rhs);
+}
+
+inline bool
+operator==(const string &lhs, std::string_view rhs) {
+    return lhs.view() == rhs;
+}
+
+inline bool
+operator==(const string &lhs, const std::string &rhs) {
+    return lhs.view() == std::string_view(rhs);
+}
+
+inline bool
+operator==(std::string_view lhs, const string &rhs) {
+    return lhs == rhs.view();
+}
+
+inline bool
+operator==(const std::string &lhs, const string &rhs) {
+    return std::string_view(lhs) == rhs.view();
+}
+
+inline bool
+operator!=(const string &lhs, std::string_view rhs) {
+    return !(lhs == rhs);
+}
+
+inline bool
+operator!=(const string &lhs, const std::string &rhs) {
+    return !(lhs == rhs);
+}
+
+inline bool
+operator!=(std::string_view lhs, const string &rhs) {
+    return !(lhs == rhs);
+}
+
+inline bool
+operator!=(const std::string &lhs, const string &rhs) {
+    return !(lhs == rhs);
+}
+
+inline bool
+operator<(const string &lhs, const string &rhs) {
+    return lhs.view() < rhs.view();
+}
+
+inline bool
+operator<(const string &lhs, std::string_view rhs) {
+    return lhs.view() < rhs;
+}
+
+inline bool
+operator<(std::string_view lhs, const string &rhs) {
+    return lhs < rhs.view();
+}
+
+inline string
+operator+(std::string_view lhs, const string &rhs) {
+    string result(lhs);
+    result += rhs;
+    return result;
+}
+
+inline string
+operator+(const std::string &lhs, const string &rhs) {
+    return std::string_view(lhs) + rhs;
+}
+
+inline string
+operator+(const char *lhs, const string &rhs) {
+    return std::string_view(lhs ? lhs : "") + rhs;
+}
+
 namespace lona {
 
 inline std::string
@@ -254,4 +413,20 @@ toStdString(const ::string &value) {
     return {value.tochara(), value.size()};
 }
 
+inline llvm::StringRef
+toStringRef(const ::string &value) {
+    return {value.tochara(), value.size()};
+}
+
 }  // namespace lona
+
+namespace std {
+
+template<>
+struct hash<::string> {
+    std::size_t operator()(const ::string &value) const noexcept {
+        return std::hash<std::string_view>{}(value.view());
+    }
+};
+
+}  // namespace std

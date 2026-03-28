@@ -8,7 +8,7 @@ namespace lona {
 
 IRBuildState::IRBuildState(const CompilationUnit &unit,
                            llvm::StringRef targetTriple)
-    : module(unit.path(), context),
+    : module(toStdString(unit.path()), context),
       builder(context),
       global(builder, module),
       types(module) {

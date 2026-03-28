@@ -173,13 +173,13 @@ ConstVar::get(Scope *scope) {
 }
 
 Object *
-TupleVar::getField(Scope *scope, std::string name) {
+TupleVar::getField(Scope *scope, const ::string &name) {
     auto &builder = scope->builder;
     auto *tupleType = asUnqualified<TupleType>(type);
     assert(tupleType);
 
     TupleType::ValueTy member;
-    if (!tupleType->getMember(llvm::StringRef(name.c_str(), name.size()), member)) {
+    if (!tupleType->getMember(toStringRef(name), member)) {
         throw "unknown tuple field";
     }
 
@@ -200,12 +200,11 @@ TupleVar::getField(Scope *scope, std::string name) {
 }
 
 Object *
-StructVar::getField(Scope *scope, std::string name) {
+StructVar::getField(Scope *scope, const ::string &name) {
     auto &builder = scope->builder;
     auto *structType = asUnqualified<StructType>(type);
     assert(structType);
-    auto *member = structType->getMember(
-        llvm::StringRef(name.c_str(), name.size()));
+    auto *member = structType->getMember(toStringRef(name));
     if (!member) {
         throw "unknown struct field";
     }

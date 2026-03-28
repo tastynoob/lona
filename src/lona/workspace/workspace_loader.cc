@@ -18,7 +18,7 @@ requireWorkspaceTopLevelBody(const CompilationUnit &unit) {
         return body;
     }
     throw DiagnosticError(DiagnosticError::Category::Internal,
-                          "compilation unit `" + unit.path() +
+                          "compilation unit `" + toStdString(unit.path()) +
                               "` does not have a top-level statement list",
                           "This looks like a parser/session integration bug.");
 }
@@ -36,14 +36,15 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
     }
     importPath += ".lo";
     if (importPath.is_relative()) {
-        importPath = fs::path(unit.path()).parent_path() / importPath;
+        importPath = fs::path(toStdString(unit.path())).parent_path() / importPath;
     }
     return importPath.lexically_normal().string();
 }
 
 bool
-isValidWorkspaceModuleName(const std::string &name) {
-    if (name.empty()) {
+isValidWorkspaceModuleName(const string &name) {
+    auto view = name.view();
+    if (view.empty()) {
         return false;
     }
     auto isHead = [](char ch) {
@@ -52,10 +53,10 @@ isValidWorkspaceModuleName(const std::string &name) {
     auto isBody = [&](char ch) {
         return isHead(ch) || (ch >= '0' && ch <= '9');
     };
-    if (!isHead(name.front())) {
+    if (!isHead(view.front())) {
         return false;
     }
-    for (char ch : name) {
+    for (char ch : view) {
         if (!isBody(ch)) {
             return false;
         }
@@ -115,9 +116,10 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
         if (!isValidWorkspaceModuleName(dependencyUnit.moduleName())) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, importNode->loc,
-                "imported module `" + dependencyUnit.path() +
+                "imported module `" + toStdString(dependencyUnit.path()) +
                     "` cannot be referenced as `file.xxx` because `" +
-                    dependencyUnit.moduleName() + "` is not a valid identifier",
+                    toStdString(dependencyUnit.moduleName()) +
+                    "` is not a valid identifier",
                 "Rename the file so its base name matches identifier syntax.");
         }
         workspace_.moduleGraph().addDependency(unit.path(), dependencyUnit.path());
@@ -133,8 +135,8 @@ WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
         return;
     }
 
-    std::vector<std::string> pending = {root->path()};
-    std::unordered_set<std::string> queued = {root->path()};
+    std::vector<string> pending = {root->path()};
+    std::unordered_set<string> queued = {root->path()};
     for (std::size_t index = 0; index < pending.size(); ++index) {
         auto &loadedUnit = workspace_.loadUnit(pending[index]);
         auto parseStart = Clock::now();
@@ -171,7 +173,7 @@ WorkspaceLoader::validateImportedUnit(const CompilationUnit &unit) const {
         }
         throw DiagnosticError(
             DiagnosticError::Category::Semantic, stmt->loc,
-            "imported file `" + unit.path() +
+            "imported file `" + toStdString(unit.path()) +
                 "` cannot contain top-level executable statements",
             "Move this statement into a function, or keep top-level execution only in the root file.");
     }

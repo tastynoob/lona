@@ -9,7 +9,7 @@ namespace lona {
 
 class ModuleExecutor {
 public:
-    using BuildTask = std::function<int(const std::string &)>;
+    using BuildTask = std::function<int(const string &)>;
 
     virtual ~ModuleExecutor() = default;
     virtual int execute(ModuleBuildQueue &queue, BuildTask task) = 0;

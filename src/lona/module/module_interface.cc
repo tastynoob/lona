@@ -5,8 +5,8 @@
 
 namespace lona {
 
-ModuleInterface::ModuleInterface(std::string sourcePath, std::string moduleKey,
-                                 std::string moduleName, std::uint64_t sourceHash)
+ModuleInterface::ModuleInterface(string sourcePath, string moduleKey,
+                                 string moduleName, std::uint64_t sourceHash)
     : sourcePath_(std::move(sourcePath)),
       moduleKey_(std::move(moduleKey)),
       moduleName_(std::move(moduleName)),
@@ -14,13 +14,16 @@ ModuleInterface::ModuleInterface(std::string sourcePath, std::string moduleKey,
 
 ModuleInterface::~ModuleInterface() = default;
 
-std::string
-ModuleInterface::exportedNameFor(const std::string &localName) const {
-    return moduleName_.empty() ? localName : moduleName_ + "." + localName;
+string
+ModuleInterface::exportedNameFor(const ::string &localName) const {
+    if (moduleName_.empty()) {
+        return localName;
+    }
+    return moduleName_ + "." + localName;
 }
 
-std::string
-ModuleInterface::functionSymbolNameFor(const std::string &localName,
+string
+ModuleInterface::functionSymbolNameFor(const ::string &localName,
                                        AbiKind abiKind) const {
     if (abiKind == AbiKind::C) {
         return localName;
@@ -29,8 +32,8 @@ ModuleInterface::functionSymbolNameFor(const std::string &localName,
 }
 
 void
-ModuleInterface::refresh(std::string sourcePath, std::string moduleKey,
-                         std::string moduleName, std::uint64_t sourceHash) {
+ModuleInterface::refresh(string sourcePath, string moduleKey,
+                         string moduleName, std::uint64_t sourceHash) {
     const bool changed = sourcePath_ != sourcePath || moduleKey_ != moduleKey ||
         moduleName_ != moduleName || sourceHash_ != sourceHash;
     sourcePath_ = std::move(sourcePath);
@@ -52,7 +55,7 @@ ModuleInterface::clear() {
 }
 
 StructType *
-ModuleInterface::declareStructType(const std::string &localName,
+ModuleInterface::declareStructType(const ::string &localName,
                                    StructDeclKind declKind) {
     auto found = localTypes_.find(localName);
     if (found != localTypes_.end()) {
@@ -65,7 +68,7 @@ ModuleInterface::declareStructType(const std::string &localName,
     }
 
     auto exportedName = exportedNameFor(localName);
-    auto type = std::make_unique<StructType>(string(exportedName.c_str()), declKind);
+    auto type = std::make_unique<StructType>(exportedName, declKind);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[exportedName] = typePtr;
@@ -75,8 +78,8 @@ ModuleInterface::declareStructType(const std::string &localName,
 }
 
 bool
-ModuleInterface::declareFunction(std::string localName, FuncType *type,
-                                 std::vector<std::string> paramNames) {
+ModuleInterface::declareFunction(string localName, FuncType *type,
+                                 std::vector<string> paramNames) {
     auto abiKind = type ? type->getAbiKind() : AbiKind::Native;
     return localFunctions_
         .emplace(localName,
@@ -94,8 +97,7 @@ ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
     }
 
     auto pointerTypeName = PointerType::buildName(pointeeType);
-    auto pointerName = std::string(pointerTypeName.tochara(), pointerTypeName.size());
-    auto found = derivedTypes_.find(pointerName);
+    auto found = derivedTypes_.find(pointerTypeName);
     if (found != derivedTypes_.end()) {
         return found->second->as<PointerType>();
     }
@@ -103,7 +105,7 @@ ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
     auto type = std::make_unique<PointerType>(pointeeType);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
-    derivedTypes_[pointerName] = typePtr;
+    derivedTypes_[pointerTypeName] = typePtr;
     return typePtr->as<PointerType>();
 }
 
@@ -114,8 +116,7 @@ ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
     }
 
     auto typeName = IndexablePointerType::buildName(elementType);
-    auto name = std::string(typeName.tochara(), typeName.size());
-    auto found = derivedTypes_.find(name);
+    auto found = derivedTypes_.find(typeName);
     if (found != derivedTypes_.end()) {
         return found->second->as<IndexablePointerType>();
     }
@@ -123,7 +124,7 @@ ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
     auto type = std::make_unique<IndexablePointerType>(elementType);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
-    derivedTypes_[name] = typePtr;
+    derivedTypes_[typeName] = typePtr;
     return typePtr->as<IndexablePointerType>();
 }
 
@@ -137,8 +138,7 @@ ModuleInterface::getOrCreateConstType(TypeClass *baseType) {
     }
 
     auto typeName = ConstType::buildName(baseType);
-    auto name = std::string(typeName.tochara(), typeName.size());
-    auto found = derivedTypes_.find(name);
+    auto found = derivedTypes_.find(typeName);
     if (found != derivedTypes_.end()) {
         return found->second->as<ConstType>();
     }
@@ -146,7 +146,7 @@ ModuleInterface::getOrCreateConstType(TypeClass *baseType) {
     auto type = std::make_unique<ConstType>(baseType);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
-    derivedTypes_[name] = typePtr;
+    derivedTypes_[typeName] = typePtr;
     return typePtr->as<ConstType>();
 }
 
@@ -157,7 +157,7 @@ ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
         return nullptr;
     }
 
-    auto arrayName = toStdString(ArrayType::buildName(elementType, dimensions));
+    auto arrayName = ArrayType::buildName(elementType, dimensions);
     auto found = derivedTypes_.find(arrayName);
     if (found != derivedTypes_.end()) {
         return found->second->as<ArrayType>();
@@ -172,7 +172,7 @@ ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
 
 TupleType *
 ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes) {
-    auto tupleName = toStdString(TupleType::buildName(itemTypes));
+    auto tupleName = TupleType::buildName(itemTypes);
     auto found = derivedTypes_.find(tupleName);
     if (found != derivedTypes_.end()) {
         return found->second->as<TupleType>();
@@ -199,7 +199,7 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
         }
     }
     auto funcTypeName =
-        toStdString(FuncType::buildName(argTypes, retType, argBindingKinds, abiKind));
+        FuncType::buildName(argTypes, retType, argBindingKinds, abiKind);
 
     auto found = derivedTypes_.find(funcTypeName);
     if (found != derivedTypes_.end()) {
@@ -207,7 +207,7 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
     }
 
     auto type = std::make_unique<FuncType>(std::vector<TypeClass *>(argTypes),
-                                           retType, string(funcTypeName.c_str()),
+                                           retType, funcTypeName,
                                            std::move(argBindingKinds), abiKind);
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
@@ -216,7 +216,7 @@ ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argType
 }
 
 const ModuleInterface::TypeDecl *
-ModuleInterface::findType(const std::string &localName) const {
+ModuleInterface::findType(const ::string &localName) const {
     auto found = localTypes_.find(localName);
     if (found == localTypes_.end()) {
         return nullptr;
@@ -225,7 +225,7 @@ ModuleInterface::findType(const std::string &localName) const {
 }
 
 const ModuleInterface::FunctionDecl *
-ModuleInterface::findFunction(const std::string &localName) const {
+ModuleInterface::findFunction(const ::string &localName) const {
     auto found = localFunctions_.find(localName);
     if (found == localFunctions_.end()) {
         return nullptr;
@@ -234,7 +234,7 @@ ModuleInterface::findFunction(const std::string &localName) const {
 }
 
 ModuleInterface::TopLevelLookup
-ModuleInterface::lookupTopLevelName(const std::string &localName) const {
+ModuleInterface::lookupTopLevelName(const ::string &localName) const {
     TopLevelLookup lookup;
     if (const auto *typeDecl = findType(localName)) {
         lookup.kind = TopLevelLookupKind::Type;

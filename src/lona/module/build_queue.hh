@@ -7,12 +7,15 @@
 namespace lona {
 
 class ModuleBuildQueue {
-    std::deque<std::string> pending_;
+    std::deque<string> pending_;
 
 public:
-    void reset(const ModuleGraph &moduleGraph, const std::string &rootPath);
+    void reset(const ModuleGraph &moduleGraph, const string &rootPath);
+    void reset(const ModuleGraph &moduleGraph, const std::string &rootPath) {
+        reset(moduleGraph, string(rootPath));
+    }
     bool empty() const { return pending_.empty(); }
-    std::string popNext();
+    string popNext();
 };
 
 }  // namespace lona

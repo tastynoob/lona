@@ -9,6 +9,7 @@
 #include <llvm/IR/Value.h>
 #include <sys/types.h>
 #include <string>
+#include "lona/util/string.hh"
 
 namespace lona {
 
@@ -117,7 +118,7 @@ public:
     TupleVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
 
-    Object *getField(Scope *scope, std::string name);
+    Object *getField(Scope *scope, const ::string &name);
 };
 
 class StructVar : public Object {
@@ -125,7 +126,7 @@ public:
     StructVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
 
-    Object *getField(Scope *scope, std::string name);
+    Object *getField(Scope *scope, const ::string &name);
 
     void set(Scope *scope, Object *src) override;
 };

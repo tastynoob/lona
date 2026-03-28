@@ -7,13 +7,13 @@
 
 namespace lona {
 
-const std::vector<std::string> kModuleGraphEmptyDependencies;
+const std::vector<string> kModuleGraphEmptyDependencies;
 
 void
 collectModuleGraphPostOrder(const ModuleGraph &moduleGraph,
-                            const std::string &path,
-                            std::unordered_set<std::string> &visited,
-                            std::vector<std::string> &ordered) {
+                            const string &path,
+                            std::unordered_set<string> &visited,
+                            std::vector<string> &ordered) {
     if (!visited.emplace(path).second) {
         return;
     }
@@ -24,19 +24,19 @@ collectModuleGraphPostOrder(const ModuleGraph &moduleGraph,
 }
 
 ModuleGraph::ModuleRecord &
-ModuleGraph::requireRecord(const std::string &path) {
+ModuleGraph::requireRecord(const string &path) {
     auto found = records_.find(path);
     if (found == records_.end()) {
-        throw std::runtime_error("module record not found: " + path);
+        throw std::runtime_error("module record not found: " + toStdString(path));
     }
     return *found->second;
 }
 
 const ModuleGraph::ModuleRecord &
-ModuleGraph::requireRecord(const std::string &path) const {
+ModuleGraph::requireRecord(const string &path) const {
     auto found = records_.find(path);
     if (found == records_.end()) {
-        throw std::runtime_error("module record not found: " + path);
+        throw std::runtime_error("module record not found: " + toStdString(path));
     }
     return *found->second;
 }
@@ -58,7 +58,7 @@ ModuleGraph::getOrCreate(const SourceBuffer &source) {
 }
 
 CompilationUnit *
-ModuleGraph::find(const std::string &path) {
+ModuleGraph::find(const string &path) {
     auto found = records_.find(path);
     if (found == records_.end()) {
         return nullptr;
@@ -67,7 +67,7 @@ ModuleGraph::find(const std::string &path) {
 }
 
 CompilationUnit *
-ModuleGraph::findByModuleName(const std::string &moduleName) {
+ModuleGraph::findByModuleName(const string &moduleName) {
     auto found = moduleNameToPath_.find(moduleName);
     if (found == moduleNameToPath_.end()) {
         return nullptr;
@@ -76,7 +76,7 @@ ModuleGraph::findByModuleName(const std::string &moduleName) {
 }
 
 const CompilationUnit *
-ModuleGraph::find(const std::string &path) const {
+ModuleGraph::find(const string &path) const {
     auto found = records_.find(path);
     if (found == records_.end()) {
         return nullptr;
@@ -85,7 +85,7 @@ ModuleGraph::find(const std::string &path) const {
 }
 
 const CompilationUnit *
-ModuleGraph::findByModuleName(const std::string &moduleName) const {
+ModuleGraph::findByModuleName(const string &moduleName) const {
     auto found = moduleNameToPath_.find(moduleName);
     if (found == moduleNameToPath_.end()) {
         return nullptr;
@@ -94,7 +94,7 @@ ModuleGraph::findByModuleName(const std::string &moduleName) const {
 }
 
 void
-ModuleGraph::markRoot(const std::string &path) {
+ModuleGraph::markRoot(const string &path) {
     if (!rootPath_.empty()) {
         requireRecord(rootPath_).root = false;
     }
@@ -120,7 +120,7 @@ ModuleGraph::root() const {
 }
 
 void
-ModuleGraph::resetDependencies(const std::string &path) {
+ModuleGraph::resetDependencies(const string &path) {
     auto &dependencies = requireRecord(path).dependencies;
     for (const auto &dependency : dependencies) {
         auto reverse = reverseDependencies_.find(dependency);
@@ -139,7 +139,7 @@ ModuleGraph::resetDependencies(const std::string &path) {
 }
 
 void
-ModuleGraph::addDependency(const std::string &path, std::string dependencyPath) {
+ModuleGraph::addDependency(const string &path, string dependencyPath) {
     auto &dependencies = requireRecord(path).dependencies;
     if (std::find(dependencies.begin(), dependencies.end(), dependencyPath) ==
         dependencies.end()) {
@@ -148,8 +148,8 @@ ModuleGraph::addDependency(const std::string &path, std::string dependencyPath) 
     }
 }
 
-const std::vector<std::string> &
-ModuleGraph::dependenciesOf(const std::string &path) const {
+const std::vector<string> &
+ModuleGraph::dependenciesOf(const string &path) const {
     auto found = records_.find(path);
     if (found == records_.end()) {
         return kModuleGraphEmptyDependencies;
@@ -157,8 +157,8 @@ ModuleGraph::dependenciesOf(const std::string &path) const {
     return found->second->dependencies;
 }
 
-const std::vector<std::string> &
-ModuleGraph::dependentsOf(const std::string &path) const {
+const std::vector<string> &
+ModuleGraph::dependentsOf(const string &path) const {
     auto found = reverseDependencies_.find(path);
     if (found == reverseDependencies_.end()) {
         return kModuleGraphEmptyDependencies;
@@ -166,14 +166,14 @@ ModuleGraph::dependentsOf(const std::string &path) const {
     return found->second;
 }
 
-std::vector<std::string>
-ModuleGraph::postOrderFrom(const std::string &path) const {
+std::vector<string>
+ModuleGraph::postOrderFrom(const string &path) const {
     if (find(path) == nullptr) {
         return {};
     }
 
-    std::unordered_set<std::string> visited;
-    std::vector<std::string> ordered;
+    std::unordered_set<string> visited;
+    std::vector<string> ordered;
     collectModuleGraphPostOrder(*this, path, visited, ordered);
     return ordered;
 }

@@ -74,9 +74,9 @@ recordTopLevelDeclName(
     seen.emplace(name, std::make_pair(kind, loc));
 }
 
-std::vector<std::string>
+std::vector<string>
 extractParamNames(AstFuncDecl *node) {
-    std::vector<std::string> names;
+    std::vector<string> names;
     if (!node || !node->args) {
         return names;
     }
@@ -86,7 +86,7 @@ extractParamNames(AstFuncDecl *node) {
         if (!varDecl) {
             continue;
         }
-        names.push_back(toStdString(varDecl->field));
+        names.push_back(varDecl->field);
     }
     return names;
 }
@@ -591,7 +591,7 @@ debugScopeFor(DebugInfoContext &debug, llvm::Function *llvmFunc) {
 
 llvm::DISubprogram *
 createDebugSubprogram(DebugInfoContext &debug, llvm::Function *llvmFunc,
-                      FuncType *funcType, const std::string &name,
+                      FuncType *funcType, llvm::StringRef name,
                       const location &loc) {
     auto *file = debug.fileForLocation(loc);
     auto *subprogram = debug.builder.createFunction(
@@ -620,7 +620,7 @@ clearDebugLocation(llvm::IRBuilder<> &builder) {
 
 void
 emitDebugDeclare(DebugInfoContext *debug, FuncScope *scope, llvm::DIScope *dbgScope,
-                 Object *obj, const std::string &name, TypeClass *type,
+                 Object *obj, llvm::StringRef name, TypeClass *type,
                  const location &loc, unsigned argNo = 0) {
     if (!debug || !scope || !dbgScope || !obj || !obj->getllvmValue() || !type) {
         return;
@@ -648,7 +648,7 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
     if (!unit || !exportNamespace) {
         return resolved;
     }
-    return unit->moduleName() + "." + resolved;
+    return toStdString(unit->moduleName() + "." + name);
 }
 
 std::string
@@ -695,12 +695,12 @@ requireTypeTable(Scope *scope) {
 
 void
 declareModuleNamespace(Scope &scope, const CompilationUnit &unit) {
-    auto moduleName = llvm::StringRef(unit.moduleName());
+    auto moduleName = toStringRef(unit.moduleName());
     auto *existing = scope.getObj(moduleName);
     if (existing) {
         auto *moduleObject = existing->as<ModuleObject>();
         if (!moduleObject || moduleObject->unit() != &unit) {
-            error("module namespace `" + unit.moduleName() +
+            error("module namespace `" + toStdString(unit.moduleName()) +
                   "` conflicts with an existing global symbol");
         }
         return;
@@ -1427,7 +1427,7 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
 Function *
 materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType,
                             llvm::StringRef llvmName,
-                            std::vector<std::string> paramNames = {},
+                            std::vector<string> paramNames = {},
                             bool hasImplicitSelf = false) {
     auto *existing = scope.getObj(llvmName);
     if (existing) {
@@ -1461,8 +1461,9 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     for (const auto &entry : interface->types()) {
         auto *type = typeMgr->internType(entry.second.type);
         if (!type) {
-            internalError("failed to materialize imported type `" + entry.first +
-                              "` from module `" + unit.path() + "`",
+            internalError("failed to materialize imported type `" +
+                              toStdString(entry.first) +
+                              "` from module `" + toStdString(unit.path()) + "`",
                           "Imported interfaces should only contain types that were "
                           "successfully collected from the defining module.");
         }
@@ -1474,15 +1475,16 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
         auto *funcType = storedType ? storedType->as<FuncType>() : nullptr;
         if (!funcType) {
             internalError(
-                "failed to materialize imported function signature `" + entry.first +
-                    "` from module `" + unit.path() + "`",
+                "failed to materialize imported function signature `" +
+                    toStdString(entry.first) +
+                    "` from module `" + toStdString(unit.path()) + "`",
                 "Imported interfaces should only contain function signatures that "
                 "were successfully collected from the defining module.");
         }
         auto runtimeName = exportNamespace ? entry.second.symbolName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);
         materializeDeclaredFunction(*global, typeMgr, funcType,
-                                    llvm::StringRef(runtimeName),
+                                    toStringRef(runtimeName),
                                     entry.second.paramNames);
     }
 
@@ -1510,7 +1512,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
                                                     llvm::Twine(methodName),
                                                     typeMgr->getModule());
             annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
-            std::vector<std::string> paramNames;
+            std::vector<string> paramNames;
             if (const auto *storedParamNames =
                     structType->getMethodParamNames(method.first())) {
                 paramNames = *storedParamNames;
@@ -1604,11 +1606,12 @@ class FunctionCompiler {
         error(message, hint);
     }
 
-    llvm::Constant *buildByteStringArrayConstant(const std::string &bytes) {
+    llvm::Constant *buildByteStringArrayConstant(const ::string &bytes) {
         std::vector<std::uint8_t> data;
         data.reserve(bytes.size() + 1);
-        for (unsigned char byte : bytes) {
-            data.push_back(static_cast<std::uint8_t>(byte));
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            data.push_back(static_cast<std::uint8_t>(
+                static_cast<unsigned char>(bytes[i])));
         }
         data.push_back(0);
         return llvm::ConstantDataArray::get(context, data);
@@ -1619,7 +1622,7 @@ class FunctionCompiler {
         return ".lona.bytes." + std::to_string(nextId++);
     }
 
-    llvm::GlobalVariable *createByteStringGlobal(const std::string &bytes) {
+    llvm::GlobalVariable *createByteStringGlobal(const ::string &bytes) {
         auto *initializer = buildByteStringArrayConstant(bytes);
         auto *llvmArrayType =
             llvm::cast<llvm::ArrayType>(initializer->getType());
@@ -1941,7 +1944,7 @@ class FunctionCompiler {
                     error("selector call parent must be a struct value");
                 }
                 auto *callee = scope->getMethodFunction(
-                    structType, llvm::StringRef(selector->getFieldName()));
+                    structType, toStringRef(selector->getFieldName()));
                 if (!callee) {
                     error("unknown struct method");
                 }
@@ -2061,8 +2064,9 @@ class FunctionCompiler {
             }
             auto *obj = materializeBinding(varDef->getObject(), initVal);
             scope->addObj(varDef->getName(), obj);
-            emitDebugDeclare(debug, scope, debugSubprogram, obj, varDef->getName(),
-                             obj->getType(), varDef->getLocation());
+            emitDebugDeclare(debug, scope, debugSubprogram, obj,
+                             toStringRef(varDef->getName()), obj->getType(),
+                             varDef->getLocation());
             return obj;
         }
         if (auto *ret = dynamic_cast<HIRRet *>(node)) {
@@ -2701,9 +2705,10 @@ public:
                 selfObj = materializeDirectValueBinding(binding.object, &*argIt,
                                                         argInfo.packedRegisterAggregate);
             }
-            scope->addObj(llvm::StringRef(binding.name), selfObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, selfObj, binding.name,
-                             selfObj->getType(), binding.loc, 1);
+            scope->addObj(binding.name, selfObj);
+            emitDebugDeclare(debug, scope, debugSubprogram, selfObj,
+                             toStringRef(binding.name), selfObj->getType(),
+                             binding.loc, 1);
             ++llvmArgIndex;
         }
 
@@ -2755,9 +2760,10 @@ public:
                 argObj = materializeDirectValueBinding(binding.object, &*argIt,
                                                        argInfo.packedRegisterAggregate);
             }
-            scope->addObj(llvm::StringRef(binding.name), argObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, argObj, binding.name,
-                             argObj->getType(), binding.loc, debugArgIndex);
+            scope->addObj(binding.name, argObj);
+            emitDebugDeclare(debug, scope, debugSubprogram, argObj,
+                             toStringRef(binding.name), argObj->getType(),
+                             binding.loc, debugArgIndex);
             ++llvmArgIndex;
             ++debugArgIndex;
             ++sourceParamIndex;

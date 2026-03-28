@@ -20,17 +20,18 @@ class FunctionResolver {
     const CompilationUnit *unit_;
     ResolvedModule &module_;
     ResolvedFunction &resolved_;
-    std::unordered_map<std::string, const ResolvedLocalBinding *> locals_;
+    std::unordered_map<string, const ResolvedLocalBinding *> locals_;
 
     void declareBinding(const ResolvedLocalBinding *binding, const location &loc,
                         const std::string &duplicateMessage,
                         const std::string &duplicateHint) {
         if (unit_ && unit_->importsModule(binding->name())) {
+            auto bindingName = toStdString(binding->name());
             error(loc,
-                  "local binding `" + binding->name() +
+                  "local binding `" + bindingName +
                       "` conflicts with imported module alias `" +
-                      binding->name() + "`",
-                  "Rename the local binding so `" + binding->name() +
+                      bindingName + "`",
+                  "Rename the local binding so `" + bindingName +
                       ".xxx` continues to refer to the imported module.");
         }
         auto inserted = locals_.emplace(binding->name(), binding);
@@ -81,7 +82,8 @@ class FunctionResolver {
         }
 
         error(node->loc,
-              "unknown module member `" + parentBinding->resolvedName() + "." +
+              "unknown module member `" + toStdString(parentBinding->resolvedName()) +
+                  "." +
                   memberName + "`",
               "Only directly imported top-level functions and types are available through `file.xxx`.");
     }
@@ -152,7 +154,7 @@ class FunctionResolver {
             return;
         }
         if (auto *field = dynamic_cast<const AstField *>(node)) {
-            auto local = locals_.find(toStdString(field->name));
+            auto local = locals_.find(field->name);
             if (local != locals_.end()) {
                 resolved_.bindField(field, ResolvedEntityRef::local(local->second));
                 return;
@@ -325,7 +327,8 @@ public:
 
         for (auto *binding : resolved_.params()) {
             declareBinding(binding, binding->loc(),
-                           "duplicate function parameter `" + binding->name() + "`",
+                           "duplicate function parameter `" +
+                               toStdString(binding->name()) + "`",
                            "Rename one of the parameters so each binding is unique.");
         }
 
@@ -340,8 +343,8 @@ class ModuleResolver {
     std::unique_ptr<ResolvedModule> module_ = std::make_unique<ResolvedModule>();
 
     ResolvedFunction *createResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
-                                             std::string functionName,
-                                             std::string methodParentTypeName,
+                                             string functionName,
+                                             string methodParentTypeName,
                                              const location &loc,
                                              bool topLevelEntry,
                                              bool guaranteedReturn) {
@@ -372,19 +375,19 @@ class ModuleResolver {
 
     void resolveFunction(AstFuncDecl *node, StructType *methodParent = nullptr) {
         Function *function = nullptr;
-        auto resolvedFunctionName = toStdString(node->name);
+        string resolvedFunctionName = node->name;
         if (methodParent) {
             function = typeMgr_->getMethodFunction(
                 methodParent,
                 llvm::StringRef(node->name.tochara(), node->name.size()));
         } else {
             if (unit_) {
-                auto lookup = unit_->lookupTopLevelName(toStdString(node->name));
+                auto lookup = unit_->lookupTopLevelName(node->name);
                 if (lookup.isFunction()) {
                     resolvedFunctionName = lookup.resolvedName;
                 }
             }
-            auto *obj = global_->getObj(llvm::StringRef(resolvedFunctionName));
+            auto *obj = global_->getObj(resolvedFunctionName);
             function = obj ? obj->as<Function>() : nullptr;
         }
         if (!function) {
@@ -394,22 +397,22 @@ class ModuleResolver {
 
         auto *resolved = createResolvedFunction(
             node, node->body,
-            methodParent ? toStdString(node->name) : resolvedFunctionName,
-            methodParent ? toStdString(methodParent->full_name) : std::string(),
+            methodParent ? string(node->name) : resolvedFunctionName,
+            methodParent ? string(methodParent->full_name) : string(),
             node->loc, false,
             node->body && node->body->hasTerminator());
         FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
     }
 
     void resolveStruct(AstStructDecl *node) {
-        auto resolvedStructName = toStdString(node->name);
+        string resolvedStructName = node->name;
         if (unit_) {
             auto lookup = unit_->lookupTopLevelName(resolvedStructName);
             if (lookup.isType()) {
                 resolvedStructName = lookup.resolvedName;
             }
         }
-        auto *type = typeMgr_->getType(llvm::StringRef(resolvedStructName));
+        auto *type = typeMgr_->getType(resolvedStructName);
         auto *structType = type ? type->as<StructType>() : nullptr;
         if (!structType) {
             error(node->loc, "struct declaration is missing from the type table",
@@ -492,7 +495,7 @@ ResolvedFunction::field(const AstField *node) const {
 const ResolvedLocalBinding *
 ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
                                    BindingKind bindingKind,
-                                   std::string name, const AstNode *node,
+                                   string name, const AstNode *node,
                                    const location &loc) {
     localBindings_.push_back(
         std::make_unique<ResolvedLocalBinding>(kind, bindingKind,
@@ -502,8 +505,8 @@ ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
 
 ResolvedFunction *
 ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
-                               std::string functionName,
-                               std::string methodParentTypeName,
+                               string functionName,
+                               string methodParentTypeName,
                                const location &loc, bool topLevelEntry,
                                bool guaranteedReturn) {
     functions_.push_back(std::make_unique<ResolvedFunction>(

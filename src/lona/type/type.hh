@@ -112,7 +112,7 @@ private:
     llvm::StringMap<ValueTy> members;
     llvm::StringMap<AccessKind> memberAccess;
     llvm::StringMap<FuncType *> methodTypes;
-    llvm::StringMap<std::vector<std::string>> methodParamNames;
+    llvm::StringMap<std::vector<string>> methodParamNames;
 
     bool opaque = false;
     StructDeclKind declKind = StructDeclKind::Native;
@@ -143,7 +143,7 @@ public:
     }
 
     void addMethodType(llvm::StringRef name, FuncType *funcType,
-                       std::vector<std::string> paramNames = {}) {
+                       std::vector<string> paramNames = {}) {
         methodTypes[name] = funcType;
         methodParamNames[name] = std::move(paramNames);
     }
@@ -172,7 +172,7 @@ public:
         return it->second;
     }
 
-    const std::vector<std::string> *getMethodParamNames(llvm::StringRef name) const {
+    const std::vector<string> *getMethodParamNames(llvm::StringRef name) const {
         auto it = methodParamNames.find(name);
         if (it == methodParamNames.end()) {
             return nullptr;
@@ -458,7 +458,7 @@ class TypeTable {
     std::unordered_map<const TypeClass *, llvm::Type *> llvmTypes_;
     struct MethodBindingKey {
         const StructType *parent = nullptr;
-        std::string name;
+        string name;
 
         bool operator==(const MethodBindingKey &other) const {
             return parent == other.parent && name == other.name;
@@ -467,7 +467,7 @@ class TypeTable {
     struct MethodBindingKeyHash {
         std::size_t operator()(const MethodBindingKey &key) const {
             return std::hash<const StructType *>{}(key.parent) ^
-                (std::hash<std::string>{}(key.name) << 1);
+                (std::hash<string>{}(key.name) << 1);
         }
     };
     std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash> methodFunctions_;
@@ -697,7 +697,7 @@ public:
                     }
                     for (const auto &method : structType->getMethodTypes()) {
                         if (!existingStruct->getMethodType(method.first())) {
-                            std::vector<std::string> paramNames;
+                            std::vector<string> paramNames;
                             if (const auto *storedParamNames =
                                     structType->getMethodParamNames(method.first())) {
                                 paramNames = *storedParamNames;
@@ -823,10 +823,10 @@ public:
     }
 
     void bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func) {
-        methodFunctions_[{parent, name.str()}] = func;
+        methodFunctions_[{parent, string(name)}] = func;
     }
     Function *getMethodFunction(const StructType *parent, llvm::StringRef name) const {
-        auto found = methodFunctions_.find({parent, name.str()});
+        auto found = methodFunctions_.find({parent, string(name)});
         if (found == methodFunctions_.end()) {
             return nullptr;
         }

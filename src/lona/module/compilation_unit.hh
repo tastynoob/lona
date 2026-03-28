@@ -31,9 +31,9 @@ public:
     };
 
     struct ImportedModule {
-        std::string path;
-        std::string moduleKey;
-        std::string moduleName;
+        string path;
+        string moduleKey;
+        string moduleName;
         const ModuleInterface *interface = nullptr;
     };
 
@@ -42,7 +42,7 @@ public:
         const ImportedModule *importedModule = nullptr;
         const ModuleInterface::TypeDecl *typeDecl = nullptr;
         const ModuleInterface::FunctionDecl *functionDecl = nullptr;
-        std::string resolvedName;
+        string resolvedName;
 
         bool found() const { return kind != TopLevelLookupKind::NotFound; }
         bool isModule() const { return kind == TopLevelLookupKind::Module; }
@@ -51,16 +51,16 @@ public:
     };
 
 private:
-    std::string path_;
-    std::string moduleKey_;
-    std::string moduleName_;
+    string path_;
+    string moduleKey_;
+    string moduleName_;
     const SourceBuffer *source_ = nullptr;
     AstNode *syntaxTree_ = nullptr;
     CompilationUnitStage stage_ = CompilationUnitStage::Discovered;
     std::shared_ptr<ModuleInterface> moduleInterface_;
-    std::unordered_map<std::string, ImportedModule> importedModules_;
-    std::unordered_map<std::string, std::string> localTypeBindings_;
-    std::unordered_map<std::string, std::string> localFunctionBindings_;
+    std::unordered_map<string, ImportedModule> importedModules_;
+    std::unordered_map<string, string> localTypeBindings_;
+    std::unordered_map<string, string> localFunctionBindings_;
     mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
     mutable bool hashesReady_ = false;
     mutable std::uint64_t interfaceHash_ = 0;
@@ -72,9 +72,9 @@ private:
 public:
     explicit CompilationUnit(const SourceBuffer &source);
 
-    const std::string &path() const { return path_; }
-    const std::string &moduleKey() const { return moduleKey_; }
-    const std::string &moduleName() const { return moduleName_; }
+    const string &path() const { return path_; }
+    const string &moduleKey() const { return moduleKey_; }
+    const string &moduleName() const { return moduleName_; }
     const SourceBuffer &source() const;
     std::uint64_t sourceHash() const;
     std::uint64_t interfaceHash() const;
@@ -99,18 +99,46 @@ public:
     void markCompiled();
     void clearImportedModules();
     void clearLocalBindings();
-    bool addImportedModule(std::string alias, const CompilationUnit &unit);
-    const ImportedModule *findImportedModule(const std::string &alias) const;
-    bool importsModule(const std::string &alias) const;
+    bool addImportedModule(string alias, const CompilationUnit &unit);
+    bool addImportedModule(std::string alias, const CompilationUnit &unit) {
+        return addImportedModule(string(std::move(alias)), unit);
+    }
+    const ImportedModule *findImportedModule(const ::string &alias) const;
+    const ImportedModule *findImportedModule(const std::string &alias) const {
+        return findImportedModule(string(alias));
+    }
+    bool importsModule(const ::string &alias) const;
+    bool importsModule(const std::string &alias) const {
+        return importsModule(string(alias));
+    }
 
     void clearInterface();
-    bool bindLocalType(std::string localName, std::string resolvedName);
-    bool bindLocalFunction(std::string localName, std::string resolvedName);
-    const std::string *findLocalType(const std::string &localName) const;
-    const std::string *findLocalFunction(const std::string &localName) const;
-    TopLevelLookup lookupTopLevelName(const std::string &name) const;
+    bool bindLocalType(string localName, string resolvedName);
+    bool bindLocalType(std::string localName, string resolvedName) {
+        return bindLocalType(string(std::move(localName)), std::move(resolvedName));
+    }
+    bool bindLocalFunction(string localName, string resolvedName);
+    bool bindLocalFunction(std::string localName, string resolvedName) {
+        return bindLocalFunction(string(std::move(localName)), std::move(resolvedName));
+    }
+    const string *findLocalType(const ::string &localName) const;
+    const string *findLocalType(const std::string &localName) const {
+        return findLocalType(string(localName));
+    }
+    const string *findLocalFunction(const ::string &localName) const;
+    const string *findLocalFunction(const std::string &localName) const {
+        return findLocalFunction(string(localName));
+    }
+    TopLevelLookup lookupTopLevelName(const ::string &name) const;
+    TopLevelLookup lookupTopLevelName(const std::string &name) const {
+        return lookupTopLevelName(string(name));
+    }
     TopLevelLookup lookupTopLevelName(const ImportedModule &moduleNamespace,
-                                      const std::string &name) const;
+                                      const ::string &name) const;
+    TopLevelLookup lookupTopLevelName(const ImportedModule &moduleNamespace,
+                                      const std::string &name) const {
+        return lookupTopLevelName(moduleNamespace, string(name));
+    }
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();

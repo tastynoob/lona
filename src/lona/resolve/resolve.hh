@@ -23,12 +23,12 @@ public:
 private:
     Kind kind_;
     BindingKind bindingKind_ = BindingKind::Value;
-    std::string name_;
+    string name_;
     const AstNode *node_ = nullptr;
     location loc_;
 
 public:
-    ResolvedLocalBinding(Kind kind, BindingKind bindingKind, std::string name,
+    ResolvedLocalBinding(Kind kind, BindingKind bindingKind, string name,
                          const AstNode *node, const location &loc)
         : kind_(kind),
           bindingKind_(bindingKind),
@@ -39,7 +39,7 @@ public:
     Kind kind() const { return kind_; }
     BindingKind bindingKind() const { return bindingKind_; }
     bool isRefBinding() const { return bindingKind_ == BindingKind::Ref; }
-    const std::string &name() const { return name_; }
+    const string &name() const { return name_; }
     const AstNode *node() const { return node_; }
     const location &loc() const { return loc_; }
 
@@ -65,7 +65,7 @@ public:
 private:
     Kind kind_ = Kind::Invalid;
     const ResolvedLocalBinding *localBinding_ = nullptr;
-    std::string resolvedName_;
+    string resolvedName_;
 
 public:
     static ResolvedEntityRef invalid() { return ResolvedEntityRef(); }
@@ -77,21 +77,21 @@ public:
         return ref;
     }
 
-    static ResolvedEntityRef globalValue(std::string name) {
+    static ResolvedEntityRef globalValue(string name) {
         ResolvedEntityRef ref;
         ref.kind_ = Kind::GlobalValue;
         ref.resolvedName_ = std::move(name);
         return ref;
     }
 
-    static ResolvedEntityRef type(std::string name) {
+    static ResolvedEntityRef type(string name) {
         ResolvedEntityRef ref;
         ref.kind_ = Kind::Type;
         ref.resolvedName_ = std::move(name);
         return ref;
     }
 
-    static ResolvedEntityRef module(std::string name) {
+    static ResolvedEntityRef module(string name) {
         ResolvedEntityRef ref;
         ref.kind_ = Kind::Module;
         ref.resolvedName_ = std::move(name);
@@ -101,14 +101,14 @@ public:
     Kind kind() const { return kind_; }
     bool valid() const { return kind_ != Kind::Invalid; }
     const ResolvedLocalBinding *localBinding() const { return localBinding_; }
-    const std::string &resolvedName() const { return resolvedName_; }
+    const string &resolvedName() const { return resolvedName_; }
 };
 
 class ResolvedFunction {
     const AstFuncDecl *decl_ = nullptr;
     const AstNode *body_ = nullptr;
-    std::string functionName_;
-    std::string methodParentTypeName_;
+    string functionName_;
+    string methodParentTypeName_;
     location loc_;
     bool topLevelEntry_ = false;
     bool guaranteedReturn_ = false;
@@ -122,7 +122,7 @@ class ResolvedFunction {
 
 public:
     ResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
-                     std::string functionName, std::string methodParentTypeName,
+                     string functionName, string methodParentTypeName,
                      const location &loc,
                      bool topLevelEntry, bool guaranteedReturn)
         : decl_(decl),
@@ -136,9 +136,9 @@ public:
     const AstFuncDecl *decl() const { return decl_; }
     const AstNode *body() const { return body_; }
     bool hasDeclaredFunction() const { return !functionName_.empty(); }
-    const std::string &functionName() const { return functionName_; }
+    const string &functionName() const { return functionName_; }
     bool isMethod() const { return !methodParentTypeName_.empty(); }
-    const std::string &methodParentTypeName() const { return methodParentTypeName_; }
+    const string &methodParentTypeName() const { return methodParentTypeName_; }
     const location &loc() const { return loc_; }
     bool isTopLevelEntry() const { return topLevelEntry_; }
     bool guaranteedReturn() const { return guaranteedReturn_; }
@@ -178,13 +178,13 @@ class ResolvedModule {
 public:
     const ResolvedLocalBinding *createLocalBinding(ResolvedLocalBinding::Kind kind,
                                                    BindingKind bindingKind,
-                                                   std::string name,
+                                                   string name,
                                                    const AstNode *node,
                                                    const location &loc);
 
     ResolvedFunction *createFunction(const AstFuncDecl *decl, const AstNode *body,
-                                     std::string functionName,
-                                     std::string methodParentTypeName,
+                                     string functionName,
+                                     string methodParentTypeName,
                                      const location &loc, bool topLevelEntry,
                                      bool guaranteedReturn);
 

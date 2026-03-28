@@ -28,18 +28,18 @@ public:
     };
 
     struct TypeDecl {
-        std::string localName;
-        std::string exportedName;
+        string localName;
+        string exportedName;
         StructDeclKind declKind = StructDeclKind::Native;
         TypeClass *type = nullptr;
     };
 
     struct FunctionDecl {
-        std::string localName;
-        std::string symbolName;
+        string localName;
+        string symbolName;
         AbiKind abiKind = AbiKind::Native;
         FuncType *type = nullptr;
-        std::vector<std::string> paramNames;
+        std::vector<string> paramNames;
     };
 
     struct TopLevelLookup {
@@ -53,41 +53,63 @@ public:
     };
 
 private:
-    std::string sourcePath_;
-    std::string moduleKey_;
-    std::string moduleName_;
+    string sourcePath_;
+    string moduleKey_;
+    string moduleName_;
     std::uint64_t sourceHash_ = 0;
     bool collected_ = false;
     std::vector<std::unique_ptr<TypeClass>> ownedTypes_;
-    std::unordered_map<std::string, TypeClass *> derivedTypes_;
-    std::unordered_map<std::string, TypeDecl> localTypes_;
-    std::unordered_map<std::string, FunctionDecl> localFunctions_;
+    std::unordered_map<string, TypeClass *> derivedTypes_;
+    std::unordered_map<string, TypeDecl> localTypes_;
+    std::unordered_map<string, FunctionDecl> localFunctions_;
 
-    std::string exportedNameFor(const std::string &localName) const;
-    std::string functionSymbolNameFor(const std::string &localName,
-                                      AbiKind abiKind) const;
+    string exportedNameFor(const ::string &localName) const;
+    string functionSymbolNameFor(const ::string &localName,
+                                 AbiKind abiKind) const;
 
 public:
+    ModuleInterface(string sourcePath, string moduleKey,
+                    string moduleName, std::uint64_t sourceHash);
     ModuleInterface(std::string sourcePath, std::string moduleKey,
-                    std::string moduleName, std::uint64_t sourceHash);
+                    std::string moduleName, std::uint64_t sourceHash)
+        : ModuleInterface(string(std::move(sourcePath)),
+                          string(std::move(moduleKey)),
+                          string(std::move(moduleName)),
+                          sourceHash) {}
     ~ModuleInterface();
 
-    const std::string &sourcePath() const { return sourcePath_; }
-    const std::string &moduleKey() const { return moduleKey_; }
-    const std::string &moduleName() const { return moduleName_; }
+    const string &sourcePath() const { return sourcePath_; }
+    const string &moduleKey() const { return moduleKey_; }
+    const string &moduleName() const { return moduleName_; }
     std::uint64_t sourceHash() const { return sourceHash_; }
 
+    void refresh(string sourcePath, string moduleKey,
+                 string moduleName, std::uint64_t sourceHash);
     void refresh(std::string sourcePath, std::string moduleKey,
-                 std::string moduleName, std::uint64_t sourceHash);
+                 std::string moduleName, std::uint64_t sourceHash) {
+        refresh(string(std::move(sourcePath)),
+                string(std::move(moduleKey)),
+                string(std::move(moduleName)),
+                sourceHash);
+    }
 
     bool collected() const { return collected_; }
     void markCollected() { collected_ = true; }
 
     void clear();
-    StructType *declareStructType(const std::string &localName,
+    StructType *declareStructType(const ::string &localName,
                                   StructDeclKind declKind = StructDeclKind::Native);
+    StructType *declareStructType(const std::string &localName,
+                                  StructDeclKind declKind = StructDeclKind::Native) {
+        return declareStructType(string(localName), declKind);
+    }
+    bool declareFunction(string localName, FuncType *type,
+                         std::vector<string> paramNames = {});
     bool declareFunction(std::string localName, FuncType *type,
-                         std::vector<std::string> paramNames = {});
+                         std::vector<string> paramNames = {}) {
+        return declareFunction(string(std::move(localName)), type,
+                               std::move(paramNames));
+    }
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(TypeClass *elementType);
     ConstType *getOrCreateConstType(TypeClass *baseType);
@@ -98,11 +120,20 @@ public:
                                       TypeClass *retType,
                                       std::vector<BindingKind> argBindingKinds = {},
                                       AbiKind abiKind = AbiKind::Native);
-    const TypeDecl *findType(const std::string &localName) const;
-    const FunctionDecl *findFunction(const std::string &localName) const;
-    TopLevelLookup lookupTopLevelName(const std::string &localName) const;
-    const std::unordered_map<std::string, TypeDecl> &types() const { return localTypes_; }
-    const std::unordered_map<std::string, FunctionDecl> &functions() const {
+    const TypeDecl *findType(const ::string &localName) const;
+    const TypeDecl *findType(const std::string &localName) const {
+        return findType(string(localName));
+    }
+    const FunctionDecl *findFunction(const ::string &localName) const;
+    const FunctionDecl *findFunction(const std::string &localName) const {
+        return findFunction(string(localName));
+    }
+    TopLevelLookup lookupTopLevelName(const ::string &localName) const;
+    TopLevelLookup lookupTopLevelName(const std::string &localName) const {
+        return lookupTopLevelName(string(localName));
+    }
+    const std::unordered_map<string, TypeDecl> &types() const { return localTypes_; }
+    const std::unordered_map<string, FunctionDecl> &functions() const {
         return localFunctions_;
     }
 };
