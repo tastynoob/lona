@@ -4,10 +4,12 @@
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/ast/type_node_tools.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/array_dim.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
+#include "lona/sema/call_target_tools.hh"
 #include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/sema/hir.hh"
@@ -33,66 +35,7 @@
 #include <vector>
 
 namespace lona {
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
-}
-
-std::string
-baseTypeName(const BaseTypeNode *node) {
-    if (!node) {
-        return {};
-    }
-    if (node->hasSyntax()) {
-        return describeDotLikeSyntax(node->syntax);
-    }
-    return toStdString(node->name);
-}
-
-bool
-splitBaseTypeName(const BaseTypeNode *node, std::string &moduleName,
-                  std::string &memberName) {
-    if (!node) {
-        return false;
-    }
-    if (node->hasSyntax()) {
-        std::vector<std::string> segments;
-        if (!collectDotLikeSegments(node->syntax, segments) || segments.size() < 2) {
-            return false;
-        }
-
-        moduleName = segments.front();
-        memberName.clear();
-        for (std::size_t i = 1; i < segments.size(); ++i) {
-            if (!memberName.empty()) {
-                memberName += ".";
-            }
-            memberName += segments[i];
-        }
-        return true;
-    }
-    auto rawName = baseTypeName(node);
-    auto separator = rawName.find('.');
-    if (separator == std::string::npos) {
-        return false;
-    }
-    moduleName = rawName.substr(0, separator);
-    memberName = rawName.substr(separator + 1);
-    return true;
-}
-
-[[noreturn]] void
-error(const std::string &message);
-
-[[noreturn]] void
-error(const location &loc, const std::string &message,
-      const std::string &hint);
-
-[[noreturn]] void
-internalError(const std::string &message,
-              const std::string &hint = std::string());
+namespace collect_decl_impl {
 
 enum class TopLevelDeclKind {
     StructType,
@@ -478,22 +421,6 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
                         retType, node->retType, node->loc);
 }
 
-[[noreturn]] void
-error(const std::string &message) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
-}
-
-[[noreturn]] void
-error(const location &loc, const std::string &message,
-      const std::string &hint = std::string()) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
-}
-
-[[noreturn]] void
-internalError(const std::string &message, const std::string &hint) {
-    throw DiagnosticError(DiagnosticError::Category::Internal, message, hint);
-}
-
 std::string
 sourceFilename(const location &loc) {
     return loc.begin.filename ? *loc.begin.filename : std::string();
@@ -733,9 +660,6 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
     return resolveTopLevelName(unit, name, exportNamespace);
 }
 
-bool isReservedInitialListTypeName(llvm::StringRef name);
-[[noreturn]] void errorReservedInitialListType(const location &loc);
-
 TypeClass *
 resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node) {
     if (!typeMgr) {
@@ -969,7 +893,29 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     return lofunc;
 }
 
-}  // namespace
+}  // namespace collect_decl_impl
+
+using collect_decl_impl::DebugInfoContext;
+using collect_decl_impl::TopLevelDeclKind;
+using collect_decl_impl::clearDebugLocation;
+using collect_decl_impl::declareFunction;
+using collect_decl_impl::declareModuleNamespace;
+using collect_decl_impl::declareStructType;
+using collect_decl_impl::extractParamBindingKinds;
+using collect_decl_impl::extractParamNames;
+using collect_decl_impl::interfaceMethodReceiverPointeeType;
+using collect_decl_impl::recordTopLevelDeclName;
+using collect_decl_impl::rejectBareFunctionType;
+using collect_decl_impl::rejectOpaqueStructByValue;
+using collect_decl_impl::requireTypeTable;
+using collect_decl_impl::resolveTypeNode;
+using collect_decl_impl::sourceColumn;
+using collect_decl_impl::sourceFilename;
+using collect_decl_impl::sourceLine;
+using collect_decl_impl::validateExternCFunctionSignature;
+using collect_decl_impl::validateFunctionReceiverAccess;
+using collect_decl_impl::validateStructDeclShape;
+using collect_decl_impl::validateStructFieldType;
 
 class StructVisitor : public AstVisitorAny {
     TypeTable *typeMgr;
@@ -1011,8 +957,8 @@ class StructVisitor : public AstVisitorAny {
             node->loc);
         validateStructFieldType(structDecl, node, type);
 
-        members.insert({llvm::StringRef(name.tochara(), name.size()),
-                        {type, nextMemberIndex++}});
+        members.insert(std::make_pair(llvm::StringRef(name.tochara(), name.size()),
+                                      StructType::ValueTy{type, nextMemberIndex++}));
         memberAccess[llvm::StringRef(name.tochara(), name.size())] =
             node->accessKind;
 
@@ -1125,7 +1071,7 @@ public:
     }
 };
 
-namespace {
+namespace collect_interface_impl {
 
 TypeClass *
 lookupBuiltinType(llvm::StringRef name) {
@@ -1144,95 +1090,6 @@ lookupBuiltinType(llvm::StringRef name) {
     if (name == "f64") return f64Ty;
     if (name == "bool") return boolTy;
     return nullptr;
-}
-
-bool
-isReservedInitialListTypeName(llvm::StringRef name) {
-    return name == "initial_list";
-}
-
-[[noreturn]] void
-errorReservedInitialListType(const location &loc) {
-    error(loc,
-          "`initial_list` is a compiler-internal initialization interface",
-          "Use brace initialization like `{1, 2, 3}` instead. User-visible generic `initial_list<T>` support is not implemented.");
-}
-
-[[noreturn]] void
-errorInvalidArrayDimension(const location &loc) {
-    error(loc,
-          "fixed-dimension arrays require positive integer literal sizes",
-          "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
-}
-
-[[noreturn]] void
-errorUnsupportedUnsizedArray(const location &loc, TypeNode *node) {
-    error(loc,
-          "explicit unsized array type syntax is not allowed: " +
-              describeTypeNode(node, "<unknown type>"),
-          "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
-}
-
-[[noreturn]] void
-errorLegacyIndexablePointerSyntax(const location &loc, TypeNode *node) {
-    error(loc,
-          "explicit unsized array type syntax is not allowed inside pointer declarations: " +
-              describeTypeNode(node, "<unknown type>"),
-          "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
-}
-
-void
-validateTypeNodeLayout(TypeNode *node) {
-    if (!node) {
-        return;
-    }
-    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-        validateTypeNodeLayout(param->type);
-        return;
-    }
-    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
-        validateTypeNodeLayout(qualified->base);
-        return;
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        if (auto *array = dynamic_cast<ArrayTypeNode *>(pointer->base);
-            array && hasUnsizedArrayDimensions(array->dim) &&
-            isBareUnsizedArraySyntax(array->dim)) {
-            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
-        }
-        validateTypeNodeLayout(pointer->base);
-        return;
-    }
-    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-        validateTypeNodeLayout(indexable->base);
-        return;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        validateTypeNodeLayout(array->base);
-        if (hasUnsizedArrayDimensions(array->dim)) {
-            errorUnsupportedUnsizedArray(array->loc, array);
-        }
-        for (auto *dimension : array->dim) {
-            std::int64_t value = 0;
-            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
-                errorInvalidArrayDimension(dimension ? dimension->loc : array->loc);
-            }
-        }
-        return;
-    }
-    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-        for (auto *item : tuple->items) {
-            validateTypeNodeLayout(item);
-        }
-        return;
-    }
-    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
-        for (auto *arg : func->args) {
-            validateTypeNodeLayout(arg);
-        }
-        validateTypeNodeLayout(func->ret);
-        return;
-    }
 }
 
 class InterfaceCollector {
@@ -1435,9 +1292,10 @@ class InterfaceCollector {
                         toStdString(varDecl->field) + "`",
                     varDecl->loc);
                 validateStructFieldType(structDecl, varDecl, fieldType);
-                members.insert({llvm::StringRef(varDecl->field.tochara(),
-                                                varDecl->field.size()),
-                                {fieldType, index++}});
+                members.insert(
+                    std::make_pair(llvm::StringRef(varDecl->field.tochara(),
+                                                   varDecl->field.size()),
+                                   StructType::ValueTy{fieldType, index++}));
                 memberAccess[llvm::StringRef(varDecl->field.tochara(),
                                              varDecl->field.size())] =
                     varDecl->accessKind;
@@ -1563,7 +1421,7 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
     if (unit.interfaceCollected()) {
         return;
     }
-    InterfaceCollector(unit).collect();
+    collect_interface_impl::InterfaceCollector(unit).collect();
 }
 
 Function *
@@ -1612,7 +1470,8 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     }
 
     for (const auto &entry : interface->functions()) {
-        auto *funcType = typeMgr->internType(entry.second.type)->as<FuncType>();
+        auto *storedType = typeMgr->internType(entry.second.type);
+        auto *funcType = storedType ? storedType->as<FuncType>() : nullptr;
         if (!funcType) {
             internalError(
                 "failed to materialize imported function signature `" + entry.first +
@@ -1628,12 +1487,15 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     }
 
     for (const auto &entry : interface->types()) {
-        auto *structType = typeMgr->internType(entry.second.type)->as<StructType>();
+        auto *storedType = typeMgr->internType(entry.second.type);
+        auto *structType = storedType ? storedType->as<StructType>() : nullptr;
         if (!structType) {
             continue;
         }
         for (const auto &method : structType->getMethodTypes()) {
-            auto *methodType = typeMgr->internType(method.second)->as<FuncType>();
+            auto *storedMethodType = typeMgr->internType(method.second);
+            auto *methodType =
+                storedMethodType ? storedMethodType->as<FuncType>() : nullptr;
             if (!methodType) {
                 continue;
             }
@@ -1662,7 +1524,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     unit.markInterfaceCollected();
 }
 
-}  // namespace
+}  // namespace collect_interface_impl
 
 Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent) {
@@ -1680,7 +1542,8 @@ scanningType(Scope *global, AstNode *root) {
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace) {
-    materializeUnitInterface(global, unit, exportNamespace);
+    collect_interface_impl::materializeUnitInterface(global, unit,
+                                                     exportNamespace);
 }
 
 StructType *
@@ -1694,20 +1557,7 @@ createStruct(Scope *scope, AstStructDecl *node) {
     return type;
 }
 
-namespace {
-
-FuncType *
-getFunctionPointerTarget(TypeClass *type) {
-    auto *pointerType = asUnqualified<PointerType>(type);
-    return pointerType ? pointerType->getPointeeType()->as<FuncType>() : nullptr;
-}
-
-Function *
-getDirectFunctionCallee(HIRExpr *callee) {
-    auto *calleeValue = dynamic_cast<HIRValue *>(callee);
-    auto *value = calleeValue ? calleeValue->getValue() : nullptr;
-    return value ? value->as<Function>() : nullptr;
-}
+namespace collect_codegen_impl {
 
 class FunctionCompiler {
     struct LoopContext {
@@ -2948,7 +2798,7 @@ public:
     }
 };
 
-}  // namespace
+}  // namespace collect_codegen_impl
 
 void
 compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
@@ -2976,7 +2826,7 @@ emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo,
             primarySourcePath.empty() ? globalScope->module.getName().str()
                                       : primarySourcePath);
     }
-    ModuleCompiler(globalScope, module, debug.get());
+    collect_codegen_impl::ModuleCompiler(globalScope, module, debug.get());
 
     if (debug) {
         debug->finalize();

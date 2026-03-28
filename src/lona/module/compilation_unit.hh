@@ -87,6 +87,7 @@ public:
     }
     bool interfaceCollected() const { return moduleInterface_ && moduleInterface_->collected(); }
     AstNode *syntaxTree() const { return syntaxTree_; }
+    AstNode *requireSyntaxTree() const;
     ModuleInterface *interface() { return moduleInterface_.get(); }
     const ModuleInterface *interface() const { return moduleInterface_.get(); }
 

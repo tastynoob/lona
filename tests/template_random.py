@@ -282,8 +282,7 @@ def apply_{case_id}(v i32, cb (i32: i32)) i32 {{
         main_body.extend(
             [
                 f"    score = {module_name}.imported_add_{case_id}(score)",
-                f"    var imported_point_{case_id} {module_name}.ImportedPoint{case_id}",
-                f"    imported_point_{case_id}.x = score",
+                f"    var imported_point_{case_id} = {module_name}.ImportedPoint{case_id}(x = score)",
                 f"    score = imported_point_{case_id}.x",
             ]
         )

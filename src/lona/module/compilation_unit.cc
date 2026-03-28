@@ -1,7 +1,6 @@
 #include "compilation_unit.hh"
-#include "lona/ast/array_dim.hh"
 #include "lona/ast/tag_apply.hh"
-#include "lona/ast/type_node_string.hh"
+#include "lona/ast/type_node_tools.hh"
 #include "lona/err/err.hh"
 #include "lona/type/type.hh"
 #include <cassert>
@@ -12,7 +11,8 @@
 #include <utility>
 
 namespace lona {
-namespace {
+
+namespace compilation_unit_impl {
 
 std::string
 deriveModuleName(const std::string &path) {
@@ -42,134 +42,6 @@ std::uint64_t
 combineHash(std::uint64_t seed, std::uint64_t value) {
     seed ^= value + kHashSeed + (seed << 6) + (seed >> 2);
     return seed;
-}
-
-std::string
-toStdString(const string &value) {
-    return {value.tochara(), value.size()};
-}
-
-std::string
-baseTypeName(const BaseTypeNode *node) {
-    if (!node) {
-        return {};
-    }
-    if (node->hasSyntax()) {
-        return describeDotLikeSyntax(node->syntax);
-    }
-    return toStdString(node->name);
-}
-
-bool
-splitBaseTypeName(const BaseTypeNode *node, std::string &moduleName,
-                  std::string &memberName) {
-    if (!node) {
-        return false;
-    }
-    if (node->hasSyntax()) {
-        std::vector<std::string> segments;
-        if (!collectDotLikeSegments(node->syntax, segments) || segments.size() < 2) {
-            return false;
-        }
-
-        moduleName = segments.front();
-        memberName.clear();
-        for (std::size_t i = 1; i < segments.size(); ++i) {
-            if (!memberName.empty()) {
-                memberName += ".";
-            }
-            memberName += segments[i];
-        }
-        return true;
-    }
-    auto rawName = baseTypeName(node);
-    auto separator = rawName.find('.');
-    if (separator == std::string::npos) {
-        return false;
-    }
-    moduleName = rawName.substr(0, separator);
-    memberName = rawName.substr(separator + 1);
-    return true;
-}
-
-[[noreturn]] void
-errorInvalidArrayDimension(const location &loc) {
-    throw DiagnosticError(
-        DiagnosticError::Category::Semantic, loc,
-        "fixed-dimension arrays require positive integer literal sizes",
-        "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
-}
-
-[[noreturn]] void
-errorUnsupportedUnsizedArray(const location &loc, const TypeNode *node) {
-    throw DiagnosticError(
-        DiagnosticError::Category::Semantic, loc,
-        "explicit unsized array type syntax is not allowed: " +
-            describeTypeNode(node, "<unknown type>"),
-        "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
-}
-
-[[noreturn]] void
-errorLegacyIndexablePointerSyntax(const location &loc, const TypeNode *node) {
-    throw DiagnosticError(
-        DiagnosticError::Category::Semantic, loc,
-        "explicit unsized array type syntax is not allowed inside pointer declarations: " +
-            describeTypeNode(node, "<unknown type>"),
-        "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
-}
-
-void
-validateTypeNodeLayout(const TypeNode *node) {
-    if (!node) {
-        return;
-    }
-    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
-        validateTypeNodeLayout(param->type);
-        return;
-    }
-    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
-        validateTypeNodeLayout(qualified->base);
-        return;
-    }
-    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
-        if (auto *array = dynamic_cast<const ArrayTypeNode *>(pointer->base);
-            array && hasUnsizedArrayDimensions(array->dim) &&
-            isBareUnsizedArraySyntax(array->dim)) {
-            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
-        }
-        validateTypeNodeLayout(pointer->base);
-        return;
-    }
-    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
-        validateTypeNodeLayout(indexable->base);
-        return;
-    }
-    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
-        validateTypeNodeLayout(array->base);
-        if (hasUnsizedArrayDimensions(array->dim)) {
-            errorUnsupportedUnsizedArray(array->loc, array);
-        }
-        for (auto *dimension : array->dim) {
-            std::int64_t value = 0;
-            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
-                errorInvalidArrayDimension(dimension ? dimension->loc : array->loc);
-            }
-        }
-        return;
-    }
-    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
-        for (auto *item : tuple->items) {
-            validateTypeNodeLayout(item);
-        }
-        return;
-    }
-    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
-        for (auto *arg : func->args) {
-            validateTypeNodeLayout(arg);
-        }
-        validateTypeNodeLayout(func->ret);
-        return;
-    }
 }
 
 void
@@ -480,7 +352,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     return nullptr;
 }
 
-}  // namespace
+}  // namespace compilation_unit_impl
 
 CompilationUnit::CompilationUnit(const SourceBuffer &source) {
     refreshSource(source);
@@ -490,6 +362,15 @@ const SourceBuffer &
 CompilationUnit::source() const {
     assert(source_ != nullptr);
     return *source_;
+}
+
+AstNode *
+CompilationUnit::requireSyntaxTree() const {
+    if (syntaxTree_ == nullptr) {
+        internalError("compilation unit `" + path_ + "` is missing its parsed syntax tree",
+                      "Parse the unit before lowering or emission.");
+    }
+    return syntaxTree_;
 }
 
 std::uint64_t
@@ -522,8 +403,8 @@ CompilationUnit::attachInterface(std::shared_ptr<ModuleInterface> moduleInterfac
 void
 CompilationUnit::refreshSource(const SourceBuffer &source) {
     const auto newPath = source.path();
-    const auto newKey = deriveModuleKey(newPath);
-    const auto newName = deriveModuleName(newPath);
+    const auto newKey = compilation_unit_impl::deriveModuleKey(newPath);
+    const auto newName = compilation_unit_impl::deriveModuleName(newPath);
     const auto newHash = hashModuleSource(source.content());
     const bool changed = !source_ || path_ != newPath || !moduleInterface_ ||
         moduleInterface_->sourceHash() != newHash;
@@ -690,7 +571,9 @@ CompilationUnit::ensureHashes() const {
     if (hashesReady_) {
         return;
     }
-    interfaceHash_ = syntaxTree_ ? computeInterfaceHash(syntaxTree_) : 0;
+    interfaceHash_ = syntaxTree_
+        ? compilation_unit_impl::computeInterfaceHash(syntaxTree_)
+        : 0;
     implementationHash_ = sourceHash();
     hashesReady_ = true;
 }
@@ -750,7 +633,7 @@ CompilationUnit::clearResolvedTypes() {
 
 TypeClass *
 CompilationUnit::resolveType(TypeTable *typeTable, TypeNode *node) const {
-    return resolveTypeNode(typeTable, *this, node);
+    return compilation_unit_impl::resolveTypeNode(typeTable, *this, node);
 }
 
 }  // namespace lona

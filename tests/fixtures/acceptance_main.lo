@@ -9,10 +9,7 @@ struct Complex {
     imag i32
 
     def add(a Complex) Complex {
-        var t Complex
-        t.real = self.real + a.real
-        t.imag = self.imag + a.imag
-        ret t
+        ret Complex(real = self.real + a.real, imag = self.imag + a.imag)
     }
 }
 

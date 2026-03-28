@@ -3,14 +3,6 @@
 #include <string>
 
 namespace lona {
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
-}
-
-}  // namespace
 
 std::string
 describeTypeNode(const TypeNode *node, std::string_view nullDescription) {

@@ -2,10 +2,9 @@
 #include "type_node_string.hh"
 
 namespace lona {
-namespace {
 
 std::string
-escapeByteStringForJson(const string &value) {
+escapeAstByteStringForJson(const string &value) {
     static constexpr char kHexDigits[] = "0123456789ABCDEF";
 
     std::string escaped;
@@ -46,8 +45,6 @@ escapeByteStringForJson(const string &value) {
 
     return escaped;
 }
-
-}  // namespace
 
 void
 AstTag::toJson(Json &root) const {
@@ -135,10 +132,12 @@ AstConst::toJson(Json &root) {
             root["value"] = *getBuf<double>();
             break;
         case Type::STRING:
-            root["value"] = escapeByteStringForJson(*this->getBuf<string>());
+            root["value"] =
+                escapeAstByteStringForJson(*this->getBuf<string>());
             break;
         case Type::CHAR:
-            root["value"] = escapeByteStringForJson(*this->getBuf<string>());
+            root["value"] =
+                escapeAstByteStringForJson(*this->getBuf<string>());
             break;
         case Type::BOOL:
             root["value"] = *getBuf<bool>();

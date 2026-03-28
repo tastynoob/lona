@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <llvm-18/llvm/ADT/StringRef.h>
 #include <sys/types.h>
 #include <charconv>
@@ -245,3 +246,12 @@ public:
 };
 
 extern std::ostream& operator<<(std::ostream& os, const string& str);
+
+namespace lona {
+
+inline std::string
+toStdString(const ::string &value) {
+    return {value.tochara(), value.size()};
+}
+
+}  // namespace lona

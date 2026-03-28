@@ -6,10 +6,9 @@
 #include <utility>
 
 namespace lona {
-namespace {
 
 std::vector<std::string>
-splitLines(const std::string &content) {
+splitSourceLines(const std::string &content) {
     std::vector<std::string> lines;
     std::istringstream input(content);
     std::string line;
@@ -23,14 +22,12 @@ splitLines(const std::string &content) {
 }
 
 std::string
-normalizeSourcePath(const std::string &path) {
+canonicalizeSourcePath(const std::string &path) {
     if (path.empty()) {
         return path;
     }
     return std::filesystem::path(path).lexically_normal().string();
 }
-
-}  // namespace
 
 SourceBuffer::SourceBuffer(std::string path, std::string content)
     : path_(std::move(path)) {
@@ -48,12 +45,12 @@ SourceBuffer::line(std::size_t lineNumber) const {
 void
 SourceBuffer::resetContent(std::string content) {
     content_ = std::move(content);
-    lines_ = splitLines(content_);
+    lines_ = splitSourceLines(content_);
 }
 
 const SourceBuffer &
 SourceManager::loadFile(const std::string &path) {
-    auto normalizedPath = normalizeSourcePath(path);
+    auto normalizedPath = canonicalizeSourcePath(path);
     std::ifstream input(normalizedPath);
     if (!input) {
         throw DiagnosticError(
@@ -76,7 +73,7 @@ SourceManager::loadFile(const std::string &path) {
 
 const SourceBuffer &
 SourceManager::addSource(std::string path, std::string content) {
-    path = normalizeSourcePath(path);
+    path = canonicalizeSourcePath(path);
     auto found = sources_.find(path);
     if (found != sources_.end()) {
         found->second->resetContent(std::move(content));
@@ -90,7 +87,7 @@ SourceManager::addSource(std::string path, std::string content) {
 
 const SourceBuffer *
 SourceManager::find(const std::string &path) const {
-    auto found = sources_.find(normalizeSourcePath(path));
+    auto found = sources_.find(canonicalizeSourcePath(path));
     if (found == sources_.end()) {
         return nullptr;
     }

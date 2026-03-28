@@ -6,19 +6,15 @@
 
 namespace lona {
 
-namespace {
-
 llvm::StringRef
-functionAbiMetadataKey() {
+abiFunctionMetadataKey() {
     return "lona.abi.kind";
 }
 
 llvm::StringRef
-functionAbiMetadataValue(AbiKind abiKind) {
+abiFunctionMetadataValue(AbiKind abiKind) {
     return abiKind == AbiKind::C ? "c" : "native";
 }
-
-}  // namespace
 
 AbiFunctionSignature
 classifyFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf) {
@@ -37,15 +33,15 @@ getFunctionAbiLLVMType(TypeTable &types, FuncType *funcType,
 void
 annotateFunctionAbi(llvm::Function &func, AbiKind abiKind) {
     auto &context = func.getContext();
-    func.setMetadata(functionAbiMetadataKey(),
+    func.setMetadata(abiFunctionMetadataKey(),
                      llvm::MDNode::get(
                          context,
-                         llvm::MDString::get(context, functionAbiMetadataValue(abiKind))));
+                         llvm::MDString::get(context, abiFunctionMetadataValue(abiKind))));
 }
 
 std::optional<AbiKind>
 functionAbiAnnotation(const llvm::Function &func) {
-    auto *node = func.getMetadata(functionAbiMetadataKey());
+    auto *node = func.getMetadata(abiFunctionMetadataKey());
     if (!node || node->getNumOperands() != 1) {
         return std::nullopt;
     }
@@ -53,10 +49,10 @@ functionAbiAnnotation(const llvm::Function &func) {
     if (!value) {
         return std::nullopt;
     }
-    if (value->getString() == functionAbiMetadataValue(AbiKind::C)) {
+    if (value->getString() == abiFunctionMetadataValue(AbiKind::C)) {
         return AbiKind::C;
     }
-    if (value->getString() == functionAbiMetadataValue(AbiKind::Native)) {
+    if (value->getString() == abiFunctionMetadataValue(AbiKind::Native)) {
         return AbiKind::Native;
     }
     return std::nullopt;

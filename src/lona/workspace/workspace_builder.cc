@@ -4,6 +4,7 @@
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
+#include "lona/util/time.hh"
 #include "lona/visitor.hh"
 #include <algorithm>
 #include <cctype>
@@ -34,14 +35,7 @@
 #include <utility>
 
 namespace lona {
-namespace {
-
-using Clock = std::chrono::steady_clock;
-
-double
-elapsedMillis(Clock::time_point start, Clock::time_point end) {
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
+namespace workspace_builder_impl {
 
 llvm::OptimizationLevel
 getOptimizationLevel(int optLevel) {
@@ -365,7 +359,24 @@ appendHIRFunctions(HIRModule &target, const HIRModule &source) {
     }
 }
 
-}  // namespace
+}  // namespace workspace_builder_impl
+
+using workspace_builder_impl::appendHIRFunctions;
+using workspace_builder_impl::createHostedMainShimModule;
+using workspace_builder_impl::emitBitcodeData;
+using workspace_builder_impl::emitObjectData;
+using workspace_builder_impl::emitObjectFile;
+using workspace_builder_impl::ensureNativeAbiVersionField;
+using workspace_builder_impl::isLanguageEntryType;
+using workspace_builder_impl::languageEntryName;
+using workspace_builder_impl::linkSyntheticModule;
+using workspace_builder_impl::moduleHasFunctionSymbol;
+using workspace_builder_impl::moduleUsesNativeAbi;
+using workspace_builder_impl::optimizeModule;
+using workspace_builder_impl::parseArtifactBitcodeModule;
+using workspace_builder_impl::readBinaryFileIfPresent;
+using workspace_builder_impl::verifyCompiledModule;
+using workspace_builder_impl::writeBinaryFile;
 
 WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
                                    const WorkspaceLoader &loader)

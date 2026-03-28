@@ -98,6 +98,62 @@ def test_set_field_allows_external_assignment(compiler: CompilerHarness) -> None
     compiler.emit_ir(input_path).expect_ok()
 
 
+def test_non_set_field_rejects_external_assignment(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "get_only_field_external_bad.lo",
+        """
+        struct Counter {
+            value i32
+        }
+
+        def main() i32 {
+            var c Counter
+            c.value = 3
+            ret c.value
+        }
+        """,
+    )
+    result = compiler.emit_ir(input_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "assignment target contains read-only storage: i32 const",
+        label="get-only field write diagnostic",
+    )
+
+
+def test_imported_non_set_field_rejects_external_assignment(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "import_get_only_field/dep.lo",
+        """
+        struct Point {
+            x i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "import_get_only_field/main.lo",
+        """
+        import dep
+
+        def main(score i32) i32 {
+            var point = dep.Point(x = 1)
+            point.x = score
+            ret point.x
+        }
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "assignment target contains read-only storage: i32 const",
+        label="imported get-only field write diagnostic",
+    )
+
+
 def test_non_set_method_cannot_write_even_set_fields(
     compiler: CompilerHarness,
 ) -> None:
@@ -714,10 +770,7 @@ def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: Compiler
             right i32
 
             def swap(extra i32) Pair {
-                var out Pair
-                out.left = self.right + extra
-                out.right = self.left + extra
-                ret out
+                ret Pair(left = self.right + extra, right = self.left + extra)
             }
         }
 
@@ -752,11 +805,8 @@ def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: Compiler
             c i32
 
             def shift(delta i32) Triple {
-                var out Triple
-                out.a = self.b + delta
-                out.b = self.c + delta
-                out.c = self.a + delta
-                ret out
+                ret Triple(a = self.b + delta, b = self.c + delta,
+                           c = self.a + delta)
             }
         }
 
@@ -920,13 +970,8 @@ def test_large_struct_returns_and_grammar_subset_stay_lowerable(compiler: Compil
             e i32
 
             def add(v i32) Big {
-                var out Big
-                out.a = self.a + v
-                out.b = self.b + v
-                out.c = self.c + v
-                out.d = self.d + v
-                out.e = self.e + v
-                ret out
+                ret Big(a = self.a + v, b = self.b + v, c = self.c + v,
+                        d = self.d + v, e = self.e + v)
             }
         }
 

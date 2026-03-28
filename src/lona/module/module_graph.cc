@@ -6,23 +6,21 @@
 #include <utility>
 
 namespace lona {
-namespace {
 
-const std::vector<std::string> kEmptyDependencies;
+const std::vector<std::string> kModuleGraphEmptyDependencies;
 
 void
-collectPostOrder(const ModuleGraph &moduleGraph, const std::string &path,
-                 std::unordered_set<std::string> &visited,
-                 std::vector<std::string> &ordered) {
+collectModuleGraphPostOrder(const ModuleGraph &moduleGraph,
+                            const std::string &path,
+                            std::unordered_set<std::string> &visited,
+                            std::vector<std::string> &ordered) {
     if (!visited.emplace(path).second) {
         return;
     }
     for (const auto &dependency : moduleGraph.dependenciesOf(path)) {
-        collectPostOrder(moduleGraph, dependency, visited, ordered);
+        collectModuleGraphPostOrder(moduleGraph, dependency, visited, ordered);
     }
     ordered.push_back(path);
-}
-
 }
 
 ModuleGraph::ModuleRecord &
@@ -154,7 +152,7 @@ const std::vector<std::string> &
 ModuleGraph::dependenciesOf(const std::string &path) const {
     auto found = records_.find(path);
     if (found == records_.end()) {
-        return kEmptyDependencies;
+        return kModuleGraphEmptyDependencies;
     }
     return found->second->dependencies;
 }
@@ -163,7 +161,7 @@ const std::vector<std::string> &
 ModuleGraph::dependentsOf(const std::string &path) const {
     auto found = reverseDependencies_.find(path);
     if (found == reverseDependencies_.end()) {
-        return kEmptyDependencies;
+        return kModuleGraphEmptyDependencies;
     }
     return found->second;
 }
@@ -176,7 +174,7 @@ ModuleGraph::postOrderFrom(const std::string &path) const {
 
     std::unordered_set<std::string> visited;
     std::vector<std::string> ordered;
-    collectPostOrder(*this, path, visited, ordered);
+    collectModuleGraphPostOrder(*this, path, visited, ordered);
     return ordered;
 }
 

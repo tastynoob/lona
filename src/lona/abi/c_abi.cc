@@ -3,15 +3,8 @@
 
 namespace lona {
 
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
-}
-
 bool
-isCAbiV0DirectType(TypeClass *type) {
+isCAbiDirectType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
         (storageType->as<BaseType>() || storageType->as<PointerType>() ||
@@ -23,14 +16,12 @@ getCAbiDirectLLVMType(TypeTable &types, TypeClass *type) {
     if (!type) {
         return nullptr;
     }
-    if (!isCAbiV0DirectType(type)) {
+    if (!isCAbiDirectType(type)) {
         throw std::runtime_error("unsupported C ABI v0 type `" +
                                  toStdString(type->full_name) + "`");
     }
     return types.getLLVMType(type);
 }
-
-}  // namespace
 
 AbiFunctionSignature
 classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf) {

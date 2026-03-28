@@ -4,10 +4,9 @@
 #include <sstream>
 
 namespace lona {
-namespace {
 
 std::string
-categoryLabel(DiagnosticError::Category category) {
+diagnosticCategoryLabel(DiagnosticError::Category category) {
     switch (category) {
     case DiagnosticError::Category::Lexical:
         return "lexical error";
@@ -24,12 +23,13 @@ categoryLabel(DiagnosticError::Category category) {
 }
 
 bool
-hasUsableLocation(const location &loc) {
+hasUsableDiagnosticLocation(const location &loc) {
     return loc.begin.line > 0 && loc.begin.column > 0;
 }
 
 std::string
-locationPath(const DiagnosticError &error, const std::string &fallbackPath) {
+diagnosticLocationPath(const DiagnosticError &error,
+                       const std::string &fallbackPath) {
     if (error.hasLocation() && error.where().begin.filename) {
         return *error.where().begin.filename;
     }
@@ -37,7 +37,7 @@ locationPath(const DiagnosticError &error, const std::string &fallbackPath) {
 }
 
 std::string
-underlineFor(const location &loc, const std::string &line) {
+diagnosticUnderlineFor(const location &loc, const std::string &line) {
     const int startColumn = std::max(1, loc.begin.column);
     int width = 1;
     if (loc.begin.line == loc.end.line && loc.end.column > loc.begin.column) {
@@ -50,15 +50,13 @@ underlineFor(const location &loc, const std::string &line) {
            std::string(static_cast<std::size_t>(std::max(1, width)), '^');
 }
 
-}  // namespace
-
 std::string
 DiagnosticEngine::render(const DiagnosticError &error,
                          const std::string &fallbackPath) const {
     std::ostringstream out;
-    out << categoryLabel(error.category()) << ": " << error.what() << '\n';
+    out << diagnosticCategoryLabel(error.category()) << ": " << error.what() << '\n';
 
-    if (!error.hasLocation() || !hasUsableLocation(error.where())) {
+    if (!error.hasLocation() || !hasUsableDiagnosticLocation(error.where())) {
         if (!error.hint().empty()) {
             out << "help: " << error.hint() << '\n';
         }
@@ -68,7 +66,7 @@ DiagnosticEngine::render(const DiagnosticError &error,
     const auto &loc = error.where();
     const auto lineNumber = loc.begin.line;
     const auto columnNumber = loc.begin.column;
-    const auto path = locationPath(error, fallbackPath);
+    const auto path = diagnosticLocationPath(error, fallbackPath);
 
     if (!path.empty()) {
         out << " --> " << path << ':' << lineNumber << ':' << columnNumber << '\n';
@@ -87,7 +85,7 @@ DiagnosticEngine::render(const DiagnosticError &error,
             out << ' ' << std::string(lineLabel.size(), ' ') << " |\n";
             out << ' ' << lineLabel << " | " << *sourceLine << '\n';
             out << ' ' << std::string(lineLabel.size(), ' ') << " | "
-                << underlineFor(loc, *sourceLine) << '\n';
+                << diagnosticUnderlineFor(loc, *sourceLine) << '\n';
         }
     }
 

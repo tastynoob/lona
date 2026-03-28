@@ -1,32 +1,11 @@
 #include "session.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/err/err.hh"
-#include <chrono>
+#include "lona/util/time.hh"
 #include <iomanip>
 #include <nlohmann/json.hpp>
 
 namespace lona {
-namespace {
-using Clock = std::chrono::steady_clock;
-
-double
-elapsedMillis(Clock::time_point start, Clock::time_point end) {
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-AstNode *
-requireSyntaxTree(const CompilationUnit &unit) {
-    auto *tree = unit.syntaxTree();
-    if (!tree) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "compilation unit `" + unit.path() +
-                                  "` is missing its parsed syntax tree",
-                              "Parse the unit before lowering or emission.");
-    }
-    return tree;
-}
-
-}  // namespace
 
 CompilerSession::CompilerSession()
     : loader_(workspace_),
@@ -136,7 +115,7 @@ CompilerSession::runFile(const std::string &inputPath,
                 unit, options.compile, options.outputPath, options.cacheOutputPath,
                 lastStats_, out));
         }
-        auto *jsonTree = requireSyntaxTree(unit);
+        auto *jsonTree = unit.requireSyntaxTree();
         Json root = Json::object();
         jsonTree->toJson(root);
         out << root.dump(2) << std::endl;

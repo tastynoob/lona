@@ -11,15 +11,13 @@
 
 namespace lona {
 
-namespace {
-
-struct TargetLayout {
+struct TypeTargetLayout {
     std::string triple;
     llvm::Reloc::Model relocModel;
     std::unique_ptr<llvm::TargetMachine> machine;
     llvm::DataLayout dataLayout;
 
-    explicit TargetLayout(const std::string &requestedTriple)
+    explicit TypeTargetLayout(const std::string &requestedTriple)
         : triple(normalizeTargetTriple(requestedTriple)),
           relocModel(targetUsesHostedEntry(triple) ? llvm::Reloc::PIC_
                                                    : llvm::Reloc::Static),
@@ -48,14 +46,14 @@ struct TargetLayout {
 };
 
 std::string
-targetLayoutCacheKey(llvm::StringRef triple) {
+typeTargetLayoutCacheKey(llvm::StringRef triple) {
     return normalizeTargetTriple(triple.str());
 }
 
-TargetLayout &
-targetLayoutFor(llvm::StringRef triple) {
+TypeTargetLayout &
+cachedTypeTargetLayoutFor(llvm::StringRef triple) {
     static std::once_flag once;
-    static std::unordered_map<std::string, std::unique_ptr<TargetLayout>> layouts;
+    static std::unordered_map<std::string, std::unique_ptr<TypeTargetLayout>> layouts;
     static std::string initError;
     static std::mutex mutex;
     std::call_once(once, [] {
@@ -74,17 +72,15 @@ targetLayoutFor(llvm::StringRef triple) {
                                      : initError);
     }
 
-    const std::string key = targetLayoutCacheKey(triple);
+    const std::string key = typeTargetLayoutCacheKey(triple);
     std::lock_guard<std::mutex> lock(mutex);
     auto it = layouts.find(key);
     if (it == layouts.end()) {
-        auto layout = std::make_unique<TargetLayout>(key);
+        auto layout = std::make_unique<TypeTargetLayout>(key);
         it = layouts.emplace(key, std::move(layout)).first;
     }
     return *it->second;
 }
-
-}  // namespace
 
 std::string
 normalizeTargetTriple(const std::string &triple) {
@@ -101,7 +97,7 @@ targetUsesHostedEntry(llvm::StringRef triple) {
 
 const llvm::DataLayout &
 defaultTargetDataLayout() {
-    return targetLayoutFor(defaultTargetTriple()).dataLayout;
+    return cachedTypeTargetLayoutFor(defaultTargetTriple()).dataLayout;
 }
 
 const std::string &
@@ -112,12 +108,12 @@ defaultTargetTriple() {
 
 llvm::TargetMachine &
 targetMachineFor(llvm::StringRef triple) {
-    return *targetLayoutFor(triple).machine;
+    return *cachedTypeTargetLayoutFor(triple).machine;
 }
 
 void
 configureModuleTargetLayout(llvm::Module &module, llvm::StringRef triple) {
-    auto &layout = targetLayoutFor(triple);
+    auto &layout = cachedTypeTargetLayoutFor(triple);
     module.setTargetTriple(layout.triple);
     module.setDataLayout(layout.dataLayout);
 }
@@ -133,11 +129,9 @@ isConstQualifiedType(TypeClass *type) {
     return type && type->as<ConstType>() != nullptr;
 }
 
-namespace {
-
 TypeClass *
-rematerializeArrayType(TypeTable *typeTable, ArrayType *array,
-                       TypeClass *elementType) {
+rematerializeValueArrayType(TypeTable *typeTable, ArrayType *array,
+                            TypeClass *elementType) {
     if (!array || !elementType) {
         return nullptr;
     }
@@ -151,9 +145,9 @@ rematerializeArrayType(TypeTable *typeTable, ArrayType *array,
 }
 
 TypeClass *
-rematerializeTupleType(TypeTable *typeTable, TupleType *tuple,
-                       const std::vector<TypeClass *> &itemTypes,
-                       bool reusedOriginalItems) {
+rematerializeValueTupleType(TypeTable *typeTable, TupleType *tuple,
+                            const std::vector<TypeClass *> &itemTypes,
+                            bool reusedOriginalItems) {
     if (!tuple) {
         return nullptr;
     }
@@ -166,8 +160,6 @@ rematerializeTupleType(TypeTable *typeTable, TupleType *tuple,
     return new TupleType(std::vector<TypeClass *>(itemTypes));
 }
 
-}  // namespace
-
 TypeClass *
 materializeValueType(TypeTable *typeTable, TypeClass *type) {
     if (!type) {
@@ -178,7 +170,7 @@ materializeValueType(TypeTable *typeTable, TypeClass *type) {
     }
     if (auto *array = type->as<ArrayType>()) {
         auto *elementType = materializeValueType(typeTable, array->getElementType());
-        return rematerializeArrayType(typeTable, array, elementType);
+        return rematerializeValueArrayType(typeTable, array, elementType);
     }
     if (auto *tuple = type->as<TupleType>()) {
         std::vector<TypeClass *> itemTypes;
@@ -189,8 +181,8 @@ materializeValueType(TypeTable *typeTable, TypeClass *type) {
             reusedOriginalItems = reusedOriginalItems && materializedItem == itemType;
             itemTypes.push_back(materializedItem);
         }
-        return rematerializeTupleType(typeTable, tuple, itemTypes,
-                                      reusedOriginalItems);
+        return rematerializeValueTupleType(typeTable, tuple, itemTypes,
+                                           reusedOriginalItems);
     }
     return type;
 }

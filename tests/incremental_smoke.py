@@ -174,9 +174,7 @@ def array_dependency_text(columns: int, rows: int, value: int) -> str:
         "def make() Box {\n"
         f"    var matrix i32[{columns}][{rows}] = {{}}\n"
         f"    matrix(0)(0) = {value}\n"
-        "    var box Box\n"
-        "    box.data = matrix\n"
-        "    ret box\n"
+        "    ret Box(data = matrix)\n"
         "}\n"
     )
 

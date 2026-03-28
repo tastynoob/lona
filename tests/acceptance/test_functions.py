@@ -697,10 +697,7 @@ def test_bare_method_values_and_selector_misuse_are_rejected(compiler: CompilerH
         imag i32
 
         def add(a Complex) Complex {
-            var out Complex
-            out.real = self.real + a.real
-            out.imag = self.imag + a.imag
-            ret out
+            ret Complex(real = self.real + a.real, imag = self.imag + a.imag)
         }
     }
     """

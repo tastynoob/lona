@@ -8,11 +8,10 @@
 #include <cassert>
 
 namespace lona {
-namespace {
 
 llvm::Value *
-reinterpretValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
-                     TypeClass *dstType) {
+reinterpretObjectValueBits(Scope *scope, llvm::Value *value,
+                           TypeClass *srcType, TypeClass *dstType) {
     if (!scope || !value || !srcType || !dstType) {
         return value;
     }
@@ -58,16 +57,14 @@ reinterpretValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
 }
 
 llvm::Value *
-coerceObjectValue(Scope *scope, Object *src, TypeClass *dstType) {
+coerceObjectValueToType(Scope *scope, Object *src, TypeClass *dstType) {
     if (!scope || !src || !dstType) {
         return nullptr;
     }
     auto *srcType = src->getType();
     auto *value = src->get(scope);
-    return reinterpretValueBits(scope, value, srcType, dstType);
+    return reinterpretObjectValueBits(scope, value, srcType, dstType);
 }
-
-}  // namespace
 
 
 void
@@ -107,7 +104,7 @@ Object::set(Scope *scope, Object *src) {
     }
 
     assert(val->getType()->isPointerTy());
-    builder.CreateStore(coerceObjectValue(scope, src, this->getType()), val);
+    builder.CreateStore(coerceObjectValueToType(scope, src, this->getType()), val);
 }
 
 llvm::Value *
@@ -335,7 +332,8 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
             }
             return;
         }
-        llvmargs.push_back(coerceObjectValue(scope, arg, expectedType));
+        llvmargs.push_back(
+            coerceObjectValueToType(scope, arg, expectedType));
     };
 
     std::size_t startIndex = 0;

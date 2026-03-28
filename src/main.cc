@@ -7,10 +7,8 @@
 #include <string>
 #include <vector>
 
-namespace {
-
 [[noreturn]] void
-finishProcess(int exitCode, std::ostream *out = nullptr) {
+flushProcessStreamsAndExit(int exitCode, std::ostream *out = nullptr) {
     if (out != nullptr) {
         out->flush();
     }
@@ -20,7 +18,7 @@ finishProcess(int exitCode, std::ostream *out = nullptr) {
 }
 
 std::vector<std::string>
-normalizeCliArgs(int argc, char *argv[]) {
+normalizeMainCliArgs(int argc, char *argv[]) {
     std::vector<std::string> args;
     args.reserve(static_cast<size_t>(argc) + 4);
 
@@ -36,8 +34,6 @@ normalizeCliArgs(int argc, char *argv[]) {
 
     return args;
 }
-
-}  // namespace
 
 int
 main(int argc, char *argv[]) {
@@ -64,7 +60,7 @@ main(int argc, char *argv[]) {
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
-    auto normalizedArgs = normalizeCliArgs(argc, argv);
+    auto normalizedArgs = normalizeMainCliArgs(argc, argv);
     cli.parse_check(normalizedArgs);
 
     const auto &args = cli.rest();
@@ -134,7 +130,7 @@ main(int argc, char *argv[]) {
                     "I couldn't open output file `" + outputPath + "`.",
                     "Check that the path is writable and that parent directories exist."),
                 std::cerr);
-            finishProcess(1);
+            flushProcessStreamsAndExit(1);
         }
         out = &output;
     }
@@ -175,5 +171,5 @@ main(int argc, char *argv[]) {
     if (cli.exist("stats")) {
         session.printStats(std::cerr);
     }
-    finishProcess(exitCode, out);
+    flushProcessStreamsAndExit(exitCode, out);
 }

@@ -12,16 +12,11 @@
 #include <stdexcept>
 
 namespace lona {
-namespace {
+namespace astnode_impl {
 
 std::string
 tokenText(const AstToken &token) {
     return std::string(token.text.tochara(), token.text.size());
-}
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
 }
 
 [[noreturn]] void
@@ -195,7 +190,13 @@ parseNumericLiteralToken(const AstToken &token) {
     return literal;
 }
 
-}  // namespace
+}  // namespace astnode_impl
+
+using astnode_impl::errorInvalidNumericLiteral;
+using astnode_impl::fitsSignedMagnitude;
+using astnode_impl::fitsUnsigned;
+using astnode_impl::parseNumericLiteralToken;
+using astnode_impl::tokenText;
 
 FuncPtrTypeNode*
 findFuncPtrTypeNode(TypeNode *node) {

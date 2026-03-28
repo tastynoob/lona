@@ -1303,10 +1303,7 @@ def test_tuples_small_aggregates_and_method_abi_shapes(compiler: CompilerHarness
             right i32
 
             def swap(extra i32) Pair {
-                var out Pair
-                out.left = self.right + extra
-                out.right = self.left + extra
-                ret out
+                ret Pair(left = self.right + extra, right = self.left + extra)
             }
         }
 
@@ -1330,11 +1327,8 @@ def test_tuples_small_aggregates_and_method_abi_shapes(compiler: CompilerHarness
             c i32
 
             def shift(delta i32) Triple {
-                var out Triple
-                out.a = self.b + delta
-                out.b = self.c + delta
-                out.c = self.a + delta
-                ret out
+                ret Triple(a = self.b + delta, b = self.c + delta,
+                           c = self.a + delta)
             }
         }
 

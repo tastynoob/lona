@@ -5,15 +5,6 @@
 
 namespace lona {
 
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return {value.tochara(), value.size()};
-}
-
-}
-
 ModuleInterface::ModuleInterface(std::string sourcePath, std::string moduleKey,
                                  std::string moduleName, std::uint64_t sourceHash)
     : sourcePath_(std::move(sourcePath)),

@@ -1,36 +1,16 @@
 #include "workspace_loader.hh"
 #include "lona/err/err.hh"
 #include "lona/scan/driver.hh"
-#include <chrono>
+#include "lona/util/time.hh"
 #include <filesystem>
 #include <sstream>
 #include <unordered_set>
 
 namespace lona {
-namespace {
-
-using Clock = std::chrono::steady_clock;
-
-double
-elapsedMillis(Clock::time_point start, Clock::time_point end) {
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-AstNode *
-requireSyntaxTree(const CompilationUnit &unit) {
-    auto *tree = unit.syntaxTree();
-    if (!tree) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "compilation unit `" + unit.path() +
-                                  "` is missing its parsed syntax tree",
-                              "Parse the unit before lowering or emission.");
-    }
-    return tree;
-}
 
 AstStatList *
-requireTopLevelBody(const CompilationUnit &unit) {
-    auto *tree = requireSyntaxTree(unit);
+requireWorkspaceTopLevelBody(const CompilationUnit &unit) {
+    auto *tree = unit.requireSyntaxTree();
     if (auto *program = dynamic_cast<AstProgram *>(tree)) {
         return program->body;
     }
@@ -44,7 +24,8 @@ requireTopLevelBody(const CompilationUnit &unit) {
 }
 
 std::string
-resolveImportPath(const CompilationUnit &unit, const AstImport &importNode) {
+resolveWorkspaceImportPath(const CompilationUnit &unit,
+                           const AstImport &importNode) {
     namespace fs = std::filesystem;
     fs::path importPath(importNode.path);
     if (importPath.has_extension()) {
@@ -61,7 +42,7 @@ resolveImportPath(const CompilationUnit &unit, const AstImport &importNode) {
 }
 
 bool
-isValidModuleName(const std::string &name) {
+isValidWorkspaceModuleName(const std::string &name) {
     if (name.empty()) {
         return false;
     }
@@ -83,7 +64,7 @@ isValidModuleName(const std::string &name) {
 }
 
 bool
-isAllowedImportedTopLevelNode(AstNode *node) {
+isAllowedWorkspaceImportedTopLevelNode(AstNode *node) {
     if (node == nullptr) {
         return true;
     }
@@ -93,8 +74,6 @@ isAllowedImportedTopLevelNode(AstNode *node) {
     auto *list = dynamic_cast<AstStatList *>(node);
     return list != nullptr && list->isEmpty();
 }
-
-}  // namespace
 
 CompilationUnit &
 WorkspaceLoader::loadRootUnit(const std::string &path) const {
@@ -125,15 +104,15 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
 
     workspace_.moduleGraph().resetDependencies(unit.path());
     unit.clearImportedModules();
-    auto *body = requireTopLevelBody(unit);
+    auto *body = requireWorkspaceTopLevelBody(unit);
     for (auto *stmt : body->getBody()) {
         auto *importNode = dynamic_cast<AstImport *>(stmt);
         if (!importNode) {
             continue;
         }
-        auto importPath = resolveImportPath(unit, *importNode);
+        auto importPath = resolveWorkspaceImportPath(unit, *importNode);
         auto &dependencyUnit = workspace_.loadUnit(importPath);
-        if (!isValidModuleName(dependencyUnit.moduleName())) {
+        if (!isValidWorkspaceModuleName(dependencyUnit.moduleName())) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, importNode->loc,
                 "imported module `" + dependencyUnit.path() +
@@ -185,9 +164,9 @@ WorkspaceLoader::validateImportedUnit(const CompilationUnit &unit) const {
         return;
     }
 
-    auto *body = requireTopLevelBody(unit);
+    auto *body = requireWorkspaceTopLevelBody(unit);
     for (auto *stmt : body->getBody()) {
-        if (isAllowedImportedTopLevelNode(stmt)) {
+        if (isAllowedWorkspaceImportedTopLevelNode(stmt)) {
             continue;
         }
         throw DiagnosticError(

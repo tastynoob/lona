@@ -7,12 +7,8 @@
 #include <vector>
 
 namespace lona {
-namespace {
 
-std::string
-toStdString(const string &value) {
-    return {value.tochara(), value.size()};
-}
+namespace tag_apply_impl {
 
 std::string
 tokenText(const AstToken *token) {
@@ -303,11 +299,11 @@ applyBuiltinTagsImpl(AstNode *node, bool allowTagsInList) {
     return node;
 }
 
-}  // namespace
+}  // namespace tag_apply_impl
 
 AstNode *
 applyBuiltinTags(AstNode *node) {
-    return applyBuiltinTagsImpl(node, true);
+    return tag_apply_impl::applyBuiltinTagsImpl(node, true);
 }
 
 void

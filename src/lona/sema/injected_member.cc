@@ -7,17 +7,19 @@
 #include <algorithm>
 
 namespace lona {
-namespace {
 
-bool isFloatFamily(TypeClass *type) {
+bool
+isInjectedMemberFloatFamily(TypeClass *type) {
     return isFloatType(type);
 }
 
-bool isIntegerFamily(TypeClass *type) {
+bool
+isInjectedMemberIntegerFamily(TypeClass *type) {
     return isIntegerType(type);
 }
 
-unsigned numericBitWidth(TypeTable *typeTable, TypeClass *type) {
+unsigned
+injectedMemberNumericBitWidth(TypeTable *typeTable, TypeClass *type) {
     auto *base = asUnqualified<BaseType>(type);
     if (!base) {
         return 0;
@@ -54,7 +56,8 @@ unsigned numericBitWidth(TypeTable *typeTable, TypeClass *type) {
     }
 }
 
-TypeClass *signedIntegerTypeForWidth(unsigned width) {
+TypeClass *
+injectedMemberSignedIntegerTypeForWidth(unsigned width) {
     switch (width) {
     case 8:
         return i8Ty;
@@ -69,7 +72,8 @@ TypeClass *signedIntegerTypeForWidth(unsigned width) {
     }
 }
 
-TypeClass *unsignedIntegerTypeForWidth(unsigned width) {
+TypeClass *
+injectedMemberUnsignedIntegerTypeForWidth(unsigned width) {
     switch (width) {
     case 8:
         return u8Ty;
@@ -84,7 +88,8 @@ TypeClass *unsignedIntegerTypeForWidth(unsigned width) {
     }
 }
 
-TypeClass *floatTypeForWidth(unsigned width) {
+TypeClass *
+injectedMemberFloatTypeForWidth(unsigned width) {
     switch (width) {
     case 32:
         return f32Ty;
@@ -95,12 +100,15 @@ TypeClass *floatTypeForWidth(unsigned width) {
     }
 }
 
-AstNode *makeArrayDimension(std::int64_t value) {
+AstNode *
+makeInjectedMemberArrayDimension(std::int64_t value) {
     AstToken token(TokenType::ConstInt32, std::to_string(value).c_str(), location());
     return new AstConst(token);
 }
 
-bool isBitsArrayType(TypeClass *type, std::int64_t *byteCount = nullptr) {
+bool
+isInjectedMemberBitsArrayType(TypeClass *type,
+                              std::int64_t *byteCount = nullptr) {
     auto *array = asUnqualified<ArrayType>(type);
     if (!array || array->getElementType() != u8Ty || !array->hasStaticLayout()) {
         return false;
@@ -115,22 +123,24 @@ bool isBitsArrayType(TypeClass *type, std::int64_t *byteCount = nullptr) {
     return true;
 }
 
-ArrayType *getOrCreateBitsArrayType(TypeTable *typeTable, std::int64_t byteCount) {
+ArrayType *
+getOrCreateInjectedMemberBitsArrayType(TypeTable *typeTable,
+                                       std::int64_t byteCount) {
     std::vector<AstNode *> dims;
-    dims.push_back(makeArrayDimension(byteCount));
+    dims.push_back(makeInjectedMemberArrayDimension(byteCount));
     return typeTable->createArrayType(u8Ty, std::move(dims));
 }
-
-}  // namespace
 
 bool canImplicitNumericConversion(TypeClass *targetType, TypeClass *sourceType) {
     if (!targetType || !sourceType || targetType == sourceType) {
         return false;
     }
-    if (isIntegerFamily(targetType) && isIntegerFamily(sourceType)) {
+    if (isInjectedMemberIntegerFamily(targetType) &&
+        isInjectedMemberIntegerFamily(sourceType)) {
         return true;
     }
-    if (isFloatFamily(targetType) && isFloatFamily(sourceType)) {
+    if (isInjectedMemberFloatFamily(targetType) &&
+        isInjectedMemberFloatFamily(sourceType)) {
         return true;
     }
     return false;
@@ -147,8 +157,10 @@ bool canExplicitBitCopy(TypeClass *targetType, TypeClass *sourceType) {
     if (!targetType || !sourceType || targetType == sourceType) {
         return false;
     }
-    const bool sourceBitsArray = isBitsArrayType(sourceType);
-    const bool targetBitsArray = isBitsArrayType(targetType);
+    const bool sourceBitsArray =
+        isInjectedMemberBitsArrayType(sourceType);
+    const bool targetBitsArray =
+        isInjectedMemberBitsArrayType(targetType);
     if ((!sourceBitsArray && !isByteCopyPlainType(sourceType)) ||
         (!targetBitsArray && !isByteCopyPlainType(targetType))) {
         return false;
@@ -166,33 +178,40 @@ TypeClass *commonNumericType(TypeTable *typeTable, TypeClass *leftType,
         return leftType;
     }
 
-    if (isFloatFamily(leftType) && isFloatFamily(rightType)) {
-        return floatTypeForWidth(std::max(numericBitWidth(typeTable, leftType),
-                                          numericBitWidth(typeTable, rightType)));
+    if (isInjectedMemberFloatFamily(leftType) &&
+        isInjectedMemberFloatFamily(rightType)) {
+        return injectedMemberFloatTypeForWidth(std::max(
+            injectedMemberNumericBitWidth(typeTable, leftType),
+            injectedMemberNumericBitWidth(typeTable, rightType)));
     }
 
-    if (isIntegerFamily(leftType) && isIntegerFamily(rightType)) {
+    if (isInjectedMemberIntegerFamily(leftType) &&
+        isInjectedMemberIntegerFamily(rightType)) {
         const bool bothSigned =
             isSignedIntegerType(leftType) && isSignedIntegerType(rightType);
         const bool bothUnsigned =
             isUnsignedIntegerType(leftType) && isUnsignedIntegerType(rightType);
-        const auto leftWidth = numericBitWidth(typeTable, leftType);
-        const auto rightWidth = numericBitWidth(typeTable, rightType);
+        const auto leftWidth =
+            injectedMemberNumericBitWidth(typeTable, leftType);
+        const auto rightWidth =
+            injectedMemberNumericBitWidth(typeTable, rightType);
         const auto width = std::max(leftWidth, rightWidth);
         if (bothSigned) {
-            return signedIntegerTypeForWidth(width);
+            return injectedMemberSignedIntegerTypeForWidth(width);
         }
         if (bothUnsigned) {
-            return unsignedIntegerTypeForWidth(width);
+            return injectedMemberUnsignedIntegerTypeForWidth(width);
         }
         auto *signedType = isSignedIntegerType(leftType) ? leftType : rightType;
         auto *unsignedType = isUnsignedIntegerType(leftType) ? leftType : rightType;
-        const auto signedWidth = numericBitWidth(typeTable, signedType);
-        const auto unsignedWidth = numericBitWidth(typeTable, unsignedType);
+        const auto signedWidth =
+            injectedMemberNumericBitWidth(typeTable, signedType);
+        const auto unsignedWidth =
+            injectedMemberNumericBitWidth(typeTable, unsignedType);
         if (signedWidth > unsignedWidth) {
-            return signedIntegerTypeForWidth(signedWidth);
+            return injectedMemberSignedIntegerTypeForWidth(signedWidth);
         }
-        return unsignedIntegerTypeForWidth(width);
+        return injectedMemberUnsignedIntegerTypeForWidth(width);
     }
 
     return nullptr;
@@ -209,11 +228,13 @@ resolveInjectedMember(TypeTable *typeTable, TypeClass *receiverType,
             return std::nullopt;
         }
         auto byteCount = static_cast<std::int64_t>(typeTable->getTypeAllocSize(receiverType));
-        auto *arrayType = getOrCreateBitsArrayType(typeTable, std::max<std::int64_t>(1, byteCount));
+        auto *arrayType = getOrCreateInjectedMemberBitsArrayType(
+            typeTable, std::max<std::int64_t>(1, byteCount));
         return InjectedMemberBinding{InjectedMemberKind::BitCopy, "tobits",
                                      receiverType, arrayType};
     }
-    const bool receiverIsBitsArray = isBitsArrayType(receiverType);
+    const bool receiverIsBitsArray =
+        isInjectedMemberBitsArrayType(receiverType);
     if (!receiverIsBitsArray) {
         return std::nullopt;
     }

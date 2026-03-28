@@ -9,10 +9,8 @@
 namespace lona {
 using Json = nlohmann::json;
 
-namespace {
-
 SessionOptions
-buildOptions(const Json &command) {
+buildSessionRunnerOptions(const Json &command) {
     SessionOptions options;
     const std::string outputMode =
         command.value("output_mode", std::string("llvm_ir"));
@@ -37,10 +35,10 @@ buildOptions(const Json &command) {
 }
 
 Json
-compileWithSession(CompilerSession &session, const Json &command) {
+compileSessionRunnerCommand(CompilerSession &session, const Json &command) {
     Json result = Json::object();
     const auto input = command.at("input").get<std::string>();
-    auto options = buildOptions(command);
+    auto options = buildSessionRunnerOptions(command);
     if (options.outputMode == OutputMode::ObjectBundle) {
         const std::string requestedOutput =
             command.value("output_path", std::string());
@@ -86,8 +84,6 @@ compileWithSession(CompilerSession &session, const Json &command) {
     result["stats"] = std::move(stats);
     return result;
 }
-
-}  // namespace
 }  // namespace lona
 
 int
@@ -107,7 +103,7 @@ main() {
             const Json command = Json::parse(line);
             const auto kind = command.value("command", std::string("compile"));
             if (kind == "compile") {
-                reply = lona::compileWithSession(*session, command);
+                reply = lona::compileSessionRunnerCommand(*session, command);
             } else if (kind == "reset_session") {
                 session = std::make_unique<CompilerSession>();
                 reply["command"] = "reset_session";

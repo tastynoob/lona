@@ -4,12 +4,10 @@
 
 namespace lona {
 
-namespace {
-
 constexpr std::uint64_t kNativeAbiDirectAggregateReturnMaxSize = 16;
 
 bool
-isSingleRegisterPackSize(std::uint64_t size) {
+isNativeAbiSingleRegisterPackSize(std::uint64_t size) {
     switch (size) {
     case 1:
     case 2:
@@ -48,14 +46,14 @@ usesNativeAbiDirectAggregateReturn(TypeTable &types, TypeClass *type) {
 }
 
 llvm::IntegerType *
-getPackedRegisterAggregateLLVMType(TypeTable &types, TypeClass *type) {
+getNativeAbiPackedRegisterAggregateLLVMType(TypeTable &types, TypeClass *type) {
     // This is ABI-level aggregate packing, not LLVM's local SROA pass.
     if (!isNativeAbiAggregateType(type) ||
         !hasNativeAbiFixedAggregateLayout(type)) {
         return nullptr;
     }
     auto size = types.getTypeAllocSize(type);
-    if (!isSingleRegisterPackSize(size)) {
+    if (!isNativeAbiSingleRegisterPackSize(size)) {
         return nullptr;
     }
     return llvm::IntegerType::get(types.getContext(),
@@ -63,8 +61,8 @@ getPackedRegisterAggregateLLVMType(TypeTable &types, TypeClass *type) {
 }
 
 llvm::Value *
-coerceDirectValue(llvm::IRBuilder<> &builder, llvm::Value *value,
-                  llvm::Type *targetType) {
+coerceNativeAbiDirectValue(llvm::IRBuilder<> &builder, llvm::Value *value,
+                           llvm::Type *targetType) {
     if (!value || !targetType || value->getType() == targetType) {
         return value;
     }
@@ -75,13 +73,11 @@ coerceDirectValue(llvm::IRBuilder<> &builder, llvm::Value *value,
 }
 
 llvm::Value *
-bitcastPointerForLoadStore(llvm::IRBuilder<> &builder, llvm::Value *ptr,
-                           llvm::Type *pointeeType) {
+bitcastNativeAbiPointerForLoadStore(llvm::IRBuilder<> &builder, llvm::Value *ptr,
+                                    llvm::Type *pointeeType) {
     auto *typedPtr = llvm::PointerType::getUnqual(pointeeType);
     return ptr->getType() == typedPtr ? ptr : builder.CreateBitCast(ptr, typedPtr);
 }
-
-}  // namespace
 
 std::string
 lonaNativeAbiVersionString() {
@@ -111,7 +107,7 @@ isNativeAbiAggregateType(TypeClass *type) {
 bool
 usesNativeAbiPackedRegisterAggregate(TypeTable &types, TypeClass *type) {
     return isNativeAbiAggregateType(type) &&
-        getPackedRegisterAggregateLLVMType(types, type) != nullptr;
+        getNativeAbiPackedRegisterAggregateLLVMType(types, type) != nullptr;
 }
 
 bool
@@ -125,7 +121,7 @@ getNativeAbiDirectLLVMType(TypeTable &types, TypeClass *type) {
     if (!type) {
         return nullptr;
     }
-    if (auto *packed = getPackedRegisterAggregateLLVMType(types, type)) {
+    if (auto *packed = getNativeAbiPackedRegisterAggregateLLVMType(types, type)) {
         return packed;
     }
     return types.getLLVMType(type);
@@ -139,12 +135,13 @@ packNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
     }
     auto *directType = getNativeAbiDirectLLVMType(types, type);
     if (!usesNativeAbiPackedRegisterAggregate(types, type)) {
-        return coerceDirectValue(builder, value, directType);
+        return coerceNativeAbiDirectValue(builder, value, directType);
     }
 
     auto *logicalType = types.getLLVMType(type);
     auto *temp = builder.CreateAlloca(logicalType);
-    builder.CreateStore(coerceDirectValue(builder, value, logicalType), temp);
+    builder.CreateStore(coerceNativeAbiDirectValue(builder, value, logicalType),
+                        temp);
     return loadNativeAbiDirectValue(builder, types, type, temp);
 }
 
@@ -159,7 +156,8 @@ loadNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
         return builder.CreateLoad(directType, sourcePtr);
     }
 
-    auto *typedPtr = bitcastPointerForLoadStore(builder, sourcePtr, directType);
+    auto *typedPtr =
+        bitcastNativeAbiPointerForLoadStore(builder, sourcePtr, directType);
     return builder.CreateLoad(directType, typedPtr);
 }
 
@@ -171,13 +169,14 @@ storeNativeAbiDirectValue(llvm::IRBuilder<> &builder, TypeTable &types,
         return;
     }
     auto *directType = getNativeAbiDirectLLVMType(types, type);
-    auto *coercedValue = coerceDirectValue(builder, value, directType);
+    auto *coercedValue = coerceNativeAbiDirectValue(builder, value, directType);
     if (!usesNativeAbiPackedRegisterAggregate(types, type)) {
         builder.CreateStore(coercedValue, destPtr);
         return;
     }
 
-    auto *typedPtr = bitcastPointerForLoadStore(builder, destPtr, directType);
+    auto *typedPtr =
+        bitcastNativeAbiPointerForLoadStore(builder, destPtr, directType);
     builder.CreateStore(coercedValue, typedPtr);
 }
 

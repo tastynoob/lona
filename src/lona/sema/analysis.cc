@@ -1,11 +1,13 @@
 #include "lona/sema/hir.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/ast/type_node_tools.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/array_dim.hh"
 #include "lona/abi/abi.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
+#include "lona/sema/call_target_tools.hh"
 #include "lona/sema/injected_member.hh"
 #include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
@@ -25,23 +27,7 @@
 #include <vector>
 
 namespace lona {
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
-}
-
-[[noreturn]] void
-error(const std::string &message) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
-}
-
-[[noreturn]] void
-error(const location &loc, const std::string &message,
-      const std::string &hint = std::string()) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
-}
+namespace analysis_impl {
 
 std::string
 describeResolvedType(TypeClass *type);
@@ -134,79 +120,6 @@ describeMemberOwnerSyntax(const AstNode *node) {
     return "";
 }
 
-[[noreturn]] void
-errorInvalidArrayDimension(const location &loc) {
-    error(loc,
-          "fixed-dimension arrays require positive integer literal sizes",
-          "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension inference and non-constant sizes are not implemented yet.");
-}
-
-[[noreturn]] void
-errorUnsupportedUnsizedArray(const location &loc, TypeNode *node) {
-    error(loc,
-          "explicit unsized array type syntax is not allowed: " +
-              describeTypeNode(node, "<unknown type>"),
-          "Use fixed explicit dimensions like `i32[2]`. If you want inferred array dimensions, write `var a = {1, 2}`. If you need an indexable pointer, write `T[*]`.");
-}
-
-[[noreturn]] void
-errorLegacyIndexablePointerSyntax(const location &loc, TypeNode *node) {
-    error(loc,
-          "explicit unsized array type syntax is not allowed inside pointer declarations: " +
-              describeTypeNode(node, "<unknown type>"),
-          "Use `T[*]` instead, for example `u8[*]`. `[]` is not a user-writable type declaration syntax.");
-}
-
-void
-validateTypeNodeLayout(TypeNode *node) {
-    if (!node) {
-        return;
-    }
-    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-        validateTypeNodeLayout(param->type);
-        return;
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        if (auto *array = dynamic_cast<ArrayTypeNode *>(pointer->base);
-            array && hasUnsizedArrayDimensions(array->dim) &&
-            isBareUnsizedArraySyntax(array->dim)) {
-            errorLegacyIndexablePointerSyntax(pointer->loc, pointer);
-        }
-        validateTypeNodeLayout(pointer->base);
-        return;
-    }
-    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-        validateTypeNodeLayout(indexable->base);
-        return;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        validateTypeNodeLayout(array->base);
-        if (hasUnsizedArrayDimensions(array->dim)) {
-            errorUnsupportedUnsizedArray(array->loc, array);
-        }
-        for (auto *dimension : array->dim) {
-            std::int64_t value = 0;
-            if (!tryExtractArrayDimension(dimension, value) || value <= 0) {
-                errorInvalidArrayDimension(dimension ? dimension->loc : array->loc);
-            }
-        }
-        return;
-    }
-    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-        for (auto *item : tuple->items) {
-            validateTypeNodeLayout(item);
-        }
-        return;
-    }
-    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
-        for (auto *arg : func->args) {
-            validateTypeNodeLayout(arg);
-        }
-        validateTypeNodeLayout(func->ret);
-        return;
-    }
-}
-
 std::string
 describeTupleFieldHelp(TupleType *tupleType) {
     if (!tupleType || tupleType->getItemTypes().empty()) {
@@ -282,25 +195,6 @@ isFixedArrayOfFunctionPointerValues(TypeClass *type) {
            isFixedArrayOfFunctionPointerValues(elementType);
 }
 
-bool
-isReservedInitialListTypeNode(TypeNode *node) {
-    auto *base = dynamic_cast<BaseTypeNode *>(node);
-    if (!base) {
-        return false;
-    }
-    if (base->hasSyntax()) {
-        return describeDotLikeSyntax(base->syntax) == "initial_list";
-    }
-    return toStdString(base->name) == "initial_list";
-}
-
-[[noreturn]] void
-errorReservedInitialListType(const location &loc) {
-    error(loc,
-          "`initial_list` is a compiler-internal initialization interface",
-          "Use brace initialization like `{1, 2, 3}` instead. User-visible generic `initial_list<T>` support is not implemented.");
-}
-
 std::string
 describeInjectedMemberHelp(TypeClass *receiverType, const std::string &memberName) {
     (void)receiverType;
@@ -323,12 +217,6 @@ getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
     auto *func = typeMgr ? typeMgr->getMethodFunction(
         structType, llvm::StringRef(selector->getFieldName())) : nullptr;
     return func && func->getType() ? func->getType()->as<FuncType>() : nullptr;
-}
-
-FuncType *
-getFunctionPointerTarget(TypeClass *type) {
-    auto *pointeeType = getRawPointerPointeeType(type);
-    return pointeeType ? pointeeType->as<FuncType>() : nullptr;
 }
 
 bool
@@ -414,13 +302,6 @@ canExplicitPointerRebindCast(TypeClass *targetType, TypeClass *sourceType) {
     auto *sourceElement = getPointerStorageElementType(sourceType);
     return targetElement && sourceElement &&
         preservesConstQualificationForPointerRebind(targetElement, sourceElement);
-}
-
-Function *
-getDirectFunctionCallee(HIRExpr *callee) {
-    auto *calleeValue = dynamic_cast<HIRValue *>(callee);
-    auto *value = calleeValue ? calleeValue->getValue() : nullptr;
-    return value ? value->as<Function>() : nullptr;
 }
 
 size_t
@@ -3152,12 +3033,12 @@ public:
     }
 };
 
-}  // namespace
+}  // namespace analysis_impl
 
 std::unique_ptr<HIRModule>
 analyzeModule(GlobalScope *global, const ResolvedModule &resolved,
               const CompilationUnit *unit) {
-    return ModuleAnalyzer(global, unit).analyze(resolved);
+    return analysis_impl::ModuleAnalyzer(global, unit).analyze(resolved);
 }
 
 }  // namespace lona

@@ -12,29 +12,7 @@
 #include <utility>
 
 namespace lona {
-namespace {
-
-std::string
-toStdString(const string &value) {
-    return std::string(value.tochara(), value.size());
-}
-
-[[noreturn]] void
-error(const std::string &message) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
-}
-
-[[noreturn]] void
-error(const location &loc, const std::string &message,
-      const std::string &hint = std::string()) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
-}
-
-[[noreturn]] void
-internalError(const location &loc, const std::string &message,
-              const std::string &hint = std::string()) {
-    throw DiagnosticError(DiagnosticError::Category::Internal, loc, message, hint);
-}
+namespace resolve_impl {
 
 class FunctionResolver {
     GlobalScope *global_;
@@ -491,7 +469,7 @@ public:
     }
 };
 
-}  // namespace
+}  // namespace resolve_impl
 
 const ResolvedLocalBinding *
 ResolvedFunction::variable(const AstVarDef *node) const {
@@ -555,7 +533,7 @@ ResolvedFunction::functionRef(const AstFuncRef *node) const {
 
 std::unique_ptr<ResolvedModule>
 resolveModule(GlobalScope *global, AstNode *root, const CompilationUnit *unit) {
-    return ModuleResolver(global, unit).resolve(root);
+    return resolve_impl::ModuleResolver(global, unit).resolve(root);
 }
 
 }  // namespace lona

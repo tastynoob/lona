@@ -37,4 +37,27 @@ public:
 
 std::string friendlySyntaxMessage(const std::string &rawMessage);
 
+[[noreturn]] inline void
+error(const std::string &message) {
+    throw DiagnosticError(DiagnosticError::Category::Semantic, message);
+}
+
+[[noreturn]] inline void
+error(const location &loc, const std::string &message,
+      const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
+}
+
+[[noreturn]] inline void
+internalError(const std::string &message,
+              const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Internal, message, hint);
+}
+
+[[noreturn]] inline void
+internalError(const location &loc, const std::string &message,
+              const std::string &hint = std::string()) {
+    throw DiagnosticError(DiagnosticError::Category::Internal, loc, message, hint);
+}
+
 }  // namespace lona

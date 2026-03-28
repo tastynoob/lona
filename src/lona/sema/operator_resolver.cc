@@ -6,18 +6,7 @@
 #include <array>
 
 namespace lona {
-namespace {
-
-[[noreturn]] void
-error(const location &loc, const std::string &message,
-      const std::string &hint = std::string()) {
-    throw DiagnosticError(DiagnosticError::Category::Semantic, loc, message, hint);
-}
-
-std::string
-toStdString(const string &value) {
-    return {value.tochara(), value.size()};
-}
+namespace operator_resolver_impl {
 
 std::string
 describeType(TypeClass *type) {
@@ -193,7 +182,7 @@ errorUnsupportedUnary(token_type token, TypeClass *operandType, const location &
           "Use a compatible built-in operand type, or add an explicit helper function until operator overloading is implemented.");
 }
 
-}  // namespace
+}  // namespace operator_resolver_impl
 
 bool
 isFloatType(TypeClass *type) {
@@ -280,14 +269,14 @@ OperatorResolver::resolveUnary(token_type op, TypeClass *operandType, bool addre
                                const location &loc) const {
     if (op == '!') {
         if (!isTruthyScalarType(operandType)) {
-            errorUnsupportedUnary(op, operandType, loc);
+            operator_resolver_impl::errorUnsupportedUnary(op, operandType, loc);
         }
         return {op, UnaryOperatorKind::LogicalNot,
                 classifyOperatorOperand(operandType), operandType, boolTy};
     }
     if (op == '~') {
         if (!isIntegerType(operandType)) {
-            errorUnsupportedUnary(op, operandType, loc);
+            operator_resolver_impl::errorUnsupportedUnary(op, operandType, loc);
         }
         return {op, UnaryOperatorKind::BitwiseNot,
                 classifyOperatorOperand(operandType), operandType,
@@ -311,43 +300,52 @@ OperatorResolver::resolveUnary(token_type op, TypeClass *operandType, bool addre
                 pointerType->getPointeeType()};
     }
 
-    if (const auto *rule = findUnaryRule(op, operandType)) {
+    if (const auto *rule = operator_resolver_impl::findUnaryRule(op, operandType)) {
         return {op, rule->kind, rule->operandClass, operandType,
                 rule->resultIsBool ? boolTy
                                    : materializeValueType(typeTable_, operandType)};
     }
 
-    errorUnsupportedUnary(op, operandType, loc);
+    operator_resolver_impl::errorUnsupportedUnary(op, operandType, loc);
 }
 
 BinaryOperatorBinding
 OperatorResolver::resolveBinary(token_type op, TypeClass *leftType,
                                 TypeClass *rightType,
                                 const location &loc) const {
-    if (const auto *rule = findBinaryRule(kBinaryRules, op, leftType, rightType)) {
+    if (const auto *rule =
+            operator_resolver_impl::findBinaryRule(
+                operator_resolver_impl::kBinaryRules, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
                 rule->resultIsBool ? boolTy
                                    : materializeValueType(typeTable_, leftType),
                 rule->shortCircuit};
     }
-    if (const auto *rule = findBinaryRule(kExtendedBinaryRules, op, leftType, rightType)) {
+    if (const auto *rule =
+            operator_resolver_impl::findBinaryRule(
+                operator_resolver_impl::kExtendedBinaryRules, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
                 rule->resultIsBool ? boolTy
                                    : materializeValueType(typeTable_, leftType),
                 rule->shortCircuit};
     }
-    if (const auto *rule = findBinaryRule(kNotEqualNumericRules, op, leftType, rightType)) {
+    if (const auto *rule =
+            operator_resolver_impl::findBinaryRule(
+                operator_resolver_impl::kNotEqualNumericRules, op, leftType,
+                rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
                 rule->resultIsBool ? boolTy
                                    : materializeValueType(typeTable_, leftType),
                 rule->shortCircuit};
     }
-    if (const auto *rule = findBinaryRule(kLogicalOrRule, op, leftType, rightType)) {
+    if (const auto *rule =
+            operator_resolver_impl::findBinaryRule(
+                operator_resolver_impl::kLogicalOrRule, op, leftType, rightType)) {
         return {op, rule->kind, rule->leftClass, rule->rightClass, leftType, rightType,
                 boolTy, rule->shortCircuit};
     }
 
-    errorUnsupportedBinary(op, leftType, rightType, loc);
+    operator_resolver_impl::errorUnsupportedBinary(op, leftType, rightType, loc);
 }
 
 }  // namespace lona

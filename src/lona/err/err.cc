@@ -2,10 +2,10 @@
 #include <utility>
 
 namespace lona {
-namespace {
 
 std::string
-replaceAll(std::string input, const std::string &from, const std::string &to) {
+replaceAllInDiagnosticText(std::string input, const std::string &from,
+                           const std::string &to) {
     if (from.empty()) {
         return input;
     }
@@ -18,7 +18,7 @@ replaceAll(std::string input, const std::string &from, const std::string &to) {
 }
 
 std::string
-trimTrailingPunctuation(std::string input) {
+trimDiagnosticTrailingPunctuation(std::string input) {
     while (!input.empty() && (input.back() == '.' || input.back() == ' ')) {
         input.pop_back();
     }
@@ -26,7 +26,7 @@ trimTrailingPunctuation(std::string input) {
 }
 
 std::string
-displayTokenText(const std::string &text) {
+displayDiagnosticTokenText(const std::string &text) {
     if (text == "\n") {
         return "\\n";
     }
@@ -35,8 +35,6 @@ displayTokenText(const std::string &text) {
     }
     return text;
 }
-
-}  // namespace
 
 DiagnosticError::DiagnosticError(Category category, std::string message,
                                  std::string hint)
@@ -61,14 +59,16 @@ friendlySyntaxMessage(const std::string &rawMessage) {
     constexpr char prefix[] = "syntax error, unexpected ";
     if (rawMessage.rfind(prefix, 0) == 0) {
         auto detail = rawMessage.substr(sizeof(prefix) - 1);
-        detail = replaceAll(detail, ", expecting ", "; expected ");
-        detail = replaceAll(detail, " or ", ", ");
-        detail = trimTrailingPunctuation(detail);
+        detail = replaceAllInDiagnosticText(detail, ", expecting ", "; expected ");
+        detail = replaceAllInDiagnosticText(detail, " or ", ", ");
+        detail = trimDiagnosticTrailingPunctuation(detail);
         return "I couldn't parse this statement: unexpected " + detail + '.';
     }
 
     return "I couldn't parse this statement: " +
-           trimTrailingPunctuation(displayTokenText(rawMessage)) + '.';
+           trimDiagnosticTrailingPunctuation(
+               displayDiagnosticTokenText(rawMessage)) +
+           '.';
 }
 
 }  // namespace lona
