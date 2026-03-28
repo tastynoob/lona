@@ -62,11 +62,14 @@ public:
     WorkspaceBuilder(CompilerWorkspace &workspace, const WorkspaceLoader &loader);
 
     std::size_t loadedUnitCount() const;
-    int emitHostedEntryObject(const CompileOptions &options, SessionStats &stats,
+    int emitHostedEntryObject(const CompileOptions &options,
+                              const std::string &outputPath,
+                              SessionStats &stats,
                               std::ostream &out) const;
     int emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                SessionStats &stats, std::ostream &out) const;
     int emitObject(CompilationUnit &rootUnit, const CompileOptions &options,
+                   const std::string &outputPath,
                    SessionStats &stats, std::ostream &out) const;
     int emitObjectBundle(CompilationUnit &rootUnit, const CompileOptions &options,
                          const std::string &outputPath,

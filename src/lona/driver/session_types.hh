@@ -46,7 +46,10 @@ struct SessionStats {
     double analyzeMs = 0.0;
     double codegenMs = 0.0;
     double emitLlvmMs = 0.0;
+    double artifactEmitMs = 0.0;
     double outputEmitMs = 0.0;
+    double outputRenderMs = 0.0;
+    double outputWriteMs = 0.0;
     double cacheLookupMs = 0.0;
     double cacheRestoreMs = 0.0;
     double optimizeMs = 0.0;

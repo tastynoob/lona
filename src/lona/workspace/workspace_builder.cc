@@ -19,8 +19,10 @@
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/raw_os_ostream.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
@@ -279,6 +281,37 @@ emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
     }
 }
 
+void
+emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
+               const std::string &outputPath) {
+    std::error_code error;
+    llvm::raw_fd_ostream out(outputPath, error, llvm::sys::fs::OF_None);
+    if (error) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't open output file `" + outputPath + "`.",
+            "Check that the path is writable and that parent directories exist.");
+    }
+
+    llvm::legacy::PassManager passManager;
+    auto &targetMachine = targetMachineFor(targetTriple);
+    if (targetMachine.addPassesToEmitFile(passManager, out, nullptr,
+                                          llvm::CodeGenFileType::ObjectFile)) {
+        throw DiagnosticError(DiagnosticError::Category::Internal,
+                              "LLVM target machine cannot emit object files for the active target",
+                              "Check native target initialization and object emission setup.");
+    }
+
+    passManager.run(module);
+    out.flush();
+    if (out.has_error()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write output file `" + outputPath + "`.",
+            "Check that the path is writable and that the filesystem has enough space.");
+    }
+}
+
 ModuleArtifact::ByteBuffer
 emitObjectData(llvm::Module &module, llvm::StringRef targetTriple) {
     llvm::SmallString<0> objectData;
@@ -360,9 +393,25 @@ appendHIRFunctions(HIRModule &target, const HIRModule &source) {
     }
 }
 
+void
+accumulateArtifactEmit(SessionStats &stats, double elapsedMs) {
+    stats.artifactEmitMs += elapsedMs;
+    stats.codegenMs += elapsedMs;
+}
+
+void
+accumulateOutputEmit(SessionStats &stats, double renderMs, double writeMs) {
+    stats.outputRenderMs += renderMs;
+    stats.outputWriteMs += writeMs;
+    stats.outputEmitMs += renderMs + writeMs;
+    stats.codegenMs += renderMs + writeMs;
+}
+
 }  // namespace workspace_builder_impl
 
 using workspace_builder_impl::appendHIRFunctions;
+using workspace_builder_impl::accumulateArtifactEmit;
+using workspace_builder_impl::accumulateOutputEmit;
 using workspace_builder_impl::createHostedMainShimModule;
 using workspace_builder_impl::emitBitcodeData;
 using workspace_builder_impl::emitObjectData;
@@ -595,19 +644,19 @@ WorkspaceBuilder::ensureArtifactOutputs(ModuleArtifact &artifact,
     auto module = parseArtifactBitcodeModule(artifact, *context);
     stats.cacheRestoreMs += elapsedMillis(restoreStart, Clock::now());
     artifact.setContainsNativeAbi(moduleUsesNativeAbi(*module));
-    auto emitStart = Clock::now();
     if (requireBitcode) {
+        auto emitStart = Clock::now();
         artifact.setBitcode(emitBitcodeData(*module));
+        accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
         ++stats.emittedModuleBitcode;
     }
     if (requireObjects) {
         ensureNativeAbiVersionField(*module, options.targetTriple);
+        auto emitStart = Clock::now();
         artifact.setObjectCode(emitObjectData(*module, options.targetTriple));
+        accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
         ++stats.emittedModuleObjects;
     }
-    auto emitMs = elapsedMillis(emitStart, Clock::now());
-    stats.outputEmitMs += emitMs;
-    stats.codegenMs += emitMs;
     return 0;
 }
 
@@ -689,21 +738,19 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
     if (exitCode == 0) {
         unit.markCompiled();
         artifact.setContainsNativeAbi(moduleUsesNativeAbi(context.build.module));
-        auto emitStart = Clock::now();
         if (emitBitcode) {
+            auto emitStart = Clock::now();
             artifact.setBitcode(emitBitcodeData(context.build.module));
+            accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
             ++stats.emittedModuleBitcode;
         }
         if (emitObject) {
             ensureNativeAbiVersionField(context.build.module, options.targetTriple);
+            auto emitStart = Clock::now();
             artifact.setObjectCode(
                 emitObjectData(context.build.module, options.targetTriple));
+            accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
             ++stats.emittedModuleObjects;
-        }
-        auto emitMs = elapsedMillis(emitStart, Clock::now());
-        if (emitBitcode || emitObject) {
-            stats.outputEmitMs += emitMs;
-            stats.codegenMs += emitMs;
         }
         ++stats.compiledModules;
     } else {
@@ -790,6 +837,7 @@ WorkspaceBuilder::loadedUnitCount() const {
 
 int
 WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
+                                        const std::string &outputPath,
                                         SessionStats &stats,
                                         std::ostream &out) const {
     if (!targetUsesHostedEntry(options.targetTriple)) {
@@ -814,10 +862,12 @@ WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
     }
     ensureNativeAbiVersionField(*hostedShim, options.targetTriple);
     auto emitStart = Clock::now();
-    emitObjectFile(*hostedShim, options.targetTriple, out);
-    auto emitMs = elapsedMillis(emitStart, Clock::now());
-    stats.outputEmitMs += emitMs;
-    stats.codegenMs += emitMs;
+    if (outputPath.empty()) {
+        emitObjectFile(*hostedShim, options.targetTriple, out);
+    } else {
+        emitObjectFile(*hostedShim, options.targetTriple, outputPath);
+    }
+    accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
     return 0;
 }
 
@@ -856,20 +906,17 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
     }
 
     auto emitStart = Clock::now();
-    std::string linkedIR;
-    llvm::raw_string_ostream irOut(linkedIR);
+    llvm::raw_os_ostream irOut(out);
     linked.module->print(irOut, nullptr);
     irOut.flush();
-    out << linkedIR;
-    auto emitMs = elapsedMillis(emitStart, Clock::now());
-    stats.outputEmitMs += emitMs;
-    stats.codegenMs += emitMs;
+    accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
     return 0;
 }
 
 int
 WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
                              const CompileOptions &options,
+                             const std::string &outputPath,
                              SessionStats &stats, std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
     int exitCode =
@@ -903,11 +950,25 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
     }
 
     ensureNativeAbiVersionField(*linked.module, options.targetTriple);
-    auto emitStart = Clock::now();
-    emitObjectFile(*linked.module, options.targetTriple, out);
-    auto emitMs = elapsedMillis(emitStart, Clock::now());
-    stats.outputEmitMs += emitMs;
-    stats.codegenMs += emitMs;
+    if (!outputPath.empty()) {
+        auto emitStart = Clock::now();
+        emitObjectFile(*linked.module, options.targetTriple, outputPath);
+        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
+        return 0;
+    }
+
+    auto renderStart = Clock::now();
+    auto bytes = emitObjectData(*linked.module, options.targetTriple);
+    auto renderMs = elapsedMillis(renderStart, Clock::now());
+    auto writeStart = Clock::now();
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "I couldn't write the emitted object file.",
+                              "Check that the destination stream or file is writable.");
+    }
+    accumulateOutputEmit(stats, renderMs, elapsedMillis(writeStart, Clock::now()));
     return 0;
 }
 
@@ -949,7 +1010,7 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     out << "format\tlona-object-bundle-v0\n";
     out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
 
-    auto emitStart = Clock::now();
+    auto writeStart = Clock::now();
     for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         auto *artifact = workspace_.findArtifact(path);
         if (artifact == nullptr) {
@@ -969,9 +1030,7 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
         writeBinaryFile(objectPath, artifact->objectCode());
         out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
     }
-    auto emitMs = elapsedMillis(emitStart, Clock::now());
-    stats.outputEmitMs += emitMs;
-    stats.codegenMs += emitMs;
+    accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
 
     return 0;
 }

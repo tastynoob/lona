@@ -117,7 +117,9 @@ main(int argc, char *argv[]) {
         (!emitEntry && !args.empty()) ? args[0] : std::string();
     const std::string outputPath =
         emitEntry ? args[0] : (args.size() == 2 ? args[1] : std::string());
-    if (!outputPath.empty()) {
+    const bool builderWritesOutputDirectly =
+        !outputPath.empty() && (emitEntry || emitObject);
+    if (!outputPath.empty() && !builderWritesOutputDirectly) {
         std::ios::openmode fileMode = std::ios::out;
         if (emitEntry || emitObject) {
             fileMode |= std::ios::binary;

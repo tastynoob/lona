@@ -30,7 +30,8 @@ CompilerSession::runEntry(const SessionOptions &options, std::ostream &out,
                                   "entry emission was invoked with the wrong output mode",
                                   "This looks like a driver/session integration bug.");
         }
-        return finish(builder_.emitHostedEntryObject(options.compile, lastStats_, out));
+        return finish(builder_.emitHostedEntryObject(
+            options.compile, options.outputPath, lastStats_, out));
     } catch (const DiagnosticError &error) {
         diagnostics().emit(error, diag);
         return finish(1);
@@ -79,7 +80,10 @@ CompilerSession::printStats(std::ostream &out) const {
     out << "      analyze-ms: " << lastStats_.analyzeMs << '\n';
     out << "    codegen-ms: " << lastStats_.codegenMs << '\n';
     out << "      emit-llvm-ms: " << lastStats_.emitLlvmMs << '\n';
+    out << "      artifact-emit-ms: " << lastStats_.artifactEmitMs << '\n';
     out << "      output-emit-ms: " << lastStats_.outputEmitMs << '\n';
+    out << "        output-render-ms: " << lastStats_.outputRenderMs << '\n';
+    out << "        output-write-ms: " << lastStats_.outputWriteMs << '\n';
     out << "    cache-ms: " << cacheMs << '\n';
     out << "      cache-lookup-ms: " << lastStats_.cacheLookupMs << '\n';
     out << "      cache-restore-ms: " << lastStats_.cacheRestoreMs << '\n';
@@ -132,7 +136,8 @@ CompilerSession::runFile(const std::string &inputPath,
                                   "Use CompilerSession::runEntry instead.");
         }
         if (options.outputMode == OutputMode::ObjectFile) {
-            return finish(builder_.emitObject(unit, options.compile, lastStats_, out));
+            return finish(builder_.emitObject(
+                unit, options.compile, options.outputPath, lastStats_, out));
         }
         if (options.outputMode == OutputMode::ObjectBundle) {
             return finish(builder_.emitObjectBundle(
