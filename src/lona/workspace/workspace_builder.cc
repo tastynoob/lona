@@ -388,6 +388,7 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         auto start = Clock::now();
         const bool exportEntryNamespace =
             context.rootUnit && context.rootUnit->path() != context.entryUnit.path();
+        auto dependencyStart = Clock::now();
         for (const auto &dependencyPath :
              context.moduleGraph.dependenciesOf(context.entryUnit.path())) {
             auto *loadedUnit = workspace_.moduleGraph().find(dependencyPath);
@@ -399,18 +400,26 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
             loader_.validateImportedUnit(*loadedUnit);
             collectUnitDeclarations(&context.build.global, *loadedUnit, true);
         }
+        context.stats.dependencyDeclarationMs +=
+            elapsedMillis(dependencyStart, Clock::now());
+        auto entryStart = Clock::now();
         collectUnitDeclarations(&context.build.global, context.entryUnit,
                                 exportEntryNamespace);
+        context.stats.entryDeclarationMs += elapsedMillis(entryStart, Clock::now());
         context.stats.declarationMs += elapsedMillis(start, Clock::now());
         return 0;
     });
 
     pipeline_.addStage("lower-hir", [](IRPipelineContext &context) {
         auto start = Clock::now();
+        auto resolveStart = Clock::now();
         auto resolved = resolveModule(&context.build.global, context.entryUnit.syntaxTree(),
                                       &context.entryUnit);
+        context.stats.resolveMs += elapsedMillis(resolveStart, Clock::now());
+        auto analyzeStart = Clock::now();
         auto hirModule =
             analyzeModule(&context.build.global, *resolved, &context.entryUnit);
+        context.stats.analyzeMs += elapsedMillis(analyzeStart, Clock::now());
         appendHIRFunctions(context.programHIR, *hirModule);
         context.loweredModules.push_back(std::move(hirModule));
         context.stats.lowerMs += elapsedMillis(start, Clock::now());
@@ -422,14 +431,18 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         emitHIRModule(&context.build.global, &context.programHIR,
                       context.options.debugInfo,
                       toStdString(context.entryUnit.path()));
-        context.stats.codegenMs += elapsedMillis(start, Clock::now());
+        auto emitMs = elapsedMillis(start, Clock::now());
+        context.stats.emitLlvmMs += emitMs;
+        context.stats.codegenMs += emitMs;
         return 0;
     });
 
     pipeline_.addStage("optimize-llvm", [](IRPipelineContext &context) {
         auto start = Clock::now();
         optimizeModule(context.build.module, context.options.optLevel);
-        context.stats.optimizeMs += elapsedMillis(start, Clock::now());
+        auto optimizeMs = elapsedMillis(start, Clock::now());
+        context.stats.moduleOptimizeMs += optimizeMs;
+        context.stats.optimizeMs += optimizeMs;
         return 0;
     });
 
@@ -439,7 +452,9 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         }
         auto start = Clock::now();
         const bool verifyOk = verifyCompiledModule(context.build.module, context.out);
-        context.stats.verifyMs += elapsedMillis(start, Clock::now());
+        auto verifyMs = elapsedMillis(start, Clock::now());
+        context.stats.moduleVerifyMs += verifyMs;
+        context.stats.verifyMs += verifyMs;
         return verifyOk ? 0 : 1;
     });
 
@@ -575,10 +590,12 @@ WorkspaceBuilder::ensureArtifactOutputs(ModuleArtifact &artifact,
         return 0;
     }
 
-    auto start = Clock::now();
+    auto restoreStart = Clock::now();
     auto context = std::make_unique<llvm::LLVMContext>();
     auto module = parseArtifactBitcodeModule(artifact, *context);
+    stats.cacheRestoreMs += elapsedMillis(restoreStart, Clock::now());
     artifact.setContainsNativeAbi(moduleUsesNativeAbi(*module));
+    auto emitStart = Clock::now();
     if (requireBitcode) {
         artifact.setBitcode(emitBitcodeData(*module));
         ++stats.emittedModuleBitcode;
@@ -588,7 +605,9 @@ WorkspaceBuilder::ensureArtifactOutputs(ModuleArtifact &artifact,
         artifact.setObjectCode(emitObjectData(*module, options.targetTriple));
         ++stats.emittedModuleObjects;
     }
-    stats.codegenMs += elapsedMillis(start, Clock::now());
+    auto emitMs = elapsedMillis(emitStart, Clock::now());
+    stats.outputEmitMs += emitMs;
+    stats.codegenMs += emitMs;
     return 0;
 }
 
@@ -605,10 +624,12 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
         if (queuedUnit == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
                                   "module build queue references a missing unit",
-                                  "This looks like a compiler module queue bug.");
+                                      "This looks like a compiler module queue bug.");
         }
 
+        auto cacheLookupStart = Clock::now();
         auto *cachedArtifact = reusableArtifactFor(*queuedUnit, options);
+        stats.cacheLookupMs += elapsedMillis(cacheLookupStart, Clock::now());
         if (cachedArtifact != nullptr && requireBitcode && !cachedArtifact->hasBitcode()) {
             cachedArtifact = nullptr;
         }
@@ -630,8 +651,10 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
         ModuleArtifact artifact = createArtifact(*queuedUnit, options);
         if (!options.noCache && objectCacheDir != nullptr && requireObjects &&
             !requireBitcode) {
+            auto cacheRestoreStart = Clock::now();
             auto cachedObject = readBinaryFileIfPresent(
                 bundleObjectPath(artifact, *objectCacheDir));
+            stats.cacheRestoreMs += elapsedMillis(cacheRestoreStart, Clock::now());
             if (cachedObject.has_value()) {
                 artifact.setObjectCode(std::move(*cachedObject));
                 workspace_.storeArtifact(std::move(artifact));
@@ -666,6 +689,7 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
     if (exitCode == 0) {
         unit.markCompiled();
         artifact.setContainsNativeAbi(moduleUsesNativeAbi(context.build.module));
+        auto emitStart = Clock::now();
         if (emitBitcode) {
             artifact.setBitcode(emitBitcodeData(context.build.module));
             ++stats.emittedModuleBitcode;
@@ -676,6 +700,11 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
                 emitObjectData(context.build.module, options.targetTriple));
             ++stats.emittedModuleObjects;
         }
+        auto emitMs = elapsedMillis(emitStart, Clock::now());
+        if (emitBitcode || emitObject) {
+            stats.outputEmitMs += emitMs;
+            stats.codegenMs += emitMs;
+        }
         ++stats.compiledModules;
     } else {
         out << ir.str();
@@ -685,9 +714,9 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
 
 WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
-                                bool hostedEntry,
-                                bool verifyIR, std::ostream &out,
-                                double *linkMs, double *verifyMs) const {
+                                bool hostedEntry, bool verifyIR,
+                                SessionStats &stats,
+                                std::ostream &out) const {
     auto *rootArtifact = workspace_.findArtifact(rootUnit.path());
     if (rootArtifact == nullptr) {
         throw DiagnosticError(DiagnosticError::Category::Internal,
@@ -695,9 +724,12 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                               "This looks like a compiler module scheduling bug.");
     }
 
-    auto start = Clock::now();
+    double linkLoadMs = 0.0;
+    double linkMergeMs = 0.0;
     auto context = std::make_unique<llvm::LLVMContext>();
+    auto loadStart = Clock::now();
     auto linkedModule = parseArtifactBitcodeModule(*rootArtifact, *context);
+    linkLoadMs += elapsedMillis(loadStart, Clock::now());
     llvm::Linker linker(*linkedModule);
     for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         if (path == rootUnit.path()) {
@@ -710,7 +742,10 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                                       toStdString(path) + "`",
                                   "This looks like a compiler module scheduling bug.");
         }
+        loadStart = Clock::now();
         auto dependencyModule = parseArtifactBitcodeModule(*artifact, *context);
+        linkLoadMs += elapsedMillis(loadStart, Clock::now());
+        auto mergeStart = Clock::now();
         if (linker.linkInModule(std::move(dependencyModule))) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
@@ -718,29 +753,32 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                     "` into root module `" + toStdString(rootUnit.path()) + "`",
                 "Check for duplicate IR symbols or incompatible LLVM module state.");
         }
+        linkMergeMs += elapsedMillis(mergeStart, Clock::now());
     }
 
     const bool hasLanguageEntry = moduleHasFunctionSymbol(*linkedModule, languageEntryName());
     if (hasLanguageEntry && hostedEntry && !moduleHasFunctionSymbol(*linkedModule, "main")) {
+        auto mergeStart = Clock::now();
         linkSyntheticModule(
             linker,
             createHostedMainShimModule(*context, linkedModule->getTargetTriple()),
             "hosted entry shim");
+        linkMergeMs += elapsedMillis(mergeStart, Clock::now());
     }
 
     if (verifyIR) {
         auto verifyStart = Clock::now();
         const bool ok = verifyCompiledModule(*linkedModule, out);
-        if (verifyMs != nullptr) {
-            *verifyMs += elapsedMillis(verifyStart, Clock::now());
-        }
+        auto verifyMs = elapsedMillis(verifyStart, Clock::now());
+        stats.linkVerifyMs += verifyMs;
+        stats.verifyMs += verifyMs;
         if (!ok) {
             return {};
         }
     }
-    if (linkMs != nullptr) {
-        *linkMs += elapsedMillis(start, Clock::now());
-    }
+    stats.linkLoadMs += linkLoadMs;
+    stats.linkMergeMs += linkMergeMs;
+    stats.linkMs += linkLoadMs + linkMergeMs;
     return {std::move(context), std::move(linkedModule)};
 }
 
@@ -752,6 +790,7 @@ WorkspaceBuilder::loadedUnitCount() const {
 
 int
 WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
+                                        SessionStats &stats,
                                         std::ostream &out) const {
     if (!targetUsesHostedEntry(options.targetTriple)) {
         throw DiagnosticError(
@@ -763,11 +802,22 @@ WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
     auto context = std::make_unique<llvm::LLVMContext>();
     auto hostedShim =
         createHostedMainShimModule(*context, normalizeTargetTriple(options.targetTriple));
-    if (options.verifyIR && !verifyCompiledModule(*hostedShim, out)) {
-        return 1;
+    if (options.verifyIR) {
+        auto verifyStart = Clock::now();
+        const bool ok = verifyCompiledModule(*hostedShim, out);
+        auto verifyMs = elapsedMillis(verifyStart, Clock::now());
+        stats.moduleVerifyMs += verifyMs;
+        stats.verifyMs += verifyMs;
+        if (!ok) {
+            return 1;
+        }
     }
     ensureNativeAbiVersionField(*hostedShim, options.targetTriple);
+    auto emitStart = Clock::now();
     emitObjectFile(*hostedShim, options.targetTriple, out);
+    auto emitMs = elapsedMillis(emitStart, Clock::now());
+    stats.outputEmitMs += emitMs;
+    stats.codegenMs += emitMs;
     return 0;
 }
 
@@ -783,30 +833,37 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
 
     auto linked = linkArtifacts(rootUnit,
                                 targetUsesHostedEntry(options.targetTriple),
-                                options.verifyIR, out,
-                                &stats.linkMs, &stats.verifyMs);
+                                options.verifyIR, stats, out);
     if (!linked.module) {
         return 1;
     }
     if (useLTO) {
         auto optimizeStart = Clock::now();
         optimizeModule(*linked.module, options.optLevel);
-        stats.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
+        auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
+        stats.ltoOptimizeMs += optimizeMs;
+        stats.optimizeMs += optimizeMs;
         if (options.verifyIR) {
             auto verifyStart = Clock::now();
             const bool ok = verifyCompiledModule(*linked.module, out);
-            stats.verifyMs += elapsedMillis(verifyStart, Clock::now());
+            auto verifyMs = elapsedMillis(verifyStart, Clock::now());
+            stats.linkVerifyMs += verifyMs;
+            stats.verifyMs += verifyMs;
             if (!ok) {
                 return 1;
             }
         }
     }
 
+    auto emitStart = Clock::now();
     std::string linkedIR;
     llvm::raw_string_ostream irOut(linkedIR);
     linked.module->print(irOut, nullptr);
     irOut.flush();
     out << linkedIR;
+    auto emitMs = elapsedMillis(emitStart, Clock::now());
+    stats.outputEmitMs += emitMs;
+    stats.codegenMs += emitMs;
     return 0;
 }
 
@@ -823,19 +880,22 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
 
     auto linked = linkArtifacts(rootUnit,
                                 targetUsesHostedEntry(options.targetTriple),
-                                options.verifyIR, out,
-                                &stats.linkMs, &stats.verifyMs);
+                                options.verifyIR, stats, out);
     if (!linked.module) {
         return 1;
     }
     if (useLTO) {
         auto optimizeStart = Clock::now();
         optimizeModule(*linked.module, options.optLevel);
-        stats.optimizeMs += elapsedMillis(optimizeStart, Clock::now());
+        auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
+        stats.ltoOptimizeMs += optimizeMs;
+        stats.optimizeMs += optimizeMs;
         if (options.verifyIR) {
             auto verifyStart = Clock::now();
             const bool ok = verifyCompiledModule(*linked.module, out);
-            stats.verifyMs += elapsedMillis(verifyStart, Clock::now());
+            auto verifyMs = elapsedMillis(verifyStart, Clock::now());
+            stats.linkVerifyMs += verifyMs;
+            stats.verifyMs += verifyMs;
             if (!ok) {
                 return 1;
             }
@@ -843,7 +903,11 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
     }
 
     ensureNativeAbiVersionField(*linked.module, options.targetTriple);
+    auto emitStart = Clock::now();
     emitObjectFile(*linked.module, options.targetTriple, out);
+    auto emitMs = elapsedMillis(emitStart, Clock::now());
+    stats.outputEmitMs += emitMs;
+    stats.codegenMs += emitMs;
     return 0;
 }
 
@@ -885,6 +949,7 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     out << "format\tlona-object-bundle-v0\n";
     out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
 
+    auto emitStart = Clock::now();
     for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         auto *artifact = workspace_.findArtifact(path);
         if (artifact == nullptr) {
@@ -904,6 +969,9 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
         writeBinaryFile(objectPath, artifact->objectCode());
         out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
     }
+    auto emitMs = elapsedMillis(emitStart, Clock::now());
+    stats.outputEmitMs += emitMs;
+    stats.codegenMs += emitMs;
 
     return 0;
 }

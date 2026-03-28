@@ -37,12 +37,27 @@ struct SessionOptions {
 struct SessionStats {
     std::size_t loadedUnits = 0;
     double parseMs = 0.0;
+    double dependencyScanMs = 0.0;
     double declarationMs = 0.0;
+    double dependencyDeclarationMs = 0.0;
+    double entryDeclarationMs = 0.0;
     double lowerMs = 0.0;
+    double resolveMs = 0.0;
+    double analyzeMs = 0.0;
     double codegenMs = 0.0;
+    double emitLlvmMs = 0.0;
+    double outputEmitMs = 0.0;
+    double cacheLookupMs = 0.0;
+    double cacheRestoreMs = 0.0;
     double optimizeMs = 0.0;
+    double moduleOptimizeMs = 0.0;
+    double ltoOptimizeMs = 0.0;
     double verifyMs = 0.0;
+    double moduleVerifyMs = 0.0;
+    double linkVerifyMs = 0.0;
     double linkMs = 0.0;
+    double linkLoadMs = 0.0;
+    double linkMergeMs = 0.0;
     double totalMs = 0.0;
     std::size_t compiledModules = 0;
     std::size_t reusedModules = 0;

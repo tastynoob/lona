@@ -143,13 +143,19 @@ WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
         auto *tree = parseUnit(loadedUnit);
         auto parseMs = elapsedMillis(parseStart, Clock::now());
         if (observer) {
-            observer(loadedUnit, parseMs);
+            observer(loadedUnit, parseMs, 0.0);
         }
         if (tree == nullptr) {
             throw DiagnosticError(DiagnosticError::Category::Syntax,
                                   "I couldn't parse this file.");
         }
+        auto dependencyScanStart = Clock::now();
         discoverUnitDependencies(loadedUnit);
+        auto dependencyScanMs =
+            elapsedMillis(dependencyScanStart, Clock::now());
+        if (observer) {
+            observer(loadedUnit, 0.0, dependencyScanMs);
+        }
         for (const auto &dependencyPath :
              workspace_.moduleGraph().dependenciesOf(loadedUnit.path())) {
             if (queued.emplace(dependencyPath).second) {

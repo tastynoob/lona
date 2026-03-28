@@ -9,7 +9,8 @@ namespace lona {
 
 class WorkspaceLoader {
 public:
-    using ParseObserver = std::function<void(const CompilationUnit &, double)>;
+    using ParseObserver =
+        std::function<void(const CompilationUnit &, double, double)>;
 
 private:
     CompilerWorkspace &workspace_;

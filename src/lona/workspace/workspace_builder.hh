@@ -54,16 +54,16 @@ class WorkspaceBuilder {
                       bool emitBitcode,
                       SessionStats &stats, std::ostream &out) const;
     LinkedModule linkArtifacts(const CompilationUnit &rootUnit,
-                               bool hostedEntry,
-                               bool verifyIR, std::ostream &out,
-                               double *linkMs = nullptr,
-                               double *verifyMs = nullptr) const;
+                               bool hostedEntry, bool verifyIR,
+                               SessionStats &stats,
+                               std::ostream &out) const;
 
 public:
     WorkspaceBuilder(CompilerWorkspace &workspace, const WorkspaceLoader &loader);
 
     std::size_t loadedUnitCount() const;
-    int emitHostedEntryObject(const CompileOptions &options, std::ostream &out) const;
+    int emitHostedEntryObject(const CompileOptions &options, SessionStats &stats,
+                              std::ostream &out) const;
     int emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                SessionStats &stats, std::ostream &out) const;
     int emitObject(CompilationUnit &rootUnit, const CompileOptions &options,
