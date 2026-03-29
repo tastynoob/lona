@@ -25,6 +25,7 @@ CompilerSession::runEntry(const SessionOptions &options, std::ostream &out,
     };
 
     try {
+        loader_.setIncludePaths(options.compile.includePaths);
         if (options.outputMode != OutputMode::EntryObject) {
             throw DiagnosticError(DiagnosticError::Category::Internal,
                                   "entry emission was invoked with the wrong output mode",
@@ -113,6 +114,7 @@ CompilerSession::runFile(const std::string &inputPath,
     };
 
     try {
+        loader_.setIncludePaths(options.compile.includePaths);
         auto &unit = loader_.loadRootUnit(inputPath);
         loader_.loadTransitiveUnits([this](
                                         const CompilationUnit &,

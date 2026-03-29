@@ -27,6 +27,7 @@ Usage: scripts/lac-native.sh [options] <input.lo> <output>
 
 Options:
   -O <0-3>       Forward optimization level to lona-ir
+  -I <dir>       Add module include search directory (repeatable)
   --target <triple>
                  Target triple for bare builds
   --lto <off|full>
@@ -37,11 +38,28 @@ EOF
 }
 
 ARGS=()
+INCLUDE_ARGS=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -O)
             OPT_LEVEL="$2"
             shift 2
+            ;;
+        -I)
+            INCLUDE_ARGS+=("-I" "$2")
+            shift 2
+            ;;
+        -I*)
+            INCLUDE_ARGS+=("-I" "${1#-I}")
+            shift
+            ;;
+        --include-dir)
+            INCLUDE_ARGS+=("-I" "$2")
+            shift 2
+            ;;
+        --include-dir=*)
+            INCLUDE_ARGS+=("-I" "${1#--include-dir=}")
+            shift
             ;;
         --target)
             TARGET_TRIPLE="$2"
@@ -139,12 +157,14 @@ OBJECTS=()
 if [ "$LTO_MODE" = "full" ]; then
     FINAL_OBJECT="$TMPDIR_LOCAL/program.lto.o"
     "$LONA_IR_BIN" --emit obj --lto full --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        "${INCLUDE_ARGS[@]}" \
         "$INPUT" "$FINAL_OBJECT"
     OBJECTS=("$FINAL_OBJECT")
 else
     MANIFEST_PATH="$TMPDIR_LOCAL/objects.manifest"
     CACHE_DIR="$TMPDIR_LOCAL/objects"
     "$LONA_IR_BIN" --emit objects --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        "${INCLUDE_ARGS[@]}" \
         --cache-dir "$CACHE_DIR" \
         "$INPUT" "$MANIFEST_PATH"
 

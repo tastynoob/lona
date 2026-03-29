@@ -4,6 +4,7 @@
 #include "workspace.hh"
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace lona {
 
@@ -14,11 +15,13 @@ public:
 
 private:
     CompilerWorkspace &workspace_;
+    std::vector<std::string> includePaths_;
 
 public:
     explicit WorkspaceLoader(CompilerWorkspace &workspace)
         : workspace_(workspace) {}
 
+    void setIncludePaths(std::vector<std::string> includePaths);
     CompilationUnit &loadRootUnit(const std::string &path) const;
     AstNode *parseUnit(CompilationUnit &unit) const;
     void loadTransitiveUnits(ParseObserver observer = {}) const;

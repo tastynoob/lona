@@ -25,7 +25,8 @@ requireWorkspaceTopLevelBody(const CompilationUnit &unit) {
 
 std::string
 resolveWorkspaceImportPath(const CompilationUnit &unit,
-                           const AstImport &importNode) {
+                           const AstImport &importNode,
+                           const std::vector<std::string> &includePaths) {
     namespace fs = std::filesystem;
     fs::path importPath(importNode.path);
     if (importPath.has_extension()) {
@@ -35,10 +36,37 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
             "Write imports like `import path/to/file`, not `import path/to/file.lo`.");
     }
     importPath += ".lo";
-    if (importPath.is_relative()) {
-        importPath = fs::path(toStdString(unit.path())).parent_path() / importPath;
+    if (!importPath.is_relative()) {
+        return importPath.lexically_normal().string();
     }
-    return importPath.lexically_normal().string();
+
+    std::vector<fs::path> candidates;
+    candidates.reserve(includePaths.size() + 1);
+    candidates.push_back(
+        fs::path(toStdString(unit.path())).parent_path() / importPath);
+    for (const auto &includePath : includePaths) {
+        candidates.push_back(fs::path(includePath) / importPath);
+    }
+
+    for (const auto &candidate : candidates) {
+        auto normalized = candidate.lexically_normal();
+        std::error_code error;
+        if (fs::exists(normalized, error)) {
+            return normalized.string();
+        }
+        if (error) {
+            auto searchedPath = normalized.string();
+            auto includeRoot = normalized.parent_path().lexically_normal().string();
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver, importNode.loc,
+                "I couldn't inspect include path `" + includeRoot +
+                    "` while resolving import `" + importNode.path + "`.",
+                "Check that the include directory exists and that you have search permission for `" +
+                    searchedPath + "`.");
+        }
+    }
+
+    return candidates.front().lexically_normal().string();
 }
 
 bool
@@ -76,6 +104,19 @@ isAllowedWorkspaceImportedTopLevelNode(AstNode *node) {
     return list != nullptr && list->isEmpty();
 }
 
+void
+WorkspaceLoader::setIncludePaths(std::vector<std::string> includePaths) {
+    includePaths_.clear();
+    includePaths_.reserve(includePaths.size());
+    for (auto &includePath : includePaths) {
+        if (includePath.empty()) {
+            continue;
+        }
+        includePaths_.push_back(
+            std::filesystem::path(std::move(includePath)).lexically_normal().string());
+    }
+}
+
 CompilationUnit &
 WorkspaceLoader::loadRootUnit(const std::string &path) const {
     return workspace_.loadRootUnit(path);
@@ -99,10 +140,6 @@ WorkspaceLoader::parseUnit(CompilationUnit &unit) const {
 
 void
 WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
-    if (unit.dependenciesScanned()) {
-        return;
-    }
-
     workspace_.moduleGraph().resetDependencies(unit.path());
     unit.clearImportedModules();
     auto *body = requireWorkspaceTopLevelBody(unit);
@@ -111,7 +148,8 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
         if (!importNode) {
             continue;
         }
-        auto importPath = resolveWorkspaceImportPath(unit, *importNode);
+        auto importPath =
+            resolveWorkspaceImportPath(unit, *importNode, includePaths_);
         auto &dependencyUnit = workspace_.loadUnit(importPath);
         if (!isValidWorkspaceModuleName(dependencyUnit.moduleName())) {
             throw DiagnosticError(

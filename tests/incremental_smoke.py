@@ -44,16 +44,18 @@ class SessionRunner:
         verify_ir: bool = True,
         output_mode: str = "llvm_ir",
         lto: str = "off",
+        include_paths: list[Path] | None = None,
     ) -> dict:
-        return self._send(
-            {
-                "command": "compile",
-                "input": str(input_path),
-                "output_mode": output_mode,
-                "verify_ir": verify_ir,
-                "lto": lto,
-            }
-        )
+        command = {
+            "command": "compile",
+            "input": str(input_path),
+            "output_mode": output_mode,
+            "verify_ir": verify_ir,
+            "lto": lto,
+        }
+        if include_paths is not None:
+            command["include_paths"] = [str(path) for path in include_paths]
+        return self._send(command)
 
     def _send(self, command: dict) -> dict:
         expect(self.proc.stdin is not None, "session runner stdin is closed")

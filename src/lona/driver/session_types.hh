@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace lona {
 
@@ -16,6 +17,7 @@ struct CompileOptions {
     bool debugInfo = false;
     bool noCache = false;
     std::string targetTriple;
+    std::vector<std::string> includePaths;
     LTOMode ltoMode = LTOMode::Off;
 };
 

@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace lona {
 using Json = nlohmann::json;
@@ -29,6 +30,8 @@ buildSessionRunnerOptions(const Json &command) {
     options.compile.noCache = command.value("no_cache", false);
     options.compile.optLevel = command.value("opt_level", 0);
     options.compile.targetTriple = command.value("target", std::string());
+    options.compile.includePaths =
+        command.value("include_paths", std::vector<std::string>{});
     options.compile.ltoMode = ltoMode == "full" ? CompileOptions::LTOMode::Full
                                                  : CompileOptions::LTOMode::Off;
     return options;

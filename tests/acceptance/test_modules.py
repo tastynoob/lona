@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from tests.harness import assert_contains, assert_not_contains, assert_regex
 from tests.harness.compiler import CompilerHarness
 
@@ -151,6 +153,137 @@ def test_imported_non_set_field_rejects_external_assignment(
         result.stderr,
         "assignment target contains read-only storage: i32 const",
         label="imported get-only field write diagnostic",
+    )
+
+
+def test_import_searches_repeated_include_paths_after_current_directory(
+    compiler: CompilerHarness,
+) -> None:
+    first_include = compiler.tmp_path / "include_search" / "first"
+    second_include = compiler.tmp_path / "include_search" / "second"
+    compiler.write_source(
+        "include_search/second/math.lo",
+        """
+        def answer() i32 {
+            ret 42
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "include_search/app/main.lo",
+        """
+        import math
+
+        def main() i32 {
+            ret math.answer()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(
+        main_path, include_paths=[first_include, second_include]
+    ).expect_ok().stdout
+    assert_contains(ir, "define i32 @math.answer()", label="include path ir")
+    assert_contains(ir, "store i32 42", label="include path ir")
+
+
+def test_import_prefers_current_directory_over_include_paths(
+    compiler: CompilerHarness,
+) -> None:
+    include_dir = compiler.tmp_path / "include_shadow" / "include"
+    compiler.write_source(
+        "include_shadow/include/util.lo",
+        """
+        def answer() i32 {
+            ret 27
+        }
+        """,
+    )
+    compiler.write_source(
+        "include_shadow/app/util.lo",
+        """
+        def answer() i32 {
+            ret 13
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "include_shadow/app/main.lo",
+        """
+        import util
+
+        def main() i32 {
+            ret util.answer()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path, include_paths=[include_dir]).expect_ok().stdout
+    assert_contains(ir, "store i32 13", label="local import precedence ir")
+    assert_not_contains(ir, "store i32 27", label="local import precedence ir")
+
+
+def test_import_supports_nested_module_paths_from_include_root(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "include_nested" / "include"
+    compiler.write_source(
+        "include_nested/include/math/ops.lo",
+        """
+        def answer() i32 {
+            ret 64
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "include_nested/app/main.lo",
+        """
+        import math/ops
+
+        def main() i32 {
+            ret ops.answer()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path, include_paths=[include_root]).expect_ok().stdout
+    assert_contains(ir, "define i32 @ops.answer()", label="nested include path ir")
+    assert_contains(ir, "store i32 64", label="nested include path ir")
+
+
+def test_unreadable_include_path_reports_driver_error(
+    compiler: CompilerHarness,
+) -> None:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
+
+    unreadable_dir = compiler.tmp_path / "include_unreadable" / "blocked"
+    unreadable_dir.mkdir(parents=True, exist_ok=True)
+    main_path = compiler.write_source(
+        "include_unreadable/app/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            ret dep.answer()
+        }
+        """,
+    )
+
+    unreadable_dir.chmod(0)
+    try:
+        result = compiler.emit_ir(
+            main_path, include_paths=[unreadable_dir]
+        ).expect_failed()
+    finally:
+        unreadable_dir.chmod(0o755)
+
+    assert_contains(
+        result.stderr,
+        "I couldn't inspect include path",
+        label="unreadable include diagnostic",
+    )
+    assert_not_contains(
+        result.stderr,
+        "internal error:",
+        label="unreadable include diagnostic",
     )
 
 

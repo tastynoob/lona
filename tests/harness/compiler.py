@@ -114,8 +114,13 @@ class CompilerHarness:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    def emit_json(self, input_path: Path) -> CommandResult:
-        return self._run([str(input_path)])
+    def emit_json(
+        self, input_path: Path, *, include_paths: list[Path] | None = None
+    ) -> CommandResult:
+        args = []
+        self._extend_include_paths(args, include_paths)
+        args.append(str(input_path))
+        return self._run(args)
 
     def emit_ir(
         self,
@@ -127,6 +132,7 @@ class CompilerHarness:
         lto: str | None = None,
         debug: bool = False,
         stats: bool = False,
+        include_paths: list[Path] | None = None,
     ) -> CommandResult:
         args = ["--emit", "ir"]
         if verify_ir:
@@ -141,6 +147,7 @@ class CompilerHarness:
             args.append("-g")
         if stats:
             args.append("--stats")
+        self._extend_include_paths(args, include_paths)
         args.append(str(input_path))
         return self._run(args)
 
@@ -152,6 +159,7 @@ class CompilerHarness:
         verify_ir: bool = True,
         target: str | None = None,
         lto: str | None = None,
+        include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         args = ["--emit", "obj"]
@@ -161,6 +169,7 @@ class CompilerHarness:
             args.extend(["--target", target])
         if lto is not None:
             args.extend(["--lto", lto])
+        self._extend_include_paths(args, include_paths)
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
@@ -175,6 +184,7 @@ class CompilerHarness:
         lto: str | None = None,
         stats: bool = False,
         no_cache: bool = False,
+        include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         args = ["--emit", "objects"]
@@ -190,6 +200,7 @@ class CompilerHarness:
             args.extend(["--target", target])
         if lto is not None:
             args.extend(["--lto", lto])
+        self._extend_include_paths(args, include_paths)
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
@@ -213,6 +224,7 @@ class CompilerHarness:
         output_name: str,
         lto: str | None = None,
         extra_env: dict[str, str] | None = None,
+        include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         env = os.environ.copy()
@@ -222,6 +234,7 @@ class CompilerHarness:
         cmd = [str(self.system_driver)]
         if lto is not None:
             cmd.extend(["--lto", lto])
+        self._extend_include_paths(cmd, include_paths)
         cmd.extend([str(input_path), str(output_path)])
         result = run_command(
             cmd,
@@ -236,6 +249,7 @@ class CompilerHarness:
         *,
         output_name: str,
         lto: str | None = None,
+        include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
         env = os.environ.copy()
@@ -243,6 +257,7 @@ class CompilerHarness:
         cmd = [str(self.native_driver)]
         if lto is not None:
             cmd.extend(["--lto", lto])
+        self._extend_include_paths(cmd, include_paths)
         cmd.extend([str(input_path), str(output_path)])
         result = run_command(
             cmd,
@@ -266,6 +281,14 @@ class CompilerHarness:
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+    def _extend_include_paths(
+        self, args: list[str], include_paths: list[Path] | None
+    ) -> None:
+        if include_paths is None:
+            return
+        for include_path in include_paths:
+            args.extend(["-I", str(include_path)])
 
     def _run(self, args: list[str]) -> CommandResult:
         env = os.environ.copy()

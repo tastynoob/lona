@@ -17,22 +17,49 @@ flushProcessStreamsAndExit(int exitCode, std::ostream *out = nullptr) {
     std::_Exit(exitCode);
 }
 
-std::vector<std::string>
-normalizeMainCliArgs(int argc, char *argv[]) {
+struct MainCliArgs {
     std::vector<std::string> args;
-    args.reserve(static_cast<size_t>(argc) + 4);
+    std::vector<std::string> includePaths;
+    std::string error;
+};
+
+MainCliArgs
+normalizeMainCliArgs(int argc, char *argv[]) {
+    MainCliArgs result;
+    result.args.reserve(static_cast<size_t>(argc) + 4);
 
     for (int i = 0; i < argc; ++i) {
         std::string arg = argv[i];
-        if (i != 0 && arg.size() > 2 && arg[0] == '-' && arg[1] == 'O') {
-            args.push_back("-O");
-            args.push_back(arg.substr(2));
+        if (i == 0) {
+            result.args.push_back(std::move(arg));
             continue;
         }
-        args.push_back(std::move(arg));
+        if (i != 0 && arg.size() > 2 && arg[0] == '-' && arg[1] == 'O') {
+            result.args.push_back("-O");
+            result.args.push_back(arg.substr(2));
+            continue;
+        }
+        if (arg == "-I" || arg == "--include-dir") {
+            if (i + 1 >= argc) {
+                result.error = "option needs value: " + arg;
+                return result;
+            }
+            result.includePaths.push_back(argv[++i]);
+            continue;
+        }
+        if (arg.size() > 2 && arg[0] == '-' && arg[1] == 'I') {
+            result.includePaths.push_back(arg.substr(2));
+            continue;
+        }
+        if (arg.rfind("--include-dir=", 0) == 0) {
+            result.includePaths.push_back(
+                arg.substr(std::string("--include-dir=").size()));
+            continue;
+        }
+        result.args.push_back(std::move(arg));
     }
 
-    return args;
+    return result;
 }
 
 int
@@ -52,6 +79,10 @@ main(int argc, char *argv[]) {
         "output directory for `--emit objects` bundle members",
         false, "./lona_cache");
     cli.add<std::string>(
+        "include-dir", 'I',
+        "add a module include search directory; searched after the importing file directory and may be repeated",
+        false, "");
+    cli.add<std::string>(
         "lto", 0, "link-time optimization mode: off or full", false, "off",
         cmdline::oneof<std::string>("off", "full"));
     cli.add("no-cache", 0, "disable module artifact reuse for this compile");
@@ -61,7 +92,12 @@ main(int argc, char *argv[]) {
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
     auto normalizedArgs = normalizeMainCliArgs(argc, argv);
-    cli.parse_check(normalizedArgs);
+    if (!normalizedArgs.error.empty()) {
+        std::cerr << normalizedArgs.error << '\n';
+        std::cerr << cli.usage();
+        return 1;
+    }
+    cli.parse_check(normalizedArgs.args);
 
     const auto &args = cli.rest();
     if (args.size() > 2) {
@@ -163,6 +199,7 @@ main(int argc, char *argv[]) {
     options.compile.debugInfo = cli.exist("debug");
     options.compile.targetTriple =
         cli.exist("target") ? cli.get<std::string>("target") : std::string();
+    options.compile.includePaths = std::move(normalizedArgs.includePaths);
     options.compile.ltoMode = ltoMode == "full"
         ? lona::CompileOptions::LTOMode::Full
         : lona::CompileOptions::LTOMode::Off;
