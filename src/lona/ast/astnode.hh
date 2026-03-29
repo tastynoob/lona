@@ -457,12 +457,15 @@ public:
     BindingKind const bindingKind;
     AccessKind const accessKind;
     string const field;
+    bool const embeddedField;
     TypeNode *const typeNode;
     AstNode *const right;
 
     AstVarDecl(BindingKind bindingKind, AstToken &field, TypeNode *typeNode,
                AstNode *right = nullptr,
-               AccessKind accessKind = AccessKind::GetOnly);
+               AccessKind accessKind = AccessKind::GetOnly,
+               bool embeddedField = false);
+    bool isEmbeddedField() const { return embeddedField; }
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;

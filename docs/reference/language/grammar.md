@@ -220,6 +220,7 @@ func-decl         ::= [ "set" ] "def" IDENT "(" ")" NL
                     | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name block
 
 field-decl        ::= IDENT type-name
+                    | "_" type-name
                     | "set" IDENT type-name
 
 var-decl          ::= IDENT type-name
@@ -404,6 +405,9 @@ brace-init-item   ::= expr
 - 当前 `xxx(...)` 统一视为“括号应用”语法；语义阶段再区分它是函数调用、函数指针调用还是数组索引。
 - `expr-assign-left` 在 parser 层包含 `field-call`，因此 `a(1)`、`grid(1, 2)` 这类数组索引写法可以出现在赋值左侧。
 - 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；结构体方法继续使用普通成员调用语法，具体规则见 [struct.md](./struct.md)。
+- `_ T` 是嵌入字段声明。它在语义上仍然是一个真实结构体字段，只是源码里不直接写字段名。
+- 当前实现不支持 `set _ T`；如果写出它，语义阶段会报错。
+- selector lookup 会把唯一的嵌入路径视为 promoted member，因此 `obj.name` 既可能命中直接成员，也可能命中某条嵌入路径上的成员。
 - 位置实参允许出现在命名实参前面，例如 `mix(1, y=2)`；命名实参后面不能再跟位置实参。
 - 普通 `()` / `[]` 里的逗号序列当前都不支持尾逗号；例如 `foo(1, 2,)`、`(1, 2,)`、`i32[4,]` 都会在 parser 阶段报错。
 - 花括号初始化当前用于数组。

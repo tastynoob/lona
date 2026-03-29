@@ -472,11 +472,12 @@ AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
 
 AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
                        TypeNode *typeNode, AstNode *right,
-                       AccessKind accessKind)
+                       AccessKind accessKind, bool embeddedField)
     : AstNode(field.loc),
       bindingKind(bindingKind),
       accessKind(accessKind),
       field(field.text),
+      embeddedField(embeddedField),
       typeNode(typeNode),
       right(right) {}
 

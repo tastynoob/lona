@@ -22,7 +22,35 @@ struct Line {
 }
 ```
 
-## 3. call-like 初始化
+## 3. 嵌入字段与成员提升
+
+```lona
+struct Inner {
+    set value i32
+
+    def read() i32 {
+        ret self.value
+    }
+}
+
+struct Outer {
+    _ Inner
+    value i32
+}
+```
+
+说明：
+
+- `_ T` 声明一个嵌入字段。它在语义上仍然是一个真实存在的结构体字段，只是源码里不直接写字段名。
+- 这个真实字段的显式访问名默认取嵌入类型的最后一个标识符；例如 `_ Inner` 的显式访问名是 `Inner`，`_ dep.Inner` 的显式访问名也是 `Inner`。
+- 因此 `obj.Inner`、`obj.Inner.value`、`obj.Inner.read()` 都是合法的显式访问写法。
+- selector lookup 同时支持成员提升：如果 `Outer` 没有自己的 `name`，而某条最短嵌入路径上唯一存在 `name`，那么 `obj.name` 会被当作那条显式路径的简写。
+- 直接成员优先于 promoted member；如果同一最短深度上存在多个候选，则 `obj.name` 会报歧义错误，此时需要改写成 `obj.A.name`、`obj.B.name` 这类显式路径。
+- 嵌入字段参与真实布局和构造。也就是说 `Outer(Inner = Inner(...), value = 1)` 合法，而 promoted member 目前不参与外层构造参数名。
+- 可写性、`set def` receiver、`ref` 绑定和 `&` 取地址都按展开后的显式路径判断。换句话说，`obj.name` 和 `obj.Inner.name` 的权限结果必须一致。
+- 当前实现不支持 `set _ T`；V1 只支持 `_ T` 形式的嵌入字段。
+
+## 4. call-like 初始化
 
 ```lona
 var c = Complex(real = 1, img = 2)
@@ -39,7 +67,7 @@ var e = Complex(1, img = 2)
 - 缺字段、重复字段、未知字段、类型不匹配都会给出 targeted diagnostic。
 - 普通顶层函数不能与结构体同名，因为 `Type(...)` 这类 call-like 初始化保留给结构体类型名。
 
-## 4. 结构体中可以定义方法
+## 5. 结构体中可以定义方法
 
 ```lona
 struct Counter {
@@ -85,7 +113,7 @@ struct Holder {
 - 结构体外部的 `obj.current` 保持可写投影，因此 `obj.current.inc(1)` 允许。
 - 结构体外部的 `obj.link` 如果未标 `set`，只表示这个指针槽位本身只读；`obj.link = other` 不允许，但它不自动把 pointee 升级成 `Counter const*`。
 
-## 5. 字段与方法可以混合出现
+## 6. 字段与方法可以混合出现
 
 ```lona
 struct Buffer {
@@ -98,7 +126,7 @@ struct Buffer {
 }
 ```
 
-## 6. 空结构体
+## 7. 空结构体
 
 当前 parser 同时接受多行空体和单行空体，例如：
 
@@ -116,7 +144,7 @@ struct Marker {}
 - 后续如果需要字段或方法，仍然按普通结构体体语法扩展即可。
 - `struct Name` 与后面的 `{` 必须在同一行；如果 `struct Name` 已经单独成行，它就表示 opaque struct declaration，而不是下一行 `{ ... }` 的开头。
 
-## 7. Opaque Struct
+## 8. Opaque Struct
 
 ```lona
 struct FILE

@@ -787,6 +787,8 @@ class FunctionAnalyzer {
         MemberLookupOwner owner;
         LookupResult result;
         std::optional<InjectedMemberBinding> injectedMember;
+        std::vector<std::string> promotedPath;
+        std::vector<std::vector<std::string>> ambiguousPromotedPaths;
     };
 
     struct MemberLookupAttempt {
@@ -823,8 +825,8 @@ class FunctionAnalyzer {
         return owner;
     }
 
-    LookupResult lookupValueMember(const MemberLookupOwner &owner,
-                                   const std::string &fieldName) {
+    LookupResult lookupDirectValueMember(const MemberLookupOwner &owner,
+                                         const std::string &fieldName) {
         auto result = owner.entity.dot(fieldName);
         if (owner.tupleType) {
             TupleType::ValueTy member;
@@ -861,6 +863,121 @@ class FunctionAnalyzer {
         return result;
     }
 
+    struct PromotedLookupState {
+        StructType *structType = nullptr;
+        TypeClass *valueType = nullptr;
+        std::vector<std::string> path;
+    };
+
+    std::string formatPromotedMemberPath(const std::vector<std::string> &path,
+                                         const std::string &fieldName) {
+        std::string name;
+        for (const auto &segment : path) {
+            if (!name.empty()) {
+                name += ".";
+            }
+            name += segment;
+        }
+        if (!name.empty()) {
+            name += ".";
+        }
+        name += fieldName;
+        return name;
+    }
+
+    void collectEmbeddedLookupStates(const MemberLookupOwner &owner,
+                                     std::vector<PromotedLookupState> &states) {
+        if (!owner.structType) {
+            return;
+        }
+        for (const auto &member : owner.structType->getMembers()) {
+            if (!owner.structType->isEmbeddedMember(member.first())) {
+                continue;
+            }
+            auto *embeddedValueType = projectStructFieldType(
+                owner.structType, owner.valueType, member.first(), member.second.first);
+            auto *embeddedStructType = asUnqualified<StructType>(embeddedValueType);
+            if (!embeddedStructType) {
+                continue;
+            }
+            states.push_back(
+                {embeddedStructType, embeddedValueType, {member.first().str()}});
+        }
+    }
+
+    void collectEmbeddedLookupStates(const PromotedLookupState &owner,
+                                     std::vector<PromotedLookupState> &states) {
+        if (!owner.structType) {
+            return;
+        }
+        for (const auto &member : owner.structType->getMembers()) {
+            if (!owner.structType->isEmbeddedMember(member.first())) {
+                continue;
+            }
+            auto *embeddedValueType = projectStructFieldType(
+                owner.structType, owner.valueType, member.first(), member.second.first);
+            auto *embeddedStructType = asUnqualified<StructType>(embeddedValueType);
+            if (!embeddedStructType) {
+                continue;
+            }
+            auto path = owner.path;
+            path.push_back(member.first().str());
+            states.push_back({embeddedStructType, embeddedValueType, std::move(path)});
+        }
+    }
+
+    LookupResult lookupPromotedValueMember(const MemberLookupOwner &owner,
+                                           const std::string &fieldName,
+                                           std::vector<std::string> &promotedPath,
+                                           std::vector<std::vector<std::string>> &ambiguousPaths) {
+        LookupResult result = owner.entity.dot(fieldName);
+        result.kind = LookupResultKind::NotFound;
+        promotedPath.clear();
+        ambiguousPaths.clear();
+        if (!owner.structType) {
+            return result;
+        }
+
+        std::vector<PromotedLookupState> frontier;
+        collectEmbeddedLookupStates(owner, frontier);
+        while (!frontier.empty()) {
+            struct Candidate {
+                LookupResult result;
+                std::vector<std::string> path;
+            };
+
+            std::vector<Candidate> candidates;
+            std::vector<PromotedLookupState> next;
+            for (const auto &state : frontier) {
+                MemberLookupOwner promotedOwner;
+                promotedOwner.entity = EntityRef::typedValue(state.valueType);
+                promotedOwner.valueType = state.valueType;
+                promotedOwner.structType = state.structType;
+                auto promotedLookup = lookupDirectValueMember(promotedOwner, fieldName);
+                if (promotedLookup.kind == LookupResultKind::ValueField ||
+                    promotedLookup.kind == LookupResultKind::Method) {
+                    candidates.push_back({promotedLookup, state.path});
+                }
+                collectEmbeddedLookupStates(state, next);
+            }
+
+            if (candidates.size() == 1) {
+                promotedPath = candidates.front().path;
+                return candidates.front().result;
+            }
+            if (candidates.size() > 1) {
+                result.kind = LookupResultKind::Ambiguous;
+                for (const auto &candidate : candidates) {
+                    ambiguousPaths.push_back(candidate.path);
+                }
+                return result;
+            }
+            frontier = std::move(next);
+        }
+
+        return result;
+    }
+
     MemberLookup lookupMember(HIRExpr *parent, const std::string &fieldName,
                               const location &loc) {
         MemberLookup lookup;
@@ -876,7 +993,14 @@ class FunctionAnalyzer {
             return lookup;
         }
 
-        lookup.result = lookupValueMember(lookup.owner, fieldName);
+        lookup.result = lookupDirectValueMember(lookup.owner, fieldName);
+        if (lookup.result.kind != LookupResultKind::NotFound) {
+            return lookup;
+        }
+
+        lookup.result = lookupPromotedValueMember(lookup.owner, fieldName,
+                                                  lookup.promotedPath,
+                                                  lookup.ambiguousPromotedPaths);
         return lookup;
     }
 
@@ -906,12 +1030,27 @@ class FunctionAnalyzer {
                                    const MemberLookup &lookup,
                                    const location &loc,
                                    bool allowInjectedMember = false) {
+        auto *current = parent;
+        for (const auto &segment : lookup.promotedPath) {
+            auto segmentOwner = classifyMemberOwner(current);
+            auto segmentLookup = lookupDirectValueMember(segmentOwner, segment);
+            if (segmentLookup.kind != LookupResultKind::ValueField) {
+                internalError(loc,
+                              "promoted member path `" + segment +
+                                  "` did not resolve to a concrete field",
+                              "This looks like a promoted-member lowering bug.");
+            }
+            current = makeHIR<HIRSelector>(current, segment,
+                                           segmentLookup.resultEntity.valueType(),
+                                           loc);
+        }
+
         switch (lookup.result.kind) {
             case LookupResultKind::ValueField:
-                return makeHIR<HIRSelector>(parent, fieldName,
+                return makeHIR<HIRSelector>(current, fieldName,
                                             lookup.result.resultEntity.valueType(), loc);
             case LookupResultKind::Method:
-                return makeHIR<HIRSelector>(parent, fieldName, nullptr, loc,
+                return makeHIR<HIRSelector>(current, fieldName, nullptr, loc,
                                             HIRSelectorKind::Method);
             case LookupResultKind::InjectedMember:
                 if (allowInjectedMember) {
@@ -920,7 +1059,7 @@ class FunctionAnalyzer {
                 error(loc,
                       "injected member `" + fieldName +
                           "` can only be used as a direct call callee",
-                      describeInjectedMemberHelp(parent->getType(), fieldName));
+                      describeInjectedMemberHelp(current->getType(), fieldName));
             default:
                 return nullptr;
         }
@@ -941,6 +1080,26 @@ class FunctionAnalyzer {
         if (lookup.owner.tupleType) {
             error(loc, "unknown tuple field `" + fieldName + "`",
                   describeTupleFieldHelp(lookup.owner.tupleType));
+        }
+
+        if (lookup.result.kind == LookupResultKind::Ambiguous) {
+            std::vector<std::string> suggestions;
+            suggestions.reserve(lookup.ambiguousPromotedPaths.size());
+            for (const auto &path : lookup.ambiguousPromotedPaths) {
+                auto suggestion = ownerLabel.empty() ? formatPromotedMemberPath(path, fieldName)
+                                                     : ownerLabel + "." +
+                                                           formatPromotedMemberPath(path, fieldName);
+                suggestions.push_back("`" + suggestion + "`");
+            }
+            std::string help = "Use an explicit embedded path such as ";
+            for (std::size_t i = 0; i < suggestions.size(); ++i) {
+                if (i != 0) {
+                    help += i + 1 == suggestions.size() ? " or " : ", ";
+                }
+                help += suggestions[i];
+            }
+            help += ".";
+            error(loc, "ambiguous promoted member `" + fieldName + "`", help);
         }
 
         if (lookup.owner.structType) {

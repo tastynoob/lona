@@ -277,6 +277,7 @@ AstVarDecl::toJson(Json &root) {
     root["bindingKind"] = bindingKindKeyword(this->bindingKind);
     root["accessKind"] = accessKindKeyword(this->accessKind);
     root["field"] = this->field.tochara();
+    root["embeddedField"] = this->isEmbeddedField();
     if (typeNode) {
         root["declaredType"] = describeTypeNode(typeNode);
     }

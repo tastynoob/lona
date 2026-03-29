@@ -294,6 +294,18 @@ validateStructDeclShape(AstStructDecl *node) {
     }
 }
 
+std::string describeStructFieldSyntax(AstVarDecl *fieldDecl);
+void validateEmbeddedStructField(AstStructDecl *structDecl,
+                                 AstVarDecl *fieldDecl,
+                                 TypeClass *fieldType);
+void insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                        TypeClass *fieldType,
+                        llvm::StringMap<StructType::ValueTy> &members,
+                        llvm::StringMap<AccessKind> &memberAccess,
+                        llvm::StringSet<> &embeddedMembers,
+                        std::unordered_map<std::string, location> &seenMembers,
+                        int &nextMemberIndex);
+
 void
 validateExternCType(AstFuncDecl *node, StructType *methodParent,
                     const std::string &role, const std::string &bindingName,
@@ -352,12 +364,12 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
     }
     if (!isFullyWritableStructFieldType(fieldType)) {
         error(fieldDecl->loc,
-              "struct field `" + toStdString(fieldDecl->field) +
+              "struct field `" + describeStructFieldSyntax(fieldDecl) +
                   "` cannot use a const-qualified storage type",
               "Struct fields must keep full read/write access during initialization. Use pointer views like `T const*` or `T const[*]`, and reserve field immutability for a future `readonly` feature.");
     }
     rejectOpaqueStructByValue(fieldType, fieldDecl->typeNode, fieldDecl->loc,
-                              "struct field `" + toStdString(fieldDecl->field) + "`");
+                              "struct field `" + describeStructFieldSyntax(fieldDecl) + "`");
     if (!structDecl->isReprC()) {
         return;
     }
@@ -368,9 +380,110 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
     auto fieldTypeName = describeExternCType(fieldType, fieldDecl->typeNode);
     error(fieldDecl->loc,
           "#[repr \"C\"] struct `" + toStdString(structDecl->name) +
-              "` field `" + toStdString(fieldDecl->field) +
+              "` field `" + describeStructFieldSyntax(fieldDecl) +
               "` uses unsupported type: " + fieldTypeName,
           "Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `#[repr \"C\"]` structs.");
+}
+
+std::string
+embeddedFieldAccessName(TypeClass *fieldType) {
+    auto *structType = asUnqualified<StructType>(fieldType);
+    if (!structType) {
+        return {};
+    }
+    auto fullName = toStdString(structType->full_name);
+    auto separator = fullName.rfind('.');
+    return separator == std::string::npos ? fullName : fullName.substr(separator + 1);
+}
+
+std::string
+effectiveStructFieldName(AstVarDecl *fieldDecl, TypeClass *fieldType) {
+    if (!fieldDecl) {
+        return {};
+    }
+    if (!fieldDecl->isEmbeddedField()) {
+        return toStdString(fieldDecl->field);
+    }
+    return embeddedFieldAccessName(fieldType);
+}
+
+std::string
+describeStructFieldSyntax(AstVarDecl *fieldDecl) {
+    if (!fieldDecl) {
+        return "<unknown field>";
+    }
+    if (!fieldDecl->isEmbeddedField()) {
+        return toStdString(fieldDecl->field);
+    }
+    return "_ " + describeTypeNode(fieldDecl->typeNode, "void");
+}
+
+void
+validateEmbeddedStructField(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                            TypeClass *fieldType) {
+    if (!fieldDecl || !fieldDecl->isEmbeddedField()) {
+        return;
+    }
+    if (fieldDecl->bindingKind == BindingKind::Ref) {
+        error(fieldDecl->loc,
+              "embedded field `" + describeStructFieldSyntax(fieldDecl) +
+                  "` cannot use `ref` binding",
+              "Embed the struct value directly, or store an explicit pointer field instead.");
+    }
+    if (fieldDecl->accessKind == AccessKind::GetSet) {
+        error(fieldDecl->loc,
+              "embedded field `" + describeStructFieldSyntax(fieldDecl) +
+                  "` cannot use `set`",
+              "V1 only supports `_ T` for embedded fields. If you need a writable named field, declare it explicitly.");
+    }
+    if (!asUnqualified<StructType>(fieldType)) {
+        error(fieldDecl->loc,
+              "embedded field `" + describeStructFieldSyntax(fieldDecl) +
+                  "` must use a struct type",
+              "Write `_ SomeStruct` or `_ dep.SomeStruct`. Non-struct embedding is not supported.");
+    }
+    auto accessName = effectiveStructFieldName(fieldDecl, fieldType);
+    if (accessName.empty()) {
+        error(fieldDecl->loc,
+              "embedded field `" + describeStructFieldSyntax(fieldDecl) +
+                  "` is missing a usable access name",
+              "Use a named struct type like `_ Inner` or `_ dep.Inner`.");
+    }
+}
+
+void
+insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl, TypeClass *fieldType,
+                   llvm::StringMap<StructType::ValueTy> &members,
+                   llvm::StringMap<AccessKind> &memberAccess,
+                   llvm::StringSet<> &embeddedMembers,
+                   std::unordered_map<std::string, location> &seenMembers,
+                   int &nextMemberIndex) {
+    auto memberName = effectiveStructFieldName(fieldDecl, fieldType);
+    if (memberName.empty()) {
+        internalError(fieldDecl ? fieldDecl->loc : location(),
+                      "struct field is missing its effective member name",
+                      "This looks like a struct-member collection bug.");
+    }
+
+    auto [seenIt, inserted] = seenMembers.emplace(memberName, fieldDecl->loc);
+    if (!inserted) {
+        auto fieldRole = fieldDecl && fieldDecl->isEmbeddedField()
+            ? "embedded field access name"
+            : "field";
+        auto structName = structDecl ? toStdString(structDecl->name)
+                                     : std::string("<unknown>");
+        error(fieldDecl->loc,
+              "struct `" + structName +
+                  "` " + fieldRole + " `" + memberName + "` conflicts with an existing member",
+              "Rename the field, or use an explicit named field instead of embedding here.");
+    }
+
+    auto memberKey = llvm::StringRef(memberName);
+    members.insert({memberKey, StructType::ValueTy{fieldType, nextMemberIndex++}});
+    memberAccess[memberKey] = fieldDecl->accessKind;
+    if (fieldDecl->isEmbeddedField()) {
+        embeddedMembers.insert(memberKey);
+    }
 }
 
 void
@@ -904,6 +1017,7 @@ using collect_decl_impl::declareStructType;
 using collect_decl_impl::extractParamBindingKinds;
 using collect_decl_impl::extractParamNames;
 using collect_decl_impl::interfaceMethodReceiverPointeeType;
+using collect_decl_impl::insertStructMember;
 using collect_decl_impl::recordTopLevelDeclName;
 using collect_decl_impl::rejectBareFunctionType;
 using collect_decl_impl::rejectOpaqueStructByValue;
@@ -912,7 +1026,9 @@ using collect_decl_impl::resolveTypeNode;
 using collect_decl_impl::sourceColumn;
 using collect_decl_impl::sourceFilename;
 using collect_decl_impl::sourceLine;
+using collect_decl_impl::describeStructFieldSyntax;
 using collect_decl_impl::validateExternCFunctionSignature;
+using collect_decl_impl::validateEmbeddedStructField;
 using collect_decl_impl::validateFunctionReceiverAccess;
 using collect_decl_impl::validateStructDeclShape;
 using collect_decl_impl::validateStructFieldType;
@@ -925,6 +1041,8 @@ class StructVisitor : public AstVisitorAny {
 
     llvm::StringMap<StructType::ValueTy> members;
     llvm::StringMap<AccessKind> memberAccess;
+    llvm::StringSet<> embeddedMembers;
+    std::unordered_map<std::string, location> seenMembers;
     int nextMemberIndex = 0;
 
     using AstVisitorAny::visit;
@@ -938,29 +1056,26 @@ class StructVisitor : public AstVisitorAny {
     }
 
     Object *visit(AstVarDecl *node) override {
-        auto &name = node->field;
         if (node->bindingKind == BindingKind::Ref) {
             error(node->loc, "struct fields cannot use `ref` binding for `" +
-                                 toStdString(name) + "`",
+                                 describeStructFieldSyntax(node) + "`",
                   "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
         }
         auto *type = resolveTypeNode(typeMgr, unit, node->typeNode);
         if (!type) {
             error(node->loc, "unknown struct field type for `" +
-                                 toStdString(name) + "`: " +
+                                 describeStructFieldSyntax(node) + "`: " +
                                  describeTypeNode(node->typeNode, "void"));
         }
         rejectBareFunctionType(
             type, node->typeNode,
             "unsupported bare function struct field type for `" +
-                toStdString(name) + "`",
+                describeStructFieldSyntax(node) + "`",
             node->loc);
         validateStructFieldType(structDecl, node, type);
-
-        members.insert(std::make_pair(llvm::StringRef(name.tochara(), name.size()),
-                                      StructType::ValueTy{type, nextMemberIndex++}));
-        memberAccess[llvm::StringRef(name.tochara(), name.size())] =
-            node->accessKind;
+        validateEmbeddedStructField(structDecl, node, type);
+        insertStructMember(structDecl, node, type, members, memberAccess,
+                           embeddedMembers, seenMembers, nextMemberIndex);
 
         return nullptr;
     }
@@ -983,7 +1098,7 @@ public:
         }
 
         this->visit(node->body);
-        lostructTy->complete(members, memberAccess);
+        lostructTy->complete(members, memberAccess, embeddedMembers);
     }
 };
 
@@ -1267,6 +1382,8 @@ class InterfaceCollector {
 
             llvm::StringMap<StructType::ValueTy> members;
             llvm::StringMap<AccessKind> memberAccess;
+            llvm::StringSet<> embeddedMembers;
+            std::unordered_map<std::string, location> seenMembers;
             int index = 0;
             for (auto *stmt : body->getBody()) {
                 auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
@@ -1276,32 +1393,29 @@ class InterfaceCollector {
                 if (varDecl->bindingKind == BindingKind::Ref) {
                     error(varDecl->loc,
                           "struct fields cannot use `ref` binding for `" +
-                              toStdString(varDecl->field) + "`",
+                              describeStructFieldSyntax(varDecl) + "`",
                           "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
                 }
                 auto *fieldType = resolveType(varDecl->typeNode);
                 if (!fieldType) {
                     error(varDecl->loc,
                           "unknown struct field type for `" +
-                              toStdString(varDecl->field) + "`: " +
+                              describeStructFieldSyntax(varDecl) + "`: " +
                               describeTypeNode(varDecl->typeNode, "void"));
                 }
                 rejectBareFunctionType(
                     fieldType, varDecl->typeNode,
                     "unsupported bare function struct field type for `" +
-                        toStdString(varDecl->field) + "`",
+                        describeStructFieldSyntax(varDecl) + "`",
                     varDecl->loc);
                 validateStructFieldType(structDecl, varDecl, fieldType);
-                members.insert(
-                    std::make_pair(llvm::StringRef(varDecl->field.tochara(),
-                                                   varDecl->field.size()),
-                                   StructType::ValueTy{fieldType, index++}));
-                memberAccess[llvm::StringRef(varDecl->field.tochara(),
-                                             varDecl->field.size())] =
-                    varDecl->accessKind;
+                validateEmbeddedStructField(structDecl, varDecl, fieldType);
+                insertStructMember(structDecl, varDecl, fieldType, members,
+                                   memberAccess, embeddedMembers, seenMembers,
+                                   index);
             }
 
-            structType->complete(members, memberAccess);
+            structType->complete(members, memberAccess, embeddedMembers);
         }
     }
 

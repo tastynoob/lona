@@ -11,6 +11,7 @@
 #include <functional>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
 #include <llvm-18/llvm/ADT/StringMap.h>
+#include <llvm-18/llvm/ADT/StringSet.h>
 #include <llvm-18/llvm/IR/DerivedTypes.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
@@ -111,6 +112,7 @@ public:
 private:
     llvm::StringMap<ValueTy> members;
     llvm::StringMap<AccessKind> memberAccess;
+    llvm::StringSet<> embeddedMembers;
     llvm::StringMap<FuncType *> methodTypes;
     llvm::StringMap<std::vector<string>> methodParamNames;
 
@@ -136,9 +138,11 @@ public:
     void setDeclKind(StructDeclKind kind) { declKind = kind; }
 
     void complete(const llvm::StringMap<ValueTy> &newMembers,
-                  const llvm::StringMap<AccessKind> &newMemberAccess = {}) {
+                  const llvm::StringMap<AccessKind> &newMemberAccess = {},
+                  const llvm::StringSet<> &newEmbeddedMembers = {}) {
         members = newMembers;
         memberAccess = newMemberAccess;
+        embeddedMembers = newEmbeddedMembers;
         opaque = false;
     }
 
@@ -164,6 +168,10 @@ public:
         return it->second;
     }
 
+    bool isEmbeddedMember(llvm::StringRef name) const {
+        return embeddedMembers.contains(name);
+    }
+
     FuncType *getMethodType(llvm::StringRef name) {
         auto it = methodTypes.find(name);
         if (it == methodTypes.end()) {
@@ -184,6 +192,7 @@ public:
     const llvm::StringMap<AccessKind> &getMemberAccesses() const {
         return memberAccess;
     }
+    const llvm::StringSet<> &getEmbeddedMembers() const { return embeddedMembers; }
     const llvm::StringMap<FuncType *> &getMethodTypes() const { return methodTypes; }
     std::vector<ValueTy> getMembersInOrder() const {
         std::vector<ValueTy> ordered(members.size(), {nullptr, -1});
@@ -693,7 +702,8 @@ public:
                     existingStruct->setDeclKind(structType->getDeclKind());
                     if (existingStruct->isOpaque() && !structType->isOpaque()) {
                         existingStruct->complete(structType->getMembers(),
-                                                 structType->getMemberAccesses());
+                                                 structType->getMemberAccesses(),
+                                                 structType->getEmbeddedMembers());
                     }
                     for (const auto &method : structType->getMethodTypes()) {
                         if (!existingStruct->getMethodType(method.first())) {

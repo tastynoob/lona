@@ -158,6 +158,7 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         hashText(seed, "field");
         hashText(seed, toStdString(varDecl->field));
         hashText(seed, accessKindKeyword(varDecl->accessKind));
+        hashText(seed, varDecl->isEmbeddedField() ? "embedded" : "plain");
         hashTypeNode(seed, varDecl->typeNode);
         return;
     }

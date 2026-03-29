@@ -295,11 +295,12 @@ func_decl
 
 field_decl
     : FIELD type_name {
-        $$ = new AstVarDecl(BindingKind::Value, *$1, $2);
+        $$ = new AstVarDecl(BindingKind::Value, *$1, $2, nullptr,
+                            AccessKind::GetOnly, $1->text == string("_"));
     }
     | SET FIELD type_name {
         $$ = new AstVarDecl(BindingKind::Value, *$2, $3, nullptr,
-                            AccessKind::GetSet);
+                            AccessKind::GetSet, $2->text == string("_"));
     }
     ;
 
