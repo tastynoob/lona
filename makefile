@@ -53,7 +53,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default gram_check frontend acceptance test bench_smoke perf example_smoke incremental_smoke native_smoke hosted_smoke system_smoke template_random ai_test install uninstall
+.PHONY: clean format default gram_check frontend acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -64,18 +64,15 @@ all: $(target)
 frontend: $(frontend_target)
 
 acceptance: $(target)
-	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance/test_*.py
+	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance
 
-test: acceptance bench_smoke example_smoke incremental_smoke template_random system_smoke native_smoke
+smoke: $(target)
+	$(PYTHON) -m pytest -q -s $(ROOT)/tests/smoke
 
-bench_smoke: $(target)
-	$(PYTHON) -m pytest -q -s $(ROOT)/tests/smoke/test_benchmark.py
+test: acceptance smoke incremental_smoke template_random
 
 perf: $(target)
 	$(PYTHON) $(ROOT)/tests/perf/profile_large_case.py --compiler $(target)
-
-example_smoke: $(target)
-	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_examples.py
 
 incremental_smoke: $(session_runner_target)
 	$(PYTHON) $(ROOT)/tests/incremental_smoke.py --runner $(session_runner_target)
@@ -85,14 +82,6 @@ template_random: $(target)
 
 ai_test:
 	$(PYTHON) $(ROOT)/tests/test_agent.py
-
-native_smoke: $(target)
-	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_native.py
-
-hosted_smoke: system_smoke
-
-system_smoke: $(target)
-	$(PYTHON) -m pytest -q $(ROOT)/tests/smoke/test_system.py
 
 install: $(target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)

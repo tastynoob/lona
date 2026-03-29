@@ -37,7 +37,7 @@ Repository root: {root}
 Output directory for generated tests: {out_dir}
 
 Requirements:
-- Read docs/README.md, tests/README.md, and skim tests/acceptance/test_*.py first.
+- Read docs/README.md, tests/README.md, tests/acceptance/README.md, and skim tests/acceptance/**/*.py first.
 - Generate small Lona test cases under {out_dir}.
 - Prefer cases that are intentionally awkward:
   - boundary numeric literals, especially signed mins/maxes, mixed prefixes/suffixes, separators

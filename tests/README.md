@@ -1,22 +1,16 @@
 # Test Index
 
-`tests/` 里的测试现在分成三类入口。
+`tests/` 里的测试现在按几类入口组织。
 
 ## Acceptance
 
-- [acceptance/test_frontend.py](acceptance/test_frontend.py): 基于 `pytest` 的 frontend acceptance；覆盖 AST/JSON、基础 IR、debug IR、target/object/object bundle 语义、跨进程 object cache 复用，以及 `--lto full` 慢路径。
-- [acceptance/test_controlflow.py](acceptance/test_controlflow.py): 基于 `pytest` 的 `for` / `for ... else` / `break` / `continue` JSON、诊断和运行语义。
-- [acceptance/test_functions.py](acceptance/test_functions.py): 基于 `pytest` 的函数指针、C FFI、裸函数限制、方法选择器和调用检查。
-- [acceptance/test_diagnostics.py](acceptance/test_diagnostics.py): 基于 `pytest` 的语法和语义错误诊断。
-- [acceptance/test_modules.py](acceptance/test_modules.py): 基于 `pytest` 的模块导入、结构体返回、顶层执行与跨模块 C ABI 场景。
-- [acceptance/test_operators.py](acceptance/test_operators.py): 基于 `pytest` 的算术、位运算、比较、逻辑短路和运行语义。
-- [acceptance/test_references.py](acceptance/test_references.py): 基于 `pytest` 的 `ref` 局部绑定、参数传递与 const 约束。
-- [acceptance/test_syntax_features.py](acceptance/test_syntax_features.py): 基于 `pytest` 的 cast、数值转换、字符串、null、tuple、数组、命名调用等语法/语义覆盖。
+- [acceptance/README.md](acceptance/README.md): acceptance 测试的主题索引；当前分为 `language`、`diagnostics`、`modules`、`toolchain` 四组。
 - [harness/compiler.py](harness/compiler.py): `pytest` 测试的编译调用、`lac.sh` 构建和临时文件辅助。
 - [harness/assertions.py](harness/assertions.py): 更短、更定向的文本/对象断言辅助。
 
 ## Smoke
 
+- `make smoke` 会统一跑整个 [smoke/](smoke/) 目录；下面这些文件只保留主题划分，不再各自暴露单独的 `make` target。
 - [smoke/test_benchmark.py](smoke/test_benchmark.py): 基于 `pytest` 的编译耗时 smoke benchmark；打印 wall time 和 `--stats` 输出。
 - [smoke/test_examples.py](smoke/test_examples.py): 基于 `pytest` 的样例编译 smoke，并实际运行 system-level `C FFI` 示例，锁住文档样例可用性。
 - [smoke/test_system.py](smoke/test_system.py): 基于 `pytest` 的 `lac` hosted 路线 smoke，覆盖入口包装、C harness 互调、system-level C FFI 场景，以及 `--lto full` slow path。
