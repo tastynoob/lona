@@ -420,8 +420,9 @@ rejectConstVariableStorage(TypeClass *type, AstVarDef *node) {
           "variable `" + toStdString(node->getName()) +
               "` cannot use a top-level const storage type: " +
               describeStorageType(type, node),
-          "Use `val " + toStdString(node->getName()) +
-              " = ...` for a read-only binding, or move `const` behind a pointer like `T const*` / `T const[*]` when you only want a read-only pointee view.");
+          "Use `const " + toStdString(node->getName()) +
+              " = ...` or `const " + toStdString(node->getName()) +
+              " T = ...` for a read-only binding, or move `const` behind a pointer like `T const*` / `T const[*]` when you only want a read-only pointee view.");
 }
 
 void
@@ -2655,7 +2656,7 @@ class FunctionAnalyzer {
             if (isRefBinding) {
                 internalError(node->loc,
                               "read-only variable binding unexpectedly used with `ref`",
-                              "Keep `val name = expr` as a value binding only.");
+                              "Keep `const name = expr` as a value binding only.");
             }
             type = typeMgr->createConstType(type);
         }

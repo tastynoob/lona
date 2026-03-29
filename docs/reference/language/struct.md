@@ -2,6 +2,7 @@
 
 > 对应 `grammar.md` 的“3.3 结构体与函数声明”。
 > 本文讲普通 `struct` 语义，以及 bodyless `struct Name` 这种 opaque 声明。`#[repr "C"] struct` 的 C 边界规则见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+> `set`、字段投影、receiver 可写性和字段 `const` 边界的统一规则见 [mutability.md](mutability.md)。
 
 ## 1. 只有字段的结构体
 

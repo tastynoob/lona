@@ -1,6 +1,7 @@
 # ref 绑定与参数
 
 > 本文只讲显式 `ref` 绑定与 `ref` 参数。显式指针见 [pointer.md](pointer.md)，结构体方法与 `set` 规则见 [struct.md](struct.md)。
+> `ref` 与 `const`、写入判定、成员投影的统一规则见 [mutability.md](mutability.md)。
 
 ## 1. `ref` 不是类型
 
