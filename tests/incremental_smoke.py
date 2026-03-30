@@ -232,6 +232,51 @@ def indexable_pointer_program_text(module_name: str) -> str:
     )
 
 
+def trait_dependency_text(
+    seed_value: int, *, extra_arg: bool = False, include_impl: bool = True
+) -> str:
+    method_sig = "def hash(step i32) i32" if extra_arg else "def hash() i32"
+    method_def = (
+        "    def hash(step i32) i32 {\n"
+        "        ret self.value + step\n"
+        "    }\n"
+        if extra_arg
+        else "    def hash() i32 {\n"
+        "        ret self.value + 1\n"
+        "    }\n"
+    )
+    text = (
+        "trait Hash {\n"
+        f"    {method_sig}\n"
+        "}\n\n"
+        "struct Point {\n"
+        "    value i32\n\n"
+        f"{method_def}"
+        "}\n\n"
+    )
+    if include_impl:
+        text += "impl Point: Hash\n\n"
+    text += (
+        "def make() Point {\n"
+        f"    ret Point(value = {seed_value})\n"
+        "}\n"
+    )
+    return text
+
+
+def trait_dyn_program_text(module_name: str, *, extra_arg: bool = False,
+                           arg_value: int = 2) -> str:
+    call = f"h.hash({arg_value})" if extra_arg else "h.hash()"
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        f"    var point {module_name}.Point = {module_name}.make()\n"
+        f"    var h {module_name}.Hash dyn = cast[{module_name}.Hash dyn](&point)\n"
+        f"    ret {call}\n"
+        "}\n"
+    )
+
+
 def run_body_vs_interface_case(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     dep_name = "dep"
     dep_path = root / f"{dep_name}.lo"
@@ -415,6 +460,68 @@ def run_imported_constructor_interface_hash_case(
 
     write_file(app_path, constructor_program_text("dep", second_field))
     expect_compile_ok(runner.compile(app_path), compiled=1, reused=1)
+
+
+def run_trait_dyn_signature_interface_hash_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    seed_value = rng.randint(30, 70)
+    arg_value = rng.randint(2, 9)
+
+    write_file(dep_path, trait_dependency_text(seed_value, extra_arg=False))
+    write_file(app_path, trait_dyn_program_text("dep", extra_arg=False))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, trait_dependency_text(seed_value, extra_arg=True))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        "call argument count mismatch: expected 1, got 0",
+    )
+
+    write_file(
+        app_path,
+        trait_dyn_program_text("dep", extra_arg=True, arg_value=arg_value),
+    )
+    result = runner.compile(app_path)
+    expect_compile_ok(result, compiled=1, reused=1)
+    expect(
+        "call i32 %trait.slot(ptr %trait.data, i32 " in result["stdout"],
+        "expected trait dyn signature change to force recompilation of the caller",
+    )
+
+
+def run_trait_dyn_impl_header_interface_hash_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    seed_value = rng.randint(30, 70)
+
+    write_file(dep_path, trait_dependency_text(seed_value, include_impl=True))
+    write_file(app_path, trait_dyn_program_text("dep", extra_arg=False))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, trait_dependency_text(seed_value, include_impl=False))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        "does not implement trait `dep.Hash`",
+    )
+
+    write_file(dep_path, trait_dependency_text(seed_value, include_impl=True))
+    result = runner.compile(app_path)
+    expect_compile_ok(result, compiled=1, reused=1)
+    expect(
+        "@__lona_trait_witness__dep_2eHash__dep_2ePoint" in result["stdout"],
+        "expected restoring the visible impl header to rebuild the caller dyn witness path",
+    )
 
 
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
@@ -607,6 +714,18 @@ def main() -> int:
                 "imported-constructor-interface-hash-invalidation",
                 lambda: run_imported_constructor_interface_hash_case(
                     rng, runner, root / "imported_constructor_interface"
+                ),
+            )
+            suite.add(
+                "trait-dyn-signature-interface-hash-invalidation",
+                lambda: run_trait_dyn_signature_interface_hash_case(
+                    rng, runner, root / "trait_dyn_signature_interface"
+                ),
+            )
+            suite.add(
+                "trait-dyn-impl-header-interface-hash-invalidation",
+                lambda: run_trait_dyn_impl_header_interface_hash_case(
+                    rng, runner, root / "trait_dyn_impl_header_interface"
                 ),
             )
             suite.add(
