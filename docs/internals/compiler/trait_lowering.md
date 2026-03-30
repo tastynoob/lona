@@ -1,0 +1,221 @@
+# Trait v0 Lowering
+
+本文记录当前仓库里已经实现的 trait v0 内部模型，目标是回答两类问题：
+
+- `Trait.method(value, ...)` 为什么是零额外运行时成本
+- `Trait dyn` / `cast[Trait dyn](&value)` 在前端和 LLVM IR 中到底怎样落地
+
+这不是设计草案；这里描述的是当前代码已经在做的事。
+
+## 1. 范围
+
+trait v0 当前只覆盖：
+
+- `trait` 顶层声明
+- `impl Type: Trait` header
+- `Trait.method(value, ...)` 静态限定调用
+- `Trait dyn` 非 owning trait object
+- `cast[Trait dyn](&value)` 借用式构造
+
+明确不包含：
+
+- 泛型 / trait bound
+- `impl Type: Trait { ... }` body
+- default method
+- associated type
+- owning trait object
+- 自动把 trait 方法注入普通 `obj.method(...)`
+
+## 2. 接口层数据模型
+
+trait 信息首先进入 `ModuleInterface`，对应文件：
+
+- `src/lona/module/module_interface.hh`
+- `src/lona/module/module_interface.cc`
+- `src/lona/declare/interface.cc`
+
+当前接口层新增了三类数据：
+
+- `ModuleInterface::TraitDecl`
+- `ModuleInterface::TraitMethodDecl`
+- `ModuleInterface::TraitImplDecl`
+
+同时，`ModuleInterface::TopLevelLookupKind` 现在多了一档 `Trait`，因此 importer 在查 `dep.Hash` 时，不会再退回到“函数 / 全局 / 类型”三选一的旧分支。
+
+`declare/interface.cc` 在接口收集阶段做两件事：
+
+1. 收集并验证 trait declaration：
+   - trait body 只能稳定产出方法签名；
+   - 字段、`var`、`global`、可执行语句和 nested struct 都会被定向拒绝；
+   - trait method 不能带 body。
+2. 收集并验证 impl header：
+   - `impl Type: Trait` 会检查 orphan rule；
+   - 同一可见程序图中的 `(Trait, Type)` 不能重复；
+   - 编译器会把 trait 方法签名与 concrete inherent method 逐项对齐，验证 name、receiver access、参数个数、binding kind、参数类型和返回类型。
+
+## 3. `interfaceHash` 与可见接口边界
+
+trait v0 没有把这些信息放进“实现细节”层，而是明确放进模块接口：
+
+- trait declaration 本身进入 `interfaceHash`
+- trait method 签名进入 `interfaceHash`
+- visible `impl Type: Trait` header 进入 `interfaceHash`
+
+这样做的原因是：
+
+- importer 的 `Trait.method(value, ...)` 解析依赖 trait 方法签名
+- importer 的 `cast[Trait dyn](&value)` 和 `h.method()` 依赖 visible impl header
+- 如果这些变化只落到 `implementationHash`，就会把 stale importer 或 stale artifact 复用成错误结果
+
+当前仓库已经有 trait 专属的增量回归，覆盖：
+
+- trait 方法签名变化会让 importer 重新编译
+- visible impl header 增删会让 importer 重新编译
+- 同一 `CompilerSession` 中不会把旧 trait/impl 接口误复用给 caller
+
+## 4. 静态路径：`Trait.method(value, ...)`
+
+静态限定调用的链路是：
+
+1. `resolve`
+   - bare trait 名会解析成独立的 trait namespace binding
+   - imported 路径里的 `dep.Hash` 也会在这里直接绑定成 trait
+2. `analyze/function.cc`
+   - 只在 `Trait.method(value, ...)` 这种限定调用语境里消费 trait binding
+   - 先找到 visible trait declaration
+   - 再验证 receiver 的 concrete type 是否有 visible impl
+   - 最后把调用直接绑定到 concrete inherent method
+3. `emit/codegen.cc`
+   - 直接生成对具体方法符号的普通调用
+
+因此这条路径没有：
+
+- witness table 读取
+- 间接跳转
+- 对象布局膨胀
+
+普通 `Point` 仍然只是普通 `Point`；trait 不会往 struct 里注入隐藏 vptr。
+
+## 5. `Trait dyn` 的语义类型
+
+`Trait dyn` 在类型层不是语法糖，而是单独的内部类型 `DynTraitType`，对应：
+
+- `src/lona/type/type.hh`
+- `src/lona/type/type.cc`
+- `src/lona/module/compilation_unit.cc`
+
+`DynTraitType` 保存的是“目标 trait 的已解析名字”，而不是某个具体 self type。这样 importer 和本模块都可以把：
+
+- `Hash dyn`
+- `dep.Hash dyn`
+
+收敛到同一个“按 trait 名命名”的语义类型。
+
+当前 v0 的 dyn-compatible 规则也在语义阶段明确限制：
+
+- 只允许 get-only trait methods
+- 只要 trait 中出现 `set def`，就不能构造 `Trait dyn`
+
+这也是为什么 `Trait dyn` 仍然是 trait v0 的子集，而不是所有 trait 的统一动态表示。
+
+## 6. trait object 的 HIR 形状
+
+动态路径在 HIR 里拆成两个专用节点：
+
+- `HIRTraitObjectCast`
+- `HIRTraitObjectCall`
+
+对应文件：
+
+- `src/lona/sema/hir.hh`
+- `src/lona/analyze/function.cc`
+
+`cast[Trait dyn](&value)` 的分析规则是：
+
+- 目标类型必须先被解析成 `DynTraitType`
+- 源表达式必须显式写成 `&value`
+- 被借用值必须可寻址
+- concrete self type 必须有 visible impl
+- const 资格不能被这条构造路径偷偷丢掉
+
+`h.method()` 的分析规则是：
+
+- 只有当 `h` 的类型已经是 `Trait dyn` 时，才会走 trait-object call 分支
+- 普通 `value.method()` 仍然保持原有 struct / selector 语义
+- 语义阶段会把调用绑定到 trait method slot index，而不是某个具体方法符号
+
+## 7. LLVM Lowering：胖指针与 witness table
+
+当前 LLVM lowering 采用外置 witness 模型，而不是 C++ 那种把 vptr 塞进对象：
+
+- ordinary struct layout 保持不变
+- trait object 内部表示是 `<erased_ptr, witness_ptr>`
+
+更具体地说：
+
+- `data_ptr` 指向原始 concrete object
+- `witness_ptr` 指向当前 `(Trait, ConcreteType)` 的 witness table
+
+`emit/codegen.cc` 里会为每个可见 `(Trait, Type)` 组合生成一份内部 witness table：
+
+- 符号名形如 `__lona_trait_witness__...`
+- linkage 是 `InternalLinkage`
+- 每个 slot 都是对应 concrete inherent method 的函数地址
+
+在 v0 当前实现里，slot 直接保存具体方法符号地址；因为 dyn-compatible 只允许 get-only 方法，所以还不需要为了 `set` receiver 引入更复杂的适配约定。
+
+## 8. `cast[Trait dyn](&value)` 的 IR 结果
+
+这条路径不会分配内存，也不会复制对象。
+
+lowering 的结果只是构造一个短生命周期或普通局部值：
+
+- 第一个槽位是对象地址
+- 第二个槽位是 witness table 地址
+
+因此：
+
+- `var x = Point(...)` 仍然只会创建 `Point`
+- 只有显式 `cast[Hash dyn](&x)` 才会额外构造 trait object
+- 当前 trait object 是非 owning 视图，不负责对象生命周期
+
+## 9. `h.method()` 的 IR 结果
+
+动态调用会被 lower 成 witness-slot 间接调用：
+
+1. 从 trait object 里取出 witness pointer
+2. 按 slot index 取出方法函数地址
+3. 把 `data_ptr` 作为 receiver 传进去
+4. 再拼接其它显式参数
+
+因此动态路径的运行时成本明确包括：
+
+- 一次 witness table 读取
+- 一次间接调用
+
+这和静态 `Trait.method(value, ...)` 的直接调用路径严格分开。
+
+## 10. 与模块缓存 / artifact 复用的关系
+
+trait v0 对缓存边界新增了两条必须牢记的约束：
+
+1. trait / impl header 是 importer 可见接口的一部分
+   - 所以必须进入 `ModuleInterface` 和 `interfaceHash`
+2. 模块 artifact 现在已经区分 entry role
+   - root 与 dependency 不能共用同一份入口产物
+
+这两条约束合起来，才能避免这类错误：
+
+- importer 继续复用旧 trait 方法签名
+- importer 继续复用已经失效的 visible impl header
+- 同一 session 中把 root 版本 artifact 错复用成 dependency 版本
+
+## 11. 当前工程边界
+
+如果你继续往后扩 trait，下面这些点会直接影响当前 lowering 设计：
+
+- 一旦支持 `set def` 的 dyn dispatch，就很可能需要新的 witness slot 约定或 adapter thunk
+- 一旦支持 owning trait object，就要重新定义存储位置和销毁语义
+- 一旦支持泛型 / trait bound，就会碰到 monomorphization 和跨模块实例化策略
+
+也就是说，当前实现是一个有意收口的 v0，而不是 future trait 系统的最终形态。

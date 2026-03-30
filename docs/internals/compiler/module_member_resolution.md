@@ -38,11 +38,13 @@
    - 命中函数则直接绑定成 `ResolvedEntityRef::globalValue(...)`
    - 命中全局变量也直接绑定成 `ResolvedEntityRef::globalValue(...)`
    - 命中类型则直接绑定成 `ResolvedEntityRef::type(...)`
+   - 命中 trait 则直接绑定成 `ResolvedEntityRef::trait(...)`
    - 未命中则直接报 `unknown module member`
 3. `analysis` 优先读取 selector 的 resolved binding，并直接物化成：
    - `HIRValue(Function)`
    - `HIRValue(某个已解析的全局对象)`
    - `HIRValue(TypeObject)`
+   - trait namespace binding，只在 `Trait.method(...)` 这类限定调用里继续消费
 
 只有下面两类情况才会真正生成 `HIRSelector`：
 
@@ -92,6 +94,7 @@
 - `module.func` 在进入 HIR 前，就应该已经等价于“某个确定的全局函数实体”
 - `module.global` 在进入 HIR 前，就应该已经等价于“某个确定的全局变量实体”
 - `module.Type` 在进入 HIR 前，就应该已经等价于“某个确定的类型实体”
+- `module.Trait` 在进入 HIR 前，就应该已经等价于“某个确定的 trait namespace binding”
 - `analysis` 里保留 selector 分派的部分，应只剩下：
   - 值字段
   - 方法选择器
@@ -178,9 +181,10 @@
 
 即使把 `module.xxx` 前移到 `resolve`，下面这些规则也不能变化：
 
-- imported 模块成员仍然只能访问模块导出的顶层函数、全局变量和类型
+- imported 模块成员现在包括模块导出的顶层函数、全局变量、类型和 trait
 - `module(...)` 仍然应该给出 targeted diagnostic，而不是把模块命名空间当成可调用值
 - `module.Type(...)` 仍然应当沿用当前“类型名独占构造入口”的语义
+- `module.Trait` 仍然不是 runtime value；它只能出现在 trait 限定调用和类型语法里的 `module.Trait dyn`
 - bare `module` 不应再物化成任何 HIR value / `EntityRef`
 - imported 模块别名遮蔽规则仍然要保持稳定
 
@@ -194,7 +198,7 @@
 2. `analysis` 不再通过模块命名空间去查询 `module.xxx`。
 3. `lookupMember(...)` 不再承担 imported 模块成员访问的主解析职责。
 4. HIR 主路径不再依赖 `HIRValue(ModuleObject)` 来解释模块成员 selector 或 bare module。
-5. 现有 `module(...)`、`module.func(...)`、`module.Type(...)` 的诊断与调用行为不回退。
+5. 现有 `module(...)`、`module.func(...)`、`module.Type(...)`、`module.Trait.method(...)` 的诊断与调用行为不回退。
 
 ## 9. 当前实现状态备注
 

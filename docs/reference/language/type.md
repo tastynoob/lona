@@ -110,3 +110,26 @@ var cursor (: i32)[*]
 - `(: i32)[*]` 表示“可索引的函数指针视图”。
 
 旧的裸函数派生写法如 `()[] i32`、`(i32)[4] i32`、`()[*] i32` 现在都不是合法类型语法。
+
+## 8. `Trait dyn` 类型
+
+```lona
+var h Hash dyn
+var imported dep.Hash dyn
+```
+
+说明：
+
+- `dyn` 是类型后缀，因此写作 `Hash dyn`、`dep.Hash dyn`。
+- 当前 `dyn` 只接受 trait 名，不接受普通结构体类型。
+- `Trait dyn` 表示一个显式、非 owning 的 trait object。
+- 它不会自动从 `Point` 之类的 concrete value 推导出来；必须显式构造。
+
+当前稳定构造方式是：
+
+```lona
+var point = Point(value = 41)
+var h Hash dyn = cast[Hash dyn](&point)
+```
+
+进一步规则见 [trait.md](trait.md)。

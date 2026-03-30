@@ -6,3 +6,4 @@
 - [compiler_pipeline.md](compiler_pipeline.md): 单模块 pipeline、阶段职责和代码落点。
 - [name_lookup_consistency.md](name_lookup_consistency.md): 本地 / imported 模块名字查找的一致性边界。
 - [module_member_resolution.md](module_member_resolution.md): `module.xxx` 消解前移后的具体边界。
+- [trait_lowering.md](trait_lowering.md): trait v0 的接口建模、静态分派和 witness-based lowering。

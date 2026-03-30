@@ -12,6 +12,7 @@
 - 控制流与块语句：[controlflow.md](controlflow.md)
 - 表达式：[expr.md](expr.md)
 - 类型写法：[type.md](type.md)
+- trait 与 `Trait dyn`：[trait.md](trait.md)
 
 ## 1. 词法规则
 
@@ -48,6 +49,8 @@
 - `else`
 - `for`
 - `struct`
+- `trait`
+- `impl`
 - `import`
 - `ref`
 - `cast`
@@ -58,6 +61,7 @@
 类型修饰关键字：
 
 - `const`
+- `dyn`
 
 说明：
 
@@ -127,6 +131,8 @@ program-item      ::= NL
                     | stat
                     | import-stat
                     | tagged-global-decl
+                    | trait-decl
+                    | impl-decl
 
 import-stat       ::= "import" ImportPath NL
 ```
@@ -137,6 +143,7 @@ import-stat       ::= "import" ImportPath NL
 - `import` 只能放在文件顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
 - `import` 不属于 `stat`，因此不能出现在块、函数体或结构体体内；写在这些位置会在 parser 阶段报错。
 - `global` 也只允许出现在文件顶层，不属于普通 `stat`。
+- `trait` 与 `impl Type: Trait` 也只允许出现在文件顶层。
 
 ### 3.2 语句
 
@@ -180,7 +187,7 @@ tagged-var-def    ::= var-def
 
 - 控制流执行语义见 [controlflow.md](controlflow.md)。
 
-### 3.3 结构体、函数与全局声明
+### 3.3 结构体、trait、impl、函数与全局声明
 
 ```ebnf
 tag-line          ::= "#" "[" tag-entry-seq "]" NL
@@ -232,6 +239,26 @@ func-decl         ::= [ "set" ] "def" IDENT "(" ")" NL
                     | [ "set" ] "def" IDENT "(" param-decl-seq ")" block
                     | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name block
 
+trait-decl        ::= "trait" IDENT NL
+                    | "trait" IDENT "{ }"
+                    | "trait" IDENT "{"
+                      ( trait-stat | NL )
+                      { NL | trait-stat }
+                      "}"
+
+trait-stat        ::= trait-func-decl
+                    | /* parser 还会接纳更多成员与语句形状，语义阶段再给 targeted diagnostic */
+
+trait-func-decl   ::= [ "set" ] "def" IDENT "(" ")" NL
+                    | [ "set" ] "def" IDENT "(" ")" type-name NL
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" NL
+                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name NL
+
+impl-decl         ::= "impl" type-name ":" dot-like-name NL
+                    | "impl" type-name ":" NL* dot-like-name NL
+                    | "impl" type-name ":" dot-like-name block
+                    | "impl" type-name ":" NL* dot-like-name block
+
 field-decl        ::= IDENT type-name
                     | "_" type-name
                     | "set" IDENT type-name
@@ -262,8 +289,12 @@ param-decl-seq    ::= param-decl
 - `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
 - `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示 opaque struct declaration。
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为函数声明。
+- `trait Name` 与后面的 `{` 也必须写在同一行；`trait Name` 单独占一行时表示空 trait declaration。
+- `trait` body 当前稳定语义只接受方法签名；为了给用户更明确的 targeted diagnostic，parser 还会暂时接纳 `field`、`var`、`global`、`ret`、`if`、`for`、块语句等形状，然后在语义阶段统一拒绝。
+- `impl Type: Trait` 当前只稳定支持 header；`impl ... { ... }` 这条语法入口保留是为了发出“trait impl body 尚未支持”的定向诊断。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
+- trait / impl / `Trait dyn` 的完整语义见 [trait.md](./trait.md)。
 
 ### 3.4 变量定义
 
@@ -443,6 +474,7 @@ postfix-type      ::= type-primary
                     | postfix-type "[" "]"
                     | postfix-type "[" expr-seq "]"
                     | postfix-type "[" "," expr-seq "]"
+                    | postfix-type "dyn"
                     | postfix-type "const"
 
 type-primary      ::= single-type
@@ -476,6 +508,7 @@ type-name-seq     ::= type-name
 - 函数指针类型本身是一个完整的 `type-primary`，因此后面可以继续接普通后缀，例如 `(i32: i32)*`、`(: i32)[4]`。
 - 函数取指针不在类型层完成，而是通过表达式 `foo&<i32, bool>` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法。
+- `postfix-type "dyn"` 当前只接受 trait 名，因此用户层稳定写法是 `Hash dyn`、`dep.Hash dyn`。
 - `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。
 - `base-type "[]"` 这种显式未定长数组类型写法对用户是禁止的；如果想省略数组维度，请用 `var a = {1, 2}` 这类初始化器推断。
 - 更具体的类型语义见 [type.md](./type.md)。

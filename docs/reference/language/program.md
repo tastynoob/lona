@@ -35,7 +35,30 @@ struct Point {
 }
 ```
 
-## 5. 顶层允许空行
+## 5. 顶层可以放 trait 声明
+
+```lona
+trait Hash {
+    def hash() i32
+}
+```
+
+trait 的完整规则见 [trait.md](trait.md)。
+
+## 6. 顶层可以放 impl header
+
+```lona
+impl Point: Hash
+impl Point: dep.Hash
+```
+
+说明：
+
+- `impl Type: Trait` 是顶层声明。
+- 当前只支持 header；`impl Type: Trait { ... }` 仍然会被拒绝。
+- impl header 只声明满足关系；真正的方法体仍然写在 `Type` 自己的 inherent methods 上。
+
+## 7. 顶层允许空行
 
 ```lona
 
@@ -46,7 +69,7 @@ def inc(v i32) i32 {
 }
 ```
 
-## 6. 块语句可以包含多条语句
+## 8. 块语句可以包含多条语句
 
 ```lona
 {
@@ -56,13 +79,13 @@ def inc(v i32) i32 {
 }
 ```
 
-## 7. 空块是合法的
+## 9. 空块是合法的
 
 ```lona
 def noop() {}
 ```
 
-## 8. 顶层可以导入其他源文件
+## 10. 顶层可以导入其他源文件
 
 ```lona
 import math
@@ -79,7 +102,7 @@ ret answer
 - imported module 的顶层函数通过 `file.xxx(...)` 的形式访问，模块名来自被导入文件的文件名。
 - 导入路径按当前文件所在目录解析。
 
-## 9. imported 模块也可以包含顶层执行语句
+## 11. imported 模块也可以包含顶层执行语句
 
 ```lona
 // dep.lo
@@ -95,7 +118,7 @@ count = count + 1
 - 同一个模块的顶层执行体只会运行一次；多个 importer 不会重复初始化同一个模块。
 - imported 模块顶层如果执行 `ret <nonzero>`，这个返回值会作为模块初始化失败码继续向上传播。
 
-## 10. root 模块的可执行入口
+## 12. root 模块的可执行入口
 
 root 模块允许直接写顶层可执行语句：
 
