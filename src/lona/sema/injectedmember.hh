@@ -17,11 +17,15 @@ struct InjectedMemberBinding {
     TypeClass *resultType = nullptr;
 };
 
-bool canImplicitNumericConversion(TypeClass *targetType, TypeClass *sourceType);
-bool canExplicitNumericConversion(TypeClass *targetType, TypeClass *sourceType);
-TypeClass *commonNumericType(TypeTable *typeTable, TypeClass *leftType,
-                             TypeClass *rightType);
-bool canExplicitBitCopy(TypeClass *targetType, TypeClass *sourceType);
+bool
+canImplicitNumericConversion(TypeClass *targetType, TypeClass *sourceType);
+bool
+canExplicitNumericConversion(TypeClass *targetType, TypeClass *sourceType);
+TypeClass *
+commonNumericType(TypeTable *typeTable, TypeClass *leftType,
+                  TypeClass *rightType);
+bool
+canExplicitBitCopy(TypeClass *targetType, TypeClass *sourceType);
 std::optional<InjectedMemberBinding>
 resolveInjectedMember(TypeTable *typeTable, TypeClass *receiverType,
                       llvm::StringRef memberName);

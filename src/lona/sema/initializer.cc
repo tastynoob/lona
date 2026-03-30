@@ -1,8 +1,8 @@
-#include "initializer_semantics.hh"
+#include "lona/sema/initializer.hh"
 
 #include "lona/err/err.hh"
 #include "lona/module/module_interface.hh"
-#include "lona/sema/injected_member.hh"
+#include "lona/sema/injectedmember.hh"
 #include "lona/type/buildin.hh"
 #include <algorithm>
 #include <cassert>

@@ -1,11 +1,11 @@
-#include "../type/buildin.hh"
-#include "../type/scope.hh"
 #include "lona/ast/astnode.hh"
+#include "lona/declare/support.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
-#include "lona/sema/collect_internal.hh"
 #include "lona/sema/hir.hh"
-#include "lona/sema/initializer_semantics.hh"
+#include "lona/sema/initializer.hh"
+#include "lona/type/buildin.hh"
+#include "lona/type/scope.hh"
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <vector>
 
 namespace lona {
-namespace collect_global_impl {
+namespace globaldefinition_impl {
 
 AstStatList *
 requireTopLevelBody(CompilationUnit &unit) {
@@ -316,7 +316,7 @@ class GlobalDefinitionEmitter {
 public:
     explicit GlobalDefinitionEmitter(GlobalScope *global)
         : global_(global),
-          typeMgr_(collect_decl_impl::requireTypeTable(global)),
+          typeMgr_(declarationsupport_impl::requireTypeTable(global)),
           context_(global->module.getContext()) {}
 
     llvm::Constant *emit(TypeClass *expectedType, AstNode *init,
@@ -325,17 +325,17 @@ public:
     }
 };
 
-}  // namespace collect_global_impl
+}  // namespace globaldefinition_impl
 
 void
 defineUnitGlobals(Scope *global, CompilationUnit &unit) {
     auto *globalScope = dynamic_cast<GlobalScope *>(global);
     assert(globalScope);
     initBuildinType(globalScope);
-    collect_interface_impl::ensureUnitInterfaceCollected(unit);
+    moduleinterface_impl::ensureUnitInterfaceCollected(unit);
 
-    collect_global_impl::GlobalDefinitionEmitter emitter(globalScope);
-    auto *body = collect_global_impl::requireTopLevelBody(unit);
+    globaldefinition_impl::GlobalDefinitionEmitter emitter(globalScope);
+    auto *body = globaldefinition_impl::requireTopLevelBody(unit);
     for (auto *stmt : body->getBody()) {
         auto *globalDecl = dynamic_cast<AstGlobalDecl *>(stmt);
         if (!globalDecl || globalDecl->isExtern()) {

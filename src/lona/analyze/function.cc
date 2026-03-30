@@ -1,4 +1,6 @@
+#include "lona/analyze/function.hh"
 #include "lona/abi/abi.hh"
+#include "lona/analyze/rules.hh"
 #include "lona/ast/array_dim.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
@@ -6,13 +8,11 @@
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
-#include "lona/sema/analysis_internal.hh"
-#include "lona/sema/analysis_support.hh"
-#include "lona/sema/call_target_tools.hh"
+#include "lona/sema/calls.hh"
 #include "lona/sema/hir.hh"
-#include "lona/sema/initializer_semantics.hh"
-#include "lona/sema/injected_member.hh"
-#include "lona/sema/operator_resolver.hh"
+#include "lona/sema/initializer.hh"
+#include "lona/sema/injectedmember.hh"
+#include "lona/sema/operatorresolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -31,6 +31,43 @@
 
 namespace lona {
 namespace analysis_impl {
+
+namespace {
+
+TypeTable *
+requireTypeTable(Scope *scope) {
+    assert(scope);
+    auto *typeMgr = scope->types();
+    assert(typeMgr);
+    return typeMgr;
+}
+
+llvm::StringRef
+languageEntrySymbolName() {
+    return "__lona_main__";
+}
+
+FuncType *
+getOrCreateMainType(TypeTable *typeMgr) {
+    return typeMgr->getOrCreateFunctionType({}, i32Ty);
+}
+
+llvm::Function *
+getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
+    auto *mainType = getOrCreateMainType(typeMgr);
+    auto entryName = languageEntrySymbolName();
+    if (auto *existing = global->module.getFunction(entryName)) {
+        return existing;
+    }
+
+    auto *entry = llvm::Function::Create(
+        typeMgr->getLLVMFunctionType(mainType), llvm::Function::ExternalLinkage,
+        llvm::Twine(entryName), global->module);
+    annotateFunctionAbi(*entry, AbiKind::Native);
+    return entry;
+}
+
+}  // namespace
 
 class FunctionAnalyzer {
     TypeTable *typeMgr;

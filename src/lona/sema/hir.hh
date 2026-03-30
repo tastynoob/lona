@@ -1,8 +1,8 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
-#include "lona/sema/injected_member.hh"
-#include "lona/sema/operator_resolver.hh"
+#include "lona/sema/injectedmember.hh"
+#include "lona/sema/operatorresolver.hh"
 #include "lona/support/arena.hh"
 #include <memory>
 #include <utility>
@@ -38,7 +38,8 @@ class HIRExpr : public HIRNode {
     TypeClass *type = nullptr;
 
 public:
-    explicit HIRExpr(TypeClass *type = nullptr, const location &loc = location())
+    explicit HIRExpr(TypeClass *type = nullptr,
+                     const location &loc = location())
         : HIRNode(loc), type(type) {}
 
     TypeClass *getType() const { return type; }
@@ -113,7 +114,9 @@ class HIRNumericCast : public HIRExpr {
 public:
     HIRNumericCast(HIRExpr *expr, TypeClass *targetType, bool explicitRequest,
                    const location &loc = location())
-        : HIRExpr(targetType, loc), expr(expr), explicitRequest_(explicitRequest) {}
+        : HIRExpr(targetType, loc),
+          expr(expr),
+          explicitRequest_(explicitRequest) {}
 
     HIRExpr *getExpr() const { return expr; }
     bool explicitRequest() const { return explicitRequest_; }
@@ -123,7 +126,8 @@ class HIRBitCast : public HIRExpr {
     HIRExpr *expr;
 
 public:
-    HIRBitCast(HIRExpr *expr, TypeClass *targetType, const location &loc = location())
+    HIRBitCast(HIRExpr *expr, TypeClass *targetType,
+               const location &loc = location())
         : HIRExpr(targetType, loc), expr(expr) {}
 
     HIRExpr *getExpr() const { return expr; }
@@ -135,8 +139,7 @@ class HIRUnaryOper : public HIRExpr {
 
 public:
     HIRUnaryOper(UnaryOperatorBinding binding, HIRExpr *expr,
-                 TypeClass *type = nullptr,
-                 const location &loc = location())
+                 TypeClass *type = nullptr, const location &loc = location())
         : HIRExpr(type ? type : binding.resultType, loc),
           binding_(std::move(binding)),
           expr(expr) {}
@@ -171,7 +174,9 @@ class HIRAssign : public HIRExpr {
 
 public:
     HIRAssign(HIRExpr *left, HIRExpr *right, const location &loc = location())
-        : HIRExpr(left ? left->getType() : nullptr, loc), left(left), right(right) {}
+        : HIRExpr(left ? left->getType() : nullptr, loc),
+          left(left),
+          right(right) {}
 
     HIRAssign(ObjectPtr left, ObjectPtr right, const location &loc = location())
         : HIRAssign(new HIRValue(left, loc), new HIRValue(right, loc), loc) {}
@@ -297,7 +302,10 @@ public:
 
     HIRIf(HIRExpr *cond, HIRBlock *thenBlock, HIRBlock *elseBlock = nullptr,
           const location &loc = location())
-        : HIRNode(loc), cond(cond), thenBlock(thenBlock), elseBlock(elseBlock) {}
+        : HIRNode(loc),
+          cond(cond),
+          thenBlock(thenBlock),
+          elseBlock(elseBlock) {}
 
     HIRExpr *getCondition() const { return cond; }
     HIRBlock *getThenBlock() const { return thenBlock; }
@@ -344,8 +352,11 @@ public:
     HIRFunc(llvm::Function *llvmFunction, FuncType *funcType,
             const location &loc = location(), bool topLevelEntry = false,
             bool guaranteedReturn = false)
-        : HIRNode(loc), llvmFunction(llvmFunction), funcType(funcType),
-          topLevelEntry(topLevelEntry), guaranteedReturn(guaranteedReturn) {}
+        : HIRNode(loc),
+          llvmFunction(llvmFunction),
+          funcType(funcType),
+          topLevelEntry(topLevelEntry),
+          guaranteedReturn(guaranteedReturn) {}
 
     llvm::Function *getLLVMFunction() const { return llvmFunction; }
     FuncType *getFuncType() const { return funcType; }

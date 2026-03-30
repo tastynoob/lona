@@ -1,11 +1,11 @@
-#include "../type/buildin.hh"
-#include "../type/scope.hh"
-#include "../visitor.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
+#include "lona/declare/support.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
-#include "lona/sema/collect_internal.hh"
+#include "lona/type/buildin.hh"
+#include "lona/type/scope.hh"
+#include "lona/visitor.hh"
 #include <cassert>
 #include <list>
 #include <string>
@@ -13,18 +13,18 @@
 
 namespace lona {
 
-using collect_decl_impl::declareFunction;
-using collect_decl_impl::declareStructType;
-using collect_decl_impl::describeStructFieldSyntax;
-using collect_decl_impl::insertStructMember;
-using collect_decl_impl::recordTopLevelDeclName;
-using collect_decl_impl::rejectBareFunctionType;
-using collect_decl_impl::requireTypeTable;
-using collect_decl_impl::resolveTypeNode;
-using collect_decl_impl::TopLevelDeclKind;
-using collect_decl_impl::validateEmbeddedStructField;
-using collect_decl_impl::validateStructDeclShape;
-using collect_decl_impl::validateStructFieldType;
+using declarationsupport_impl::declareFunction;
+using declarationsupport_impl::declareStructType;
+using declarationsupport_impl::describeStructFieldSyntax;
+using declarationsupport_impl::insertStructMember;
+using declarationsupport_impl::recordTopLevelDeclName;
+using declarationsupport_impl::rejectBareFunctionType;
+using declarationsupport_impl::requireTypeTable;
+using declarationsupport_impl::resolveTypeNode;
+using declarationsupport_impl::TopLevelDeclKind;
+using declarationsupport_impl::validateEmbeddedStructField;
+using declarationsupport_impl::validateStructDeclShape;
+using declarationsupport_impl::validateStructFieldType;
 
 class StructVisitor : public AstVisitorAny {
     TypeTable *typeMgr;

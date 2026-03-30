@@ -1,6 +1,6 @@
+#include "lona/analyze/function.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
-#include "lona/sema/analysis_internal.hh"
 #include "lona/sema/hir.hh"
 #include <memory>
 

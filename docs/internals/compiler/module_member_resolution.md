@@ -20,7 +20,7 @@
 这条路径现在已经进一步收口：
 
 - `module.xxx` 会在 `resolve` 阶段直接折叠成具体语言实体
-- `analysis.cc` 只消费已解析的 selector 结果，不再负责 imported 模块成员查询
+- `analyze/function.cc` 只消费已解析的 selector 结果，不再负责 imported 模块成员查询
 
 当前剩下的相关边界主要是：
 

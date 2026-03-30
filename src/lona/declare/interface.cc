@@ -1,14 +1,14 @@
-#include "../abi/abi.hh"
-#include "../type/buildin.hh"
-#include "../type/scope.hh"
+#include "lona/abi/abi.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/type_node_tools.hh"
+#include "lona/declare/support.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/module/module_interface.hh"
-#include "lona/sema/collect_internal.hh"
-#include "lona/sema/initializer_semantics.hh"
+#include "lona/sema/initializer.hh"
+#include "lona/type/buildin.hh"
+#include "lona/type/scope.hh"
 #include <cassert>
 #include <cstdint>
 #include <llvm-18/llvm/IR/Function.h>
@@ -21,24 +21,24 @@
 
 namespace lona {
 
-using collect_decl_impl::declareModuleNamespace;
-using collect_decl_impl::describeStructFieldSyntax;
-using collect_decl_impl::extractParamBindingKinds;
-using collect_decl_impl::extractParamNames;
-using collect_decl_impl::insertStructMember;
-using collect_decl_impl::interfaceMethodReceiverPointeeType;
-using collect_decl_impl::recordTopLevelDeclName;
-using collect_decl_impl::rejectBareFunctionType;
-using collect_decl_impl::rejectOpaqueStructByValue;
-using collect_decl_impl::requireTypeTable;
-using collect_decl_impl::TopLevelDeclKind;
-using collect_decl_impl::validateEmbeddedStructField;
-using collect_decl_impl::validateExternCFunctionSignature;
-using collect_decl_impl::validateFunctionReceiverAccess;
-using collect_decl_impl::validateStructDeclShape;
-using collect_decl_impl::validateStructFieldType;
+using declarationsupport_impl::declareModuleNamespace;
+using declarationsupport_impl::describeStructFieldSyntax;
+using declarationsupport_impl::extractParamBindingKinds;
+using declarationsupport_impl::extractParamNames;
+using declarationsupport_impl::insertStructMember;
+using declarationsupport_impl::interfaceMethodReceiverPointeeType;
+using declarationsupport_impl::recordTopLevelDeclName;
+using declarationsupport_impl::rejectBareFunctionType;
+using declarationsupport_impl::rejectOpaqueStructByValue;
+using declarationsupport_impl::requireTypeTable;
+using declarationsupport_impl::TopLevelDeclKind;
+using declarationsupport_impl::validateEmbeddedStructField;
+using declarationsupport_impl::validateExternCFunctionSignature;
+using declarationsupport_impl::validateFunctionReceiverAccess;
+using declarationsupport_impl::validateStructDeclShape;
+using declarationsupport_impl::validateStructFieldType;
 
-namespace collect_interface_impl {
+namespace moduleinterface_impl {
 
 [[noreturn]] void
 reportGlobalConflict(const CompilationUnit *unit, llvm::StringRef globalName,
@@ -495,7 +495,7 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
     if (unit.interfaceCollected()) {
         return;
     }
-    collect_interface_impl::InterfaceCollector(unit).collect();
+    moduleinterface_impl::InterfaceCollector(unit).collect();
 }
 
 Function *
@@ -650,13 +650,13 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
     unit.markInterfaceCollected();
 }
 
-}  // namespace collect_interface_impl
+}  // namespace moduleinterface_impl
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit,
                         bool exportNamespace) {
-    collect_interface_impl::materializeUnitInterface(global, unit,
-                                                     exportNamespace);
+    moduleinterface_impl::materializeUnitInterface(global, unit,
+                                                   exportNamespace);
 }
 
 }  // namespace lona

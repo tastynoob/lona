@@ -15,7 +15,7 @@
 
 namespace lona {
 
-namespace collect_decl_impl {
+namespace declarationsupport_impl {
 
 enum class TopLevelDeclKind {
     StructType,
@@ -104,13 +104,13 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 StructType *methodParent, CompilationUnit *unit = nullptr,
                 bool exportNamespace = false);
 
-}  // namespace collect_decl_impl
+}  // namespace declarationsupport_impl
 
-namespace collect_interface_impl {
+namespace moduleinterface_impl {
 
 void
 ensureUnitInterfaceCollected(CompilationUnit &unit);
 
-}  // namespace collect_interface_impl
+}  // namespace moduleinterface_impl
 
 }  // namespace lona

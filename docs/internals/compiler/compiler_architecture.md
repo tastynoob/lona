@@ -123,14 +123,17 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `src/lona/pass/compile_pipeline.hh`
 - `src/lona/pass/compile_pipeline.cc`
 - `src/lona/resolve/resolve.hh`
-- `src/lona/sema/analysis.cc`
-- `src/lona/sema/analysis_module.cc`
-- `src/lona/sema/analysis_support.cc`
-- `src/lona/sema/collect.cc`
-- `src/lona/sema/collect_types.cc`
-- `src/lona/sema/collect_interface.cc`
-- `src/lona/sema/collect_globals.cc`
-- `src/lona/sema/collect_codegen.cc`
+- `src/lona/analyze/function.cc`
+- `src/lona/analyze/module.cc`
+- `src/lona/analyze/rules.cc`
+- `src/lona/declare/support.cc`
+- `src/lona/declare/function.cc`
+- `src/lona/declare/struct.cc`
+- `src/lona/declare/scanner.cc`
+- `src/lona/declare/interface.cc`
+- `src/lona/declare/global.cc`
+- `src/lona/emit/debug.cc`
+- `src/lona/emit/codegen.cc`
 - `src/lona/visitor.hh`
 
 单模块编译仍然是显式 pipeline：
@@ -157,14 +160,17 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 
 按当前职责划分：
 
-- `analysis.cc` 保留函数级表达式/语句分析主流程
-- `analysis_module.cc` 负责模块级 HIR 聚合
-- `analysis_support.cc` 放辅助诊断、函数入口辅助、方法选择器等共享分析工具
-- `collect.cc` 保留声明收集 helper 和底层类型/符号声明逻辑
-- `collect_types.cc` 负责结构体成员收集、类型扫描、单模块声明收集入口
-- `collect_interface.cc` 负责模块接口收集与接口物化
-- `collect_globals.cc` 负责全局变量定义与静态 initializer lowering
-- `collect_codegen.cc` 负责 debug info、函数级 LLVM lowering、模块级 IR emission
+- `analyze/function.cc` 保留函数级表达式/语句分析主流程
+- `analyze/module.cc` 负责模块级 HIR 聚合
+- `analyze/rules.cc` 放函数分析共享规则，包括方法选择器、storage 约束和诊断辅助
+- `declare/support.cc` 只保留声明阶段共享基础能力，例如顶层命名冲突、类型解析和通用声明辅助
+- `declare/function.cc` 负责函数签名声明、extern C 约束和 LLVM function materialization
+- `declare/struct.cc` 负责结构体声明、字段规则和成员布局收集
+- `declare/scanner.cc` 负责结构体成员收集、类型扫描、单模块声明收集入口
+- `declare/interface.cc` 负责模块接口收集与接口物化
+- `declare/global.cc` 负责全局变量定义与静态 initializer lowering
+- `emit/debug.cc` 负责 LLVM debug info 构造
+- `emit/codegen.cc` 负责函数级 LLVM lowering 与模块级 IR emission
 
 ## 3. 模块数据模型
 

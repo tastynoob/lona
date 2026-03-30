@@ -1,15 +1,9 @@
 #pragma once
 
-#include "lona/module/compilation_unit.hh"
 #include "lona/sema/hir.hh"
-#include "lona/sema/injected_member.hh"
-#include <llvm/ADT/StringRef.h>
+#include "lona/sema/injectedmember.hh"
 #include <optional>
 #include <string>
-
-namespace llvm {
-class Function;
-}
 
 namespace lona {
 namespace analysis_impl {
@@ -77,18 +71,6 @@ rejectConstVariableStorage(TypeClass *type, AstVarDef *node);
 void
 rejectUninitializedFunctionPointerValueStorage(TypeClass *type,
                                                AstVarDef *node);
-
-TypeTable *
-requireTypeTable(Scope *scope);
-
-llvm::StringRef
-languageEntrySymbolName();
-
-FuncType *
-getOrCreateMainType(TypeTable *typeMgr);
-
-llvm::Function *
-getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr);
 
 }  // namespace analysis_impl
 }  // namespace lona

@@ -66,13 +66,20 @@ struct BinaryOperatorBinding {
     bool shortCircuit = false;
 };
 
-bool isFloatType(TypeClass *type);
-bool isSignedIntegerType(TypeClass *type);
-bool isUnsignedIntegerType(TypeClass *type);
-bool isIntegerType(TypeClass *type);
-bool isNumericType(TypeClass *type);
-bool isTruthyScalarType(TypeClass *type);
-OperatorOperandClass classifyOperatorOperand(TypeClass *type);
+bool
+isFloatType(TypeClass *type);
+bool
+isSignedIntegerType(TypeClass *type);
+bool
+isUnsignedIntegerType(TypeClass *type);
+bool
+isIntegerType(TypeClass *type);
+bool
+isNumericType(TypeClass *type);
+bool
+isTruthyScalarType(TypeClass *type);
+OperatorOperandClass
+classifyOperatorOperand(TypeClass *type);
 
 class OperatorResolver {
     TypeTable *typeTable_ = nullptr;
