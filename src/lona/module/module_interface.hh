@@ -24,6 +24,7 @@ public:
     enum class TopLevelLookupKind {
         NotFound,
         Type,
+        Trait,
         Function,
         Global,
     };
@@ -33,6 +34,27 @@ public:
         string exportedName;
         StructDeclKind declKind = StructDeclKind::Native;
         TypeClass *type = nullptr;
+    };
+
+    struct TraitMethodDecl {
+        string localName;
+        AccessKind receiverAccess = AccessKind::GetOnly;
+        std::vector<string> paramNames;
+        std::vector<BindingKind> paramBindingKinds;
+        std::vector<string> paramTypeSpellings;
+        string returnTypeSpelling;
+    };
+
+    struct TraitDecl {
+        string localName;
+        string exportedName;
+        std::vector<TraitMethodDecl> methods;
+    };
+
+    struct TraitImplDecl {
+        string selfTypeSpelling;
+        string traitName;
+        bool hasBody = false;
     };
 
     struct FunctionDecl {
@@ -53,11 +75,13 @@ public:
     struct TopLevelLookup {
         TopLevelLookupKind kind = TopLevelLookupKind::NotFound;
         const TypeDecl *typeDecl = nullptr;
+        const TraitDecl *traitDecl = nullptr;
         const FunctionDecl *functionDecl = nullptr;
         const GlobalDecl *globalDecl = nullptr;
 
         bool found() const { return kind != TopLevelLookupKind::NotFound; }
         bool isType() const { return kind == TopLevelLookupKind::Type; }
+        bool isTrait() const { return kind == TopLevelLookupKind::Trait; }
         bool isFunction() const { return kind == TopLevelLookupKind::Function; }
         bool isGlobal() const { return kind == TopLevelLookupKind::Global; }
     };
@@ -71,6 +95,8 @@ private:
     std::vector<std::unique_ptr<TypeClass>> ownedTypes_;
     std::unordered_map<string, TypeClass *> derivedTypes_;
     std::unordered_map<string, TypeDecl> localTypes_;
+    std::unordered_map<string, TraitDecl> localTraits_;
+    std::vector<TraitImplDecl> traitImpls_;
     std::unordered_map<string, FunctionDecl> localFunctions_;
     std::unordered_map<string, GlobalDecl> localGlobals_;
 
@@ -127,6 +153,19 @@ public:
                        bool isExtern = false) {
         return declareGlobal(string(std::move(localName)), type, isExtern);
     }
+    bool declareTrait(string localName,
+                      std::vector<TraitMethodDecl> methods = {});
+    bool declareTrait(std::string localName,
+                      std::vector<TraitMethodDecl> methods = {}) {
+        return declareTrait(string(std::move(localName)), std::move(methods));
+    }
+    bool declareTraitImpl(string selfTypeSpelling, string traitName,
+                          bool hasBody = false);
+    bool declareTraitImpl(std::string selfTypeSpelling, std::string traitName,
+                          bool hasBody = false) {
+        return declareTraitImpl(string(std::move(selfTypeSpelling)),
+                                string(std::move(traitName)), hasBody);
+    }
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(
         TypeClass *elementType);
@@ -146,6 +185,10 @@ public:
     const FunctionDecl *findFunction(const std::string &localName) const {
         return findFunction(string(localName));
     }
+    const TraitDecl *findTrait(const ::string &localName) const;
+    const TraitDecl *findTrait(const std::string &localName) const {
+        return findTrait(string(localName));
+    }
     const GlobalDecl *findGlobal(const ::string &localName) const;
     const GlobalDecl *findGlobal(const std::string &localName) const {
         return findGlobal(string(localName));
@@ -156,6 +199,12 @@ public:
     }
     const std::unordered_map<string, TypeDecl> &types() const {
         return localTypes_;
+    }
+    const std::unordered_map<string, TraitDecl> &traits() const {
+        return localTraits_;
+    }
+    const std::vector<TraitImplDecl> &traitImpls() const {
+        return traitImpls_;
     }
     const std::unordered_map<string, FunctionDecl> &functions() const {
         return localFunctions_;

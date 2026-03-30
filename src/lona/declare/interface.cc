@@ -85,6 +85,8 @@ class InterfaceCollector {
     CompilationUnit &unit_;
     ModuleInterface *interface_;
     std::vector<AstStructDecl *> structDecls_;
+    std::vector<AstTraitDecl *> traitDecls_;
+    std::vector<AstTraitImplDecl *> traitImplDecls_;
     std::vector<AstFuncDecl *> funcDecls_;
     std::vector<AstGlobalDecl *> globalDecls_;
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
@@ -111,6 +113,18 @@ class InterfaceCollector {
               "top-level function `" + name +
                   "` conflicts with imported module alias `" + name + "`",
               "Rename the function so `" + name +
+                  ".xxx` continues to refer to the imported module.");
+    }
+
+    void validateImportAliasConflict(AstTraitDecl *traitDecl) {
+        const auto name = toStdString(traitDecl->name);
+        if (!unit_.importsModule(name)) {
+            return;
+        }
+        error(traitDecl->loc,
+              "trait `" + name + "` conflicts with imported module alias `" +
+                  name + "`",
+              "Rename the trait so `" + name +
                   ".xxx` continues to refer to the imported module.");
     }
 
@@ -223,6 +237,69 @@ class InterfaceCollector {
         return nullptr;
     }
 
+    std::vector<ModuleInterface::TraitMethodDecl>
+    collectTraitMethods(AstTraitDecl *traitDecl) {
+        std::vector<ModuleInterface::TraitMethodDecl> methods;
+        auto *body = dynamic_cast<AstStatList *>(traitDecl ? traitDecl->body
+                                                           : nullptr);
+        if (!body) {
+            return methods;
+        }
+
+        for (auto *stmt : body->getBody()) {
+            if (dynamic_cast<AstTagNode *>(stmt)) {
+                continue;
+            }
+            if (auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt)) {
+                error(fieldDecl->loc,
+                      "trait `" + toStdString(traitDecl->name) +
+                          "` only supports method declarations",
+                      "Remove field declarations from the trait body and keep "
+                      "only `def name(...)` signatures in trait v0.");
+            }
+            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!funcDecl) {
+                error(stmt ? stmt->loc : traitDecl->loc,
+                      "unsupported trait member in `" +
+                          toStdString(traitDecl->name) + "`",
+                      "Trait v0 only supports method declarations inside "
+                      "trait bodies.");
+            }
+            if (funcDecl->hasBody()) {
+                error(funcDecl->loc,
+                      "trait method `" + toStdString(funcDecl->name) +
+                          "` cannot have a body in trait v0",
+                      "Keep only the method signature inside the trait. "
+                      "`impl Type: Trait { ... }` bodies are not supported "
+                      "yet either.");
+            }
+
+            ModuleInterface::TraitMethodDecl method;
+            method.localName = funcDecl->name;
+            method.receiverAccess = funcDecl->receiverAccess;
+            method.paramNames = extractParamNames(funcDecl);
+            method.paramBindingKinds = extractParamBindingKinds(funcDecl);
+            if (funcDecl->args) {
+                method.paramTypeSpellings.reserve(funcDecl->args->size());
+                for (auto *arg : *funcDecl->args) {
+                    auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+                    if (!varDecl) {
+                        error(funcDecl->loc,
+                              "invalid trait method parameter declaration in "
+                              "`" +
+                                  toStdString(funcDecl->name) + "`");
+                    }
+                    method.paramTypeSpellings.push_back(
+                        describeTypeNode(varDecl->typeNode, "void"));
+                }
+            }
+            method.returnTypeSpelling =
+                describeTypeNode(funcDecl->retType, "void");
+            methods.push_back(std::move(method));
+        }
+        return methods;
+    }
+
     void collectTopLevelLists(AstNode *root) {
         auto *program = dynamic_cast<AstProgram *>(root);
         auto *body =
@@ -238,6 +315,16 @@ class InterfaceCollector {
                     topLevelDecls_, toStdString(structDecl->name),
                     TopLevelDeclKind::StructType, structDecl->loc);
                 structDecls_.push_back(structDecl);
+            } else if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(stmt)) {
+                validateImportAliasConflict(traitDecl);
+                recordTopLevelDeclName(topLevelDecls_,
+                                       toStdString(traitDecl->name),
+                                       TopLevelDeclKind::Trait,
+                                       traitDecl->loc);
+                traitDecls_.push_back(traitDecl);
+            } else if (auto *traitImplDecl =
+                           dynamic_cast<AstTraitImplDecl *>(stmt)) {
+                traitImplDecls_.push_back(traitImplDecl);
             } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
                 validateImportAliasConflict(funcDecl);
                 recordTopLevelDeclName(
@@ -258,6 +345,33 @@ class InterfaceCollector {
         for (auto *structDecl : structDecls_) {
             interface_->declareStructType(toStdString(structDecl->name),
                                           structDecl->declKind);
+        }
+    }
+
+    void declareTraits() {
+        for (auto *traitDecl : traitDecls_) {
+            auto methods = collectTraitMethods(traitDecl);
+            if (!interface_->declareTrait(toStdString(traitDecl->name),
+                                          std::move(methods))) {
+                error(traitDecl->loc,
+                      "duplicate trait `" + toStdString(traitDecl->name) + "`",
+                      "Choose a distinct top-level trait name in this "
+                      "module.");
+            }
+        }
+
+        for (auto *traitImplDecl : traitImplDecls_) {
+            if (traitImplDecl->hasBody()) {
+                error(traitImplDecl->loc,
+                      "trait impl bodies are not supported in trait v0",
+                      "Declare only `impl Type: Trait` headers for now. "
+                      "Keep the actual method implementations as inherent "
+                      "methods on the concrete type.");
+            }
+            interface_->declareTraitImpl(
+                describeTypeNode(traitImplDecl->selfType, "<unknown type>"),
+                describeDotLikeSyntax(traitImplDecl->trait, "<unknown trait>"),
+                traitImplDecl->hasBody());
         }
     }
 
@@ -483,6 +597,7 @@ public:
         interface_->clear();
         collectTopLevelLists(unit_.syntaxTree());
         declareStructs();
+        declareTraits();
         completeStructs();
         declareGlobals();
         declareFunctions();
@@ -575,6 +690,12 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
                 "successfully collected from the defining module.");
         }
         unit.bindLocalType(entry.first, toStdString(type->full_name));
+    }
+
+    for (const auto &entry : interface->traits()) {
+        auto runtimeName =
+            exportNamespace ? entry.second.exportedName : entry.first;
+        unit.bindLocalTrait(entry.first, runtimeName);
     }
 
     for (const auto &entry : interface->functions()) {

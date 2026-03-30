@@ -125,6 +125,10 @@ class TypeCollector : public AstVisitorAny {
                 recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
                                        TopLevelDeclKind::StructType, decl->loc);
                 structDecls.push_back(it->as<AstStructDecl>());
+            } else if (it->is<AstTraitDecl>()) {
+                auto *decl = it->as<AstTraitDecl>();
+                recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
+                                       TopLevelDeclKind::Trait, decl->loc);
             } else if (it->is<AstFuncDecl>()) {
                 auto *decl = it->as<AstFuncDecl>();
                 recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),

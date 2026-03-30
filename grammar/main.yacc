@@ -69,7 +69,7 @@
 %token TRUE "true" FALSE "false" NULL_KW "null"
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
-%token DEF "def" SET "set" STRUCT "struct"
+%token DEF "def" SET "set" STRUCT "struct" TRAIT "trait" IMPL "impl" DYN "dyn"
 %token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
@@ -97,14 +97,14 @@
 %right unary
 
 %type <node> pragram pragram_stat
-%type <node> struct_decl func_decl import_stat global_decl
-%type <node> struct_stat stat
+%type <node> struct_decl trait_decl impl_decl func_decl trait_func_decl import_stat global_decl
+%type <node> struct_stat trait_stat stat
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren atom_expr postfix_expr dot_like func_pointer_expr dot_like_name
 %type <node> param_decl var_def
-%type <stat_list> pragram_statlist struct_statlist stat_list stat_compound
+%type <stat_list> pragram_statlist struct_statlist trait_statlist stat_list stat_compound
 %type <var_decl> field_decl var_decl
 
 %type <typeNode> single_type type_primary postfix_type func_ptr_type type_name tuple_type func_param_type
@@ -148,6 +148,8 @@ pragram_stat
     : stat { $$ = $1; }
     | import_stat { $$ = $1; }
     | global_decl { $$ = $1; }
+    | trait_decl { $$ = $1; }
+    | impl_decl { $$ = $1; }
     ;
 
 import_stat
@@ -296,6 +298,41 @@ func_decl
     }
     ;
 
+trait_func_decl
+    : opt_set_prefix DEF FIELD '(' opt_newlines ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, nullptr, $7, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $6, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name NEWLINE {
+        $$ = new AstFuncDecl(*$3, nullptr, $6, $9, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $7, nullptr, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $8, nullptr, $7, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' stat_compound {
+        $$ = new AstFuncDecl(*$3, $9, $6, nullptr, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF FIELD '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
+        $$ = new AstFuncDecl(*$3, $10, $6, $9, AbiKind::Native,
+                             $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    ;
+
 field_decl
     : FIELD type_name {
         $$ = new AstVarDecl(BindingKind::Value, *$1, $2, nullptr,
@@ -350,6 +387,51 @@ struct_stat
     }
     | tag_stat {
         $$ = $1;
+    }
+    ;
+
+trait_decl
+    : TRAIT FIELD NEWLINE { $$ = new AstTraitDecl(*$2, nullptr); }
+    | TRAIT FIELD '{' '}' {
+        $$ = new AstTraitDecl(*$2, new AstStatList());
+    }
+    | TRAIT FIELD trait_statlist '}' {
+        $$ = new AstTraitDecl(*$2, $3);
+    }
+    ;
+
+trait_statlist
+    : '{' trait_stat {
+        $$ = new AstStatList($2);
+    }
+    | '{' NEWLINE {
+        $$ = new AstStatList();
+    }
+    | trait_statlist NEWLINE {
+        $$ = $1;
+    }
+    | trait_statlist trait_stat {
+        $$ = $1;
+        $$->push($2);
+    }
+    ;
+
+trait_stat
+    : field_decl NEWLINE { $$ = $1; }
+    | trait_func_decl {
+        $$ = $1;
+    }
+    | tag_stat {
+        $$ = $1;
+    }
+    ;
+
+impl_decl
+    : IMPL type_name ':' opt_newlines dot_like_name NEWLINE {
+        $$ = new AstTraitImplDecl($2, $5, nullptr, @$);
+    }
+    | IMPL type_name ':' opt_newlines dot_like_name stat_compound {
+        $$ = new AstTraitImplDecl($2, $5, $6, @$);
     }
     ;
 

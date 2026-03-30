@@ -23,6 +23,9 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
         }
         return toStdString(base->name);
     }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
+        return describeTypeNode(dynType->base, nullDescription) + " dyn";
+    }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
         return describeTypeNode(qualified->base, nullDescription) + " const";
     }

@@ -192,6 +192,131 @@ def test_unary_operators_cannot_continue_onto_next_line(
     for name, source, needles in failures:
         _expect_ir_failure(compiler, name, source, needles)
 
+
+def test_trait_surface_json_includes_trait_impl_and_dyn_type_nodes(
+    compiler: CompilerHarness,
+) -> None:
+    json_out = _emit_json(
+        compiler,
+        "trait_surface_json.lo",
+        """
+        trait Hash {
+            def hash() u64
+            set def rewrite(value i32)
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Point: Hash
+
+        def show(ptr Point*) {
+            var h Hash dyn = cast[Hash dyn](ptr)
+        }
+        """,
+    )
+    for needle in [
+        '"type": "TraitDecl"',
+        '"type": "TraitImplDecl"',
+        '"selfType": "Point"',
+        '"targetType": "Hash dyn"',
+        '"declaredType": "Hash dyn"',
+        '"receiverAccess": "set"',
+    ]:
+        assert_contains(json_out, needle, label="trait surface json")
+
+
+def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_header_only.lo",
+        """
+        trait Hash {
+            def hash() u64
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            ret 0
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait header ir")
+
+
+def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "trait_field_member_bad.lo",
+            """
+            trait Hash {
+                value i32
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait `Hash` only supports method declarations",
+                "keep only `def name(...)` signatures in trait v0",
+            ],
+        ),
+        (
+            "trait_method_body_bad.lo",
+            """
+            trait Hash {
+                def hash() i32 {
+                    ret 1
+                }
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait method `hash` cannot have a body in trait v0",
+                "Keep only the method signature inside the trait.",
+            ],
+        ),
+        (
+            "trait_impl_body_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+            }
+
+            impl Point: Hash {
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait impl bodies are not supported in trait v0",
+                "Declare only `impl Type: Trait` headers for now.",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
     failures = [
         (
             "cast_pointer_nested_const_bad.lo",

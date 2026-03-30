@@ -23,6 +23,8 @@ class AstIf;
 class AstBreak;
 class AstContinue;
 class AstRet;
+class AstTraitDecl;
+class AstTraitImplDecl;
 class AstVisitor;
 class Object;
 class Scope;
@@ -113,6 +115,13 @@ struct BaseTypeNode : public TypeNode {
         : TypeNode(loc), syntax(syntax) {}
 
     bool hasSyntax() const { return syntax != nullptr; }
+};
+
+struct DynTypeNode : public TypeNode {
+    TypeNode *base;
+
+    explicit DynTypeNode(TypeNode *base, const location &loc = location())
+        : TypeNode(loc), base(base) {}
 };
 
 struct ConstTypeNode : public TypeNode {
@@ -440,6 +449,34 @@ public:
     bool isOpaqueDecl() const { return declKind == StructDeclKind::Opaque; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
     void setDeclKind(StructDeclKind kind) { declKind = kind; }
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstTraitDecl : public AstNode {
+public:
+    string const name;
+    AstNode *const body;
+
+    AstTraitDecl(AstToken &field, AstNode *body)
+        : AstNode(field.loc), name(field.text), body(body) {}
+
+    bool hasBody() const { return body != nullptr; }
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
+class AstTraitImplDecl : public AstNode {
+public:
+    TypeNode *const selfType;
+    AstNode *const trait;
+    AstNode *const body;
+
+    AstTraitImplDecl(TypeNode *selfType, AstNode *trait, AstNode *body,
+                     const location &loc = location())
+        : AstNode(loc), selfType(selfType), trait(trait), body(body) {}
+
+    bool hasBody() const { return body != nullptr; }
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };

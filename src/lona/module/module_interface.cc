@@ -57,6 +57,8 @@ ModuleInterface::clear() {
     ownedTypes_.clear();
     derivedTypes_.clear();
     localTypes_.clear();
+    localTraits_.clear();
+    traitImpls_.clear();
     localFunctions_.clear();
     localGlobals_.clear();
 }
@@ -83,6 +85,25 @@ ModuleInterface::declareStructType(const ::string &localName,
     localTypes_.emplace(localName,
                         TypeDecl{localName, exportedName, declKind, typePtr});
     return typePtr->as<StructType>();
+}
+
+bool
+ModuleInterface::declareTrait(string localName,
+                              std::vector<TraitMethodDecl> methods) {
+    return localTraits_
+        .emplace(localName,
+                 TraitDecl{localName, exportedNameFor(localName),
+                           std::move(methods)})
+        .second;
+}
+
+bool
+ModuleInterface::declareTraitImpl(string selfTypeSpelling, string traitName,
+                                  bool hasBody) {
+    traitImpls_.push_back(
+        TraitImplDecl{std::move(selfTypeSpelling), std::move(traitName),
+                      hasBody});
+    return true;
 }
 
 bool
@@ -251,6 +272,15 @@ ModuleInterface::findFunction(const ::string &localName) const {
     return &found->second;
 }
 
+const ModuleInterface::TraitDecl *
+ModuleInterface::findTrait(const ::string &localName) const {
+    auto found = localTraits_.find(localName);
+    if (found == localTraits_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
 const ModuleInterface::GlobalDecl *
 ModuleInterface::findGlobal(const ::string &localName) const {
     auto found = localGlobals_.find(localName);
@@ -266,6 +296,11 @@ ModuleInterface::lookupTopLevelName(const ::string &localName) const {
     if (const auto *typeDecl = findType(localName)) {
         lookup.kind = TopLevelLookupKind::Type;
         lookup.typeDecl = typeDecl;
+        return lookup;
+    }
+    if (const auto *traitDecl = findTrait(localName)) {
+        lookup.kind = TopLevelLookupKind::Trait;
+        lookup.traitDecl = traitDecl;
         return lookup;
     }
     if (const auto *functionDecl = findFunction(localName)) {

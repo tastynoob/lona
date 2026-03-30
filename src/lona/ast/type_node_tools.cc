@@ -114,6 +114,10 @@ validateTypeNodeLayout(const TypeNode *node) {
         validateTypeNodeLayout(qualified->base);
         return;
     }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
+        validateTypeNodeLayout(dynType->base);
+        return;
+    }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
         if (auto *array = dynamic_cast<const ArrayTypeNode *>(pointer->base);
             array && hasUnsizedArrayDimensions(array->dim) &&

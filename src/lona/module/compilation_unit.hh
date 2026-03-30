@@ -27,6 +27,7 @@ public:
         NotFound,
         Module,
         Type,
+        Trait,
         Function,
         Global,
     };
@@ -42,6 +43,7 @@ public:
         TopLevelLookupKind kind = TopLevelLookupKind::NotFound;
         const ImportedModule *importedModule = nullptr;
         const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        const ModuleInterface::TraitDecl *traitDecl = nullptr;
         const ModuleInterface::FunctionDecl *functionDecl = nullptr;
         const ModuleInterface::GlobalDecl *globalDecl = nullptr;
         string resolvedName;
@@ -49,6 +51,7 @@ public:
         bool found() const { return kind != TopLevelLookupKind::NotFound; }
         bool isModule() const { return kind == TopLevelLookupKind::Module; }
         bool isType() const { return kind == TopLevelLookupKind::Type; }
+        bool isTrait() const { return kind == TopLevelLookupKind::Trait; }
         bool isFunction() const { return kind == TopLevelLookupKind::Function; }
         bool isGlobal() const { return kind == TopLevelLookupKind::Global; }
     };
@@ -63,6 +66,7 @@ private:
     std::shared_ptr<ModuleInterface> moduleInterface_;
     std::unordered_map<string, ImportedModule> importedModules_;
     std::unordered_map<string, string> localTypeBindings_;
+    std::unordered_map<string, string> localTraitBindings_;
     std::unordered_map<string, string> localFunctionBindings_;
     std::unordered_map<string, string> localGlobalBindings_;
     mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
@@ -124,6 +128,11 @@ public:
         return bindLocalType(string(std::move(localName)),
                              std::move(resolvedName));
     }
+    bool bindLocalTrait(string localName, string resolvedName);
+    bool bindLocalTrait(std::string localName, string resolvedName) {
+        return bindLocalTrait(string(std::move(localName)),
+                              std::move(resolvedName));
+    }
     bool bindLocalFunction(string localName, string resolvedName);
     bool bindLocalFunction(std::string localName, string resolvedName) {
         return bindLocalFunction(string(std::move(localName)),
@@ -137,6 +146,10 @@ public:
     const string *findLocalType(const ::string &localName) const;
     const string *findLocalType(const std::string &localName) const {
         return findLocalType(string(localName));
+    }
+    const string *findLocalTrait(const ::string &localName) const;
+    const string *findLocalTrait(const std::string &localName) const {
+        return findLocalTrait(string(localName));
     }
     const string *findLocalFunction(const ::string &localName) const;
     const string *findLocalFunction(const std::string &localName) const {

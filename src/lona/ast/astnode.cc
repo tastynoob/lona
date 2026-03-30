@@ -207,6 +207,9 @@ findFuncPtrTypeNode(TypeNode *node) {
     if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
         return findFuncPtrTypeNode(qualified->base);
     }
+    if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+        return findFuncPtrTypeNode(dynType->base);
+    }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         return findFuncPtrTypeNode(pointer->base);
     }
@@ -266,6 +269,8 @@ DEF_ACCEPT(AstBraceInitItem)
 DEF_ACCEPT(AstBraceInit)
 DEF_ACCEPT(AstNamedCallArg)
 DEF_ACCEPT(AstStructDecl)
+DEF_ACCEPT(AstTraitDecl)
+DEF_ACCEPT(AstTraitImplDecl)
 DEF_ACCEPT(AstGlobalDecl)
 DEF_ACCEPT(AstImport)
 DEF_ACCEPT(AstVarDecl)

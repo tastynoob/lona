@@ -1545,7 +1545,8 @@ class FunctionAnalyzer {
         if (auto *forNode = node->as<AstFor>()) {
             return analyzeFor(forNode);
         }
-        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
+        if (node->is<AstStructDecl>() || node->is<AstTraitDecl>() ||
+            node->is<AstTraitImplDecl>() || node->is<AstFuncDecl>() ||
             node->is<AstImport>()) {
             return nullptr;
         }

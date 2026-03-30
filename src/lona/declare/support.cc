@@ -15,6 +15,8 @@ topLevelDeclKindName(TopLevelDeclKind kind) {
     switch (kind) {
         case TopLevelDeclKind::StructType:
             return "struct";
+        case TopLevelDeclKind::Trait:
+            return "trait";
         case TopLevelDeclKind::Function:
             return "top-level function";
         case TopLevelDeclKind::Global:

@@ -112,13 +112,15 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 (for) { RETURN_PLAIN_TOKEN(token::FOR); }
 
 (struct) { RETURN_PLAIN_TOKEN(token::STRUCT); }
+(trait) { RETURN_PLAIN_TOKEN(token::TRAIT); }
+(impl) { RETURN_PLAIN_TOKEN(token::IMPL); }
+(dyn) { RETURN_PLAIN_TOKEN(token::DYN); }
 (type|u8|i8|u16|i16|u32|i32|u64|i64|usize|int|uint|f32|f64|bool) {
     loc->columns(yyleng);
     lval->token = new AstToken(TokenType::Field, yytext, *loc);
     return token::TYPE;
 }
 (class) {}
-(trait) {}
 (case) {}
 
 

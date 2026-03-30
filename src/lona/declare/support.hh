@@ -19,6 +19,7 @@ namespace declarationsupport_impl {
 
 enum class TopLevelDeclKind {
     StructType,
+    Trait,
     Function,
     Global,
 };

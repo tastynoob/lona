@@ -265,6 +265,34 @@ AstStructDecl::toJson(Json &root) {
 }
 
 void
+AstTraitDecl::toJson(Json &root) {
+    root["type"] = "TraitDecl";
+    root["name"] = this->name.tochara();
+    if (this->body) {
+        root["body"] = Json::object();
+        this->body->toJson(root["body"]);
+    } else {
+        root["body"] = nullptr;
+    }
+}
+
+void
+AstTraitImplDecl::toJson(Json &root) {
+    root["type"] = "TraitImplDecl";
+    root["selfType"] = describeTypeNode(this->selfType);
+    root["trait"] = Json::object();
+    if (this->trait) {
+        this->trait->toJson(root["trait"]);
+    }
+    if (this->body) {
+        root["body"] = Json::object();
+        this->body->toJson(root["body"]);
+    } else {
+        root["body"] = nullptr;
+    }
+}
+
+void
 AstGlobalDecl::toJson(Json &root) {
     root["type"] = "GlobalDecl";
     root["name"] = getName().tochara();

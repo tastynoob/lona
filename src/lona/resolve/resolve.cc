@@ -148,7 +148,8 @@ class FunctionResolver {
             }
             return;
         }
-        if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
+        if (node->is<AstStructDecl>() || node->is<AstTraitDecl>() ||
+            node->is<AstTraitImplDecl>() || node->is<AstFuncDecl>() ||
             node->is<AstGlobalDecl>() || node->is<AstImport>()) {
             return;
         }
@@ -466,6 +467,10 @@ class ModuleResolver {
                 continue;
             }
             if (dynamic_cast<AstGlobalDecl *>(stmt)) {
+                continue;
+            }
+            if (dynamic_cast<AstTraitDecl *>(stmt) ||
+                dynamic_cast<AstTraitImplDecl *>(stmt)) {
                 continue;
             }
             if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {

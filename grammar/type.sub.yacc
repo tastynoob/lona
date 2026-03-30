@@ -38,6 +38,7 @@ postfix_type
         $$ = new ArrayTypeNode($1, dims, @$);
         delete $6;
     }
+    | postfix_type DYN %prec type_suffix { $$ = new DynTypeNode($1, @$); }
     | postfix_type TYPE_CONST %prec type_suffix { $$ = new ConstTypeNode($1, @$); }
     ;
 

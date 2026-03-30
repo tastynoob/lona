@@ -208,6 +208,24 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         }
         return;
     }
+    if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(node)) {
+        hashText(seed, "trait");
+        hashText(seed, toStdString(traitDecl->name));
+        if (traitDecl->body) {
+            hashInterfaceList(seed, traitDecl->body);
+        } else {
+            hashText(seed, "trait-body:none");
+        }
+        return;
+    }
+    if (auto *traitImplDecl = dynamic_cast<AstTraitImplDecl *>(node)) {
+        hashText(seed, "trait-impl");
+        hashTypeNode(seed, traitImplDecl->selfType);
+        hashText(seed, describeDotLikeSyntax(traitImplDecl->trait));
+        hashText(seed, traitImplDecl->hasBody() ? "impl-body:present"
+                                                : "impl-body:none");
+        return;
+    }
     if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
         hashText(seed, "func");
         hashText(seed, toStdString(funcDecl->name));
@@ -270,6 +288,11 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
         hashText(seed, "base");
         hashText(seed, baseTypeName(base));
+        return;
+    }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
+        hashText(seed, "dyn");
+        hashTypeNode(seed, dynType->base);
         return;
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
@@ -560,6 +583,7 @@ CompilationUnit::clearImportedModules() {
 void
 CompilationUnit::clearLocalBindings() {
     localTypeBindings_.clear();
+    localTraitBindings_.clear();
     localFunctionBindings_.clear();
     localGlobalBindings_.clear();
 }
@@ -595,6 +619,15 @@ CompilationUnit::lookupTopLevelName(const ::string &name) const {
         lookup.resolvedName = *typeName;
         if (moduleInterface_) {
             lookup.typeDecl = moduleInterface_->findType(name);
+        }
+        return lookup;
+    }
+
+    if (const auto *traitName = findLocalTrait(name)) {
+        lookup.kind = TopLevelLookupKind::Trait;
+        lookup.resolvedName = *traitName;
+        if (moduleInterface_) {
+            lookup.traitDecl = moduleInterface_->findTrait(name);
         }
         return lookup;
     }
@@ -642,6 +675,14 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.typeDecl = member.typeDecl;
         lookup.resolvedName =
             member.typeDecl ? member.typeDecl->exportedName : string();
+        return lookup;
+    }
+    if (member.isTrait()) {
+        lookup.kind = TopLevelLookupKind::Trait;
+        lookup.importedModule = &moduleNamespace;
+        lookup.traitDecl = member.traitDecl;
+        lookup.resolvedName =
+            member.traitDecl ? member.traitDecl->exportedName : string();
         return lookup;
     }
     if (member.isFunction()) {
@@ -700,6 +741,13 @@ CompilationUnit::bindLocalType(string localName, string resolvedName) {
 }
 
 bool
+CompilationUnit::bindLocalTrait(string localName, string resolvedName) {
+    return localTraitBindings_
+        .emplace(std::move(localName), std::move(resolvedName))
+        .second;
+}
+
+bool
 CompilationUnit::bindLocalFunction(string localName, string resolvedName) {
     return localFunctionBindings_
         .emplace(std::move(localName), std::move(resolvedName))
@@ -717,6 +765,15 @@ const string *
 CompilationUnit::findLocalType(const ::string &localName) const {
     auto found = localTypeBindings_.find(localName);
     if (found == localTypeBindings_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
+const string *
+CompilationUnit::findLocalTrait(const ::string &localName) const {
+    auto found = localTraitBindings_.find(localName);
+    if (found == localTraitBindings_.end()) {
         return nullptr;
     }
     return &found->second;
