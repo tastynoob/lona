@@ -108,6 +108,22 @@ def test_global_initializer_rejects_non_static_expressions(
     )
 
 
+def test_duplicate_global_declarations_are_rejected(
+    compiler: CompilerHarness,
+) -> None:
+    _expect_ir_failure(
+        compiler,
+        "duplicate_globals_bad.lo",
+        """
+        global value = 1
+        global value = 2
+
+        ret 0
+        """,
+        ["duplicate global `value`"],
+    )
+
+
 def test_global_initializer_preserves_scalar_type_checks(
     compiler: CompilerHarness,
 ) -> None:

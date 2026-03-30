@@ -124,28 +124,47 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `src/lona/pass/compile_pipeline.cc`
 - `src/lona/resolve/resolve.hh`
 - `src/lona/sema/analysis.cc`
+- `src/lona/sema/analysis_module.cc`
+- `src/lona/sema/analysis_support.cc`
 - `src/lona/sema/collect.cc`
+- `src/lona/sema/collect_types.cc`
+- `src/lona/sema/collect_interface.cc`
+- `src/lona/sema/collect_globals.cc`
+- `src/lona/sema/collect_codegen.cc`
 - `src/lona/visitor.hh`
 
 单模块编译仍然是显式 pipeline：
 
 1. `collect-declarations`
-2. `lower-hir`
-3. `emit-llvm`
-4. `optimize-llvm`
-5. `verify-llvm`
-6. `print-llvm`
+2. `define-globals`
+3. `lower-hir`
+4. `emit-llvm`
+5. `optimize-llvm`
+6. `verify-llvm`
+7. `print-llvm`
 
 其中：
 
-- `collect-declarations` 收集当前模块和其直接 import 模块的声明
+- `collect-declarations` 收集当前模块和其直接 import 模块的声明，以及类型/函数/全局的可见接口
+- `define-globals` 为当前模块的全局变量补齐 LLVM global storage 和静态 initializer
 - `lower-hir` 执行 resolve 和 HIR 分析
-- `emit-llvm` 把 HIR lowering 成 LLVM IR
+- `emit-llvm` 把函数级 HIR lowering 成 LLVM IR
 - `optimize-llvm` 应用 LLVM 优化 pipeline
 - `verify-llvm` 做 IR 验证
 - `print-llvm` 只在显式文本 IR 输出路径上使用
 
 `CompilePipeline` 只负责“单模块”的 lowering 和 codegen，不负责多模块调度和最终链接。
+
+按当前职责划分：
+
+- `analysis.cc` 保留函数级表达式/语句分析主流程
+- `analysis_module.cc` 负责模块级 HIR 聚合
+- `analysis_support.cc` 放辅助诊断、函数入口辅助、方法选择器等共享分析工具
+- `collect.cc` 保留声明收集 helper 和底层类型/符号声明逻辑
+- `collect_types.cc` 负责结构体成员收集、类型扫描、单模块声明收集入口
+- `collect_interface.cc` 负责模块接口收集与接口物化
+- `collect_globals.cc` 负责全局变量定义与静态 initializer lowering
+- `collect_codegen.cc` 负责 debug info、函数级 LLVM lowering、模块级 IR emission
 
 ## 3. 模块数据模型
 

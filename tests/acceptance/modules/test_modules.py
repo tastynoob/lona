@@ -156,6 +156,46 @@ def test_imported_non_set_field_rejects_external_assignment(
     )
 
 
+def test_conflicting_imported_extern_globals_report_semantic_error(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "extern_global_conflict/dep_a.lo",
+        """
+        #[extern]
+        global errno i32
+        """,
+    )
+    compiler.write_source(
+        "extern_global_conflict/dep_b.lo",
+        """
+        #[extern]
+        global errno i64
+        """,
+    )
+    main_path = compiler.write_source(
+        "extern_global_conflict/main.lo",
+        """
+        import dep_a
+        import dep_b
+
+        ret 0
+        """,
+    )
+
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "conflicting declarations for global `errno`",
+        label="extern global conflict diagnostic",
+    )
+    assert_not_contains(
+        result.stderr,
+        "internal error",
+        label="extern global conflict category",
+    )
+
+
 def test_import_searches_repeated_include_paths_after_current_directory(
     compiler: CompilerHarness,
 ) -> None:
