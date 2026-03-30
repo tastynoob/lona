@@ -2,14 +2,23 @@
 
 > 对应 `grammar.md` 的“3.1 程序结构”和“3.2 语句”。
 
-## 1. 顶层可以直接放语句
+## 1. 顶层可以声明全局变量
+
+```lona
+global counter = 1
+global total i64 = 42_i64
+```
+
+`global` 的完整规则见 [global.md](global.md)。
+
+## 2. 顶层可以直接放语句
 
 ```lona
 var answer = 42
 answer += 1
 ```
 
-## 2. 顶层可以放函数声明
+## 3. 顶层可以放函数声明
 
 ```lona
 def id(x i32) i32 {
@@ -17,7 +26,7 @@ def id(x i32) i32 {
 }
 ```
 
-## 3. 顶层可以放结构体声明
+## 4. 顶层可以放结构体声明
 
 ```lona
 struct Point {
@@ -26,7 +35,7 @@ struct Point {
 }
 ```
 
-## 4. 顶层允许空行
+## 5. 顶层允许空行
 
 ```lona
 
@@ -37,7 +46,7 @@ def inc(v i32) i32 {
 }
 ```
 
-## 5. 块语句可以包含多条语句
+## 6. 块语句可以包含多条语句
 
 ```lona
 {
@@ -47,13 +56,13 @@ def inc(v i32) i32 {
 }
 ```
 
-## 6. 空块是合法的
+## 7. 空块是合法的
 
 ```lona
 def noop() {}
 ```
 
-## 7. 顶层可以导入其他源文件
+## 8. 顶层可以导入其他源文件
 
 ```lona
 import math
@@ -70,7 +79,24 @@ ret answer
 - imported module 的顶层函数通过 `file.xxx(...)` 的形式访问，模块名来自被导入文件的文件名。
 - 导入路径按当前文件所在目录解析。
 
-## 8. root 模块的可执行入口
+## 9. imported 模块可以包含声明，但不能包含顶层执行语句
+
+```lona
+// dep.lo
+global count = 1
+
+def bump() i32 {
+    count = count + 1
+    ret count
+}
+```
+
+说明：
+
+- imported 模块可以包含 `import`、`struct`、`def`、`global` 这些顶层声明。
+- imported 模块仍然不能包含顶层可执行语句。
+
+## 10. root 模块的可执行入口
 
 root 模块允许直接写顶层可执行语句：
 

@@ -72,6 +72,10 @@ class FunctionResolver {
 
         auto memberName = toStdString(node->field->text);
         auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
+        if (lookup.isGlobal()) {
+            resolved_.bindDotLike(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
+            return;
+        }
         if (lookup.isFunction()) {
             resolved_.bindDotLike(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
             return;
@@ -85,7 +89,7 @@ class FunctionResolver {
               "unknown module member `" + toStdString(parentBinding->resolvedName()) +
                   "." +
                   memberName + "`",
-              "Only directly imported top-level functions and types are available through `file.xxx`.");
+              "Only directly imported top-level functions, globals, and types are available through `file.xxx`.");
     }
 
     void resolveStmt(const AstNode *node) {
@@ -140,6 +144,7 @@ class FunctionResolver {
             return;
         }
         if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
+            node->is<AstGlobalDecl>() ||
             node->is<AstImport>()) {
             return;
         }
@@ -163,6 +168,12 @@ class FunctionResolver {
             if (unit_) {
                 auto lookup = unit_->lookupTopLevelName(toStdString(field->name));
                 if (lookup.isFunction()) {
+                    resolved_.bindField(field,
+                                        ResolvedEntityRef::globalValue(
+                                            lookup.resolvedName));
+                    return;
+                }
+                if (lookup.isGlobal()) {
                     resolved_.bindField(field,
                                         ResolvedEntityRef::globalValue(
                                             lookup.resolvedName));
@@ -432,6 +443,7 @@ class ModuleResolver {
 
     void resolveTopLevel(AstStatList *body) {
         bool hasTopLevelExec = false;
+        auto *execBody = new AstStatList();
         for (auto *stmt : body->getBody()) {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
                 resolveStruct(structDecl);
@@ -440,17 +452,21 @@ class ModuleResolver {
             if (dynamic_cast<AstImport *>(stmt)) {
                 continue;
             }
+            if (dynamic_cast<AstGlobalDecl *>(stmt)) {
+                continue;
+            }
             if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
                 resolveFunction(funcDecl);
                 continue;
             }
             hasTopLevelExec = true;
+            execBody->push(stmt);
         }
 
         if (hasTopLevelExec) {
             auto *resolved = createResolvedFunction(
-                nullptr, body, std::string(), std::string(), body->loc, true,
-                body->hasTerminator());
+                nullptr, execBody, std::string(), std::string(), execBody->loc,
+                true, execBody->hasTerminator());
             FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
         }
     }

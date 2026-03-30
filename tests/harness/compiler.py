@@ -266,9 +266,11 @@ class CompilerHarness:
         )
         return result, output_path
 
-    def run_executable(self, path: Path) -> ExecutableResult:
+    def run_executable(
+        self, path: Path, args: list[str] | None = None
+    ) -> ExecutableResult:
         completed = subprocess.run(
-            [str(path)],
+            [str(path), *(args or [])],
             cwd=self.repo_root,
             text=True,
             stdout=subprocess.PIPE,

@@ -31,6 +31,12 @@ ModuleInterface::functionSymbolNameFor(const ::string &localName,
     return exportedNameFor(localName);
 }
 
+string
+ModuleInterface::globalSymbolNameFor(const ::string &localName,
+                                     bool isExtern) const {
+    return isExtern ? localName : exportedNameFor(localName);
+}
+
 void
 ModuleInterface::refresh(string sourcePath, string moduleKey,
                          string moduleName, std::uint64_t sourceHash) {
@@ -52,6 +58,7 @@ ModuleInterface::clear() {
     derivedTypes_.clear();
     localTypes_.clear();
     localFunctions_.clear();
+    localGlobals_.clear();
 }
 
 StructType *
@@ -87,6 +94,15 @@ ModuleInterface::declareFunction(string localName, FuncType *type,
                               functionSymbolNameFor(localName, abiKind),
                               abiKind, type,
                               std::move(paramNames)})
+        .second;
+}
+
+bool
+ModuleInterface::declareGlobal(string localName, TypeClass *type, bool isExtern) {
+    return localGlobals_
+        .emplace(localName,
+                 GlobalDecl{localName, globalSymbolNameFor(localName, isExtern),
+                            isExtern, type})
         .second;
 }
 
@@ -233,6 +249,15 @@ ModuleInterface::findFunction(const ::string &localName) const {
     return &found->second;
 }
 
+const ModuleInterface::GlobalDecl *
+ModuleInterface::findGlobal(const ::string &localName) const {
+    auto found = localGlobals_.find(localName);
+    if (found == localGlobals_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
 ModuleInterface::TopLevelLookup
 ModuleInterface::lookupTopLevelName(const ::string &localName) const {
     TopLevelLookup lookup;
@@ -244,6 +269,11 @@ ModuleInterface::lookupTopLevelName(const ::string &localName) const {
     if (const auto *functionDecl = findFunction(localName)) {
         lookup.kind = TopLevelLookupKind::Function;
         lookup.functionDecl = functionDecl;
+        return lookup;
+    }
+    if (const auto *globalDecl = findGlobal(localName)) {
+        lookup.kind = TopLevelLookupKind::Global;
+        lookup.globalDecl = globalDecl;
         return lookup;
     }
     return lookup;

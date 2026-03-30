@@ -28,6 +28,7 @@ public:
     DEF_VISIT(AstBraceInit)
     DEF_VISIT(AstNamedCallArg)
     DEF_VISIT(AstStructDecl)
+    DEF_VISIT(AstGlobalDecl)
     DEF_VISIT(AstImport)
     DEF_VISIT(AstVarDecl)
     DEF_VISIT(AstVarDef)
@@ -65,6 +66,7 @@ public:
     DEF_VISIT(AstBraceInit)
     DEF_VISIT(AstNamedCallArg)
     DEF_VISIT(AstStructDecl)
+    DEF_VISIT(AstGlobalDecl)
     DEF_VISIT(AstImport)
     DEF_VISIT(AstVarDecl)
     DEF_VISIT(AstVarDef)
@@ -98,6 +100,9 @@ scanningType(Scope *global, AstNode *root);
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace);
+
+void
+defineUnitGlobals(Scope *global, CompilationUnit &unit);
 
 void
 emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo = false,

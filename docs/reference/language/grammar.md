@@ -6,6 +6,7 @@
 
 - 程序结构与顶层项：[program.md](program.md)
 - 变量定义：[vardef.md](vardef.md)
+- 全局变量：[global.md](global.md)
 - 函数声明：[func.md](func.md)
 - 结构体声明：[struct.md](struct.md)
 - 控制流与块语句：[controlflow.md](controlflow.md)
@@ -36,6 +37,7 @@
 绑定、语句与声明关键字：
 
 - `var`
+- `global`
 - `const`
 - `def`
 - `set`
@@ -124,6 +126,7 @@ program           ::= program-item { program-item }
 program-item      ::= NL
                     | stat
                     | import-stat
+                    | tagged-global-decl
 
 import-stat       ::= "import" ImportPath NL
 ```
@@ -133,6 +136,7 @@ import-stat       ::= "import" ImportPath NL
 - 当前文法不接受完全空文件；至少需要一个顶层项或一个换行。
 - `import` 只能放在文件顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
 - `import` 不属于 `stat`，因此不能出现在块、函数体或结构体体内；写在这些位置会在 parser 阶段报错。
+- `global` 也只允许出现在文件顶层，不属于普通 `stat`。
 
 ### 3.2 语句
 
@@ -176,7 +180,7 @@ tagged-var-def    ::= var-def
 
 - 控制流执行语义见 [controlflow.md](controlflow.md)。
 
-### 3.3 结构体与函数声明
+### 3.3 结构体、函数与全局声明
 
 ```ebnf
 tag-line          ::= "#" "[" tag-entry-seq "]" NL
@@ -210,6 +214,15 @@ struct-stat       ::= field-decl NL
 tagged-func-decl  ::= func-decl
                     | tag-line func-decl
 
+tagged-global-decl ::= global-decl
+                     | tag-line global-decl
+
+global-decl       ::= "global" IDENT type-name NL
+                    | "global" IDENT type-name "=" expr NL
+                    | "global" IDENT type-name "=" brace-init NL
+                    | "global" IDENT "=" expr NL
+                    | "global" IDENT "=" brace-init NL
+
 func-decl         ::= [ "set" ] "def" IDENT "(" ")" NL
                     | [ "set" ] "def" IDENT "(" ")" type-name NL
                     | [ "set" ] "def" IDENT "(" param-decl-seq ")" NL
@@ -238,15 +251,19 @@ param-decl-seq    ::= param-decl
 说明：
 
 - tag line 必须单独占一行，然后紧跟一个函数声明、结构体声明或变量定义。
+- tag line 也可以跟一个 `global` 声明。
 - 当前内建 tag 只有 `extern` 和 `repr`。
 - `#[extern "C"]` 只接受一个字符串参数 `"C"`，当前用于 C ABI 顶层函数。
+- `#[extern] global name T` 用于外部全局符号声明；它不接受参数。
 - `#[extern] struct Name` 已移除；opaque 类型统一写成 bodyless `struct Name`。
 - `#[repr "C"]` 只接受一个字符串参数 `"C"`，当前用于 C-compatible 结构体。
+- 普通 `global` 当前必须带初始化器；`global name T` 只对 `#[extern] global` 有意义。
 - `const name = expr` / `const name T = expr` 是变量定义语法，不是类型后缀；它会先按普通变量那样做推断或类型检查，再在最外层补一层 `const`。
 - `param-decl-seq` 当前不支持尾逗号；例如 `def sum(a i32, b i32,)` 会在 parser 阶段报错。
 - `struct Name` 与后面的 `{` 必须写在同一行；`struct Name` 单独占一行时表示 opaque struct declaration。
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为函数声明。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+- `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
 
 ### 3.4 变量定义
 

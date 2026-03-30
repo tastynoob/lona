@@ -31,6 +31,9 @@ describeTagTarget(const AstNode *target) {
     if (auto *structDecl = dynamic_cast<const AstStructDecl *>(target)) {
         return "struct `" + toStdString(structDecl->name) + "`";
     }
+    if (auto *globalDecl = dynamic_cast<const AstGlobalDecl *>(target)) {
+        return "global `" + toStdString(globalDecl->getName()) + "`";
+    }
     if (auto *varDef = dynamic_cast<const AstVarDef *>(target)) {
         return "variable `" + toStdString(varDef->getName()) + "`";
     }
@@ -118,6 +121,20 @@ applyExternTag(AstNode *target, const AstTag *tag) {
         return;
     }
 
+    if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(target)) {
+        if (globalDecl->isExtern()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Semantic,
+                tag ? tag->name.loc : globalDecl->loc,
+                "duplicate `extern` tag on " + describeTagTarget(globalDecl),
+                "Write a single tag like `#[extern]`.");
+        }
+        requireTagArgCount(tag, 0, globalDecl,
+                           "Use syntax like `#[extern] global name T`.");
+        globalDecl->setExtern();
+        return;
+    }
+
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(target)) {
         errorCannotApplyTag(
             tag, target,
@@ -135,7 +152,7 @@ applyExternTag(AstNode *target, const AstTag *tag) {
 
     errorCannotApplyTag(
         tag, target,
-        "Tags can only be applied to function declarations, struct declarations, and variable definitions.");
+        "Tags can only be applied to function declarations, struct declarations, global declarations, and variable definitions.");
 }
 
 void
@@ -168,6 +185,11 @@ applyReprTag(AstNode *target, const AstTag *tag) {
             tag, target,
             "Use `#[extern \"C\"]` for C ABI functions. The `repr` tag only applies to struct declarations.");
     }
+    if (dynamic_cast<AstGlobalDecl *>(target)) {
+        errorCannotApplyTag(
+            tag, target,
+            "The `repr` tag only applies to struct declarations right now.");
+    }
     if (dynamic_cast<AstVarDef *>(target)) {
         errorCannotApplyTag(
             tag, target,
@@ -176,7 +198,7 @@ applyReprTag(AstNode *target, const AstTag *tag) {
 
     errorCannotApplyTag(
         tag, target,
-        "Tags can only be applied to function declarations, struct declarations, and variable definitions.");
+        "Tags can only be applied to function declarations, struct declarations, global declarations, and variable definitions.");
 }
 
 void
@@ -213,7 +235,7 @@ errorDanglingTags(std::vector<AstTag *> *tags) {
         DiagnosticError::Category::Semantic,
         tag ? tag->name.loc : location(),
         "tag `" + tagName(tag) +
-            "` must be followed by a function declaration, struct declaration, or variable definition",
+            "` must be followed by a function declaration, struct declaration, global declaration, or variable definition",
         "Move the tagged declaration directly below the tag line.");
 }
 
@@ -350,6 +372,39 @@ validateBuiltinTagResults(AstNode *node) {
         }
         if (structDecl->body) {
             validateBuiltinTagResults(structDecl->body);
+        }
+        return;
+    }
+    if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(node)) {
+        if (globalDecl->isExtern()) {
+            if (!globalDecl->hasTypeNode()) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Semantic, globalDecl->loc,
+                    "extern global `" + toStdString(globalDecl->getName()) +
+                        "` requires an explicit type",
+                    "Write `#[extern] global " +
+                        toStdString(globalDecl->getName()) + " T`.");
+            }
+            if (globalDecl->hasInitVal()) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Semantic, globalDecl->loc,
+                    "extern global `" + toStdString(globalDecl->getName()) +
+                        "` cannot have an initializer",
+                    "Remove the initializer and keep `#[extern] global " +
+                        toStdString(globalDecl->getName()) + " T`.");
+            }
+            return;
+        }
+        if (!globalDecl->hasInitVal()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Semantic, globalDecl->loc,
+                "global `" + toStdString(globalDecl->getName()) +
+                    "` requires an initializer",
+                "Write `global " + toStdString(globalDecl->getName()) +
+                    " = expr`, `global " +
+                    toStdString(globalDecl->getName()) +
+                    " T = expr`, or `#[extern] global " +
+                    toStdString(globalDecl->getName()) + " T`.");
         }
         return;
     }

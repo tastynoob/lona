@@ -10,6 +10,7 @@
         class AstNode;
         class AstStatList;
         class AstVarDecl;
+        class AstGlobalDecl;
         class TypeNode;
     }
 
@@ -60,6 +61,7 @@
 %token LOGIC_EQUAL "==" LOGIC_NOT_EQUAL "!=" LOGIC_AND "&&" LOGIC_OR "||"
 %token LOGIC_LE "<=" LOGIC_GE ">=" SHIFT_LEFT "<<" SHIFT_RIGHT ">>"
 %token VAR "var"
+%token GLOBAL "global"
 %token REF "ref"
 %token TYPE_CONST "const"
 %token CAST "cast"
@@ -95,7 +97,7 @@
 %right unary
 
 %type <node> pragram pragram_stat
-%type <node> struct_decl func_decl import_stat
+%type <node> struct_decl func_decl import_stat global_decl
 %type <node> struct_stat stat
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
@@ -145,6 +147,7 @@ pragram_statlist
 pragram_stat
     : stat { $$ = $1; }
     | import_stat { $$ = $1; }
+    | global_decl { $$ = $1; }
     ;
 
 import_stat
@@ -369,6 +372,24 @@ var_def
     | VAR FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5); }
     | FIELD ':' '=' opt_newlines expr { $$ = new AstVarDef(*$1, $5); }
     | FIELD ':' '=' opt_newlines brace_init { $$ = new AstVarDef(*$1, $5); }
+    ;
+
+global_decl
+    : GLOBAL FIELD type_name NEWLINE {
+        $$ = new AstGlobalDecl(*$2, $3);
+    }
+    | GLOBAL FIELD type_name '=' opt_newlines expr NEWLINE {
+        $$ = new AstGlobalDecl(*$2, $3, $6);
+    }
+    | GLOBAL FIELD type_name '=' opt_newlines brace_init NEWLINE {
+        $$ = new AstGlobalDecl(*$2, $3, $6);
+    }
+    | GLOBAL FIELD '=' opt_newlines expr NEWLINE {
+        $$ = new AstGlobalDecl(*$2, nullptr, $5);
+    }
+    | GLOBAL FIELD '=' opt_newlines brace_init NEWLINE {
+        $$ = new AstGlobalDecl(*$2, nullptr, $5);
+    }
     ;
 
 /* expression */

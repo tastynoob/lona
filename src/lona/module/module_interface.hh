@@ -25,6 +25,7 @@ public:
         NotFound,
         Type,
         Function,
+        Global,
     };
 
     struct TypeDecl {
@@ -42,14 +43,23 @@ public:
         std::vector<string> paramNames;
     };
 
+    struct GlobalDecl {
+        string localName;
+        string symbolName;
+        bool isExtern = false;
+        TypeClass *type = nullptr;
+    };
+
     struct TopLevelLookup {
         TopLevelLookupKind kind = TopLevelLookupKind::NotFound;
         const TypeDecl *typeDecl = nullptr;
         const FunctionDecl *functionDecl = nullptr;
+        const GlobalDecl *globalDecl = nullptr;
 
         bool found() const { return kind != TopLevelLookupKind::NotFound; }
         bool isType() const { return kind == TopLevelLookupKind::Type; }
         bool isFunction() const { return kind == TopLevelLookupKind::Function; }
+        bool isGlobal() const { return kind == TopLevelLookupKind::Global; }
     };
 
 private:
@@ -62,10 +72,12 @@ private:
     std::unordered_map<string, TypeClass *> derivedTypes_;
     std::unordered_map<string, TypeDecl> localTypes_;
     std::unordered_map<string, FunctionDecl> localFunctions_;
+    std::unordered_map<string, GlobalDecl> localGlobals_;
 
     string exportedNameFor(const ::string &localName) const;
     string functionSymbolNameFor(const ::string &localName,
                                  AbiKind abiKind) const;
+    string globalSymbolNameFor(const ::string &localName, bool isExtern) const;
 
 public:
     ModuleInterface(string sourcePath, string moduleKey,
@@ -110,6 +122,10 @@ public:
         return declareFunction(string(std::move(localName)), type,
                                std::move(paramNames));
     }
+    bool declareGlobal(string localName, TypeClass *type, bool isExtern = false);
+    bool declareGlobal(std::string localName, TypeClass *type, bool isExtern = false) {
+        return declareGlobal(string(std::move(localName)), type, isExtern);
+    }
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(TypeClass *elementType);
     ConstType *getOrCreateConstType(TypeClass *baseType);
@@ -128,6 +144,10 @@ public:
     const FunctionDecl *findFunction(const std::string &localName) const {
         return findFunction(string(localName));
     }
+    const GlobalDecl *findGlobal(const ::string &localName) const;
+    const GlobalDecl *findGlobal(const std::string &localName) const {
+        return findGlobal(string(localName));
+    }
     TopLevelLookup lookupTopLevelName(const ::string &localName) const;
     TopLevelLookup lookupTopLevelName(const std::string &localName) const {
         return lookupTopLevelName(string(localName));
@@ -135,6 +155,9 @@ public:
     const std::unordered_map<string, TypeDecl> &types() const { return localTypes_; }
     const std::unordered_map<string, FunctionDecl> &functions() const {
         return localFunctions_;
+    }
+    const std::unordered_map<string, GlobalDecl> &globals() const {
+        return localGlobals_;
     }
 };
 

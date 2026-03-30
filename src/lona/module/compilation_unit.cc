@@ -91,6 +91,76 @@ hashParamSignature(std::uint64_t &seed, AstNode *node) {
 }
 
 void
+hashInferredGlobalType(std::uint64_t &seed, const AstNode *node) {
+    if (node == nullptr) {
+        hashText(seed, "global-infer:null");
+        return;
+    }
+    if (auto *constant = dynamic_cast<const AstConst *>(node)) {
+        hashText(seed, "global-infer:const");
+        switch (constant->getType()) {
+        case AstConst::Type::I8:
+            hashText(seed, "i8");
+            return;
+        case AstConst::Type::U8:
+        case AstConst::Type::CHAR:
+            hashText(seed, "u8");
+            return;
+        case AstConst::Type::I16:
+            hashText(seed, "i16");
+            return;
+        case AstConst::Type::U16:
+            hashText(seed, "u16");
+            return;
+        case AstConst::Type::I32:
+            hashText(seed, "i32");
+            return;
+        case AstConst::Type::U32:
+            hashText(seed, "u32");
+            return;
+        case AstConst::Type::I64:
+            hashText(seed, "i64");
+            return;
+        case AstConst::Type::U64:
+            hashText(seed, "u64");
+            return;
+        case AstConst::Type::USIZE:
+            hashText(seed, "usize");
+            return;
+        case AstConst::Type::F32:
+            hashText(seed, "f32");
+            return;
+        case AstConst::Type::F64:
+            hashText(seed, "f64");
+            return;
+        case AstConst::Type::BOOL:
+            hashText(seed, "bool");
+            return;
+        case AstConst::Type::STRING:
+            hashText(seed, "indexable-ptr");
+            hashText(seed, "const");
+            hashText(seed, "u8");
+            return;
+        case AstConst::Type::NULLPTR:
+            hashText(seed, "null-pointer-untyped");
+            return;
+        }
+    }
+    if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
+        if (unary->op == '+' || unary->op == '-') {
+            hashText(seed, "global-infer:signed-unary");
+            hashInferredGlobalType(seed, unary->expr);
+            return;
+        }
+    }
+    if (dynamic_cast<const AstBraceInit *>(node)) {
+        hashText(seed, "global-infer:brace");
+        return;
+    }
+    hashText(seed, "global-infer:unsupported");
+}
+
+void
 hashInterfaceNode(std::uint64_t &seed, AstNode *node);
 
 void
@@ -152,6 +222,19 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         hashTypeNode(seed, funcDecl->retType);
         hashText(seed, funcDecl->hasBody() ? "func-body:present"
                                            : "func-body:none");
+        return;
+    }
+    if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(node)) {
+        hashText(seed, "global");
+        hashText(seed, toStdString(globalDecl->getName()));
+        hashText(seed, globalDecl->isExtern() ? "extern" : "native");
+        if (globalDecl->hasTypeNode()) {
+            hashTypeNode(seed, globalDecl->getTypeNode());
+        } else {
+            hashInferredGlobalType(seed, globalDecl->getInitVal());
+        }
+        hashText(seed, globalDecl->hasInitVal() ? "global-init:present"
+                                                : "global-init:none");
         return;
     }
     if (auto *varDecl = dynamic_cast<AstVarDecl *>(node)) {
@@ -469,6 +552,7 @@ void
 CompilationUnit::clearLocalBindings() {
     localTypeBindings_.clear();
     localFunctionBindings_.clear();
+    localGlobalBindings_.clear();
 }
 
 bool
@@ -514,6 +598,15 @@ CompilationUnit::lookupTopLevelName(const ::string &name) const {
         return lookup;
     }
 
+    if (const auto *globalName = findLocalGlobal(name)) {
+        lookup.kind = TopLevelLookupKind::Global;
+        lookup.resolvedName = *globalName;
+        if (moduleInterface_) {
+            lookup.globalDecl = moduleInterface_->findGlobal(name);
+        }
+        return lookup;
+    }
+
     if (const auto *imported = findImportedModule(name)) {
         lookup.kind = TopLevelLookupKind::Module;
         lookup.importedModule = imported;
@@ -546,6 +639,14 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.functionDecl = member.functionDecl;
         lookup.resolvedName =
             member.functionDecl ? member.functionDecl->symbolName : string();
+        return lookup;
+    }
+    if (member.isGlobal()) {
+        lookup.kind = TopLevelLookupKind::Global;
+        lookup.importedModule = &moduleNamespace;
+        lookup.globalDecl = member.globalDecl;
+        lookup.resolvedName =
+            member.globalDecl ? member.globalDecl->symbolName : string();
         return lookup;
     }
     return lookup;
@@ -594,6 +695,13 @@ CompilationUnit::bindLocalFunction(string localName, string resolvedName) {
         .second;
 }
 
+bool
+CompilationUnit::bindLocalGlobal(string localName, string resolvedName) {
+    return localGlobalBindings_
+        .emplace(std::move(localName), std::move(resolvedName))
+        .second;
+}
+
 const string *
 CompilationUnit::findLocalType(const ::string &localName) const {
     auto found = localTypeBindings_.find(localName);
@@ -607,6 +715,15 @@ const string *
 CompilationUnit::findLocalFunction(const ::string &localName) const {
     auto found = localFunctionBindings_.find(localName);
     if (found == localFunctionBindings_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
+const string *
+CompilationUnit::findLocalGlobal(const ::string &localName) const {
+    auto found = localGlobalBindings_.find(localName);
+    if (found == localGlobalBindings_.end()) {
         return nullptr;
     }
     return &found->second;

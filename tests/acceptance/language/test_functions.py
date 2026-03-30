@@ -438,11 +438,11 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             ],
         ),
         (
-            "ffi_extern_var_bad.lo",
-            '#[extern "C"]\nvar file i32 = 0\n',
+            "ffi_extern_global_arg_count_bad.lo",
+            '#[extern "C"]\nglobal file i32\n',
             [
-                'semantic error: cannot apply tag `extern` to variable `file`',
-                'help: The `extern` tag only applies to function declarations right now.',
+                'semantic error: invalid arguments for tag `extern` on global `file`: expected 0 arguments, got 1',
+                'help: Use syntax like `#[extern] global name T`.',
             ],
         ),
         (

@@ -1,25 +1,29 @@
-#include "../visitor.hh"
 #include "../abi/abi.hh"
 #include "../abi/native_abi.hh"
 #include "../type/buildin.hh"
 #include "../type/scope.hh"
-#include "lona/ast/astnode.hh"
-#include "lona/ast/type_node_tools.hh"
-#include "lona/ast/type_node_string.hh"
+#include "../visitor.hh"
 #include "lona/ast/array_dim.hh"
+#include "lona/ast/astnode.hh"
+#include "lona/ast/type_node_string.hh"
+#include "lona/ast/type_node_tools.hh"
 #include "lona/err/err.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/call_target_tools.hh"
+#include "lona/sema/hir.hh"
+#include "lona/sema/initializer_semantics.hh"
 #include "lona/sema/operator_resolver.hh"
 #include "lona/sym/func.hh"
-#include "lona/sema/hir.hh"
 #include "parser.hh"
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <list>
 #include <llvm-18/llvm/BinaryFormat/Dwarf.h>
 #include <llvm-18/llvm/IR/BasicBlock.h>
+#include <llvm-18/llvm/IR/ConstantFold.h>
 #include <llvm-18/llvm/IR/Constants.h>
 #include <llvm-18/llvm/IR/DIBuilder.h>
 #include <llvm-18/llvm/IR/DebugInfoMetadata.h>
@@ -40,22 +44,41 @@ namespace collect_decl_impl {
 enum class TopLevelDeclKind {
     StructType,
     Function,
+    Global,
 };
 
 const char *
 topLevelDeclKindName(TopLevelDeclKind kind) {
     switch (kind) {
-    case TopLevelDeclKind::StructType:
-        return "struct";
-    case TopLevelDeclKind::Function:
-        return "top-level function";
+        case TopLevelDeclKind::StructType:
+            return "struct";
+        case TopLevelDeclKind::Function:
+            return "top-level function";
+        case TopLevelDeclKind::Global:
+            return "global";
     }
     return "top-level declaration";
 }
 
+std::string
+topLevelDeclConflictHint(TopLevelDeclKind incoming, TopLevelDeclKind existing,
+                         const std::string &name) {
+    if ((incoming == TopLevelDeclKind::StructType &&
+         existing == TopLevelDeclKind::Function) ||
+        (incoming == TopLevelDeclKind::Function &&
+         existing == TopLevelDeclKind::StructType)) {
+        return "Type names reserve constructor syntax like `" + name +
+               "(...)`. Rename the function, for example `make" + name +
+               "`, or choose a different type name.";
+    }
+    return "Choose distinct names for top-level declarations in the same "
+           "module.";
+}
+
 void
 recordTopLevelDeclName(
-    std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>> &seen,
+    std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
+        &seen,
     const std::string &name, TopLevelDeclKind kind, const location &loc) {
     auto found = seen.find(name);
     if (found != seen.end()) {
@@ -65,9 +88,7 @@ recordTopLevelDeclName(
                       "` conflicts with " +
                       topLevelDeclKindName(found->second.first) + " `" + name +
                       "`",
-                  "Type names reserve constructor syntax like `" + name +
-                      "(...)`. Rename the function, for example `make" + name +
-                      "`, or choose a different type name.");
+                  topLevelDeclConflictHint(kind, found->second.first, name));
         }
         return;
     }
@@ -138,9 +159,9 @@ validateFunctionReceiverAccess(AstFuncDecl *node, StructType *methodParent) {
     if (!node || methodParent || node->receiverAccess == AccessKind::GetOnly) {
         return;
     }
-    error(node->loc,
-          "`set def` is only valid on struct methods",
-          "Move this declaration into a struct, or remove the `set` receiver modifier.");
+    error(node->loc, "`set def` is only valid on struct methods",
+          "Move this declaration into a struct, or remove the `set` receiver "
+          "modifier.");
 }
 
 std::string
@@ -166,7 +187,8 @@ describeExternCTypeSubject(const std::string &role, const std::string &name) {
 std::string
 describeExternCType(TypeClass *type, TypeNode *node) {
     if (node) {
-        return describeTypeNode(node, type ? toStdString(type->full_name) : "void");
+        return describeTypeNode(node,
+                                type ? toStdString(type->full_name) : "void");
     }
     if (type) {
         return toStdString(type->full_name);
@@ -202,8 +224,8 @@ bool
 isExternCByValueAggregateType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
-        (storageType->as<StructType>() || storageType->as<TupleType>() ||
-         storageType->as<ArrayType>());
+           (storageType->as<StructType>() || storageType->as<TupleType>() ||
+            storageType->as<ArrayType>());
 }
 
 bool
@@ -228,12 +250,12 @@ isCCompatiblePointerTarget(TypeClass *type) {
     if (auto *pointerType = type->as<PointerType>()) {
         auto *pointeeType = pointerType->getPointeeType();
         return pointeeType && !pointeeType->as<FuncType>() &&
-            isCCompatiblePointerTarget(pointeeType);
+               isCCompatiblePointerTarget(pointeeType);
     }
     if (auto *indexableType = type->as<IndexablePointerType>()) {
         auto *elementType = indexableType->getElementType();
         return elementType && !elementType->as<FuncType>() &&
-            isCCompatiblePointerTarget(elementType);
+               isCCompatiblePointerTarget(elementType);
     }
     return false;
 }
@@ -260,7 +282,7 @@ isCCompatibleReprCFieldType(TypeClass *type) {
     }
     if (auto *arrayType = type->as<ArrayType>()) {
         return arrayType->hasStaticLayout() &&
-            isCCompatibleReprCFieldType(arrayType->getElementType());
+               isCCompatibleReprCFieldType(arrayType->getElementType());
     }
     return false;
 }
@@ -290,21 +312,24 @@ validateStructDeclShape(AstStructDecl *node) {
               "opaque struct `" + toStdString(node->name) +
                   "` cannot declare fields or methods",
               "Use `struct " + toStdString(node->name) +
-                  "` for an opaque declaration, or add a body without the opaque form.");
+                  "` for an opaque declaration, or add a body without the "
+                  "opaque form.");
     }
 }
 
-std::string describeStructFieldSyntax(AstVarDecl *fieldDecl);
-void validateEmbeddedStructField(AstStructDecl *structDecl,
-                                 AstVarDecl *fieldDecl,
-                                 TypeClass *fieldType);
-void insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
-                        TypeClass *fieldType,
-                        llvm::StringMap<StructType::ValueTy> &members,
-                        llvm::StringMap<AccessKind> &memberAccess,
-                        llvm::StringSet<> &embeddedMembers,
-                        std::unordered_map<std::string, location> &seenMembers,
-                        int &nextMemberIndex);
+std::string
+describeStructFieldSyntax(AstVarDecl *fieldDecl);
+void
+validateEmbeddedStructField(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                            TypeClass *fieldType);
+void
+insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                   TypeClass *fieldType,
+                   llvm::StringMap<StructType::ValueTy> &members,
+                   llvm::StringMap<AccessKind> &memberAccess,
+                   llvm::StringSet<> &embeddedMembers,
+                   std::unordered_map<std::string, location> &seenMembers,
+                   int &nextMemberIndex);
 
 void
 validateExternCType(AstFuncDecl *node, StructType *methodParent,
@@ -320,8 +345,8 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
 
     if (isExternCCallbackType(type)) {
         error(loc,
-              "#[extern \"C\"] function `" + funcName +
-                  "` uses unsupported " + subject + ": " + typeName,
+              "#[extern \"C\"] function `" + funcName + "` uses unsupported " +
+                  subject + ": " + typeName,
               "Callback support is not implemented in C FFI v0 yet.");
     }
     if (auto *pointerType = asUnqualified<PointerType>(type)) {
@@ -329,7 +354,9 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
             error(loc,
                   "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, opaque `struct` "
+                  "declarations, or `#[repr \"C\"] struct` types. Ordinary "
+                  "Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }
@@ -338,21 +365,25 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
             error(loc,
                   "#[extern \"C\"] function `" + funcName +
                       "` uses unsupported " + subject + ": " + typeName,
-                  "Use pointers to scalars, pointers, opaque `struct` declarations, or `#[repr \"C\"] struct` types. Ordinary Lona structs cannot cross the C FFI boundary.");
+                  "Use pointers to scalars, pointers, opaque `struct` "
+                  "declarations, or `#[repr \"C\"] struct` types. Ordinary "
+                  "Lona structs cannot cross the C FFI boundary.");
         }
         return;
     }
     if (asUnqualified<TupleType>(type)) {
         error(loc,
-              "#[extern \"C\"] function `" + funcName +
-                  "` uses unsupported " + subject + ": " + typeName,
-              "Flatten the tuple into scalar parameters or pass a pointer instead.");
+              "#[extern \"C\"] function `" + funcName + "` uses unsupported " +
+                  subject + ": " + typeName,
+              "Flatten the tuple into scalar parameters or pass a pointer "
+              "instead.");
     }
     if (isExternCByValueAggregateType(type)) {
         error(loc,
-              "#[extern \"C\"] function `" + funcName +
-                  "` uses unsupported " + subject + ": " + typeName,
-              "Pass a pointer instead. C FFI v0 does not support aggregate values at the boundary yet.");
+              "#[extern \"C\"] function `" + funcName + "` uses unsupported " +
+                  subject + ": " + typeName,
+              "Pass a pointer instead. C FFI v0 does not support aggregate "
+              "values at the boundary yet.");
     }
 }
 
@@ -366,10 +397,14 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
         error(fieldDecl->loc,
               "struct field `" + describeStructFieldSyntax(fieldDecl) +
                   "` cannot use a const-qualified storage type",
-              "Struct fields must keep full read/write access during initialization. Use pointer views like `T const*` or `T const[*]`, and reserve field immutability for a future `readonly` feature.");
+              "Struct fields must keep full read/write access during "
+              "initialization. Use pointer views like `T const*` or `T "
+              "const[*]`, and reserve field immutability for a future "
+              "`readonly` feature.");
     }
-    rejectOpaqueStructByValue(fieldType, fieldDecl->typeNode, fieldDecl->loc,
-                              "struct field `" + describeStructFieldSyntax(fieldDecl) + "`");
+    rejectOpaqueStructByValue(
+        fieldType, fieldDecl->typeNode, fieldDecl->loc,
+        "struct field `" + describeStructFieldSyntax(fieldDecl) + "`");
     if (!structDecl->isReprC()) {
         return;
     }
@@ -378,11 +413,13 @@ validateStructFieldType(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
     }
 
     auto fieldTypeName = describeExternCType(fieldType, fieldDecl->typeNode);
-    error(fieldDecl->loc,
-          "#[repr \"C\"] struct `" + toStdString(structDecl->name) +
-              "` field `" + describeStructFieldSyntax(fieldDecl) +
-              "` uses unsupported type: " + fieldTypeName,
-          "Use only C-compatible field types: scalars, raw pointers, fixed arrays of C-compatible elements, or nested `#[repr \"C\"]` structs.");
+    error(
+        fieldDecl->loc,
+        "#[repr \"C\"] struct `" + toStdString(structDecl->name) + "` field `" +
+            describeStructFieldSyntax(fieldDecl) +
+            "` uses unsupported type: " + fieldTypeName,
+        "Use only C-compatible field types: scalars, raw pointers, fixed "
+        "arrays of C-compatible elements, or nested `#[repr \"C\"]` structs.");
 }
 
 std::string
@@ -393,7 +430,8 @@ embeddedFieldAccessName(TypeClass *fieldType) {
     }
     auto fullName = toStdString(structType->full_name);
     auto separator = fullName.rfind('.');
-    return separator == std::string::npos ? fullName : fullName.substr(separator + 1);
+    return separator == std::string::npos ? fullName
+                                          : fullName.substr(separator + 1);
 }
 
 std::string
@@ -428,19 +466,22 @@ validateEmbeddedStructField(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
         error(fieldDecl->loc,
               "embedded field `" + describeStructFieldSyntax(fieldDecl) +
                   "` cannot use `ref` binding",
-              "Embed the struct value directly, or store an explicit pointer field instead.");
+              "Embed the struct value directly, or store an explicit pointer "
+              "field instead.");
     }
     if (fieldDecl->accessKind == AccessKind::GetSet) {
         error(fieldDecl->loc,
               "embedded field `" + describeStructFieldSyntax(fieldDecl) +
                   "` cannot use `set`",
-              "V1 only supports `_ T` for embedded fields. If you need a writable named field, declare it explicitly.");
+              "V1 only supports `_ T` for embedded fields. If you need a "
+              "writable named field, declare it explicitly.");
     }
     if (!asUnqualified<StructType>(fieldType)) {
         error(fieldDecl->loc,
               "embedded field `" + describeStructFieldSyntax(fieldDecl) +
                   "` must use a struct type",
-              "Write `_ SomeStruct` or `_ dep.SomeStruct`. Non-struct embedding is not supported.");
+              "Write `_ SomeStruct` or `_ dep.SomeStruct`. Non-struct "
+              "embedding is not supported.");
     }
     auto accessName = effectiveStructFieldName(fieldDecl, fieldType);
     if (accessName.empty()) {
@@ -452,7 +493,8 @@ validateEmbeddedStructField(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
 }
 
 void
-insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl, TypeClass *fieldType,
+insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl,
+                   TypeClass *fieldType,
                    llvm::StringMap<StructType::ValueTy> &members,
                    llvm::StringMap<AccessKind> &memberAccess,
                    llvm::StringSet<> &embeddedMembers,
@@ -468,18 +510,20 @@ insertStructMember(AstStructDecl *structDecl, AstVarDecl *fieldDecl, TypeClass *
     auto [seenIt, inserted] = seenMembers.emplace(memberName, fieldDecl->loc);
     if (!inserted) {
         auto fieldRole = fieldDecl && fieldDecl->isEmbeddedField()
-            ? "embedded field access name"
-            : "field";
+                             ? "embedded field access name"
+                             : "field";
         auto structName = structDecl ? toStdString(structDecl->name)
                                      : std::string("<unknown>");
         error(fieldDecl->loc,
-              "struct `" + structName +
-                  "` " + fieldRole + " `" + memberName + "` conflicts with an existing member",
-              "Rename the field, or use an explicit named field instead of embedding here.");
+              "struct `" + structName + "` " + fieldRole + " `" + memberName +
+                  "` conflicts with an existing member",
+              "Rename the field, or use an explicit named field instead of "
+              "embedding here.");
     }
 
     auto memberKey = llvm::StringRef(memberName);
-    members.insert({memberKey, StructType::ValueTy{fieldType, nextMemberIndex++}});
+    members.insert(
+        {memberKey, StructType::ValueTy{fieldType, nextMemberIndex++}});
     memberAccess[memberKey] = fieldDecl->accessKind;
     if (fieldDecl->isEmbeddedField()) {
         embeddedMembers.insert(memberKey);
@@ -498,7 +542,8 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
     if (methodParent) {
         error(node->loc,
               "#[extern \"C\"] method `" + funcName + "` is not supported",
-              "Declare a top-level wrapper function instead. C FFI v0 only supports top-level functions.");
+              "Declare a top-level wrapper function instead. C FFI v0 only "
+              "supports top-level functions.");
     }
 
     size_t argTypeIndex = 0;
@@ -515,12 +560,13 @@ validateExternCFunctionSignature(AstFuncDecl *node, StructType *methodParent,
                           "` cannot use `ref` binding",
                       "Use an explicit pointer type like `i32*` instead.");
             }
-            auto *argType = argTypeIndex < argTypes.size() ? argTypes[argTypeIndex]
-                                                           : nullptr;
-            rejectOpaqueStructByValue(
-                argType, varDecl->typeNode, varDecl->loc,
-                "parameter `" + toStdString(varDecl->field) + "` in function `" +
-                    funcName + "`");
+            auto *argType = argTypeIndex < argTypes.size()
+                                ? argTypes[argTypeIndex]
+                                : nullptr;
+            rejectOpaqueStructByValue(argType, varDecl->typeNode, varDecl->loc,
+                                      "parameter `" +
+                                          toStdString(varDecl->field) +
+                                          "` in function `" + funcName + "`");
             validateExternCType(node, methodParent, "parameter",
                                 toStdString(varDecl->field), argType,
                                 varDecl->typeNode, varDecl->loc);
@@ -564,8 +610,8 @@ struct DebugInfoContext {
         module.addModuleFlag(llvm::Module::Warning, "Debug Info Version",
                              llvm::DEBUG_METADATA_VERSION);
         module.addModuleFlag(llvm::Module::Warning, "Dwarf Version", 5);
-        primaryFile = getOrCreateFile(sourcePath.empty() ? module.getName().str()
-                                                         : sourcePath);
+        primaryFile = getOrCreateFile(
+            sourcePath.empty() ? module.getName().str() : sourcePath);
         compileUnit = builder.createCompileUnit(
             llvm::dwarf::DW_LANG_C, primaryFile, "lona", false, "", 0);
     }
@@ -601,9 +647,7 @@ struct DebugInfoContext {
         return getOrCreateFile(path);
     }
 
-    void finalize() {
-        builder.finalize();
-    }
+    void finalize() { builder.finalize(); }
 };
 
 llvm::DIType *
@@ -621,27 +665,26 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
     if (auto *base = asUnqualified<BaseType>(type)) {
         unsigned encoding = llvm::dwarf::DW_ATE_signed;
         switch (base->type) {
-        case BaseType::BOOL:
-            encoding = llvm::dwarf::DW_ATE_boolean;
-            break;
-        case BaseType::F32:
-        case BaseType::F64:
-            encoding = llvm::dwarf::DW_ATE_float;
-            break;
-        case BaseType::U8:
-        case BaseType::U16:
-        case BaseType::U32:
-        case BaseType::U64:
-        case BaseType::USIZE:
-            encoding = llvm::dwarf::DW_ATE_unsigned;
-            break;
-        default:
-            break;
+            case BaseType::BOOL:
+                encoding = llvm::dwarf::DW_ATE_boolean;
+                break;
+            case BaseType::F32:
+            case BaseType::F64:
+                encoding = llvm::dwarf::DW_ATE_float;
+                break;
+            case BaseType::U8:
+            case BaseType::U16:
+            case BaseType::U32:
+            case BaseType::U64:
+            case BaseType::USIZE:
+                encoding = llvm::dwarf::DW_ATE_unsigned;
+                break;
+            default:
+                break;
         }
         diType = debug.builder.createBasicType(
             toStdString(type->full_name),
-            debug.typeTable.getTypeAllocSize(type) * 8,
-            encoding);
+            debug.typeTable.getTypeAllocSize(type) * 8, encoding);
     } else if (auto *pointer = asUnqualified<PointerType>(type)) {
         diType = debug.builder.createPointerType(
             getOrCreateDebugType(debug, pointer->getPointeeType()),
@@ -668,12 +711,13 @@ getOrCreateDebugType(DebugInfoContext &debug, TypeClass *type) {
             debug.builder.getOrCreateTypeArray(elements));
     } else if (asUnqualified<StructType>(type)) {
         diType = debug.builder.createStructType(
-            debug.primaryFile, toStdString(type->full_name), debug.primaryFile, 1,
-            debug.typeTable.getTypeAllocSize(type) * 8, 0,
+            debug.primaryFile, toStdString(type->full_name), debug.primaryFile,
+            1, debug.typeTable.getTypeAllocSize(type) * 8, 0,
             llvm::DINode::FlagZero, nullptr,
             debug.builder.getOrCreateArray({}));
     } else {
-        diType = debug.builder.createUnspecifiedType(toStdString(type->full_name));
+        diType =
+            debug.builder.createUnspecifiedType(toStdString(type->full_name));
     }
 
     debug.types[type] = diType;
@@ -710,8 +754,7 @@ createDebugSubprogram(DebugInfoContext &debug, llvm::Function *llvmFunc,
     auto *subprogram = debug.builder.createFunction(
         file, name, llvmFunc->getName(), file, sourceLine(loc),
         createDebugSubroutineType(debug, funcType), sourceLine(loc),
-        llvm::DINode::FlagPrototyped,
-        llvm::DISubprogram::SPFlagDefinition);
+        llvm::DINode::FlagPrototyped, llvm::DISubprogram::SPFlagDefinition);
     llvmFunc->setSubprogram(subprogram);
     return subprogram;
 }
@@ -732,20 +775,21 @@ clearDebugLocation(llvm::IRBuilder<> &builder) {
 }
 
 void
-emitDebugDeclare(DebugInfoContext *debug, FuncScope *scope, llvm::DIScope *dbgScope,
-                 Object *obj, llvm::StringRef name, TypeClass *type,
-                 const location &loc, unsigned argNo = 0) {
-    if (!debug || !scope || !dbgScope || !obj || !obj->getllvmValue() || !type) {
+emitDebugDeclare(DebugInfoContext *debug, FuncScope *scope,
+                 llvm::DIScope *dbgScope, Object *obj, llvm::StringRef name,
+                 TypeClass *type, const location &loc, unsigned argNo = 0) {
+    if (!debug || !scope || !dbgScope || !obj || !obj->getllvmValue() ||
+        !type) {
         return;
     }
 
     auto *file = debug->fileForLocation(loc);
-    auto *var = argNo == 0
-        ? debug->builder.createAutoVariable(dbgScope, name, file, sourceLine(loc),
-                                            getOrCreateDebugType(*debug, type))
-        : debug->builder.createParameterVariable(
-              dbgScope, name, argNo, file, sourceLine(loc),
-              getOrCreateDebugType(*debug, type), true);
+    auto *var = argNo == 0 ? debug->builder.createAutoVariable(
+                                 dbgScope, name, file, sourceLine(loc),
+                                 getOrCreateDebugType(*debug, type))
+                           : debug->builder.createParameterVariable(
+                                 dbgScope, name, argNo, file, sourceLine(loc),
+                                 getOrCreateDebugType(*debug, type), true);
 
     debug->builder.insertDeclare(
         obj->getllvmValue(), var, debug->builder.createExpression(),
@@ -773,8 +817,18 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
     return resolveTopLevelName(unit, name, exportNamespace);
 }
 
+std::string
+resolveGlobalSymbolName(const CompilationUnit *unit, const string &name,
+                        bool isExtern, bool exportNamespace) {
+    if (isExtern) {
+        return toStdString(name);
+    }
+    return resolveTopLevelName(unit, name, exportNamespace);
+}
+
 TypeClass *
-resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node) {
+resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit,
+                TypeNode *node) {
     if (!typeMgr) {
         return nullptr;
     }
@@ -789,13 +843,15 @@ resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit, TypeNode *node)
 }
 
 void
-rejectBareFunctionType(TypeClass *type, TypeNode *node, const std::string &context,
+rejectBareFunctionType(TypeClass *type, TypeNode *node,
+                       const std::string &context,
                        const location &loc = location()) {
     if (!type || !type->as<FuncType>()) {
         return;
     }
     error(loc, context + ": " + describeTypeNode(node, "void"),
-          "Use an explicit function pointer type instead of a bare function type.");
+          "Use an explicit function pointer type instead of a bare function "
+          "type.");
 }
 
 TypeTable *
@@ -874,7 +930,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     validateFunctionReceiverAccess(node, methodParent);
     auto &func_name = node->name;
     auto resolvedFunctionName = resolveFunctionSymbolName(
-        unit, func_name, node ? node->abiKind : AbiKind::Native, exportNamespace);
+        unit, func_name, node ? node->abiKind : AbiKind::Native,
+        exportNamespace);
     if (methodParent) {
         if (auto *existing = typeMgr->getMethodFunction(
                 methodParent,
@@ -894,22 +951,24 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
             if (unit->findLocalType(toStdString(func_name)) != nullptr) {
                 error(node->loc,
                       "top-level function `" + toStdString(func_name) +
-                          "` conflicts with struct `" +
-                          toStdString(func_name) + "`",
+                          "` conflicts with struct `" + toStdString(func_name) +
+                          "`",
                       "Type names reserve constructor syntax like `" +
                           toStdString(func_name) +
                           "(...)`. Rename the function, for example `make" +
                           toStdString(func_name) + "`.");
             }
-            unit->bindLocalFunction(toStdString(func_name), resolvedFunctionName);
+            unit->bindLocalFunction(toStdString(func_name),
+                                    resolvedFunctionName);
         }
-        if (auto *existing = scope.getObj(llvm::StringRef(resolvedFunctionName))) {
+        if (auto *existing =
+                scope.getObj(llvm::StringRef(resolvedFunctionName))) {
             auto *func = existing->as<Function>();
             if (!func) {
-                error(node->loc,
-                      "top-level function `" + toStdString(func_name) +
-                          "` conflicts with module namespace `" +
-                          resolvedFunctionName + "`");
+                error(node->loc, "top-level function `" +
+                                     toStdString(func_name) +
+                                     "` conflicts with module namespace `" +
+                                     resolvedFunctionName + "`");
             }
             return func;
         }
@@ -921,39 +980,38 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     if (node->retType) {
         loretType = resolveTypeNode(typeMgr, unit, node->retType);
         if (!loretType) {
-            error(node->loc,
-                "unknown return type for function `" + toStdString(func_name) +
-                "`: " + describeTypeNode(node->retType, "void"));
+            error(node->loc, "unknown return type for function `" +
+                                 toStdString(func_name) + "`: " +
+                                 describeTypeNode(node->retType, "void"));
         }
-        rejectBareFunctionType(
-            loretType, node->retType,
-            "unsupported bare function return type for `" + toStdString(func_name) + "`",
-            node->loc);
+        rejectBareFunctionType(loretType, node->retType,
+                               "unsupported bare function return type for `" +
+                                   toStdString(func_name) + "`",
+                               node->loc);
         rejectOpaqueStructByValue(
             loretType, node->retType, node->loc,
             "return type of function `" + toStdString(func_name) + "`");
     }
 
     if (methodParent) {
-        loargs.push_back(typeMgr->createPointerType(
-            methodReceiverPointeeType(typeMgr, methodParent, node->receiverAccess)));
+        loargs.push_back(typeMgr->createPointerType(methodReceiverPointeeType(
+            typeMgr, methodParent, node->receiverAccess)));
     }
 
     if (node->args) {
         for (auto *arg : *node->args) {
             if (!arg->is<AstVarDecl>()) {
-                error(node->loc,
-                    "invalid function parameter declaration in `" +
-                    toStdString(func_name) + "`");
+                error(node->loc, "invalid function parameter declaration in `" +
+                                     toStdString(func_name) + "`");
             }
             auto *varDecl = arg->as<AstVarDecl>();
             auto *type = resolveTypeNode(typeMgr, unit, varDecl->typeNode);
             if (!type) {
                 error(varDecl->loc,
-                    "unknown type for function parameter `" +
-                    toStdString(varDecl->field) + "` in `" +
-                    toStdString(func_name) + "`: " +
-                    describeTypeNode(varDecl->typeNode, "void"));
+                      "unknown type for function parameter `" +
+                          toStdString(varDecl->field) + "` in `" +
+                          toStdString(func_name) +
+                          "`: " + describeTypeNode(varDecl->typeNode, "void"));
             }
             rejectBareFunctionType(
                 type, varDecl->typeNode,
@@ -963,34 +1021,31 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 varDecl->loc);
             rejectOpaqueStructByValue(
                 type, varDecl->typeNode, varDecl->loc,
-                "parameter `" + toStdString(varDecl->field) + "` in function `" +
-                    toStdString(func_name) + "`");
+                "parameter `" + toStdString(varDecl->field) +
+                    "` in function `" + toStdString(func_name) + "`");
             loargs.push_back(type);
         }
     }
 
     validateExternCFunctionSignature(node, methodParent, loargs, loretType);
-    auto *lofuncType = typeMgr->getOrCreateFunctionType(loargs, loretType,
-                                                        std::move(loargKinds),
-                                                        node->abiKind);
-    if (methodParent && !methodParent->getMethodType(
-            llvm::StringRef(func_name.tochara(), func_name.size()))) {
+    auto *lofuncType = typeMgr->getOrCreateFunctionType(
+        loargs, loretType, std::move(loargKinds), node->abiKind);
+    if (methodParent && !methodParent->getMethodType(llvm::StringRef(
+                            func_name.tochara(), func_name.size()))) {
         methodParent->addMethodType(
             llvm::StringRef(func_name.tochara(), func_name.size()), lofuncType,
             extractParamNames(node));
     }
 
-    std::string llvmName = resolvedFunctionName.empty()
-        ? toStdString(func_name)
-        : resolvedFunctionName;
+    std::string llvmName = resolvedFunctionName.empty() ? toStdString(func_name)
+                                                        : resolvedFunctionName;
     if (methodParent) {
         llvmName = toStdString(methodParent->full_name) + "." + llvmName;
     }
 
     auto *llfunc = llvm::Function::Create(
         getFunctionAbiLLVMType(*typeMgr, lofuncType, methodParent != nullptr),
-        llvm::Function::ExternalLinkage,
-        llvm::Twine(llvmName),
+        llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
         typeMgr->getModule());
     annotateFunctionAbi(*llfunc, lofuncType->getAbiKind());
     auto *lofunc = new Function(llfunc, lofuncType, extractParamNames(node),
@@ -1008,16 +1063,16 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
 
 }  // namespace collect_decl_impl
 
-using collect_decl_impl::DebugInfoContext;
-using collect_decl_impl::TopLevelDeclKind;
 using collect_decl_impl::clearDebugLocation;
+using collect_decl_impl::DebugInfoContext;
 using collect_decl_impl::declareFunction;
 using collect_decl_impl::declareModuleNamespace;
 using collect_decl_impl::declareStructType;
+using collect_decl_impl::describeStructFieldSyntax;
 using collect_decl_impl::extractParamBindingKinds;
 using collect_decl_impl::extractParamNames;
-using collect_decl_impl::interfaceMethodReceiverPointeeType;
 using collect_decl_impl::insertStructMember;
+using collect_decl_impl::interfaceMethodReceiverPointeeType;
 using collect_decl_impl::recordTopLevelDeclName;
 using collect_decl_impl::rejectBareFunctionType;
 using collect_decl_impl::rejectOpaqueStructByValue;
@@ -1026,9 +1081,9 @@ using collect_decl_impl::resolveTypeNode;
 using collect_decl_impl::sourceColumn;
 using collect_decl_impl::sourceFilename;
 using collect_decl_impl::sourceLine;
-using collect_decl_impl::describeStructFieldSyntax;
-using collect_decl_impl::validateExternCFunctionSignature;
+using collect_decl_impl::TopLevelDeclKind;
 using collect_decl_impl::validateEmbeddedStructField;
+using collect_decl_impl::validateExternCFunctionSignature;
 using collect_decl_impl::validateFunctionReceiverAccess;
 using collect_decl_impl::validateStructDeclShape;
 using collect_decl_impl::validateStructFieldType;
@@ -1057,9 +1112,11 @@ class StructVisitor : public AstVisitorAny {
 
     Object *visit(AstVarDecl *node) override {
         if (node->bindingKind == BindingKind::Ref) {
-            error(node->loc, "struct fields cannot use `ref` binding for `" +
-                                 describeStructFieldSyntax(node) + "`",
-                  "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
+            error(node->loc,
+                  "struct fields cannot use `ref` binding for `" +
+                      describeStructFieldSyntax(node) + "`",
+                  "Store an explicit pointer type instead. Struct fields must "
+                  "be value or pointer-like storage.");
         }
         auto *type = resolveTypeNode(typeMgr, unit, node->typeNode);
         if (!type) {
@@ -1082,11 +1139,13 @@ class StructVisitor : public AstVisitorAny {
 
 public:
     StructVisitor(TypeTable *typeMgr, AstStructDecl *node,
-                  CompilationUnit *unit = nullptr,
-                  bool exportNamespace = false)
-        : typeMgr(typeMgr), unit(unit), exportNamespace(exportNamespace),
+                  CompilationUnit *unit = nullptr, bool exportNamespace = false)
+        : typeMgr(typeMgr),
+          unit(unit),
+          exportNamespace(exportNamespace),
           structDecl(node) {
-        auto *lostructTy = declareStructType(typeMgr, node, unit, exportNamespace);
+        auto *lostructTy =
+            declareStructType(typeMgr, node, unit, exportNamespace);
         assert(lostructTy);
 
         if (!lostructTy->isOpaque()) {
@@ -1139,7 +1198,8 @@ class TypeCollector : public AstVisitorAny {
     }
 
     Object *visit(AstStructDecl *node) override {
-        auto *structTy = declareStructType(typeMgr, node, unit, exportNamespace);
+        auto *structTy =
+            declareStructType(typeMgr, node, unit, exportNamespace);
         if (!node->body || !node->body->is<AstStatList>()) {
             return nullptr;
         }
@@ -1148,7 +1208,8 @@ class TypeCollector : public AstVisitorAny {
             if (!func) {
                 continue;
             }
-            declareFunction(*scope, typeMgr, func, structTy, unit, exportNamespace);
+            declareFunction(*scope, typeMgr, func, structTy, unit,
+                            exportNamespace);
         }
         return nullptr;
     }
@@ -1160,8 +1221,7 @@ class TypeCollector : public AstVisitorAny {
 
 public:
     TypeCollector(TypeTable *typeMgr, Scope *scope, AstNode *root,
-                  CompilationUnit *unit = nullptr,
-                  bool exportNamespace = false)
+                  CompilationUnit *unit = nullptr, bool exportNamespace = false)
         : typeMgr(typeMgr),
           scope(scope),
           unit(unit),
@@ -1212,6 +1272,7 @@ class InterfaceCollector {
     ModuleInterface *interface_;
     std::vector<AstStructDecl *> structDecls_;
     std::vector<AstFuncDecl *> funcDecls_;
+    std::vector<AstGlobalDecl *> globalDecls_;
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
@@ -1239,6 +1300,18 @@ class InterfaceCollector {
                   ".xxx` continues to refer to the imported module.");
     }
 
+    void validateImportAliasConflict(AstGlobalDecl *globalDecl) {
+        const auto name = toStdString(globalDecl->getName());
+        if (!unit_.importsModule(name)) {
+            return;
+        }
+        error(globalDecl->loc,
+              "global `" + name + "` conflicts with imported module alias `" +
+                  name + "`",
+              "Rename the global so `" + name +
+                  ".xxx` continues to refer to the imported module.");
+    }
+
     TypeClass *resolveType(TypeNode *node, bool validateLayout = true) {
         if (!node) {
             return nullptr;
@@ -1251,7 +1324,8 @@ class InterfaceCollector {
         }
         if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
             auto *baseType = resolveType(qualified->base, false);
-            return baseType ? interface_->getOrCreateConstType(baseType) : nullptr;
+            return baseType ? interface_->getOrCreateConstType(baseType)
+                            : nullptr;
         }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = baseTypeName(base);
@@ -1278,7 +1352,8 @@ class InterfaceCollector {
                 return nullptr;
             }
             auto lookup = imported->interface->lookupTopLevelName(typeName);
-            return lookup.isType() && lookup.typeDecl ? lookup.typeDecl->type : nullptr;
+            return lookup.isType() && lookup.typeDecl ? lookup.typeDecl->type
+                                                      : nullptr;
         }
         if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
             auto *baseType = resolveType(pointer->base, false);
@@ -1289,7 +1364,8 @@ class InterfaceCollector {
         }
         if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
             auto *elementType = resolveType(indexable->base, false);
-            return elementType ? interface_->getOrCreateIndexablePointerType(elementType)
+            return elementType ? interface_->getOrCreateIndexablePointerType(
+                                     elementType)
                                : nullptr;
         }
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
@@ -1335,7 +1411,8 @@ class InterfaceCollector {
 
     void collectTopLevelLists(AstNode *root) {
         auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body = dynamic_cast<AstStatList *>(program ? program->body : root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
         if (!body) {
             return;
         }
@@ -1343,16 +1420,22 @@ class InterfaceCollector {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
                 validateImportAliasConflict(structDecl);
                 validateStructDeclShape(structDecl);
-                recordTopLevelDeclName(topLevelDecls_, toStdString(structDecl->name),
-                                       TopLevelDeclKind::StructType,
-                                       structDecl->loc);
+                recordTopLevelDeclName(
+                    topLevelDecls_, toStdString(structDecl->name),
+                    TopLevelDeclKind::StructType, structDecl->loc);
                 structDecls_.push_back(structDecl);
             } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
                 validateImportAliasConflict(funcDecl);
-                recordTopLevelDeclName(topLevelDecls_, toStdString(funcDecl->name),
-                                       TopLevelDeclKind::Function,
-                                       funcDecl->loc);
+                recordTopLevelDeclName(
+                    topLevelDecls_, toStdString(funcDecl->name),
+                    TopLevelDeclKind::Function, funcDecl->loc);
                 funcDecls_.push_back(funcDecl);
+            } else if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(stmt)) {
+                validateImportAliasConflict(globalDecl);
+                recordTopLevelDeclName(
+                    topLevelDecls_, toStdString(globalDecl->getName()),
+                    TopLevelDeclKind::Global, globalDecl->loc);
+                globalDecls_.push_back(globalDecl);
             }
         }
     }
@@ -1366,8 +1449,10 @@ class InterfaceCollector {
 
     void completeStructs() {
         for (auto *structDecl : structDecls_) {
-            auto *typeDecl = interface_->findType(toStdString(structDecl->name));
-            auto *structType = typeDecl ? typeDecl->type->as<StructType>() : nullptr;
+            auto *typeDecl =
+                interface_->findType(toStdString(structDecl->name));
+            auto *structType =
+                typeDecl ? typeDecl->type->as<StructType>() : nullptr;
             if (!structType) {
                 error(structDecl->loc, "failed to declare struct interface");
             }
@@ -1394,7 +1479,8 @@ class InterfaceCollector {
                     error(varDecl->loc,
                           "struct fields cannot use `ref` binding for `" +
                               describeStructFieldSyntax(varDecl) + "`",
-                          "Store an explicit pointer type instead. Struct fields must be value or pointer-like storage.");
+                          "Store an explicit pointer type instead. Struct "
+                          "fields must be value or pointer-like storage.");
                 }
                 auto *fieldType = resolveType(varDecl->typeNode);
                 if (!fieldType) {
@@ -1422,7 +1508,8 @@ class InterfaceCollector {
     FuncType *buildFunctionType(AstFuncDecl *node, StructType *methodParent) {
         validateFunctionReceiverAccess(node, methodParent);
         std::vector<TypeClass *> argTypes;
-        auto argBindingKinds = extractParamBindingKinds(node, methodParent != nullptr);
+        auto argBindingKinds =
+            extractParamBindingKinds(node, methodParent != nullptr);
         if (methodParent) {
             argTypes.push_back(interface_->getOrCreatePointerType(
                 interfaceMethodReceiverPointeeType(interface_, methodParent,
@@ -1462,10 +1549,9 @@ class InterfaceCollector {
         if (node->retType) {
             retType = resolveType(node->retType);
             if (!retType) {
-                error(node->loc,
-                      "unknown return type for function `" +
-                          toStdString(node->name) + "`: " +
-                          describeTypeNode(node->retType, "void"));
+                error(node->loc, "unknown return type for function `" +
+                                     toStdString(node->name) + "`: " +
+                                     describeTypeNode(node->retType, "void"));
             }
             rejectBareFunctionType(
                 retType, node->retType,
@@ -1478,15 +1564,16 @@ class InterfaceCollector {
         }
 
         validateExternCFunctionSignature(node, methodParent, argTypes, retType);
-        return interface_->getOrCreateFunctionType(argTypes, retType,
-                                                   std::move(argBindingKinds),
-                                                   node->abiKind);
+        return interface_->getOrCreateFunctionType(
+            argTypes, retType, std::move(argBindingKinds), node->abiKind);
     }
 
     void declareFunctions() {
         for (auto *structDecl : structDecls_) {
-            auto *typeDecl = interface_->findType(toStdString(structDecl->name));
-            auto *structType = typeDecl ? typeDecl->type->as<StructType>() : nullptr;
+            auto *typeDecl =
+                interface_->findType(toStdString(structDecl->name));
+            auto *structType =
+                typeDecl ? typeDecl->type->as<StructType>() : nullptr;
             auto *body = dynamic_cast<AstStatList *>(structDecl->body);
             if (!structType || !body) {
                 continue;
@@ -1497,11 +1584,12 @@ class InterfaceCollector {
                     continue;
                 }
                 auto *funcType = buildFunctionType(funcDecl, structType);
-                if (structType->getMethodType(
-                        llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size())) ==
+                if (structType->getMethodType(llvm::StringRef(
+                        funcDecl->name.tochara(), funcDecl->name.size())) ==
                     nullptr) {
                     structType->addMethodType(
-                        llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()),
+                        llvm::StringRef(funcDecl->name.tochara(),
+                                        funcDecl->name.size()),
                         funcType, extractParamNames(funcDecl));
                 }
             }
@@ -1511,6 +1599,58 @@ class InterfaceCollector {
             auto *funcType = buildFunctionType(funcDecl, nullptr);
             interface_->declareFunction(toStdString(funcDecl->name), funcType,
                                         extractParamNames(funcDecl));
+        }
+    }
+
+    void declareGlobals() {
+        for (auto *globalDecl : globalDecls_) {
+            TypeClass *globalType = nullptr;
+            if (globalDecl->hasTypeNode()) {
+                globalType = resolveType(globalDecl->getTypeNode());
+                if (!globalType) {
+                    error(globalDecl->loc,
+                          "unknown type for global `" +
+                              toStdString(globalDecl->getName()) + "`: " +
+                              describeTypeNode(globalDecl->getTypeNode(),
+                                               "void"));
+                }
+                rejectBareFunctionType(
+                    globalType, globalDecl->getTypeNode(),
+                    "unsupported bare function global type for `" +
+                        toStdString(globalDecl->getName()) + "`",
+                    globalDecl->loc);
+                rejectOpaqueStructByValue(
+                    globalType, globalDecl->getTypeNode(), globalDecl->loc,
+                    "global `" + toStdString(globalDecl->getName()) + "`");
+            } else {
+                globalType = inferStaticLiteralInitializerType(
+                    interface_, globalDecl->getInitVal());
+                if (!globalType) {
+                    if (auto *constant =
+                            dynamic_cast<AstConst *>(globalDecl->getInitVal());
+                        constant &&
+                        constant->getType() == AstConst::Type::NULLPTR) {
+                        error(globalDecl->loc,
+                              "global `" + toStdString(globalDecl->getName()) +
+                                  "` cannot infer a type from `null`",
+                              "Add an explicit pointer type, for example "
+                              "`global " +
+                                  toStdString(globalDecl->getName()) +
+                                  " u8* = null`.");
+                    }
+                    error(globalDecl->loc,
+                          "global `" + toStdString(globalDecl->getName()) +
+                              "` requires a statically typed initializer for "
+                              "inference",
+                          "This first version infers global types only from "
+                          "literal initializers such as numbers, booleans, "
+                          "chars, and strings. Add an explicit type for other "
+                          "cases.");
+                }
+            }
+
+            interface_->declareGlobal(toStdString(globalDecl->getName()),
+                                      globalType, globalDecl->isExtern());
         }
     }
 
@@ -1525,6 +1665,7 @@ public:
         collectTopLevelLists(unit_.syntaxTree());
         declareStructs();
         completeStructs();
+        declareGlobals();
         declareFunctions();
         interface_->markCollected();
     }
@@ -1539,8 +1680,8 @@ ensureUnitInterfaceCollected(CompilationUnit &unit) {
 }
 
 Function *
-materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType,
-                            llvm::StringRef llvmName,
+materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr,
+                            FuncType *funcType, llvm::StringRef llvmName,
                             std::vector<string> paramNames = {},
                             bool hasImplicitSelf = false) {
     auto *existing = scope.getObj(llvmName);
@@ -1548,11 +1689,9 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType
         return existing->as<Function>();
     }
     auto *llvmFunc = llvm::Function::Create(
-                                            getFunctionAbiLLVMType(
-                                                *typeMgr, funcType, hasImplicitSelf),
-                                            llvm::Function::ExternalLinkage,
-                                            llvm::Twine(llvmName),
-                                            typeMgr->getModule());
+        getFunctionAbiLLVMType(*typeMgr, funcType, hasImplicitSelf),
+        llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
+        typeMgr->getModule());
     annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
     auto *func = new Function(llvmFunc, funcType, std::move(paramNames),
                               hasImplicitSelf);
@@ -1560,8 +1699,47 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr, FuncType *funcType
     return func;
 }
 
+Object *
+materializeDeclaredGlobal(Scope &scope, TypeTable *typeMgr, TypeClass *type,
+                          llvm::StringRef llvmName) {
+    if (!type) {
+        internalError("failed to materialize global declaration `" +
+                          llvmName.str() + "` without a type",
+                      "Global interfaces should only contain resolved types.");
+    }
+
+    if (auto *existing = scope.getObj(llvmName)) {
+        if (existing->getType() != type) {
+            internalError("global declaration `" + llvmName.str() +
+                              "` was materialized with conflicting types",
+                          "Make sure duplicated extern globals use the same "
+                          "type in every module.");
+        }
+        return existing;
+    }
+
+    auto *llvmGlobal = scope.module.getGlobalVariable(llvmName);
+    auto *llvmType = typeMgr->getLLVMType(type);
+    if (llvmGlobal == nullptr) {
+        llvmGlobal = new llvm::GlobalVariable(
+            scope.module, llvmType, !isFullyWritableValueType(type),
+            llvm::GlobalValue::ExternalLinkage, nullptr, llvmName);
+    } else if (llvmGlobal->getValueType() != llvmType) {
+        internalError("LLVM global `" + llvmName.str() +
+                          "` was materialized with a conflicting storage type",
+                      "Make sure duplicated extern globals use the same type "
+                      "in every module.");
+    }
+
+    auto *obj = type->newObj(Object::VARIABLE);
+    obj->setllvmValue(llvmGlobal);
+    scope.addObj(llvmName, obj);
+    return obj;
+}
+
 void
-materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamespace) {
+materializeUnitInterface(Scope *global, CompilationUnit &unit,
+                         bool exportNamespace) {
     initBuildinType(global);
     ensureUnitInterfaceCollected(unit);
     auto *interface = unit.interface();
@@ -1575,11 +1753,12 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
     for (const auto &entry : interface->types()) {
         auto *type = typeMgr->internType(entry.second.type);
         if (!type) {
-            internalError("failed to materialize imported type `" +
-                              toStdString(entry.first) +
-                              "` from module `" + toStdString(unit.path()) + "`",
-                          "Imported interfaces should only contain types that were "
-                          "successfully collected from the defining module.");
+            internalError(
+                "failed to materialize imported type `" +
+                    toStdString(entry.first) + "` from module `" +
+                    toStdString(unit.path()) + "`",
+                "Imported interfaces should only contain types that were "
+                "successfully collected from the defining module.");
         }
         unit.bindLocalType(entry.first, toStdString(type->full_name));
     }
@@ -1590,16 +1769,34 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
         if (!funcType) {
             internalError(
                 "failed to materialize imported function signature `" +
-                    toStdString(entry.first) +
-                    "` from module `" + toStdString(unit.path()) + "`",
-                "Imported interfaces should only contain function signatures that "
+                    toStdString(entry.first) + "` from module `" +
+                    toStdString(unit.path()) + "`",
+                "Imported interfaces should only contain function signatures "
+                "that "
                 "were successfully collected from the defining module.");
         }
-        auto runtimeName = exportNamespace ? entry.second.symbolName : entry.first;
+        auto runtimeName =
+            exportNamespace ? entry.second.symbolName : entry.first;
         unit.bindLocalFunction(entry.first, runtimeName);
         materializeDeclaredFunction(*global, typeMgr, funcType,
                                     toStringRef(runtimeName),
                                     entry.second.paramNames);
+    }
+
+    for (const auto &entry : interface->globals()) {
+        auto *storedType = typeMgr->internType(entry.second.type);
+        if (!storedType) {
+            internalError("failed to materialize imported global `" +
+                              toStdString(entry.first) + "` from module `" +
+                              toStdString(unit.path()) + "`",
+                          "Imported interfaces should only contain globals "
+                          "with fully resolved types.");
+        }
+        auto runtimeName =
+            exportNamespace ? entry.second.symbolName : entry.first;
+        unit.bindLocalGlobal(entry.first, runtimeName);
+        materializeDeclaredGlobal(*global, typeMgr, storedType,
+                                  toStringRef(runtimeName));
     }
 
     for (const auto &entry : interface->types()) {
@@ -1618,13 +1815,12 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
             if (typeMgr->getMethodFunction(structType, method.first())) {
                 continue;
             }
-            auto methodName = toStdString(structType->full_name) + "." + method.first().str();
+            auto methodName =
+                toStdString(structType->full_name) + "." + method.first().str();
             auto *llvmFunc = llvm::Function::Create(
-                                                    getFunctionAbiLLVMType(
-                                                        *typeMgr, methodType, true),
-                                                    llvm::Function::ExternalLinkage,
-                                                    llvm::Twine(methodName),
-                                                    typeMgr->getModule());
+                getFunctionAbiLLVMType(*typeMgr, methodType, true),
+                llvm::Function::ExternalLinkage, llvm::Twine(methodName),
+                typeMgr->getModule());
             annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
             std::vector<string> paramNames;
             if (const auto *storedParamNames =
@@ -1633,7 +1829,8 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
             }
             typeMgr->bindMethodFunction(
                 structType, method.first(),
-                new Function(llvmFunc, methodType, std::move(paramNames), true));
+                new Function(llvmFunc, methodType, std::move(paramNames),
+                             true));
         }
     }
 
@@ -1645,8 +1842,8 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit, bool exportNamesp
 Function *
 createFunc(Scope &scope, AstFuncDecl *root, StructType *parent) {
     initBuildinType(&scope);
-    auto *func =
-        declareFunction(scope, requireTypeTable(&scope), root, parent, nullptr, false);
+    auto *func = declareFunction(scope, requireTypeTable(&scope), root, parent,
+                                 nullptr, false);
     return func;
 }
 
@@ -1657,9 +1854,367 @@ scanningType(Scope *global, AstNode *root) {
 }
 
 void
-collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace) {
+collectUnitDeclarations(Scope *global, CompilationUnit &unit,
+                        bool exportNamespace) {
     collect_interface_impl::materializeUnitInterface(global, unit,
                                                      exportNamespace);
+}
+
+namespace collect_global_impl {
+
+AstStatList *
+requireTopLevelBody(CompilationUnit &unit) {
+    auto *tree = unit.requireSyntaxTree();
+    if (auto *program = dynamic_cast<AstProgram *>(tree)) {
+        return program->body;
+    }
+    if (auto *body = dynamic_cast<AstStatList *>(tree)) {
+        return body;
+    }
+    internalError("compilation unit `" + toStdString(unit.path()) +
+                      "` does not have a top-level statement list",
+                  "This looks like a compiler parser/session integration bug.");
+}
+
+class GlobalDefinitionEmitter {
+    GlobalScope *global_;
+    TypeTable *typeMgr_;
+    llvm::LLVMContext &context_;
+    HIRModule ownerModule_;
+
+    [[noreturn]] void error(const location &loc, const std::string &message,
+                            const std::string &hint = std::string()) {
+        lona::error(loc, message, hint);
+    }
+
+    std::string nextByteStringGlobalName() {
+        static std::uint64_t nextId = 0;
+        return ".lona.global.bytes." + std::to_string(nextId++);
+    }
+
+    llvm::Constant *buildByteStringArrayConstant(const ::string &bytes) {
+        std::vector<std::uint8_t> data;
+        data.reserve(bytes.size() + 1);
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            data.push_back(static_cast<std::uint8_t>(
+                static_cast<unsigned char>(bytes[i])));
+        }
+        data.push_back(0);
+        return llvm::ConstantDataArray::get(context_, data);
+    }
+
+    llvm::Constant *createByteStringPointerConstant(const ::string &bytes) {
+        auto *initializer = buildByteStringArrayConstant(bytes);
+        auto *llvmArrayType =
+            llvm::cast<llvm::ArrayType>(initializer->getType());
+        auto *globalValue =
+            new llvm::GlobalVariable(global_->module, llvmArrayType, true,
+                                     llvm::GlobalValue::PrivateLinkage,
+                                     initializer, nextByteStringGlobalName());
+        globalValue->setAlignment(llvm::MaybeAlign(1));
+        globalValue->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        auto *zero =
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0, true);
+        std::array<llvm::Constant *, 2> indices = {zero, zero};
+        return llvm::ConstantExpr::getInBoundsGetElementPtr(
+            llvmArrayType, globalValue, indices);
+    }
+
+    llvm::Constant *emitScalarValue(HIRValue *value, const location &loc,
+                                    const std::string &name) {
+        auto *object = value ? value->getValue() : nullptr;
+        auto *constant =
+            object
+                ? llvm::dyn_cast_or_null<llvm::Constant>(object->get(global_))
+                : nullptr;
+        if (!constant) {
+            error(loc,
+                  "global `" + name +
+                      "` initializer escaped static-literal lowering",
+                  "This looks like a compiler global-initializer bug.");
+        }
+        return constant;
+    }
+
+    llvm::Constant *foldCastConstant(unsigned opcode, llvm::Constant *source,
+                                     llvm::Type *targetLLVMType,
+                                     const location &loc,
+                                     const std::string &name,
+                                     llvm::StringRef context) {
+        if (!source || !targetLLVMType) {
+            error(loc,
+                  "global `" + name + "` initializer escaped " + context.str() +
+                      " lowering",
+                  "This looks like a compiler global-initializer bug.");
+        }
+        if (source->getType() == targetLLVMType) {
+            return source;
+        }
+
+        if (auto *folded = llvm::ConstantFoldCastInstruction(opcode, source,
+                                                             targetLLVMType)) {
+            return folded;
+        }
+
+        error(loc,
+              "global `" + name + "` initializer escaped " + context.str() +
+                  " lowering",
+              "This looks like a compiler global-initializer bug.");
+    }
+
+    llvm::Constant *emitNumericCast(HIRNumericCast *cast, const location &loc,
+                                    const std::string &name) {
+        auto *sourceType =
+            cast && cast->getExpr() ? cast->getExpr()->getType() : nullptr;
+        auto *targetType = cast ? cast->getType() : nullptr;
+        auto *source = cast && cast->getExpr()
+                           ? emitAnalyzed(cast->getExpr(), loc, name)
+                           : nullptr;
+        if (!sourceType || !targetType || !source) {
+            error(loc,
+                  "global `" + name +
+                      "` initializer escaped numeric cast lowering",
+                  "This looks like a compiler global-initializer bug.");
+        }
+
+        auto *targetLLVMType = typeMgr_->getLLVMType(targetType);
+        if (source->getType() == targetLLVMType) {
+            return source;
+        }
+        if (isIntegerType(sourceType) && isIntegerType(targetType)) {
+            auto sourceBits = static_cast<unsigned>(
+                typeMgr_->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(
+                typeMgr_->getTypeAllocSize(targetType) * 8);
+            if (sourceBits == targetBits) {
+                return source;
+            }
+            if (sourceBits > targetBits) {
+                return foldCastConstant(llvm::Instruction::Trunc, source,
+                                        targetLLVMType, loc, name, "numeric");
+            }
+            return foldCastConstant(
+                isSignedIntegerType(sourceType) ? llvm::Instruction::SExt
+                                                : llvm::Instruction::ZExt,
+                source, targetLLVMType, loc, name, "numeric");
+        }
+        if (isFloatType(sourceType) && isFloatType(targetType)) {
+            auto sourceBits = static_cast<unsigned>(
+                typeMgr_->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(
+                typeMgr_->getTypeAllocSize(targetType) * 8);
+            if (sourceBits == targetBits) {
+                return source;
+            }
+            if (sourceBits < targetBits) {
+                return foldCastConstant(llvm::Instruction::FPExt, source,
+                                        targetLLVMType, loc, name, "numeric");
+            }
+            return foldCastConstant(llvm::Instruction::FPTrunc, source,
+                                    targetLLVMType, loc, name, "numeric");
+        }
+        if (isIntegerType(sourceType) && isFloatType(targetType)) {
+            return foldCastConstant(
+                isSignedIntegerType(sourceType) ? llvm::Instruction::SIToFP
+                                                : llvm::Instruction::UIToFP,
+                source, targetLLVMType, loc, name, "numeric");
+        }
+        if (isFloatType(sourceType) && isIntegerType(targetType)) {
+            return foldCastConstant(
+                isSignedIntegerType(targetType) ? llvm::Instruction::FPToSI
+                                                : llvm::Instruction::FPToUI,
+                source, targetLLVMType, loc, name, "numeric");
+        }
+        error(loc,
+              "global `" + name + "` initializer escaped numeric cast lowering",
+              "This looks like a compiler global-initializer bug.");
+    }
+
+    llvm::Constant *emitPointerCast(HIRBitCast *cast, const location &loc,
+                                    const std::string &name) {
+        auto *source = cast && cast->getExpr()
+                           ? emitAnalyzed(cast->getExpr(), loc, name)
+                           : nullptr;
+        auto *targetType = cast ? cast->getType() : nullptr;
+        if (!source || !targetType) {
+            error(loc,
+                  "global `" + name +
+                      "` initializer escaped pointer cast lowering",
+                  "This looks like a compiler global-initializer bug.");
+        }
+
+        auto *targetLLVMType = typeMgr_->getLLVMType(targetType);
+        if (source->getType() == targetLLVMType) {
+            return source;
+        }
+        if (source->getType()->isPointerTy() && targetLLVMType->isPointerTy()) {
+            return llvm::ConstantExpr::getBitCast(source, targetLLVMType);
+        }
+        error(loc,
+              "global `" + name + "` initializer escaped pointer cast lowering",
+              "This looks like a compiler global-initializer bug.");
+    }
+
+    llvm::Constant *emitUnary(HIRUnaryOper *unary, const location &loc,
+                              const std::string &name) {
+        auto *operand = unary && unary->getExpr()
+                            ? emitAnalyzed(unary->getExpr(), loc, name)
+                            : nullptr;
+        if (!operand) {
+            error(loc,
+                  "global `" + name + "` initializer escaped unary lowering",
+                  "This looks like a compiler global-initializer bug.");
+        }
+
+        switch (unary->getBinding().kind) {
+            case UnaryOperatorKind::Identity:
+                return operand;
+            case UnaryOperatorKind::Negate:
+                if (operand->getType()->isFloatingPointTy()) {
+                    return llvm::ConstantExpr::get(
+                        llvm::Instruction::FSub,
+                        llvm::ConstantFP::get(operand->getType(), -0.0),
+                        operand);
+                }
+                if (operand->getType()->isIntegerTy()) {
+                    return llvm::ConstantExpr::getNeg(operand);
+                }
+                break;
+            default:
+                break;
+        }
+        error(loc, "global `" + name + "` initializer escaped unary lowering",
+              "This looks like a compiler global-initializer bug.");
+    }
+
+    HIRExpr *analyze(TypeClass *expectedType, AstNode *init,
+                     const location &loc, const std::string &name) {
+        if (!expectedType || !init) {
+            return nullptr;
+        }
+        if (dynamic_cast<AstBraceInit *>(init)) {
+            error(loc, "global `" + name + "` initializer is not supported yet",
+                  "This first version only supports literal global "
+                  "initializers. Add runtime initialization inside a function "
+                  "for aggregate values.");
+        }
+        if (!isSupportedStaticLiteralInitializerExpr(init)) {
+            error(
+                loc,
+                "global `" + name +
+                    "` initializer must be a static literal expression",
+                "This first version supports numbers, booleans, chars, "
+                "strings, `null`, and unary `+` / `-` over numeric literals.");
+        }
+
+        auto *expr = analyzeStaticLiteralInitializerExpr(
+            typeMgr_, &ownerModule_, init, expectedType);
+        expr = coerceNumericInitializerExpr(typeMgr_, &ownerModule_, expr,
+                                            expectedType, loc, false);
+        expr = coercePointerInitializerExpr(typeMgr_, &ownerModule_, expr,
+                                            expectedType, loc);
+        requireCompatibleInitializerTypes(
+            loc, expectedType, expr ? expr->getType() : nullptr,
+            "global `" + name + "` initializer type mismatch");
+        return expr;
+    }
+
+    llvm::Constant *emitAnalyzed(HIRExpr *expr, const location &loc,
+                                 const std::string &name) {
+        if (auto *value = dynamic_cast<HIRValue *>(expr)) {
+            return emitScalarValue(value, loc, name);
+        }
+        if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
+            return createByteStringPointerConstant(byteString->getBytes());
+        }
+        if (auto *nullLiteral = dynamic_cast<HIRNullLiteral *>(expr)) {
+            auto *type = nullLiteral->getType();
+            if (!isPointerLikeType(type)) {
+                error(loc,
+                      "global `" + name +
+                          "` null initializer lost its pointer type",
+                      "This looks like a compiler global-initializer bug.");
+            }
+            return llvm::ConstantPointerNull::get(
+                llvm::cast<llvm::PointerType>(typeMgr_->getLLVMType(type)));
+        }
+        if (auto *numericCast = dynamic_cast<HIRNumericCast *>(expr)) {
+            return emitNumericCast(numericCast, loc, name);
+        }
+        if (auto *bitCast = dynamic_cast<HIRBitCast *>(expr)) {
+            return emitPointerCast(bitCast, loc, name);
+        }
+        if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
+            return emitUnary(unary, loc, name);
+        }
+        error(
+            loc,
+            "global `" + name + "` initializer escaped static-literal lowering",
+            "This looks like a compiler global-initializer bug.");
+    }
+
+public:
+    explicit GlobalDefinitionEmitter(GlobalScope *global)
+        : global_(global),
+          typeMgr_(requireTypeTable(global)),
+          context_(global->module.getContext()) {}
+
+    llvm::Constant *emit(TypeClass *expectedType, AstNode *init,
+                         const location &loc, const std::string &name) {
+        return emitAnalyzed(analyze(expectedType, init, loc, name), loc, name);
+    }
+};
+
+}  // namespace collect_global_impl
+
+void
+defineUnitGlobals(Scope *global, CompilationUnit &unit) {
+    auto *globalScope = dynamic_cast<GlobalScope *>(global);
+    assert(globalScope);
+    initBuildinType(globalScope);
+    collect_interface_impl::ensureUnitInterfaceCollected(unit);
+
+    collect_global_impl::GlobalDefinitionEmitter emitter(globalScope);
+    auto *body = collect_global_impl::requireTopLevelBody(unit);
+    for (auto *stmt : body->getBody()) {
+        auto *globalDecl = dynamic_cast<AstGlobalDecl *>(stmt);
+        if (!globalDecl || globalDecl->isExtern()) {
+            continue;
+        }
+
+        auto *runtimeName =
+            unit.findLocalGlobal(toStdString(globalDecl->getName()));
+        if (!runtimeName) {
+            internalError(
+                "failed to look up materialized global `" +
+                    toStdString(globalDecl->getName()) +
+                    "` in compilation unit `" + toStdString(unit.path()) + "`",
+                "Collect declarations before defining global storage.");
+        }
+
+        auto *obj = globalScope->getObj(*runtimeName);
+        if (!obj || !obj->getType() || !obj->getllvmValue()) {
+            internalError(
+                "failed to materialize global storage for `" +
+                    toStdString(*runtimeName) + "`",
+                "Collect declarations before defining global storage.");
+        }
+
+        auto *llvmGlobal =
+            llvm::dyn_cast<llvm::GlobalVariable>(obj->getllvmValue());
+        if (!llvmGlobal) {
+            internalError(
+                "global `" + toStdString(*runtimeName) +
+                    "` does not map to an LLVM global variable",
+                "Collect declarations before defining global storage.");
+        }
+
+        auto *initializer =
+            emitter.emit(obj->getType(), globalDecl->getInitVal(),
+                         globalDecl->loc, toStdString(globalDecl->getName()));
+        llvmGlobal->setInitializer(initializer);
+        llvmGlobal->setConstant(!isFullyWritableValueType(obj->getType()));
+    }
 }
 
 StructType *
@@ -1700,11 +2255,13 @@ class FunctionCompiler {
         lona::error(message);
     }
 
-    [[noreturn]] void error(const std::string &message, const std::string &hint) {
+    [[noreturn]] void error(const std::string &message,
+                            const std::string &hint) {
         if (hasCurrentLocation) {
             lona::error(currentLocation, message, hint);
         }
-        throw DiagnosticError(DiagnosticError::Category::Semantic, message, hint);
+        throw DiagnosticError(DiagnosticError::Category::Semantic, message,
+                              hint);
     }
 
     [[noreturn]] void error(const location &loc, const std::string &message,
@@ -1712,7 +2269,8 @@ class FunctionCompiler {
         lona::error(loc, message, hint);
     }
 
-    [[noreturn]] void functionError(HIRFunc *hirFunc, const std::string &message,
+    [[noreturn]] void functionError(HIRFunc *hirFunc,
+                                    const std::string &message,
                                     const std::string &hint = std::string()) {
         if (hirFunc) {
             error(hirFunc->getLocation(), message, hint);
@@ -1740,10 +2298,10 @@ class FunctionCompiler {
         auto *initializer = buildByteStringArrayConstant(bytes);
         auto *llvmArrayType =
             llvm::cast<llvm::ArrayType>(initializer->getType());
-        auto *globalValue = new llvm::GlobalVariable(
-            scope->module, llvmArrayType, true,
-            llvm::GlobalValue::PrivateLinkage, initializer,
-            nextByteStringGlobalName());
+        auto *globalValue =
+            new llvm::GlobalVariable(scope->module, llvmArrayType, true,
+                                     llvm::GlobalValue::PrivateLinkage,
+                                     initializer, nextByteStringGlobalName());
         globalValue->setAlignment(llvm::MaybeAlign(1));
         return globalValue;
     }
@@ -1783,18 +2341,20 @@ class FunctionCompiler {
         return obj;
     }
 
-    Object *materializeIndirectValueBinding(Object *obj, llvm::Value *incomingPtr) {
+    Object *materializeIndirectValueBinding(Object *obj,
+                                            llvm::Value *incomingPtr) {
         if (!obj || !incomingPtr) {
             error("indirect value binding requires an incoming pointer");
         }
         auto *bound = materializeBinding(obj);
-        auto *value = scope->builder.CreateLoad(scope->getLLVMType(obj->getType()),
-                                                incomingPtr);
+        auto *value = scope->builder.CreateLoad(
+            scope->getLLVMType(obj->getType()), incomingPtr);
         scope->builder.CreateStore(value, bound->getllvmValue());
         return bound;
     }
 
-    Object *materializeDirectValueBinding(Object *obj, llvm::Value *incomingValue,
+    Object *materializeDirectValueBinding(Object *obj,
+                                          llvm::Value *incomingValue,
                                           bool packedRegisterAggregate) {
         if (!obj || !incomingValue) {
             error("direct value binding requires an incoming value");
@@ -1809,7 +2369,8 @@ class FunctionCompiler {
         return bound;
     }
 
-    std::vector<AstNode *> consumeArrayOuterDimension(const std::vector<AstNode *> &dims) {
+    std::vector<AstNode *> consumeArrayOuterDimension(
+        const std::vector<AstNode *> &dims) {
         std::vector<AstNode *> remaining;
         remaining.reserve(dims.size());
         bool consumed = false;
@@ -1843,7 +2404,8 @@ class FunctionCompiler {
             return arrayType->getElementType();
         }
         auto childDims = consumeArrayOuterDimension(arrayType->getDimensions());
-        return typeMgr->createArrayType(arrayType->getElementType(), std::move(childDims));
+        return typeMgr->createArrayType(arrayType->getElementType(),
+                                        std::move(childDims));
     }
 
     void setLocation(const location &loc) {
@@ -1858,9 +2420,7 @@ class FunctionCompiler {
         }
     }
 
-    void clearLocation() {
-        clearDebugLocation(scope->builder);
-    }
+    void clearLocation() { clearDebugLocation(scope->builder); }
 
     const LoopContext &requireCurrentLoop() {
         if (loopStack.empty()) {
@@ -1900,18 +2460,20 @@ class FunctionCompiler {
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, itemValue, {static_cast<unsigned>(i)});
             }
-            auto *result = tupleType->newObj(Object::REG_VAL | Object::READONLY);
+            auto *result =
+                tupleType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
         }
         if (auto *structLiteral = dynamic_cast<HIRStructLiteral *>(expr)) {
             setLocation(structLiteral);
-            auto *structType = asUnqualified<StructType>(structLiteral->getType());
+            auto *structType =
+                asUnqualified<StructType>(structLiteral->getType());
             if (!structType) {
                 error("struct literal is missing its struct type");
             }
-            auto *llvmStructType =
-                llvm::dyn_cast<llvm::StructType>(typeMgr->getLLVMType(structType));
+            auto *llvmStructType = llvm::dyn_cast<llvm::StructType>(
+                typeMgr->getLLVMType(structType));
             if (!llvmStructType) {
                 error("struct literal lowering requires an LLVM struct type");
             }
@@ -1942,7 +2504,8 @@ class FunctionCompiler {
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, field->get(scope), {static_cast<unsigned>(i)});
             }
-            auto *result = structType->newObj(Object::REG_VAL | Object::READONLY);
+            auto *result =
+                structType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
         }
@@ -1956,20 +2519,22 @@ class FunctionCompiler {
             if (!childType) {
                 error("array initializer is missing its child element type");
             }
-            llvm::Value *aggregate = llvm::Constant::getNullValue(
-                scope->getLLVMType(arrayType));
+            llvm::Value *aggregate =
+                llvm::Constant::getNullValue(scope->getLLVMType(arrayType));
             for (std::size_t i = 0; i < arrayInit->getItems().size(); ++i) {
                 auto *item = compileExpr(arrayInit->getItems()[i]);
                 if (!item) {
                     error("array initializer item did not produce a value");
                 }
                 if (!isByteCopyCompatible(childType, item->getType())) {
-                    error("array initializer item type mismatch during lowering");
+                    error(
+                        "array initializer item type mismatch during lowering");
                 }
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, item->get(scope), {static_cast<unsigned>(i)});
             }
-            auto *result = arrayType->newObj(Object::REG_VAL | Object::READONLY);
+            auto *result =
+                arrayType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
         }
@@ -1978,7 +2543,8 @@ class FunctionCompiler {
             auto *globalValue = createByteStringGlobal(byteString->getBytes());
             auto *llvmArrayType =
                 llvm::cast<llvm::ArrayType>(globalValue->getValueType());
-            auto *zero = llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true);
+            auto *zero =
+                llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true);
             auto *borrowed = scope->builder.CreateInBoundsGEP(
                 llvmArrayType, globalValue, {zero, zero});
             return makeReadonlyValue(byteString->getType(), borrowed);
@@ -2069,17 +2635,19 @@ class FunctionCompiler {
                     parent = materializeLocal(parent->getType(), parent);
                 }
                 auto *selfType = funcType && !funcType->getArgTypes().empty()
-                    ? funcType->getArgTypes().front()
-                    : nullptr;
+                                     ? funcType->getArgTypes().front()
+                                     : nullptr;
                 auto *selfPointeeType = getRawPointerPointeeType(selfType);
                 if (!selfType || !selfPointeeType ||
                     !isConstQualificationConvertible(selfPointeeType,
                                                      parent->getType())) {
                     error("method lowering expected an implicit self pointer");
                 }
-                args.push_back(makeReadonlyValue(selfType, parent->getllvmValue()));
+                args.push_back(
+                    makeReadonlyValue(selfType, parent->getllvmValue()));
                 hasImplicitSelf = true;
-            } else if (auto *callee = getDirectFunctionCallee(call->getCallee())) {
+            } else if (auto *callee =
+                           getDirectFunctionCallee(call->getCallee())) {
                 funcType = callee->getType()->as<FuncType>();
                 calleeValue = callee->getllvmValue();
                 hasImplicitSelf = callee->hasImplicitSelf();
@@ -2090,7 +2658,9 @@ class FunctionCompiler {
                 }
                 funcType = getFunctionPointerTarget(calleeObj->getType());
                 if (!funcType) {
-                    error("callee must be a function, function pointer, or method selector");
+                    error(
+                        "callee must be a function, function pointer, or "
+                        "method selector");
                 }
                 calleeValue = calleeObj->get(scope);
             }
@@ -2116,7 +2686,9 @@ class FunctionCompiler {
             auto *indexableType =
                 asUnqualified<IndexablePointerType>(target->getType());
             if (!arrayType && !indexableType) {
-                error("array indexing expects an array value or indexable pointer");
+                error(
+                    "array indexing expects an array value or indexable "
+                    "pointer");
             }
 
             std::vector<llvm::Value *> gepIndices;
@@ -2124,23 +2696,27 @@ class FunctionCompiler {
             llvm::Value *targetPtr = nullptr;
             const bool fixedLayout = arrayType && arrayType->hasStaticLayout();
             if (arrayType && !fixedLayout) {
-                error("array indexing requires a fixed-layout array type or an indexable pointer");
+                error(
+                    "array indexing requires a fixed-layout array type or an "
+                    "indexable pointer");
             }
-            gepIndices.reserve(index->getIndices().size() + (fixedLayout ? 1 : 0));
+            gepIndices.reserve(index->getIndices().size() +
+                               (fixedLayout ? 1 : 0));
             if (fixedLayout) {
                 targetPtr = target->getllvmValue();
                 if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
                     error("array indexing expects an addressable array value");
                 }
                 gepSourceType = scope->getLLVMType(arrayType);
-                gepIndices.push_back(
-                    llvm::ConstantInt::get(scope->builder.getInt32Ty(), 0, true));
+                gepIndices.push_back(llvm::ConstantInt::get(
+                    scope->builder.getInt32Ty(), 0, true));
             } else {
                 targetPtr = target->get(scope);
                 if (!targetPtr || !targetPtr->getType()->isPointerTy()) {
                     error("array indexing expects a pointer value");
                 }
-                gepSourceType = scope->getLLVMType(indexableType->getElementType());
+                gepSourceType =
+                    scope->getLLVMType(indexableType->getElementType());
             }
             for (auto *argExpr : index->getIndices()) {
                 auto *arg = compileExpr(argExpr);
@@ -2189,7 +2765,8 @@ class FunctionCompiler {
             if (ret->getExpr()) {
                 auto *value = compileExpr(ret->getExpr());
                 if (!retSlot) {
-                    error(ret->getLocation(), "unexpected return value in void function");
+                    error(ret->getLocation(),
+                          "unexpected return value in void function");
                 }
                 retSlot->set(scope, value);
             } else if (retSlot) {
@@ -2221,11 +2798,12 @@ class FunctionCompiler {
             auto *condObj = compileExpr(ifNode->getCondition());
             auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
 
-            auto *thenBB = llvm::BasicBlock::Create(context, "if.then", llvmFunc);
+            auto *thenBB =
+                llvm::BasicBlock::Create(context, "if.then", llvmFunc);
             auto *mergeBB = llvm::BasicBlock::Create(context, "if.end");
             auto *elseBB = ifNode->hasElseBlock()
-                ? llvm::BasicBlock::Create(context, "if.else")
-                : mergeBB;
+                               ? llvm::BasicBlock::Create(context, "if.else")
+                               : mergeBB;
 
             scope->builder.CreateCondBr(emitBoolCast(condObj), thenBB, elseBB);
 
@@ -2251,12 +2829,13 @@ class FunctionCompiler {
         if (auto *forNode = dynamic_cast<HIRFor *>(node)) {
             setLocation(forNode);
             auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
-            auto *condBB = llvm::BasicBlock::Create(context, "for.cond", llvmFunc);
+            auto *condBB =
+                llvm::BasicBlock::Create(context, "for.cond", llvmFunc);
             auto *bodyBB = llvm::BasicBlock::Create(context, "for.body");
             auto *endBB = llvm::BasicBlock::Create(context, "for.end");
             auto *elseBB = forNode->hasElseBlock()
-                ? llvm::BasicBlock::Create(context, "for.else")
-                : endBB;
+                               ? llvm::BasicBlock::Create(context, "for.else")
+                               : endBB;
 
             scope->builder.CreateBr(condBB);
 
@@ -2369,35 +2948,48 @@ class FunctionCompiler {
 
         llvm::Value *result = nullptr;
         if (isIntegerType(sourceType) && isIntegerType(targetType)) {
-            auto sourceBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(sourceType) * 8);
-            auto targetBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(targetType) * 8);
+            auto sourceBits = static_cast<unsigned>(
+                scope->types()->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(
+                scope->types()->getTypeAllocSize(targetType) * 8);
             if (sourceBits == targetBits) {
                 result = value;
             } else if (sourceBits < targetBits) {
                 result = isSignedIntegerType(sourceType)
-                    ? scope->builder.CreateSExt(value, scope->getLLVMType(targetType))
-                    : scope->builder.CreateZExt(value, scope->getLLVMType(targetType));
+                             ? scope->builder.CreateSExt(
+                                   value, scope->getLLVMType(targetType))
+                             : scope->builder.CreateZExt(
+                                   value, scope->getLLVMType(targetType));
             } else {
-                result = scope->builder.CreateTrunc(value, scope->getLLVMType(targetType));
+                result = scope->builder.CreateTrunc(
+                    value, scope->getLLVMType(targetType));
             }
         } else if (isFloatType(sourceType) && isFloatType(targetType)) {
-            auto sourceBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(sourceType) * 8);
-            auto targetBits = static_cast<unsigned>(scope->types()->getTypeAllocSize(targetType) * 8);
+            auto sourceBits = static_cast<unsigned>(
+                scope->types()->getTypeAllocSize(sourceType) * 8);
+            auto targetBits = static_cast<unsigned>(
+                scope->types()->getTypeAllocSize(targetType) * 8);
             if (sourceBits == targetBits) {
                 result = value;
             } else if (sourceBits < targetBits) {
-                result = scope->builder.CreateFPExt(value, scope->getLLVMType(targetType));
+                result = scope->builder.CreateFPExt(
+                    value, scope->getLLVMType(targetType));
             } else {
-                result = scope->builder.CreateFPTrunc(value, scope->getLLVMType(targetType));
+                result = scope->builder.CreateFPTrunc(
+                    value, scope->getLLVMType(targetType));
             }
         } else if (isIntegerType(sourceType) && isFloatType(targetType)) {
             result = isSignedIntegerType(sourceType)
-                ? scope->builder.CreateSIToFP(value, scope->getLLVMType(targetType))
-                : scope->builder.CreateUIToFP(value, scope->getLLVMType(targetType));
+                         ? scope->builder.CreateSIToFP(
+                               value, scope->getLLVMType(targetType))
+                         : scope->builder.CreateUIToFP(
+                               value, scope->getLLVMType(targetType));
         } else if (isFloatType(sourceType) && isIntegerType(targetType)) {
             result = isSignedIntegerType(targetType)
-                ? scope->builder.CreateFPToSI(value, scope->getLLVMType(targetType))
-                : scope->builder.CreateFPToUI(value, scope->getLLVMType(targetType));
+                         ? scope->builder.CreateFPToSI(
+                               value, scope->getLLVMType(targetType))
+                         : scope->builder.CreateFPToUI(
+                               value, scope->getLLVMType(targetType));
         } else {
             error("unsupported numeric cast");
         }
@@ -2427,13 +3019,14 @@ class FunctionCompiler {
         };
 
         auto targetBitsWidth = bitWidthFor(targetType);
-        auto *targetBitsType =
-            llvm::IntegerType::get(scope->builder.getContext(), targetBitsWidth);
+        auto *targetBitsType = llvm::IntegerType::get(
+            scope->builder.getContext(), targetBitsWidth);
 
         auto isBitsArray = [](TypeClass *type) {
             auto *array = asUnqualified<ArrayType>(type);
-            return array && array->getElementType() == u8Ty && array->hasStaticLayout() &&
-                array->staticDimensions().size() == 1;
+            return array && array->getElementType() == u8Ty &&
+                   array->hasStaticLayout() &&
+                   array->staticDimensions().size() == 1;
         };
 
         llvm::Value *bits = nullptr;
@@ -2444,7 +3037,8 @@ class FunctionCompiler {
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = sourceValue;
             if (bits->getType() != sourceBitsType) {
-                bits = scope->builder.CreateTruncOrBitCast(bits, sourceBitsType);
+                bits =
+                    scope->builder.CreateTruncOrBitCast(bits, sourceBitsType);
             }
         } else if (sourceValue->getType()->isFloatingPointTy()) {
             bitsWidth = bitWidthFor(sourceType);
@@ -2457,23 +3051,26 @@ class FunctionCompiler {
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = scope->builder.CreatePtrToInt(sourceValue, sourceBitsType);
         } else if (isBitsArray(sourceType)) {
-            auto dims = asUnqualified<ArrayType>(sourceType)->staticDimensions();
-            const auto relevantBytes =
-                std::max<std::int64_t>(1, std::min<std::int64_t>(
-                                              dims[0],
-                                              static_cast<std::int64_t>(
-                                                  scope->types()->getTypeAllocSize(targetType))));
+            auto dims =
+                asUnqualified<ArrayType>(sourceType)->staticDimensions();
+            const auto relevantBytes = std::max<std::int64_t>(
+                1, std::min<std::int64_t>(
+                       dims[0],
+                       static_cast<std::int64_t>(
+                           scope->types()->getTypeAllocSize(targetType))));
             bitsWidth = static_cast<unsigned>(relevantBytes * 8);
             auto *sourceBitsType =
                 llvm::IntegerType::get(scope->builder.getContext(), bitsWidth);
             bits = llvm::ConstantInt::get(sourceBitsType, 0);
             for (std::int64_t i = 0; i < relevantBytes; ++i) {
-                auto *byteValue =
-                    scope->builder.CreateExtractValue(sourceValue, {static_cast<unsigned>(i)});
-                auto *byteBits = scope->builder.CreateZExt(byteValue, sourceBitsType);
+                auto *byteValue = scope->builder.CreateExtractValue(
+                    sourceValue, {static_cast<unsigned>(i)});
+                auto *byteBits =
+                    scope->builder.CreateZExt(byteValue, sourceBitsType);
                 if (i != 0) {
                     byteBits = scope->builder.CreateShl(
-                        byteBits, llvm::ConstantInt::get(sourceBitsType, i * 8));
+                        byteBits,
+                        llvm::ConstantInt::get(sourceBitsType, i * 8));
                 }
                 bits = scope->builder.CreateOr(bits, byteBits);
             }
@@ -2497,12 +3094,15 @@ class FunctionCompiler {
             result = scope->builder.CreateIntToPtr(bits, targetLLVMType);
         } else if (isBitsArray(targetType)) {
             result = llvm::UndefValue::get(targetLLVMType);
-            auto dims = asUnqualified<ArrayType>(targetType)->staticDimensions();
+            auto dims =
+                asUnqualified<ArrayType>(targetType)->staticDimensions();
             for (std::int64_t i = 0; i < dims[0]; ++i) {
-                auto *shift =
-                    i == 0 ? bits : scope->builder.CreateLShr(
-                                         bits, llvm::ConstantInt::get(targetBitsType, i * 8));
-                auto *byteValue = scope->builder.CreateTrunc(shift, scope->getLLVMType(u8Ty));
+                auto *shift = i == 0 ? bits
+                                     : scope->builder.CreateLShr(
+                                           bits, llvm::ConstantInt::get(
+                                                     targetBitsType, i * 8));
+                auto *byteValue =
+                    scope->builder.CreateTrunc(shift, scope->getLLVMType(u8Ty));
                 result = scope->builder.CreateInsertValue(
                     result, byteValue, {static_cast<unsigned>(i)});
             }
@@ -2513,43 +3113,46 @@ class FunctionCompiler {
         return makeReadonlyValue(targetType, result);
     }
 
-    Object *emitUnaryOperator(const UnaryOperatorBinding &binding, Object *value) {
+    Object *emitUnaryOperator(const UnaryOperatorBinding &binding,
+                              Object *value) {
         auto *llvmValue = binding.kind == UnaryOperatorKind::AddressOf
-            ? value->getllvmValue()
-            : (binding.kind == UnaryOperatorKind::Dereference ? value->get(scope)
-                                                              : value->get(scope));
+                              ? value->getllvmValue()
+                              : (binding.kind == UnaryOperatorKind::Dereference
+                                     ? value->get(scope)
+                                     : value->get(scope));
 
         switch (binding.kind) {
-        case UnaryOperatorKind::Identity:
-            return value;
-        case UnaryOperatorKind::Negate:
-            return makeReadonlyValue(
-                binding.resultType,
-                binding.operandClass == OperatorOperandClass::Float
-                    ? scope->builder.CreateFNeg(llvmValue)
-                    : scope->builder.CreateNeg(llvmValue));
-        case UnaryOperatorKind::LogicalNot:
-            return makeReadonlyValue(boolTy, scope->builder.CreateNot(emitBoolCast(value)));
-        case UnaryOperatorKind::BitwiseNot:
-            return makeReadonlyValue(binding.resultType,
-                                     scope->builder.CreateNot(llvmValue));
-        case UnaryOperatorKind::AddressOf:
-            if (!value->isVariable() || value->isRegVal() || !llvmValue) {
-                error("address-of expects an addressable value");
+            case UnaryOperatorKind::Identity:
+                return value;
+            case UnaryOperatorKind::Negate:
+                return makeReadonlyValue(
+                    binding.resultType,
+                    binding.operandClass == OperatorOperandClass::Float
+                        ? scope->builder.CreateFNeg(llvmValue)
+                        : scope->builder.CreateNeg(llvmValue));
+            case UnaryOperatorKind::LogicalNot:
+                return makeReadonlyValue(
+                    boolTy, scope->builder.CreateNot(emitBoolCast(value)));
+            case UnaryOperatorKind::BitwiseNot:
+                return makeReadonlyValue(binding.resultType,
+                                         scope->builder.CreateNot(llvmValue));
+            case UnaryOperatorKind::AddressOf:
+                if (!value->isVariable() || value->isRegVal() || !llvmValue) {
+                    error("address-of expects an addressable value");
+                }
+                return makeReadonlyValue(binding.resultType, llvmValue);
+            case UnaryOperatorKind::Dereference: {
+                auto *result = binding.resultType->newObj(Object::VARIABLE);
+                result->setllvmValue(llvmValue);
+                return result;
             }
-            return makeReadonlyValue(binding.resultType, llvmValue);
-        case UnaryOperatorKind::Dereference: {
-            auto *result = binding.resultType->newObj(Object::VARIABLE);
-            result->setllvmValue(llvmValue);
-            return result;
-        }
-        default:
-            error("unsupported unary operator binding");
+            default:
+                error("unsupported unary operator binding");
         }
     }
 
-    Object *emitBinaryOperator(const BinaryOperatorBinding &binding, Object *left,
-                               Object *right) {
+    Object *emitBinaryOperator(const BinaryOperatorBinding &binding,
+                               Object *left, Object *right) {
         auto *lhs = left->get(scope);
         auto *rhs = right->get(scope);
         if (binding.leftClass == OperatorOperandClass::Bool &&
@@ -2563,100 +3166,105 @@ class FunctionCompiler {
         llvm::Value *result = nullptr;
 
         switch (binding.kind) {
-        case BinaryOperatorKind::Add:
-            result = binding.leftClass == OperatorOperandClass::Float
-                ? scope->builder.CreateFAdd(lhs, rhs)
-                : scope->builder.CreateAdd(lhs, rhs);
-            break;
-        case BinaryOperatorKind::Sub:
-            result = binding.leftClass == OperatorOperandClass::Float
-                ? scope->builder.CreateFSub(lhs, rhs)
-                : scope->builder.CreateSub(lhs, rhs);
-            break;
-        case BinaryOperatorKind::Mul:
-            result = binding.leftClass == OperatorOperandClass::Float
-                ? scope->builder.CreateFMul(lhs, rhs)
-                : scope->builder.CreateMul(lhs, rhs);
-            break;
-        case BinaryOperatorKind::Div:
-            if (binding.leftClass == OperatorOperandClass::Float) {
-                result = scope->builder.CreateFDiv(lhs, rhs);
-            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
-                result = scope->builder.CreateUDiv(lhs, rhs);
-            } else {
-                result = scope->builder.CreateSDiv(lhs, rhs);
-            }
-            break;
-        case BinaryOperatorKind::Mod:
-            result = binding.leftClass == OperatorOperandClass::UnsignedInt
-                ? scope->builder.CreateURem(lhs, rhs)
-                : scope->builder.CreateSRem(lhs, rhs);
-            break;
-        case BinaryOperatorKind::ShiftLeft:
-            result = scope->builder.CreateShl(lhs, rhs);
-            break;
-        case BinaryOperatorKind::ShiftRight:
-            result = binding.leftClass == OperatorOperandClass::UnsignedInt
-                ? scope->builder.CreateLShr(lhs, rhs)
-                : scope->builder.CreateAShr(lhs, rhs);
-            break;
-        case BinaryOperatorKind::BitAnd:
-            result = scope->builder.CreateAnd(lhs, rhs);
-            break;
-        case BinaryOperatorKind::BitXor:
-            result = scope->builder.CreateXor(lhs, rhs);
-            break;
-        case BinaryOperatorKind::BitOr:
-            result = scope->builder.CreateOr(lhs, rhs);
-            break;
-        case BinaryOperatorKind::Less:
-            if (binding.leftClass == OperatorOperandClass::Float) {
-                result = scope->builder.CreateFCmpOLT(lhs, rhs);
-            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
-                result = scope->builder.CreateICmpULT(lhs, rhs);
-            } else {
-                result = scope->builder.CreateICmpSLT(lhs, rhs);
-            }
-            break;
-        case BinaryOperatorKind::Greater:
-            if (binding.leftClass == OperatorOperandClass::Float) {
-                result = scope->builder.CreateFCmpOGT(lhs, rhs);
-            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
-                result = scope->builder.CreateICmpUGT(lhs, rhs);
-            } else {
-                result = scope->builder.CreateICmpSGT(lhs, rhs);
-            }
-            break;
-        case BinaryOperatorKind::LessEqual:
-            if (binding.leftClass == OperatorOperandClass::Float) {
-                result = scope->builder.CreateFCmpOLE(lhs, rhs);
-            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
-                result = scope->builder.CreateICmpULE(lhs, rhs);
-            } else {
-                result = scope->builder.CreateICmpSLE(lhs, rhs);
-            }
-            break;
-        case BinaryOperatorKind::GreaterEqual:
-            if (binding.leftClass == OperatorOperandClass::Float) {
-                result = scope->builder.CreateFCmpOGE(lhs, rhs);
-            } else if (binding.leftClass == OperatorOperandClass::UnsignedInt) {
-                result = scope->builder.CreateICmpUGE(lhs, rhs);
-            } else {
-                result = scope->builder.CreateICmpSGE(lhs, rhs);
-            }
-            break;
-        case BinaryOperatorKind::Equal:
-            result = binding.leftClass == OperatorOperandClass::Float
-                ? scope->builder.CreateFCmpOEQ(lhs, rhs)
-                : scope->builder.CreateICmpEQ(lhs, rhs);
-            break;
-        case BinaryOperatorKind::NotEqual:
-            result = binding.leftClass == OperatorOperandClass::Float
-                ? scope->builder.CreateFCmpUNE(lhs, rhs)
-                : scope->builder.CreateICmpNE(lhs, rhs);
-            break;
-        default:
-            error("unsupported binary operator binding");
+            case BinaryOperatorKind::Add:
+                result = binding.leftClass == OperatorOperandClass::Float
+                             ? scope->builder.CreateFAdd(lhs, rhs)
+                             : scope->builder.CreateAdd(lhs, rhs);
+                break;
+            case BinaryOperatorKind::Sub:
+                result = binding.leftClass == OperatorOperandClass::Float
+                             ? scope->builder.CreateFSub(lhs, rhs)
+                             : scope->builder.CreateSub(lhs, rhs);
+                break;
+            case BinaryOperatorKind::Mul:
+                result = binding.leftClass == OperatorOperandClass::Float
+                             ? scope->builder.CreateFMul(lhs, rhs)
+                             : scope->builder.CreateMul(lhs, rhs);
+                break;
+            case BinaryOperatorKind::Div:
+                if (binding.leftClass == OperatorOperandClass::Float) {
+                    result = scope->builder.CreateFDiv(lhs, rhs);
+                } else if (binding.leftClass ==
+                           OperatorOperandClass::UnsignedInt) {
+                    result = scope->builder.CreateUDiv(lhs, rhs);
+                } else {
+                    result = scope->builder.CreateSDiv(lhs, rhs);
+                }
+                break;
+            case BinaryOperatorKind::Mod:
+                result = binding.leftClass == OperatorOperandClass::UnsignedInt
+                             ? scope->builder.CreateURem(lhs, rhs)
+                             : scope->builder.CreateSRem(lhs, rhs);
+                break;
+            case BinaryOperatorKind::ShiftLeft:
+                result = scope->builder.CreateShl(lhs, rhs);
+                break;
+            case BinaryOperatorKind::ShiftRight:
+                result = binding.leftClass == OperatorOperandClass::UnsignedInt
+                             ? scope->builder.CreateLShr(lhs, rhs)
+                             : scope->builder.CreateAShr(lhs, rhs);
+                break;
+            case BinaryOperatorKind::BitAnd:
+                result = scope->builder.CreateAnd(lhs, rhs);
+                break;
+            case BinaryOperatorKind::BitXor:
+                result = scope->builder.CreateXor(lhs, rhs);
+                break;
+            case BinaryOperatorKind::BitOr:
+                result = scope->builder.CreateOr(lhs, rhs);
+                break;
+            case BinaryOperatorKind::Less:
+                if (binding.leftClass == OperatorOperandClass::Float) {
+                    result = scope->builder.CreateFCmpOLT(lhs, rhs);
+                } else if (binding.leftClass ==
+                           OperatorOperandClass::UnsignedInt) {
+                    result = scope->builder.CreateICmpULT(lhs, rhs);
+                } else {
+                    result = scope->builder.CreateICmpSLT(lhs, rhs);
+                }
+                break;
+            case BinaryOperatorKind::Greater:
+                if (binding.leftClass == OperatorOperandClass::Float) {
+                    result = scope->builder.CreateFCmpOGT(lhs, rhs);
+                } else if (binding.leftClass ==
+                           OperatorOperandClass::UnsignedInt) {
+                    result = scope->builder.CreateICmpUGT(lhs, rhs);
+                } else {
+                    result = scope->builder.CreateICmpSGT(lhs, rhs);
+                }
+                break;
+            case BinaryOperatorKind::LessEqual:
+                if (binding.leftClass == OperatorOperandClass::Float) {
+                    result = scope->builder.CreateFCmpOLE(lhs, rhs);
+                } else if (binding.leftClass ==
+                           OperatorOperandClass::UnsignedInt) {
+                    result = scope->builder.CreateICmpULE(lhs, rhs);
+                } else {
+                    result = scope->builder.CreateICmpSLE(lhs, rhs);
+                }
+                break;
+            case BinaryOperatorKind::GreaterEqual:
+                if (binding.leftClass == OperatorOperandClass::Float) {
+                    result = scope->builder.CreateFCmpOGE(lhs, rhs);
+                } else if (binding.leftClass ==
+                           OperatorOperandClass::UnsignedInt) {
+                    result = scope->builder.CreateICmpUGE(lhs, rhs);
+                } else {
+                    result = scope->builder.CreateICmpSGE(lhs, rhs);
+                }
+                break;
+            case BinaryOperatorKind::Equal:
+                result = binding.leftClass == OperatorOperandClass::Float
+                             ? scope->builder.CreateFCmpOEQ(lhs, rhs)
+                             : scope->builder.CreateICmpEQ(lhs, rhs);
+                break;
+            case BinaryOperatorKind::NotEqual:
+                result = binding.leftClass == OperatorOperandClass::Float
+                             ? scope->builder.CreateFCmpUNE(lhs, rhs)
+                             : scope->builder.CreateICmpNE(lhs, rhs);
+                break;
+            default:
+                error("unsupported binary operator binding");
         }
 
         return makeReadonlyValue(binding.resultType, result);
@@ -2669,16 +3277,18 @@ class FunctionCompiler {
 
         auto &context = scope->builder.getContext();
         auto *function = scope->builder.GetInsertBlock()
-            ? scope->builder.GetInsertBlock()->getParent()
-            : nullptr;
+                             ? scope->builder.GetInsertBlock()->getParent()
+                             : nullptr;
         if (!function) {
             error("logical short-circuit needs an active function");
         }
 
         auto *lhsBlock = scope->builder.GetInsertBlock();
         auto *rhsBB = llvm::BasicBlock::Create(context, "logic.rhs", function);
-        auto *shortBB = llvm::BasicBlock::Create(context, "logic.short", function);
-        auto *mergeBB = llvm::BasicBlock::Create(context, "logic.merge", function);
+        auto *shortBB =
+            llvm::BasicBlock::Create(context, "logic.short", function);
+        auto *mergeBB =
+            llvm::BasicBlock::Create(context, "logic.merge", function);
 
         if (binding.kind == BinaryOperatorKind::LogicalAnd) {
             scope->builder.CreateCondBr(lhsBool, rhsBB, shortBB);
@@ -2783,21 +3393,23 @@ public:
         returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
-            scope->structTy = asUnqualified<StructType>(
-                getRawPointerPointeeType(hirFunc->getSelfBinding().object->getType()));
+            scope->structTy =
+                asUnqualified<StructType>(getRawPointerPointeeType(
+                    hirFunc->getSelfBinding().object->getType()));
         }
 
         if (debug) {
-            debugSubprogram = createDebugSubprogram(
-                *debug, llvmFunc, funcType, llvmFunc->getName().str(),
-                hirFunc->getLocation());
+            debugSubprogram = createDebugSubprogram(*debug, llvmFunc, funcType,
+                                                    llvmFunc->getName().str(),
+                                                    hirFunc->getLocation());
             scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
                 context, sourceLine(hirFunc->getLocation()),
                 sourceColumn(hirFunc->getLocation()), debugSubprogram));
         }
 
         auto *retType = funcType->getRetType();
-        if (!hirFunc->isTopLevelEntry() && retType && !hirFunc->hasGuaranteedReturn()) {
+        if (!hirFunc->isTopLevelEntry() && retType &&
+            !hirFunc->hasGuaranteedReturn()) {
             functionError(hirFunc, "not all paths return a value");
         }
 
@@ -2810,14 +3422,16 @@ public:
             const auto &argInfo = abiSignature.argInfo(0);
             auto passKind = argInfo.passKind;
             if (passKind == AbiPassKind::IndirectRef) {
-                auto *incomingSelf = binding.object->getType()->newObj(Object::VARIABLE);
+                auto *incomingSelf =
+                    binding.object->getType()->newObj(Object::VARIABLE);
                 incomingSelf->setllvmValue(&*argIt);
                 selfObj = materializeBinding(binding.object, incomingSelf);
             } else if (passKind == AbiPassKind::IndirectValue) {
-                selfObj = materializeIndirectValueBinding(binding.object, &*argIt);
+                selfObj =
+                    materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
-                selfObj = materializeDirectValueBinding(binding.object, &*argIt,
-                                                        argInfo.packedRegisterAggregate);
+                selfObj = materializeDirectValueBinding(
+                    binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, selfObj);
             emitDebugDeclare(debug, scope, debugSubprogram, selfObj,
@@ -2830,7 +3444,9 @@ public:
             Object *retSlot = nullptr;
             if (returnByPointer) {
                 if (llvmFunc->arg_size() < 1) {
-                    functionError(hirFunc, "function is missing hidden return slot argument");
+                    functionError(
+                        hirFunc,
+                        "function is missing hidden return slot argument");
                 }
                 auto argIt = llvmFunc->arg_begin();
                 std::advance(argIt, llvmArgIndex);
@@ -2850,9 +3466,8 @@ public:
 
         unsigned debugArgIndex = hirFunc->hasSelfBinding() ? 2 : 1;
 
-        auto expectedArgs = abiSignature.llvmType
-            ? abiSignature.llvmType->getNumParams()
-            : 0;
+        auto expectedArgs =
+            abiSignature.llvmType ? abiSignature.llvmType->getNumParams() : 0;
         if (llvmFunc->arg_size() != expectedArgs) {
             functionError(hirFunc, "function argument number mismatch");
         }
@@ -2865,14 +3480,16 @@ public:
             const auto &argInfo = abiSignature.argInfo(sourceParamIndex);
             auto passKind = argInfo.passKind;
             if (passKind == AbiPassKind::IndirectRef) {
-                auto *incomingArg = binding.object->getType()->newObj(Object::VARIABLE);
+                auto *incomingArg =
+                    binding.object->getType()->newObj(Object::VARIABLE);
                 incomingArg->setllvmValue(&*argIt);
                 argObj = materializeBinding(binding.object, incomingArg);
             } else if (passKind == AbiPassKind::IndirectValue) {
-                argObj = materializeIndirectValueBinding(binding.object, &*argIt);
+                argObj =
+                    materializeIndirectValueBinding(binding.object, &*argIt);
             } else {
-                argObj = materializeDirectValueBinding(binding.object, &*argIt,
-                                                       argInfo.packedRegisterAggregate);
+                argObj = materializeDirectValueBinding(
+                    binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, argObj);
             emitDebugDeclare(debug, scope, debugSubprogram, argObj,

@@ -97,7 +97,8 @@ isAllowedWorkspaceImportedTopLevelNode(AstNode *node) {
     if (node == nullptr) {
         return true;
     }
-    if (node->is<AstImport>() || node->is<AstStructDecl>() || node->is<AstFuncDecl>()) {
+    if (node->is<AstImport>() || node->is<AstStructDecl>() ||
+        node->is<AstFuncDecl>() || node->is<AstGlobalDecl>()) {
         return true;
     }
     auto *list = dynamic_cast<AstStatList *>(node);

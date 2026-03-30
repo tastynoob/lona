@@ -28,6 +28,7 @@ public:
         Module,
         Type,
         Function,
+        Global,
     };
 
     struct ImportedModule {
@@ -42,12 +43,14 @@ public:
         const ImportedModule *importedModule = nullptr;
         const ModuleInterface::TypeDecl *typeDecl = nullptr;
         const ModuleInterface::FunctionDecl *functionDecl = nullptr;
+        const ModuleInterface::GlobalDecl *globalDecl = nullptr;
         string resolvedName;
 
         bool found() const { return kind != TopLevelLookupKind::NotFound; }
         bool isModule() const { return kind == TopLevelLookupKind::Module; }
         bool isType() const { return kind == TopLevelLookupKind::Type; }
         bool isFunction() const { return kind == TopLevelLookupKind::Function; }
+        bool isGlobal() const { return kind == TopLevelLookupKind::Global; }
     };
 
 private:
@@ -61,6 +64,7 @@ private:
     std::unordered_map<string, ImportedModule> importedModules_;
     std::unordered_map<string, string> localTypeBindings_;
     std::unordered_map<string, string> localFunctionBindings_;
+    std::unordered_map<string, string> localGlobalBindings_;
     mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
     mutable bool hashesReady_ = false;
     mutable std::uint64_t interfaceHash_ = 0;
@@ -121,6 +125,10 @@ public:
     bool bindLocalFunction(std::string localName, string resolvedName) {
         return bindLocalFunction(string(std::move(localName)), std::move(resolvedName));
     }
+    bool bindLocalGlobal(string localName, string resolvedName);
+    bool bindLocalGlobal(std::string localName, string resolvedName) {
+        return bindLocalGlobal(string(std::move(localName)), std::move(resolvedName));
+    }
     const string *findLocalType(const ::string &localName) const;
     const string *findLocalType(const std::string &localName) const {
         return findLocalType(string(localName));
@@ -128,6 +136,10 @@ public:
     const string *findLocalFunction(const ::string &localName) const;
     const string *findLocalFunction(const std::string &localName) const {
         return findLocalFunction(string(localName));
+    }
+    const string *findLocalGlobal(const ::string &localName) const;
+    const string *findLocalGlobal(const std::string &localName) const {
+        return findLocalGlobal(string(localName));
     }
     TopLevelLookup lookupTopLevelName(const ::string &name) const;
     TopLevelLookup lookupTopLevelName(const std::string &name) const {

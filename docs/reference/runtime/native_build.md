@@ -92,6 +92,18 @@ native object 还会额外携带：
 2. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
 3. 如果当前程序没有建立 `__lona_main__`，两条构建路径都会报错并提示缺少可执行入口。
 
+如果你要在语言层读取 hosted 参数，现在可以显式声明：
+
+```lona
+#[extern]
+global __lona_argc i32
+
+#[extern]
+global __lona_argv u8 const[*][*]
+```
+
+然后按普通全局变量访问，例如 `__lona_argv(1)(0)` 表示第一个命令行参数的第一个字节。
+
 ## 使用方式
 
 走 system 路径构建一个可执行文件：
@@ -189,5 +201,5 @@ lac --lto full -O 3 input.lo output/program
 - system 路径直接复用宿主 ABI 和系统 CRT 启动对象
 - bare 路径只支持无 libc 的最小裸链接路径
 - bare 启动代码只处理 `i32` 退出码，不处理参数和环境变量
-- system 路径只把 `argc/argv` 存进 `@__lona_argc` / `@__lona_argv`，还没有对应的语言层访问语法
+- system 路径只把 `argc/argv` 暴露成 `@__lona_argc` / `@__lona_argv` 两个 extern global；更高级的命令行封装还没有内建
 - `--lto full` 只提供 full-LTO 慢路径，还没有 ThinLTO

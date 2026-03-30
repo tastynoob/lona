@@ -266,6 +266,20 @@ AstStructDecl::toJson(Json &root) {
 }
 
 void
+AstGlobalDecl::toJson(Json &root) {
+    root["type"] = "GlobalDecl";
+    root["name"] = getName().tochara();
+    root["extern"] = isExtern();
+    if (getTypeNode()) {
+        root["declaredType"] = describeTypeNode(getTypeNode());
+    }
+    if (getInitVal()) {
+        root["init"] = Json::object();
+        getInitVal()->toJson(root["init"]);
+    }
+}
+
+void
 AstImport::toJson(Json &root) {
     root["type"] = "Import";
     root["path"] = path;

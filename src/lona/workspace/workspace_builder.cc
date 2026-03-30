@@ -459,6 +459,11 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         return 0;
     });
 
+    pipeline_.addStage("define-globals", [](IRPipelineContext &context) {
+        defineUnitGlobals(&context.build.global, context.entryUnit);
+        return 0;
+    });
+
     pipeline_.addStage("lower-hir", [](IRPipelineContext &context) {
         auto start = Clock::now();
         auto resolveStart = Clock::now();

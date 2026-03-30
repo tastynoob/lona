@@ -440,6 +440,33 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstGlobalDecl : public AstNode {
+    string name_;
+    TypeNode *const typeNode_;
+    AstNode *const initVal_;
+    bool externLinkage_ = false;
+
+public:
+    AstGlobalDecl(AstToken &name, TypeNode *typeNode = nullptr,
+                  AstNode *initVal = nullptr, bool isExtern = false)
+        : AstNode(name.loc),
+          name_(name.text),
+          typeNode_(typeNode),
+          initVal_(initVal),
+          externLinkage_(isExtern) {}
+
+    const string &getName() const { return name_; }
+    TypeNode *getTypeNode() const { return typeNode_; }
+    AstNode *getInitVal() const { return initVal_; }
+    bool hasTypeNode() const { return typeNode_ != nullptr; }
+    bool hasInitVal() const { return initVal_ != nullptr; }
+    bool isExtern() const { return externLinkage_; }
+    void setExtern(bool value = true) { externLinkage_ = value; }
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstImport : public AstNode {
 public:
     std::string const path;
