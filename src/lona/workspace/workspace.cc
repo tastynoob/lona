@@ -3,6 +3,16 @@
 
 namespace lona {
 
+namespace {
+
+string
+artifactCacheKey(const string &path, ModuleEntryRole entryRole) {
+    return path +
+           (entryRole == ModuleEntryRole::Root ? "#root" : "#dependency");
+}
+
+}  // namespace
+
 CompilerWorkspace::CompilerWorkspace() : diagnostics_(&sourceManager_) {}
 
 const SourceBuffer &
@@ -27,8 +37,8 @@ CompilerWorkspace::loadRootUnit(const string &path) {
 }
 
 ModuleArtifact *
-CompilerWorkspace::findArtifact(const string &path) {
-    auto found = moduleArtifacts_.find(path);
+CompilerWorkspace::findArtifact(const string &path, ModuleEntryRole entryRole) {
+    auto found = moduleArtifacts_.find(artifactCacheKey(path, entryRole));
     if (found == moduleArtifacts_.end()) {
         return nullptr;
     }
@@ -36,8 +46,9 @@ CompilerWorkspace::findArtifact(const string &path) {
 }
 
 const ModuleArtifact *
-CompilerWorkspace::findArtifact(const string &path) const {
-    auto found = moduleArtifacts_.find(path);
+CompilerWorkspace::findArtifact(const string &path,
+                                ModuleEntryRole entryRole) const {
+    auto found = moduleArtifacts_.find(artifactCacheKey(path, entryRole));
     if (found == moduleArtifacts_.end()) {
         return nullptr;
     }
@@ -46,7 +57,8 @@ CompilerWorkspace::findArtifact(const string &path) const {
 
 void
 CompilerWorkspace::storeArtifact(ModuleArtifact artifact) {
-    moduleArtifacts_[artifact.path()] = std::move(artifact);
+    moduleArtifacts_[artifactCacheKey(artifact.path(), artifact.entryRole())] =
+        std::move(artifact);
 }
 
 }  // namespace lona

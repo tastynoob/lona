@@ -500,6 +500,65 @@ def run_module_bitcode_reuse_case(rng: random.Random, runner: SessionRunner, roo
     )
 
 
+def run_root_vs_dependency_entry_role_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    leaf_path = root / "leaf.lo"
+    mid_path = root / "mid.lo"
+    app_path = root / "app.lo"
+    delta = rng.randint(2, 9)
+
+    write_file(
+        leaf_path,
+        (
+            "def base() i32 {\n"
+            f"    ret {delta}\n"
+            "}\n"
+        ),
+    )
+    write_file(
+        mid_path,
+        (
+            "import leaf\n\n"
+            "ret leaf.base()\n"
+        ),
+    )
+    write_file(
+        app_path,
+        (
+            "import mid\n\n"
+            "ret 0\n"
+        ),
+    )
+
+    standalone_mid = runner.compile(mid_path)
+    expect_compile_ok(standalone_mid, compiled=2, reused=0)
+    expect(
+        "define i32 @__lona_main__()" in standalone_mid["stdout"],
+        "expected standalone mid compile to synthesize __lona_main__",
+    )
+
+    imported_mid = runner.compile(app_path)
+    expect_compile_ok(imported_mid, compiled=2, reused=1)
+    expect_equal(
+        imported_mid["stdout"].count("define i32 @__lona_main__()"),
+        1,
+        "expected importing app compile to contain exactly one language entry",
+    )
+
+    runner.reset()
+
+    imported_first = runner.compile(app_path)
+    expect_compile_ok(imported_first, compiled=3, reused=0)
+
+    standalone_after_import = runner.compile(mid_path)
+    expect_compile_ok(standalone_after_import, compiled=1, reused=1)
+    expect(
+        "define i32 @__lona_main__()" in standalone_after_import["stdout"],
+        "expected standalone recompile to recover root language entry",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runner", required=True, type=Path)
@@ -564,6 +623,12 @@ def main() -> int:
                 "module-bitcode-reuse",
                 lambda: run_module_bitcode_reuse_case(
                     rng, runner, root / "module_bitcode_reuse"
+                ),
+            )
+            suite.add(
+                "module-entry-role-reuse",
+                lambda: run_root_vs_dependency_entry_role_case(
+                    rng, runner, root / "module_entry_role_reuse"
                 ),
             )
             exit_code = suite.execute()

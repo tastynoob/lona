@@ -22,10 +22,11 @@ ModuleArtifact::setDependencyInterfaceHashes(
 
 void
 ModuleArtifact::setCompileProfile(string targetTriple, int optLevel,
-                                  bool debugInfo) {
+                                  bool debugInfo, ModuleEntryRole entryRole) {
     targetTriple_ = std::move(targetTriple);
     optLevel_ = optLevel;
     debugInfo_ = debugInfo;
+    entryRole_ = entryRole;
 }
 
 void

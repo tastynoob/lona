@@ -57,13 +57,16 @@ public:
         return loadRootUnit(string(path));
     }
 
-    ModuleArtifact *findArtifact(const string &path);
-    ModuleArtifact *findArtifact(const std::string &path) {
-        return findArtifact(string(path));
+    ModuleArtifact *findArtifact(const string &path, ModuleEntryRole entryRole);
+    ModuleArtifact *findArtifact(const std::string &path,
+                                 ModuleEntryRole entryRole) {
+        return findArtifact(string(path), entryRole);
     }
-    const ModuleArtifact *findArtifact(const string &path) const;
-    const ModuleArtifact *findArtifact(const std::string &path) const {
-        return findArtifact(string(path));
+    const ModuleArtifact *findArtifact(const string &path,
+                                       ModuleEntryRole entryRole) const;
+    const ModuleArtifact *findArtifact(const std::string &path,
+                                       ModuleEntryRole entryRole) const {
+        return findArtifact(string(path), entryRole);
     }
     void storeArtifact(ModuleArtifact artifact);
 };

@@ -36,10 +36,12 @@
 1. `resolve` 把裸模块别名解析成 `ResolvedEntityRef::module`
 2. `resolve` 在处理 `AstSelector(module, member)` 时，若 parent 是 imported 模块别名：
    - 命中函数则直接绑定成 `ResolvedEntityRef::globalValue(...)`
+   - 命中全局变量也直接绑定成 `ResolvedEntityRef::globalValue(...)`
    - 命中类型则直接绑定成 `ResolvedEntityRef::type(...)`
    - 未命中则直接报 `unknown module member`
 3. `analysis` 优先读取 selector 的 resolved binding，并直接物化成：
    - `HIRValue(Function)`
+   - `HIRValue(某个已解析的全局对象)`
    - `HIRValue(TypeObject)`
 
 只有下面两类情况才会真正生成 `HIRSelector`：
@@ -88,6 +90,7 @@
 更具体地说：
 
 - `module.func` 在进入 HIR 前，就应该已经等价于“某个确定的全局函数实体”
+- `module.global` 在进入 HIR 前，就应该已经等价于“某个确定的全局变量实体”
 - `module.Type` 在进入 HIR 前，就应该已经等价于“某个确定的类型实体”
 - `analysis` 里保留 selector 分派的部分，应只剩下：
   - 值字段
@@ -140,11 +143,13 @@
 当前实现已经按这个方式落地，可以把：
 
 - `math.inc`
+- `math.counter`
 - `math.Counter`
 
 在 `resolve` 阶段直接折叠成：
 
 - `ResolvedEntityRef::globalValue("math.inc")`
+- `ResolvedEntityRef::globalValue("math.counter")`
 - `ResolvedEntityRef::type("math.Counter")`
 
 ### 6.3 `analysis` 优先消费已解析 selector
@@ -156,7 +161,7 @@
 
 若 selector 已经在 `resolve` 中被折叠：
 
-- 直接物化成具体 `HIRValue(Function)` 或 `HIRValue(TypeObject)`
+- 直接物化成具体 `HIRValue(Function)`、`HIRValue(某个已解析的全局对象)` 或 `HIRValue(TypeObject)`
 - 不再重新走 `lookupMember(...)`
 
 ### 6.4 模块 lookup 从 selector 主路径中剥离
@@ -173,7 +178,7 @@
 
 即使把 `module.xxx` 前移到 `resolve`，下面这些规则也不能变化：
 
-- imported 模块成员仍然只能访问模块导出的顶层函数和类型
+- imported 模块成员仍然只能访问模块导出的顶层函数、全局变量和类型
 - `module(...)` 仍然应该给出 targeted diagnostic，而不是把模块命名空间当成可调用值
 - `module.Type(...)` 仍然应当沿用当前“类型名独占构造入口”的语义
 - bare `module` 不应再物化成任何 HIR value / `EntityRef`

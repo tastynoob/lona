@@ -448,6 +448,13 @@ using workspace_builder_impl::readBinaryFileIfPresent;
 using workspace_builder_impl::verifyCompiledModule;
 using workspace_builder_impl::writeBinaryFile;
 
+ModuleEntryRole
+WorkspaceBuilder::artifactEntryRoleFor(const CompilationUnit &unit,
+                                       const CompilationUnit &rootUnit) {
+    return unit.path() == rootUnit.path() ? ModuleEntryRole::Root
+                                          : ModuleEntryRole::Dependency;
+}
+
 WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
                                    const WorkspaceLoader &loader)
     : workspace_(workspace),
@@ -606,7 +613,9 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
     suffix << std::hex << std::setw(16) << std::setfill('0')
            << static_cast<unsigned long long>(
                   std::hash<std::string>{}(cacheKey.str()));
-    return stem + "-" + suffix.str() + ".o";
+    const char *roleSuffix =
+        artifact.entryRole() == ModuleEntryRole::Root ? "root" : "dependency";
+    return stem + "-" + roleSuffix + "-" + suffix.str() + ".o";
 }
 
 std::filesystem::path
@@ -619,7 +628,8 @@ WorkspaceBuilder::bundleObjectPath(
 bool
 WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
                                   const ModuleArtifact &artifact,
-                                  const CompileOptions &options) const {
+                                  const CompileOptions &options,
+                                  ModuleEntryRole entryRole) const {
     if (artifact.sourceHash() != unit.sourceHash() ||
         artifact.interfaceHash() != unit.interfaceHash() ||
         artifact.implementationHash() != unit.implementationHash()) {
@@ -628,7 +638,8 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
     if (toStdString(artifact.targetTriple()) !=
             normalizeTargetTriple(options.targetTriple) ||
         artifact.optLevel() != options.optLevel ||
-        artifact.debugInfo() != options.debugInfo) {
+        artifact.debugInfo() != options.debugInfo ||
+        artifact.entryRole() != entryRole) {
         return false;
     }
     return artifact.dependencyInterfaceHashes() ==
@@ -637,27 +648,34 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
 
 ModuleArtifact *
 WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
-                                      const CompileOptions &options) const {
+                                      const CompileOptions &options,
+                                      const CompilationUnit &rootUnit) const {
     if (options.noCache) {
         return nullptr;
     }
-    auto *artifact = workspace_.findArtifact(unit.path());
+    auto *artifact = workspace_.findArtifact(
+        unit.path(), artifactEntryRoleFor(unit, rootUnit));
     if (artifact == nullptr) {
         return nullptr;
     }
-    return matchesArtifact(unit, *artifact, options) ? artifact : nullptr;
+    return matchesArtifact(unit, *artifact, options,
+                           artifactEntryRoleFor(unit, rootUnit))
+               ? artifact
+               : nullptr;
 }
 
 ModuleArtifact
 WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
-                                 const CompileOptions &options) const {
+                                 const CompileOptions &options,
+                                 const CompilationUnit &rootUnit) const {
+    const auto entryRole = artifactEntryRoleFor(unit, rootUnit);
     ModuleArtifact artifact(unit.path(), unit.moduleKey(), unit.moduleName(),
                             unit.sourceHash(), unit.interfaceHash(),
                             unit.implementationHash());
     artifact.setDependencyInterfaceHashes(
         collectDependencyInterfaceHashes(unit));
     artifact.setCompileProfile(normalizeTargetTriple(options.targetTriple),
-                               options.optLevel, options.debugInfo);
+                               options.optLevel, options.debugInfo, entryRole);
     return artifact;
 }
 
@@ -718,7 +736,8 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
             }
 
             auto cacheLookupStart = Clock::now();
-            auto *cachedArtifact = reusableArtifactFor(*queuedUnit, options);
+            auto *cachedArtifact =
+                reusableArtifactFor(*queuedUnit, options, rootUnit);
             stats.cacheLookupMs +=
                 elapsedMillis(cacheLookupStart, Clock::now());
             if (cachedArtifact != nullptr && requireBitcode &&
@@ -742,7 +761,8 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 return 0;
             }
 
-            ModuleArtifact artifact = createArtifact(*queuedUnit, options);
+            ModuleArtifact artifact =
+                createArtifact(*queuedUnit, options, rootUnit);
             if (!options.noCache && objectCacheDir != nullptr &&
                 requireObjects && !requireBitcode) {
                 auto cacheRestoreStart = Clock::now();
@@ -815,7 +835,8 @@ WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                                 bool hostedEntry, bool verifyIR,
                                 SessionStats &stats, std::ostream &out) const {
-    auto *rootArtifact = workspace_.findArtifact(rootUnit.path());
+    auto *rootArtifact =
+        workspace_.findArtifact(rootUnit.path(), ModuleEntryRole::Root);
     if (rootArtifact == nullptr) {
         throw DiagnosticError(
             DiagnosticError::Category::Internal,
@@ -835,7 +856,8 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
         if (path == rootUnit.path()) {
             continue;
         }
-        auto *artifact = workspace_.findArtifact(path);
+        auto *artifact =
+            workspace_.findArtifact(path, ModuleEntryRole::Dependency);
         if (artifact == nullptr) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
@@ -1075,7 +1097,16 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     auto writeStart = Clock::now();
     for (const auto &path :
          workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
-        auto *artifact = workspace_.findArtifact(path);
+        auto *unit = workspace_.moduleGraph().find(path);
+        if (unit == nullptr) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission references a missing module `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module graph bug.");
+        }
+        auto *artifact = workspace_.findArtifact(
+            path, artifactEntryRoleFor(*unit, rootUnit));
         if (artifact == nullptr) {
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,

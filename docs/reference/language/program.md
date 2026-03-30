@@ -79,22 +79,21 @@ ret answer
 - imported module 的顶层函数通过 `file.xxx(...)` 的形式访问，模块名来自被导入文件的文件名。
 - 导入路径按当前文件所在目录解析。
 
-## 9. imported 模块可以包含声明，但不能包含顶层执行语句
+## 9. imported 模块也可以包含顶层执行语句
 
 ```lona
 // dep.lo
-global count = 1
+global count = 0
 
-def bump() i32 {
-    count = count + 1
-    ret count
-}
+count = count + 1
 ```
 
 说明：
 
-- imported 模块可以包含 `import`、`struct`、`def`、`global` 这些顶层声明。
-- imported 模块仍然不能包含顶层可执行语句。
+- imported 模块可以像 root 模块一样混合 `import`、`struct`、`def`、`global` 和顶层执行语句。
+- 当某个模块第一次被执行到时，编译器会先初始化它直接依赖的模块，再执行它自己的顶层语句。
+- 同一个模块的顶层执行体只会运行一次；多个 importer 不会重复初始化同一个模块。
+- imported 模块顶层如果执行 `ret <nonzero>`，这个返回值会作为模块初始化失败码继续向上传播。
 
 ## 10. root 模块的可执行入口
 
@@ -107,8 +106,10 @@ answer = answer + 1
 
 规则是：
 
-- 只有 root 模块允许顶层可执行语句。
-- imported 模块仍然只能包含声明，不能包含顶层执行语句。
-- root 模块如果存在顶层可执行语句，语言内部会建立 `__lona_main__() -> i32` 作为入口。
+- root 模块仍然保留语言入口 `__lona_main__() -> i32` 这个特殊规则。
+- imported 模块的顶层执行语句会被 lower 到各自模块的内部初始化入口，再由 importer 链式触发。
+- `__lona_main__()` 进入 root 模块后，也会先触发依赖模块初始化，再执行 root 自己的顶层语句。
+- root 模块顶层 `ret <code>` 仍然会成为 `__lona_main__()` 的返回值，也就是当前 native 可执行文件的退出码。
+- 如果程序没有建立 `__lona_main__()`，可执行文件构建路径会报缺少入口。
 - `def main() i32` 现在只是普通函数名，不再自动提升成程序入口。
 - 宿主系统的 `main(argc, argv)` wrapper、bare `_start` 和可执行文件构建路径见 [../runtime/native_build.md](../runtime/native_build.md)。

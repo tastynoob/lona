@@ -95,7 +95,6 @@
 - 解析单个 `CompilationUnit`
 - 遍历 `import`，构建 import tree
 - 填充 `ModuleGraph`
-- 校验 imported 文件是否只包含允许的顶层声明
 
 Loader 解决的是“有哪些模块、它们怎么依赖、每个模块的语法树是什么”。
 
@@ -157,6 +156,13 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `print-llvm` 只在显式文本 IR 输出路径上使用
 
 `CompilePipeline` 只负责“单模块”的 lowering 和 codegen，不负责多模块调度和最终链接。
+
+模块级入口的职责当前也已经分摊进这条单模块 pipeline：
+
+- `resolve` / `analyze` 会为模块顶层执行体合成模块入口
+- root 模块保留 `__lona_main__() -> i32` 这个特殊语言入口
+- 非 root 模块会合成每模块唯一的内部 init entry
+- `emit/codegen.cc` 会为模块入口补依赖初始化调用、一次性执行 guard 和结果缓存
 
 按当前职责划分：
 
@@ -310,7 +316,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - 只能出现在顶层
 - 写成无引号、无后缀的形式
 - imported 模块的顶层成员通过 `file.xxx` 访问
-- imported 文件不能包含顶层可执行语句
+- imported 模块也允许顶层可执行语句；这些语句通过模块初始化入口链执行
 
 ### 4.4 进入 Builder
 
@@ -390,6 +396,12 @@ artifact 可复用的条件是：
 
 - 语言入口：`__lona_main__() -> i32`
 - hosted system wrapper：`main(argc, argv) -> i32`
+
+在这个稳定 ABI 之外，当前前端还会为 imported 模块按模块 key 合成内部 init entry 和配套的状态/result 全局：
+
+- init entry 负责先调用依赖模块 init，再执行本模块顶层执行体
+- 同一个模块 init 只会执行一次
+- 非 0 返回值会沿 import 链向上传播回 root 的 `__lona_main__`
 
 ## 5. 当前增量编译语义
 

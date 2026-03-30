@@ -29,17 +29,22 @@ class WorkspaceBuilder {
 
     std::unordered_map<string, std::uint64_t> collectDependencyInterfaceHashes(
         const CompilationUnit &unit) const;
+    static ModuleEntryRole artifactEntryRoleFor(
+        const CompilationUnit &unit, const CompilationUnit &rootUnit);
     std::string bundleObjectFileName(const ModuleArtifact &artifact) const;
     std::filesystem::path bundleObjectPath(
         const ModuleArtifact &artifact,
         const std::filesystem::path &bundleDir) const;
     bool matchesArtifact(const CompilationUnit &unit,
                          const ModuleArtifact &artifact,
-                         const CompileOptions &options) const;
+                         const CompileOptions &options,
+                         ModuleEntryRole entryRole) const;
     ModuleArtifact *reusableArtifactFor(const CompilationUnit &unit,
-                                        const CompileOptions &options) const;
+                                        const CompileOptions &options,
+                                        const CompilationUnit &rootUnit) const;
     ModuleArtifact createArtifact(const CompilationUnit &unit,
-                                  const CompileOptions &options) const;
+                                  const CompileOptions &options,
+                                  const CompilationUnit &rootUnit) const;
     int ensureArtifactOutputs(ModuleArtifact &artifact,
                               const CompileOptions &options,
                               bool requireObjects, bool requireBitcode,
