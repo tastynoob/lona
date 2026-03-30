@@ -30,10 +30,10 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
     namespace fs = std::filesystem;
     fs::path importPath(importNode.path);
     if (importPath.has_extension()) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Syntax, importNode.loc,
-            "import paths should omit the file suffix",
-            "Write imports like `import path/to/file`, not `import path/to/file.lo`.");
+        throw DiagnosticError(DiagnosticError::Category::Syntax, importNode.loc,
+                              "import paths should omit the file suffix",
+                              "Write imports like `import path/to/file`, not "
+                              "`import path/to/file.lo`.");
     }
     importPath += ".lo";
     if (!importPath.is_relative()) {
@@ -42,8 +42,8 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
 
     std::vector<fs::path> candidates;
     candidates.reserve(includePaths.size() + 1);
-    candidates.push_back(
-        fs::path(toStdString(unit.path())).parent_path() / importPath);
+    candidates.push_back(fs::path(toStdString(unit.path())).parent_path() /
+                         importPath);
     for (const auto &includePath : includePaths) {
         candidates.push_back(fs::path(includePath) / importPath);
     }
@@ -56,12 +56,14 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
         }
         if (error) {
             auto searchedPath = normalized.string();
-            auto includeRoot = normalized.parent_path().lexically_normal().string();
+            auto includeRoot =
+                normalized.parent_path().lexically_normal().string();
             throw DiagnosticError(
                 DiagnosticError::Category::Driver, importNode.loc,
                 "I couldn't inspect include path `" + includeRoot +
                     "` while resolving import `" + importNode.path + "`.",
-                "Check that the include directory exists and that you have search permission for `" +
+                "Check that the include directory exists and that you have "
+                "search permission for `" +
                     searchedPath + "`.");
         }
     }
@@ -76,7 +78,8 @@ isValidWorkspaceModuleName(const string &name) {
         return false;
     }
     auto isHead = [](char ch) {
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_';
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+               ch == '_';
     };
     auto isBody = [&](char ch) {
         return isHead(ch) || (ch >= '0' && ch <= '9');
@@ -113,8 +116,9 @@ WorkspaceLoader::setIncludePaths(std::vector<std::string> includePaths) {
         if (includePath.empty()) {
             continue;
         }
-        includePaths_.push_back(
-            std::filesystem::path(std::move(includePath)).lexically_normal().string());
+        includePaths_.push_back(std::filesystem::path(std::move(includePath))
+                                    .lexically_normal()
+                                    .string());
     }
 }
 
@@ -161,7 +165,8 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
                     "` is not a valid identifier",
                 "Rename the file so its base name matches identifier syntax.");
         }
-        workspace_.moduleGraph().addDependency(unit.path(), dependencyUnit.path());
+        workspace_.moduleGraph().addDependency(unit.path(),
+                                               dependencyUnit.path());
         unit.addImportedModule(dependencyUnit.moduleName(), dependencyUnit);
     }
     unit.markDependenciesScanned();
@@ -206,22 +211,7 @@ WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
 
 void
 WorkspaceLoader::validateImportedUnit(const CompilationUnit &unit) const {
-    const auto *root = workspace_.moduleGraph().root();
-    if (root != nullptr && root->path() == unit.path()) {
-        return;
-    }
-
-    auto *body = requireWorkspaceTopLevelBody(unit);
-    for (auto *stmt : body->getBody()) {
-        if (isAllowedWorkspaceImportedTopLevelNode(stmt)) {
-            continue;
-        }
-        throw DiagnosticError(
-            DiagnosticError::Category::Semantic, stmt->loc,
-            "imported file `" + toStdString(unit.path()) +
-                "` cannot contain top-level executable statements",
-            "Move this statement into a function, or keep top-level execution only in the root file.");
-    }
+    (void)unit;
 }
 
 }  // namespace lona

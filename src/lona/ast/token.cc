@@ -63,7 +63,8 @@ strEscape(const string &str) {
                                 if (i + 3 < str.size()) {
                                     const int second = hexValue(str[i + 3]);
                                     if (second >= 0) {
-                                        appendByte(static_cast<unsigned>((first << 4) | second));
+                                        appendByte(static_cast<unsigned>(
+                                            (first << 4) | second));
                                         i += 2;
                                         break;
                                     }

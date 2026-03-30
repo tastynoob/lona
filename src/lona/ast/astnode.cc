@@ -7,9 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <stdexcept>
 
 namespace lona {
 namespace astnode_impl {
@@ -21,7 +21,7 @@ tokenText(const AstToken &token) {
 
 [[noreturn]] void
 errorInvalidNumericLiteral(const AstToken &token, const std::string &message,
-                          const std::string &help) {
+                           const std::string &help) {
     throw DiagnosticError(DiagnosticError::Category::Lexical, token.loc,
                           message, help);
 }
@@ -32,18 +32,12 @@ struct NumericSuffixSpec {
 };
 
 constexpr NumericSuffixSpec kNumericSuffixes[] = {
-    {"uint", AstConst::Type::U32},
-    {"int", AstConst::Type::I32},
-    {"usize", AstConst::Type::USIZE},
-    {"u64", AstConst::Type::U64},
-    {"i64", AstConst::Type::I64},
-    {"u32", AstConst::Type::U32},
-    {"i32", AstConst::Type::I32},
-    {"u16", AstConst::Type::U16},
-    {"i16", AstConst::Type::I16},
-    {"u8", AstConst::Type::U8},
-    {"i8", AstConst::Type::I8},
-    {"f64", AstConst::Type::F64},
+    {"uint", AstConst::Type::U32},    {"int", AstConst::Type::I32},
+    {"usize", AstConst::Type::USIZE}, {"u64", AstConst::Type::U64},
+    {"i64", AstConst::Type::I64},     {"u32", AstConst::Type::U32},
+    {"i32", AstConst::Type::I32},     {"u16", AstConst::Type::U16},
+    {"i16", AstConst::Type::I16},     {"u8", AstConst::Type::U8},
+    {"i8", AstConst::Type::I8},       {"f64", AstConst::Type::F64},
     {"f32", AstConst::Type::F32},
 };
 
@@ -68,7 +62,8 @@ removeDigitSeparators(std::string_view text) {
 }
 
 bool
-parseUnsignedMagnitude(std::string_view digits, int base, std::uint64_t &value) {
+parseUnsignedMagnitude(std::string_view digits, int base,
+                       std::uint64_t &value) {
     auto cleaned = removeDigitSeparators(digits);
     if (cleaned.empty()) {
         return false;
@@ -83,7 +78,7 @@ template<typename T>
 bool
 fitsSignedMagnitude(std::uint64_t value) {
     return value <=
-        static_cast<std::uint64_t>(std::numeric_limits<T>::max()) + 1ULL;
+           static_cast<std::uint64_t>(std::numeric_limits<T>::max()) + 1ULL;
 }
 
 template<typename T>
@@ -123,18 +118,18 @@ parseNumericLiteralToken(const AstToken &token) {
     if (hasDot) {
         if (raw.find("0b") == 0 || raw.find("0o") == 0 || raw.find("0x") == 0) {
             errorInvalidNumericLiteral(
-                token,
-                "floating-point literals do not support base prefixes",
-                "Use decimal floating-point syntax like `1.5`, or remove the decimal point for integer literals such as `0x10_u64`.");
+                token, "floating-point literals do not support base prefixes",
+                "Use decimal floating-point syntax like `1.5`, or remove the "
+                "decimal point for integer literals such as `0x10_u64`.");
         }
-        if (hasExplicitType &&
-            suffixType != AstConst::Type::F32 &&
+        if (hasExplicitType && suffixType != AstConst::Type::F32 &&
             suffixType != AstConst::Type::F64) {
             errorInvalidNumericLiteral(
                 token,
                 "floating-point literal cannot use integer suffix `" +
                     std::string(rawText.substr(rawText.rfind('_') + 1)) + "`",
-                "Use `_f32` or `_f64`, or remove the decimal point and cast explicitly if you need an integer value.");
+                "Use `_f32` or `_f64`, or remove the decimal point and cast "
+                "explicitly if you need an integer value.");
         }
 
         auto cleaned = removeDigitSeparators(raw);
@@ -142,9 +137,9 @@ parseNumericLiteralToken(const AstToken &token) {
         const double value = std::strtod(cleaned.c_str(), &end);
         if (!end || *end != '\0') {
             errorInvalidNumericLiteral(
-                token,
-                "invalid floating-point literal `" + rawText + "`",
-                "Use digits with optional `_` separators, and optional `_f32` or `_f64` suffixes.");
+                token, "invalid floating-point literal `" + rawText + "`",
+                "Use digits with optional `_` separators, and optional `_f32` "
+                "or `_f64` suffixes.");
         }
 
         literal.type = hasExplicitType ? suffixType : AstConst::Type::F64;
@@ -156,29 +151,29 @@ parseNumericLiteralToken(const AstToken &token) {
     std::string_view digits = raw;
     if (raw.size() >= 2 && raw[0] == '0') {
         switch (raw[1]) {
-        case 'b':
-            base = 2;
-            digits.remove_prefix(2);
-            break;
-        case 'o':
-            base = 8;
-            digits.remove_prefix(2);
-            break;
-        case 'x':
-            base = 16;
-            digits.remove_prefix(2);
-            break;
-        default:
-            break;
+            case 'b':
+                base = 2;
+                digits.remove_prefix(2);
+                break;
+            case 'o':
+                base = 8;
+                digits.remove_prefix(2);
+                break;
+            case 'x':
+                base = 16;
+                digits.remove_prefix(2);
+                break;
+            default:
+                break;
         }
     }
 
     std::uint64_t magnitude = 0;
     if (!parseUnsignedMagnitude(digits, base, magnitude)) {
         errorInvalidNumericLiteral(
-            token,
-            "invalid numeric literal `" + rawText + "`",
-            "Use digits that match the selected base, optional `_` separators, and a suffix like `_u64` only when needed.");
+            token, "invalid numeric literal `" + rawText + "`",
+            "Use digits that match the selected base, optional `_` separators, "
+            "and a suffix like `_u64` only when needed.");
     }
 
     literal.integerValue = magnitude;
@@ -198,7 +193,7 @@ using astnode_impl::fitsUnsigned;
 using astnode_impl::parseNumericLiteralToken;
 using astnode_impl::tokenText;
 
-FuncPtrTypeNode*
+FuncPtrTypeNode *
 findFuncPtrTypeNode(TypeNode *node) {
     if (node == nullptr) {
         return nullptr;
@@ -224,7 +219,7 @@ findFuncPtrTypeNode(TypeNode *node) {
     return nullptr;
 }
 
-TypeNode*
+TypeNode *
 createPointerOrArrayTypeNode(TypeNode *head, std::vector<AstNode *> *suffix) {
     if (suffix == nullptr || suffix->empty()) {
         return head;
@@ -251,9 +246,9 @@ AstNode::accept(AstVisitor &) {
     throw std::runtime_error("Cannot visit abstract AstNode directly");
 }
 
-#define DEF_ACCEPT(classname)                \
+#define DEF_ACCEPT(classname)                        \
     Object *classname::accept(AstVisitor &visitor) { \
-        return visitor.visit(this);          \
+        return visitor.visit(this);                  \
     }
 
 DEF_ACCEPT(AstProgram)
@@ -296,125 +291,164 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
         case TokenType::ConstNumeric: {
             auto literal = parseNumericLiteralToken(token);
             switch (literal.type) {
-            case Type::I8:
-                if (!fitsSignedMagnitude<std::int8_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `i8`",
-                        "Use a wider integer suffix like `_i16`, or write a smaller value.");
-                }
-                if (literal.integerValue ==
-                    static_cast<std::uint64_t>(std::numeric_limits<std::int8_t>::max()) + 1ULL) {
-                    setNumericLiteral(Type::I8, literal.explicitType,
-                                      new std::uint64_t(literal.integerValue), true);
-                } else {
-                    setNumericLiteral(Type::I8, literal.explicitType,
-                                      new std::int8_t(static_cast<std::int8_t>(literal.integerValue)));
-                }
-                break;
-            case Type::U8:
-                if (!fitsUnsigned<std::uint8_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `u8`",
-                        "Use a wider integer suffix like `_u16`, or write a smaller value.");
-                }
-                setNumericLiteral(Type::U8, literal.explicitType,
-                                  new std::uint8_t(static_cast<std::uint8_t>(literal.integerValue)));
-                break;
-            case Type::I16:
-                if (!fitsSignedMagnitude<std::int16_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `i16`",
-                        "Use a wider integer suffix like `_i32`, or write a smaller value.");
-                }
-                if (literal.integerValue ==
-                    static_cast<std::uint64_t>(std::numeric_limits<std::int16_t>::max()) + 1ULL) {
-                    setNumericLiteral(Type::I16, literal.explicitType,
-                                      new std::uint64_t(literal.integerValue), true);
-                } else {
-                    setNumericLiteral(Type::I16, literal.explicitType,
-                                      new std::int16_t(static_cast<std::int16_t>(literal.integerValue)));
-                }
-                break;
-            case Type::U16:
-                if (!fitsUnsigned<std::uint16_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `u16`",
-                        "Use a wider integer suffix like `_u32`, or write a smaller value.");
-                }
-                setNumericLiteral(Type::U16, literal.explicitType,
-                                  new std::uint16_t(static_cast<std::uint16_t>(literal.integerValue)));
-                break;
-            case Type::I32:
-                if (!fitsSignedMagnitude<std::int32_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `i32`",
-                        "Use a wider suffix like `_u64` or `_i64` if you need a larger integer literal.");
-                }
-                if (literal.integerValue ==
-                    static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) + 1ULL) {
-                    setNumericLiteral(Type::I32, literal.explicitType,
-                                      new std::uint64_t(literal.integerValue), true);
-                } else {
-                    setNumericLiteral(Type::I32, literal.explicitType,
-                                      new std::int32_t(static_cast<std::int32_t>(literal.integerValue)));
-                }
-                break;
-            case Type::U32:
-                if (!fitsUnsigned<std::uint32_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `u32`",
-                        "Use a wider integer suffix like `_u64` if you need a larger value.");
-                }
-                setNumericLiteral(Type::U32, literal.explicitType,
-                                  new std::uint32_t(static_cast<std::uint32_t>(literal.integerValue)));
-                break;
-            case Type::I64:
-                if (!fitsSignedMagnitude<std::int64_t>(literal.integerValue)) {
-                    errorInvalidNumericLiteral(
-                        token,
-                        "integer literal `" + tokenText(token) +
-                            "` is out of range for `i64`",
-                        "Use an unsigned suffix like `_u64`, or write a smaller signed value.");
-                }
-                if (literal.integerValue ==
-                    static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1ULL) {
-                    setNumericLiteral(Type::I64, literal.explicitType,
-                                      new std::uint64_t(literal.integerValue), true);
-                } else {
-                    setNumericLiteral(Type::I64, literal.explicitType,
-                                      new std::int64_t(static_cast<std::int64_t>(literal.integerValue)));
-                }
-                break;
-            case Type::U64:
-                setNumericLiteral(Type::U64, literal.explicitType,
-                                  new std::uint64_t(literal.integerValue));
-                break;
-            case Type::USIZE:
-                setNumericLiteral(Type::USIZE, literal.explicitType,
-                                  new std::uint64_t(literal.integerValue));
-                break;
-            case Type::F32:
-                setNumericLiteral(Type::F32, literal.explicitType,
-                                  new float(static_cast<float>(literal.floatValue)));
-                break;
-            case Type::F64:
-                setNumericLiteral(Type::F64, literal.explicitType,
-                                  new double(literal.floatValue));
-                break;
-            default:
-                throw std::runtime_error("Invalid parsed numeric literal type");
+                case Type::I8:
+                    if (!fitsSignedMagnitude<std::int8_t>(
+                            literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `i8`",
+                            "Use a wider integer suffix like `_i16`, or write "
+                            "a smaller value.");
+                    }
+                    if (literal.integerValue ==
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int8_t>::max()) +
+                            1ULL) {
+                        setNumericLiteral(
+                            Type::I8, literal.explicitType,
+                            new std::uint64_t(literal.integerValue), true);
+                    } else {
+                        setNumericLiteral(
+                            Type::I8, literal.explicitType,
+                            new std::int8_t(static_cast<std::int8_t>(
+                                literal.integerValue)));
+                    }
+                    break;
+                case Type::U8:
+                    if (!fitsUnsigned<std::uint8_t>(literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `u8`",
+                            "Use a wider integer suffix like `_u16`, or write "
+                            "a smaller value.");
+                    }
+                    setNumericLiteral(
+                        Type::U8, literal.explicitType,
+                        new std::uint8_t(
+                            static_cast<std::uint8_t>(literal.integerValue)));
+                    break;
+                case Type::I16:
+                    if (!fitsSignedMagnitude<std::int16_t>(
+                            literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `i16`",
+                            "Use a wider integer suffix like `_i32`, or write "
+                            "a smaller value.");
+                    }
+                    if (literal.integerValue ==
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int16_t>::max()) +
+                            1ULL) {
+                        setNumericLiteral(
+                            Type::I16, literal.explicitType,
+                            new std::uint64_t(literal.integerValue), true);
+                    } else {
+                        setNumericLiteral(
+                            Type::I16, literal.explicitType,
+                            new std::int16_t(static_cast<std::int16_t>(
+                                literal.integerValue)));
+                    }
+                    break;
+                case Type::U16:
+                    if (!fitsUnsigned<std::uint16_t>(literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `u16`",
+                            "Use a wider integer suffix like `_u32`, or write "
+                            "a smaller value.");
+                    }
+                    setNumericLiteral(
+                        Type::U16, literal.explicitType,
+                        new std::uint16_t(
+                            static_cast<std::uint16_t>(literal.integerValue)));
+                    break;
+                case Type::I32:
+                    if (!fitsSignedMagnitude<std::int32_t>(
+                            literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `i32`",
+                            "Use a wider suffix like `_u64` or `_i64` if you "
+                            "need a larger integer literal.");
+                    }
+                    if (literal.integerValue ==
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int32_t>::max()) +
+                            1ULL) {
+                        setNumericLiteral(
+                            Type::I32, literal.explicitType,
+                            new std::uint64_t(literal.integerValue), true);
+                    } else {
+                        setNumericLiteral(
+                            Type::I32, literal.explicitType,
+                            new std::int32_t(static_cast<std::int32_t>(
+                                literal.integerValue)));
+                    }
+                    break;
+                case Type::U32:
+                    if (!fitsUnsigned<std::uint32_t>(literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `u32`",
+                            "Use a wider integer suffix like `_u64` if you "
+                            "need a larger value.");
+                    }
+                    setNumericLiteral(
+                        Type::U32, literal.explicitType,
+                        new std::uint32_t(
+                            static_cast<std::uint32_t>(literal.integerValue)));
+                    break;
+                case Type::I64:
+                    if (!fitsSignedMagnitude<std::int64_t>(
+                            literal.integerValue)) {
+                        errorInvalidNumericLiteral(
+                            token,
+                            "integer literal `" + tokenText(token) +
+                                "` is out of range for `i64`",
+                            "Use an unsigned suffix like `_u64`, or write a "
+                            "smaller signed value.");
+                    }
+                    if (literal.integerValue ==
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int64_t>::max()) +
+                            1ULL) {
+                        setNumericLiteral(
+                            Type::I64, literal.explicitType,
+                            new std::uint64_t(literal.integerValue), true);
+                    } else {
+                        setNumericLiteral(
+                            Type::I64, literal.explicitType,
+                            new std::int64_t(static_cast<std::int64_t>(
+                                literal.integerValue)));
+                    }
+                    break;
+                case Type::U64:
+                    setNumericLiteral(Type::U64, literal.explicitType,
+                                      new std::uint64_t(literal.integerValue));
+                    break;
+                case Type::USIZE:
+                    setNumericLiteral(Type::USIZE, literal.explicitType,
+                                      new std::uint64_t(literal.integerValue));
+                    break;
+                case Type::F32:
+                    setNumericLiteral(
+                        Type::F32, literal.explicitType,
+                        new float(static_cast<float>(literal.floatValue)));
+                    break;
+                case Type::F64:
+                    setNumericLiteral(Type::F64, literal.explicitType,
+                                      new double(literal.floatValue));
+                    break;
+                default:
+                    throw std::runtime_error(
+                        "Invalid parsed numeric literal type");
             }
             break;
         }
@@ -436,7 +470,8 @@ AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
             break;
         case TokenType::ConstBool:
             this->vtype = Type::BOOL;
-            this->buf = (char *)new bool(std::strcmp(token.text.tochara(), "true") == 0);
+            this->buf = (char *)new bool(
+                std::strcmp(token.text.tochara(), "true") == 0);
             break;
         case TokenType::ConstNull:
             this->vtype = Type::NULLPTR;
@@ -462,11 +497,14 @@ AstField::AstField(AstToken &token) : AstNode(token.loc), name(token.text) {
 
 AstAssign::AstAssign(AstNode *left, AstNode *right)
     : AstNode(left ? left->loc : (right ? right->loc : location())),
-      left(left), right(right) {}
+      left(left),
+      right(right) {}
 
 AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
     : AstNode(left ? left->loc : (right ? right->loc : location())),
-      left(left), op(op), right(right) {}
+      left(left),
+      op(op),
+      right(right) {}
 
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
     : AstNode(expr ? expr->loc : location()), op(op), expr(expr) {}
@@ -507,10 +545,15 @@ AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : AstNode(condition ? condition->loc : location()),
-      condition(condition), then(then), els(els) {}
+      condition(condition),
+      then(then),
+      els(els) {}
 
 AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
-    : AstNode(expr ? expr->loc : location()), expr(expr), body(body), els(els) {}
+    : AstNode(expr ? expr->loc : location()),
+      expr(expr),
+      body(body),
+      els(els) {}
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : AstNode(value ? value->loc : location()), value(value), args(args) {}
@@ -535,7 +578,8 @@ describeDotLikeSyntax(const AstNode *node, std::string_view nullDescription) {
 }
 
 bool
-collectDotLikeSegments(const AstNode *node, std::vector<std::string> &segments) {
+collectDotLikeSegments(const AstNode *node,
+                       std::vector<std::string> &segments) {
     if (!node) {
         return false;
     }

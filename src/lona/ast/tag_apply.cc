@@ -43,33 +43,30 @@ describeTagTarget(const AstNode *target) {
 [[noreturn]] void
 errorUnknownTag(const AstTag *tag, AstNode *target) {
     throw DiagnosticError(
-        DiagnosticError::Category::Semantic,
-        tag ? tag->name.loc : location(),
+        DiagnosticError::Category::Semantic, tag ? tag->name.loc : location(),
         "unknown tag `" + tagName(tag) + "` on " + describeTagTarget(target),
         "Only `extern` and `repr` are supported right now.");
 }
 
 void
-requireTagArgCount(const AstTag *tag, std::size_t expected,
-                   AstNode *target, const std::string &usage) {
+requireTagArgCount(const AstTag *tag, std::size_t expected, AstNode *target,
+                   const std::string &usage) {
     const std::size_t actual = tag && tag->args ? tag->args->size() : 0;
     if (actual == expected) {
         return;
     }
     throw DiagnosticError(
-        DiagnosticError::Category::Semantic,
-        tag ? tag->name.loc : location(),
+        DiagnosticError::Category::Semantic, tag ? tag->name.loc : location(),
         "invalid arguments for tag `" + tagName(tag) + "` on " +
             describeTagTarget(target) + ": expected " +
             std::to_string(expected) + " argument" +
-            (expected == 1 ? "" : "s") + ", got " +
-            std::to_string(actual),
+            (expected == 1 ? "" : "s") + ", got " + std::to_string(actual),
         usage);
 }
 
 std::string
-requireStringTagArg(const AstTag *tag, std::size_t index,
-                    AstNode *target, const std::string &usage) {
+requireStringTagArg(const AstTag *tag, std::size_t index, AstNode *target,
+                    const std::string &usage) {
     if (!tag || !tag->args || index >= tag->args->size()) {
         requireTagArgCount(tag, index + 1, target, usage);
     }
@@ -79,16 +76,16 @@ requireStringTagArg(const AstTag *tag, std::size_t index,
             DiagnosticError::Category::Semantic,
             arg ? arg->loc : (tag ? tag->name.loc : location()),
             "invalid arguments for tag `" + tagName(tag) + "` on " +
-                describeTagTarget(target) +
-                ": argument " + std::to_string(index) +
-                " must be a string literal",
+                describeTagTarget(target) + ": argument " +
+                std::to_string(index) + " must be a string literal",
             usage);
     }
     return tokenText(arg);
 }
 
 [[noreturn]] void
-errorCannotApplyTag(const AstTag *tag, AstNode *target, const std::string &hint) {
+errorCannotApplyTag(const AstTag *tag, AstNode *target,
+                    const std::string &hint) {
     throw DiagnosticError(
         DiagnosticError::Category::Semantic,
         tag ? tag->name.loc : (target ? target->loc : location()),
@@ -107,9 +104,10 @@ applyExternTag(AstNode *target, const AstTag *tag) {
                 "duplicate `extern` tag on " + describeTagTarget(funcDecl),
                 "Write a single tag like `#[extern \"C\"]`.");
         }
-        requireTagArgCount(tag, 1, funcDecl, "Use syntax like `#[extern \"C\"]`.");
-        auto abi =
-            requireStringTagArg(tag, 0, funcDecl, "Use syntax like `#[extern \"C\"]`.");
+        requireTagArgCount(tag, 1, funcDecl,
+                           "Use syntax like `#[extern \"C\"]`.");
+        auto abi = requireStringTagArg(tag, 0, funcDecl,
+                                       "Use syntax like `#[extern \"C\"]`.");
         if (abi != "C") {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic,
@@ -141,18 +139,20 @@ applyExternTag(AstNode *target, const AstTag *tag) {
             "Write `struct " + toStdString(structDecl->name) +
                 "` for an opaque type, or use `#[repr \"C\"] struct " +
                 toStdString(structDecl->name) +
-                " { ... }` for a C-compatible layout. The `extern` tag only applies to function declarations.");
+                " { ... }` for a C-compatible layout. The `extern` tag only "
+                "applies to function declarations.");
     }
 
     if (dynamic_cast<AstVarDef *>(target)) {
-        errorCannotApplyTag(
-            tag, target,
-            "The `extern` tag only applies to function declarations right now.");
+        errorCannotApplyTag(tag, target,
+                            "The `extern` tag only applies to function "
+                            "declarations right now.");
     }
 
     errorCannotApplyTag(
         tag, target,
-        "Tags can only be applied to function declarations, struct declarations, global declarations, and variable definitions.");
+        "Tags can only be applied to function declarations, struct "
+        "declarations, global declarations, and variable definitions.");
 }
 
 void
@@ -166,9 +166,10 @@ applyReprTag(AstNode *target, const AstTag *tag) {
                     describeTagTarget(structDecl),
                 "Choose exactly one struct declaration kind.");
         }
-        requireTagArgCount(tag, 1, structDecl, "Use syntax like `#[repr \"C\"]`.");
-        auto repr =
-            requireStringTagArg(tag, 0, structDecl, "Use syntax like `#[repr \"C\"]`.");
+        requireTagArgCount(tag, 1, structDecl,
+                           "Use syntax like `#[repr \"C\"]`.");
+        auto repr = requireStringTagArg(tag, 0, structDecl,
+                                        "Use syntax like `#[repr \"C\"]`.");
         if (repr != "C") {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic,
@@ -181,9 +182,9 @@ applyReprTag(AstNode *target, const AstTag *tag) {
     }
 
     if (dynamic_cast<AstFuncDecl *>(target)) {
-        errorCannotApplyTag(
-            tag, target,
-            "Use `#[extern \"C\"]` for C ABI functions. The `repr` tag only applies to struct declarations.");
+        errorCannotApplyTag(tag, target,
+                            "Use `#[extern \"C\"]` for C ABI functions. The "
+                            "`repr` tag only applies to struct declarations.");
     }
     if (dynamic_cast<AstGlobalDecl *>(target)) {
         errorCannotApplyTag(
@@ -198,7 +199,8 @@ applyReprTag(AstNode *target, const AstTag *tag) {
 
     errorCannotApplyTag(
         tag, target,
-        "Tags can only be applied to function declarations, struct declarations, global declarations, and variable definitions.");
+        "Tags can only be applied to function declarations, struct "
+        "declarations, global declarations, and variable definitions.");
 }
 
 void
@@ -232,23 +234,24 @@ applyBuiltinTagList(AstNode *target, std::vector<AstTag *> *tags) {
 errorDanglingTags(std::vector<AstTag *> *tags) {
     auto *tag = tags && !tags->empty() ? (*tags)[0] : nullptr;
     throw DiagnosticError(
-        DiagnosticError::Category::Semantic,
-        tag ? tag->name.loc : location(),
+        DiagnosticError::Category::Semantic, tag ? tag->name.loc : location(),
         "tag `" + tagName(tag) +
-            "` must be followed by a function declaration, struct declaration, global declaration, or variable definition",
+            "` must be followed by a function declaration, struct declaration, "
+            "global declaration, or variable definition",
         "Move the tagged declaration directly below the tag line.");
 }
 
 [[noreturn]] void
 errorNonTopLevelTag(const AstTagNode *tagNode) {
     auto *tag = tagNode && tagNode->tags && !tagNode->tags->empty()
-        ? (*tagNode->tags)[0]
-        : nullptr;
+                    ? (*tagNode->tags)[0]
+                    : nullptr;
     throw DiagnosticError(
         DiagnosticError::Category::Semantic,
         tag ? tag->name.loc : (tagNode ? tagNode->loc : location()),
         "tag `" + tagName(tag) + "` is only allowed on top-level declarations",
-        "Move the tagged declaration to module scope. Tags are not supported inside functions, structs, or control-flow blocks.");
+        "Move the tagged declaration to module scope. Tags are not supported "
+        "inside functions, structs, or control-flow blocks.");
 }
 
 void
@@ -259,7 +262,8 @@ appendPendingTags(std::vector<AstTag *> *&pending, const AstTagNode *tagNode) {
     if (!pending) {
         pending = new std::vector<AstTag *>;
     }
-    pending->insert(pending->end(), tagNode->tags->begin(), tagNode->tags->end());
+    pending->insert(pending->end(), tagNode->tags->begin(),
+                    tagNode->tags->end());
 }
 
 AstNode *
@@ -357,7 +361,8 @@ validateBuiltinTagResults(AstNode *node) {
                     "#[repr \"C\"] struct `" + toStdString(structDecl->name) +
                         "` requires a body",
                     "Use `struct " + toStdString(structDecl->name) +
-                        "` for an opaque type, or add fields to `#[repr \"C\"] struct " +
+                        "` for an opaque type, or add fields to `#[repr \"C\"] "
+                        "struct " +
                         toStdString(structDecl->name) + " { ... }`.");
             }
             structDecl->setDeclKind(StructDeclKind::Opaque);
@@ -368,7 +373,8 @@ validateBuiltinTagResults(AstNode *node) {
                 "opaque struct `" + toStdString(structDecl->name) +
                     "` cannot declare fields or methods",
                 "Use `struct " + toStdString(structDecl->name) +
-                    "` for an opaque declaration, or drop the opaque form and keep the body.");
+                    "` for an opaque declaration, or drop the opaque form and "
+                    "keep the body.");
         }
         if (structDecl->body) {
             validateBuiltinTagResults(structDecl->body);
@@ -401,8 +407,7 @@ validateBuiltinTagResults(AstNode *node) {
                 "global `" + toStdString(globalDecl->getName()) +
                     "` requires an initializer",
                 "Write `global " + toStdString(globalDecl->getName()) +
-                    " = expr`, `global " +
-                    toStdString(globalDecl->getName()) +
+                    " = expr`, `global " + toStdString(globalDecl->getName()) +
                     " T = expr`, or `#[extern] global " +
                     toStdString(globalDecl->getName()) + " T`.");
         }

@@ -9,11 +9,11 @@
 #include <type_traits>
 #include <vector>
 
-#include "../err/err.hh"
 #include "../ast/token.hh"
-#include "location.hh"
+#include "../err/err.hh"
 #include "../sym/object.hh"
 #include "../util/string.hh"
+#include "location.hh"
 
 using Json = nlohmann::ordered_json;
 
@@ -71,13 +71,13 @@ enum class StructDeclKind {
 inline const char *
 structDeclKindKeyword(StructDeclKind kind) {
     switch (kind) {
-    case StructDeclKind::Opaque:
-        return "opaque";
-    case StructDeclKind::ReprC:
-        return "repr_c";
-    case StructDeclKind::Native:
-    default:
-        return "native";
+        case StructDeclKind::Opaque:
+            return "opaque";
+        case StructDeclKind::ReprC:
+            return "repr_c";
+        case StructDeclKind::Native:
+        default:
+            return "native";
     }
 }
 
@@ -92,8 +92,7 @@ public:
     std::vector<AstToken *> *const args = nullptr;
 
     explicit AstTag(AstToken &name, std::vector<AstToken *> *args = nullptr)
-        : name(name),
-          args(args ? args : new std::vector<AstToken *>) {}
+        : name(name), args(args ? args : new std::vector<AstToken *>) {}
 
     void toJson(Json &root) const;
 };
@@ -141,9 +140,9 @@ struct IndexablePointerTypeNode : public TypeNode {
 
 struct ArrayTypeNode : public TypeNode {
     TypeNode *base;
-    std::vector<AstNode*> dim;
+    std::vector<AstNode *> dim;
 
-    ArrayTypeNode(TypeNode *base, std::vector<AstNode*> dim = {},
+    ArrayTypeNode(TypeNode *base, std::vector<AstNode *> dim = {},
                   const location &loc = location())
         : TypeNode(loc), base(base), dim(std::move(dim)) {}
 };
@@ -157,10 +156,10 @@ struct TupleTypeNode : public TypeNode {
 };
 
 struct FuncPtrTypeNode : public TypeNode {
-    std::vector<TypeNode*> args;
-    TypeNode* ret = nullptr;
+    std::vector<TypeNode *> args;
+    TypeNode *ret = nullptr;
 
-    FuncPtrTypeNode(std::vector<TypeNode*> args = {}, TypeNode* ret = nullptr,
+    FuncPtrTypeNode(std::vector<TypeNode *> args = {}, TypeNode *ret = nullptr,
                     const location &loc = location())
         : TypeNode(loc), args(std::move(args)), ret(ret) {}
 };
@@ -192,8 +191,10 @@ unwrapFuncParamType(const TypeNode *node) {
     return param ? param->type : node;
 }
 
-extern FuncPtrTypeNode* findFuncPtrTypeNode(TypeNode* node);
-extern TypeNode* createPointerOrArrayTypeNode(TypeNode* head, std::vector<AstNode*>* suffix);
+extern FuncPtrTypeNode *
+findFuncPtrTypeNode(TypeNode *node);
+extern TypeNode *
+createPointerOrArrayTypeNode(TypeNode *head, std::vector<AstNode *> *suffix);
 
 class AstNode {
 public:
@@ -221,9 +222,8 @@ public:
     std::vector<AstTag *> *const tags;
 
     explicit AstTagNode(std::vector<AstTag *> *tags)
-        : AstNode(tags && !tags->empty() && (*tags)[0]
-                      ? (*tags)[0]->name.loc
-                      : location()),
+        : AstNode(tags && !tags->empty() && (*tags)[0] ? (*tags)[0]->name.loc
+                                                       : location()),
           tags(tags ? tags : new std::vector<AstTag *>) {}
 
     void toJson(Json &root) override;
@@ -282,18 +282,18 @@ public:
     }
     bool isIntegerLiteral() const {
         switch (vtype) {
-        case Type::I8:
-        case Type::U8:
-        case Type::I16:
-        case Type::U16:
-        case Type::I32:
-        case Type::U32:
-        case Type::I64:
-        case Type::U64:
-        case Type::USIZE:
-            return true;
-        default:
-            return false;
+            case Type::I8:
+            case Type::U8:
+            case Type::I16:
+            case Type::U16:
+            case Type::I32:
+            case Type::U32:
+            case Type::I64:
+            case Type::U64:
+            case Type::USIZE:
+                return true;
+            default:
+                return false;
         }
     }
     bool isFloatLiteral() const {
@@ -304,7 +304,8 @@ public:
         return (T *)buf;
     }
     std::uint64_t getDeferredSignedMinMagnitude() const {
-        return isUnaryMinusOnlySignedMinLiteral() ? *getBuf<std::uint64_t>() : 0;
+        return isUnaryMinusOnlySignedMinLiteral() ? *getBuf<std::uint64_t>()
+                                                  : 0;
     }
 
     AstConst(AstToken &token);
@@ -431,7 +432,10 @@ public:
 
     AstStructDecl(AstToken &field, AstNode *body,
                   StructDeclKind declKind = StructDeclKind::Native)
-        : AstNode(field.loc), name(field.text), body(body), declKind(declKind) {}
+        : AstNode(field.loc),
+          name(field.text),
+          body(body),
+          declKind(declKind) {}
     bool hasBody() const { return body != nullptr; }
     bool isOpaqueDecl() const { return declKind == StructDeclKind::Opaque; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
@@ -472,8 +476,7 @@ public:
     std::string const path;
 
     AstImport(const location &loc, AstToken &pathToken)
-        : AstNode(loc),
-          path(pathToken.text.tochara(), pathToken.text.size()) {}
+        : AstNode(loc), path(pathToken.text.tochara(), pathToken.text.size()) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -504,21 +507,27 @@ class AstVarDef : public AstNode {
     string const field;
     TypeNode *const typeNode;
     AstNode *const initVal;
+
 public:
     AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr,
               bool readOnlyBinding = false)
-        : AstNode(vardecl->loc), bindingKind(vardecl->bindingKind),
-          readOnlyBinding(readOnlyBinding), field(vardecl->field), typeNode(vardecl->typeNode),
+        : AstNode(vardecl->loc),
+          bindingKind(vardecl->bindingKind),
+          readOnlyBinding(readOnlyBinding),
+          field(vardecl->field),
+          typeNode(vardecl->typeNode),
           initVal(initVal) {}
 
     AstVarDef(AstToken &field, AstNode *initVal = nullptr,
               bool readOnlyBinding = false)
-        : AstNode(field.loc), bindingKind(BindingKind::Value),
-          readOnlyBinding(readOnlyBinding), field(field.text), typeNode(nullptr),
+        : AstNode(field.loc),
+          bindingKind(BindingKind::Value),
+          readOnlyBinding(readOnlyBinding),
+          field(field.text),
+          typeNode(nullptr),
           initVal(initVal) {}
 
-
-    auto& getName() const { return field; }
+    auto &getName() const { return field; }
     BindingKind getBindingKind() const { return bindingKind; }
     bool isRefBinding() const { return bindingKind == BindingKind::Ref; }
     bool isReadOnlyBinding() const { return readOnlyBinding; }
@@ -569,8 +578,7 @@ public:
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstNode *> *args = nullptr,
-                TypeNode *retType = nullptr,
-                AbiKind abiKind = AbiKind::Native,
+                TypeNode *retType = nullptr, AbiKind abiKind = AbiKind::Native,
                 AccessKind receiverAccess = AccessKind::GetOnly);
     void toJson(Json &root) override;
 
@@ -584,9 +592,7 @@ public:
     AstRet(const location &loc, AstNode *expr);
     void toJson(Json &root) override;
 
-    bool hasTerminator() override {
-        return true;
-    }
+    bool hasTerminator() override { return true; }
 
     Object *accept(AstVisitor &visitor) override;
 };
@@ -700,9 +706,10 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
-std::string describeDotLikeSyntax(const AstNode *node,
-                                  std::string_view nullDescription = "");
-bool collectDotLikeSegments(const AstNode *node,
-                            std::vector<std::string> &segments);
+std::string
+describeDotLikeSyntax(const AstNode *node,
+                      std::string_view nullDescription = "");
+bool
+collectDotLikeSegments(const AstNode *node, std::vector<std::string> &segments);
 
 }  // namespace lona

@@ -871,6 +871,21 @@ def test_import_namespace_misuse_and_shadowing_are_rejected(compiler: CompilerHa
     result = compiler.emit_ir(main_path).expect_failed()
     assert_contains(result.stderr, "struct `math` conflicts with imported module alias `math`", label="type shadow diagnostic")
 
+    main_path = compiler.write_source(
+        "import_shadow/main.lo",
+        """
+        import math
+
+        global math = 1
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "global `math` conflicts with imported module alias `math`",
+        label="global shadow diagnostic",
+    )
+
 
 def test_imported_methods_and_aggregate_calls_lower_correctly(compiler: CompilerHarness) -> None:
     compiler.write_source(
@@ -1016,6 +1031,8 @@ def test_transitive_imports_do_not_leak(compiler: CompilerHarness) -> None:
     compiler.write_source(
         "import_transitive/leaf.lo",
         """
+        global count = 9
+
         def inc(v i32) i32 {
             ret v + 1
         }
@@ -1076,30 +1093,228 @@ def test_transitive_imports_do_not_leak(compiler: CompilerHarness) -> None:
     assert_contains(result.stderr, "semantic error: unknown variable type", label="transitive type access diagnostic")
     assert_contains(result.stderr, "var p leaf.Point", label="transitive type access diagnostic")
 
-
-def test_imported_root_execution_and_name_conflicts_are_rejected(compiler: CompilerHarness) -> None:
-    compiler.write_source("import_exec/bad_dep.lo", "var x i32 = 1\n")
     main_path = compiler.write_source(
-        "import_exec/main.lo",
+        "import_transitive/main.lo",
         """
-        import bad_dep
+        import mid
 
         def main() i32 {
-            ret 0
+            ret leaf.count
         }
         """,
     )
     result = compiler.emit_ir(main_path).expect_failed()
     assert_contains(
         result.stderr,
-        f"imported file `{main_path.parent / 'bad_dep.lo'}` cannot contain top-level executable statements",
-        label="imported executable diagnostic",
+        "semantic error: undefined identifier `leaf`",
+        label="transitive global access diagnostic",
     )
-    assert_contains(
-        result.stderr,
-        "help: Move this statement into a function, or keep top-level execution only in the root file.",
-        label="imported executable diagnostic",
+
+
+def test_imported_module_top_level_execution_emits_init_chain_and_runs(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "import_exec/dep.lo",
+        """
+        global count = 0
+
+        count = count + 5
+        """,
     )
+    main_path = compiler.write_source(
+        "import_exec/main.lo",
+        """
+        import dep
+
+        ret dep.count
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(ir, r"define i32 @__.*dep.*_init_entry__\(\)", label="imported executable ir")
+    assert_regex(ir, r"call i32 @__.*dep.*_init_entry__\(\)", label="imported executable ir")
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="import_exec.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(5)
+
+
+def test_imported_module_init_runs_once_across_diamond_dependencies(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "module_init_diamond/leaf.lo",
+        """
+        global counter = 0
+
+        counter = counter + 1
+        """,
+    )
+    compiler.write_source(
+        "module_init_diamond/left.lo",
+        """
+        import leaf
+
+        def read() i32 {
+            ret leaf.counter
+        }
+        """,
+    )
+    compiler.write_source(
+        "module_init_diamond/right.lo",
+        """
+        import leaf
+
+        def read() i32 {
+            ret leaf.counter
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "module_init_diamond/main.lo",
+        """
+        import left
+        import right
+
+        ret left.read() + right.read()
+        """,
+    )
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="module_init_diamond.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(2)
+
+
+def test_imported_module_init_failure_is_propagated_to_root(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "module_init_failure/dep.lo",
+        """
+        ret 7
+        """,
+    )
+    main_path = compiler.write_source(
+        "module_init_failure/main.lo",
+        """
+        import dep
+
+        ret 0
+        """,
+    )
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="module_init_failure.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(7)
+
+
+def test_import_only_root_module_still_emits_language_entry_and_runs_init(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "module_import_only_root/dep.lo",
+        """
+        ret 7
+        """,
+    )
+    main_path = compiler.write_source(
+        "module_import_only_root/main.lo",
+        """
+        import dep
+        """,
+    )
+
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "define i32 @__lona_main__()", label="import-only root ir")
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="module_import_only_root.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(7)
+
+
+def test_import_only_mid_module_still_propagates_dependency_init_failure(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "module_import_only_mid/leaf.lo",
+        """
+        ret 9
+        """,
+    )
+    compiler.write_source(
+        "module_import_only_mid/mid.lo",
+        """
+        import leaf
+        """,
+    )
+    main_path = compiler.write_source(
+        "module_import_only_mid/main.lo",
+        """
+        import mid
+        """,
+    )
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="module_import_only_mid.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(9)
+
+
+def test_module_init_respects_direct_import_order(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "module_init_order/leaf.lo",
+        """
+        global trace = 0
+        """,
+    )
+    compiler.write_source(
+        "module_init_order/first.lo",
+        """
+        import leaf
+
+        leaf.trace = leaf.trace * 10 + 1
+        """,
+    )
+    compiler.write_source(
+        "module_init_order/second.lo",
+        """
+        import leaf
+
+        leaf.trace = leaf.trace * 10 + 2
+        """,
+    )
+    main_path = compiler.write_source(
+        "module_init_order/main.lo",
+        """
+        import first
+        import second
+        import leaf
+
+        ret leaf.trace
+        """,
+    )
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path, output_name="module_init_order.bin"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(12)
+
+
+def test_imported_module_name_conflicts_are_rejected(
+    compiler: CompilerHarness,
+) -> None:
 
     compiler.write_source(
         "import_conflict/conflict_dep.lo",

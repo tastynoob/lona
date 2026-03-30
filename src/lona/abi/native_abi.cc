@@ -9,13 +9,13 @@ constexpr std::uint64_t kNativeAbiDirectAggregateReturnMaxSize = 16;
 bool
 isNativeAbiSingleRegisterPackSize(std::uint64_t size) {
     switch (size) {
-    case 1:
-    case 2:
-    case 4:
-    case 8:
-        return true;
-    default:
-        return false;
+        case 1:
+        case 2:
+        case 4:
+        case 8:
+            return true;
+        default:
+            return false;
     }
 }
 
@@ -73,22 +73,23 @@ coerceNativeAbiDirectValue(llvm::IRBuilder<> &builder, llvm::Value *value,
 }
 
 llvm::Value *
-bitcastNativeAbiPointerForLoadStore(llvm::IRBuilder<> &builder, llvm::Value *ptr,
-                                    llvm::Type *pointeeType) {
+bitcastNativeAbiPointerForLoadStore(llvm::IRBuilder<> &builder,
+                                    llvm::Value *ptr, llvm::Type *pointeeType) {
     auto *typedPtr = llvm::PointerType::getUnqual(pointeeType);
-    return ptr->getType() == typedPtr ? ptr : builder.CreateBitCast(ptr, typedPtr);
+    return ptr->getType() == typedPtr ? ptr
+                                      : builder.CreateBitCast(ptr, typedPtr);
 }
 
 std::string
 lonaNativeAbiVersionString() {
     return "v" + std::to_string(kLonaNativeAbiMajorVersion) + "." +
-        std::to_string(kLonaNativeAbiMinorVersion);
+           std::to_string(kLonaNativeAbiMinorVersion);
 }
 
 std::string
 lonaNativeAbiVersionSymbolName() {
     return "__lona_native_abi_v" + std::to_string(kLonaNativeAbiMajorVersion) +
-        "_" + std::to_string(kLonaNativeAbiMinorVersion);
+           "_" + std::to_string(kLonaNativeAbiMinorVersion);
 }
 
 std::string
@@ -100,20 +101,20 @@ bool
 isNativeAbiAggregateType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
-        (storageType->as<StructType>() || storageType->as<TupleType>() ||
-         storageType->as<ArrayType>());
+           (storageType->as<StructType>() || storageType->as<TupleType>() ||
+            storageType->as<ArrayType>());
 }
 
 bool
 usesNativeAbiPackedRegisterAggregate(TypeTable &types, TypeClass *type) {
     return isNativeAbiAggregateType(type) &&
-        getNativeAbiPackedRegisterAggregateLLVMType(types, type) != nullptr;
+           getNativeAbiPackedRegisterAggregateLLVMType(types, type) != nullptr;
 }
 
 bool
 usesNativeAbiIndirectResult(TypeTable &types, TypeClass *type) {
     return isNativeAbiAggregateType(type) &&
-        !usesNativeAbiDirectAggregateReturn(types, type);
+           !usesNativeAbiDirectAggregateReturn(types, type);
 }
 
 llvm::Type *
@@ -121,7 +122,8 @@ getNativeAbiDirectLLVMType(TypeTable &types, TypeClass *type) {
     if (!type) {
         return nullptr;
     }
-    if (auto *packed = getNativeAbiPackedRegisterAggregateLLVMType(types, type)) {
+    if (auto *packed =
+            getNativeAbiPackedRegisterAggregateLLVMType(types, type)) {
         return packed;
     }
     return types.getLLVMType(type);
@@ -198,11 +200,12 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
         isNativeAbiAggregateType(retType) &&
         !usesNativeAbiPackedRegisterAggregate(types, retType);
     signature.resultInfo.passKind = signature.hasIndirectResult
-        ? AbiPassKind::IndirectValue
-        : AbiPassKind::Direct;
-    signature.resultInfo.llvmType = signature.hasIndirectResult
-        ? nullptr
-        : getNativeAbiDirectLLVMType(types, retType);
+                                        ? AbiPassKind::IndirectValue
+                                        : AbiPassKind::Direct;
+    signature.resultInfo.llvmType =
+        signature.hasIndirectResult
+            ? nullptr
+            : getNativeAbiDirectLLVMType(types, retType);
     signature.resultInfo.packedRegisterAggregate =
         retType && usesNativeAbiPackedRegisterAggregate(types, retType);
 
@@ -225,15 +228,17 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
             info.llvmType = getNativeAbiDirectLLVMType(types, argTypes[i]);
         }
         if (!info.llvmType) {
-            info.llvmType = info.passKind == AbiPassKind::Direct
-                ? getNativeAbiDirectLLVMType(types, argTypes[i])
-                : types.getLLVMType(types.createPointerType(argTypes[i]));
+            info.llvmType =
+                info.passKind == AbiPassKind::Direct
+                    ? getNativeAbiDirectLLVMType(types, argTypes[i])
+                    : types.getLLVMType(types.createPointerType(argTypes[i]));
         }
         signature.sourceArgInfos.push_back(info);
     }
 
     std::vector<llvm::Type *> llvmArgTypes;
-    llvmArgTypes.reserve(argTypes.size() + (signature.hasIndirectResult ? 1 : 0));
+    llvmArgTypes.reserve(argTypes.size() +
+                         (signature.hasIndirectResult ? 1 : 0));
 
     std::size_t startIndex = 0;
     if (hasImplicitSelf && !argTypes.empty()) {
@@ -251,8 +256,8 @@ classifyNativeFunctionAbi(TypeTable &types, FuncType *funcType,
     }
 
     auto *llvmRetType = signature.hasIndirectResult || !retType
-        ? llvm::Type::getVoidTy(types.getContext())
-        : signature.resultInfo.llvmType;
+                            ? llvm::Type::getVoidTy(types.getContext())
+                            : signature.resultInfo.llvmType;
     signature.llvmType =
         llvm::FunctionType::get(llvmRetType, llvmArgTypes, false);
     return signature;

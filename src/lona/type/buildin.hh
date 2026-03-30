@@ -7,23 +7,21 @@ namespace lona {
 class IntType : public BaseType {
 
 public:
-    IntType(Type id, std::string name)
-        : BaseType(id, string(name.c_str())) {}
+    IntType(Type id, std::string name) : BaseType(id, string(name.c_str())) {}
 
     bool isSigned() {
         return type == I8 || type == I16 || type == I32 || type == I64;
     }
 
     void binaryOperation(llvm::IRBuilder<>& builder, Object* left,
-                            token_type op, ObjectPtr right, ObjectPtr& res);
+                         token_type op, ObjectPtr right, ObjectPtr& res);
     void unaryOperation(llvm::IRBuilder<>& builder, token_type op,
-                           ObjectPtr value, ObjectPtr& res);
+                        ObjectPtr value, ObjectPtr& res);
 };
 
 class FLoatType : public BaseType {
 public:
-    FLoatType(Type id, std::string name)
-        : BaseType(id, string(name.c_str())) {}
+    FLoatType(Type id, std::string name) : BaseType(id, string(name.c_str())) {}
 };
 
 class BoolType : public BaseType {

@@ -3,8 +3,7 @@
 
 namespace lona {
 
-CompilerWorkspace::CompilerWorkspace()
-    : diagnostics_(&sourceManager_) {}
+CompilerWorkspace::CompilerWorkspace() : diagnostics_(&sourceManager_) {}
 
 const SourceBuffer &
 CompilerWorkspace::loadSource(const string &path) {

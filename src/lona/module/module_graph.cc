@@ -10,8 +10,7 @@ namespace lona {
 const std::vector<string> kModuleGraphEmptyDependencies;
 
 void
-collectModuleGraphPostOrder(const ModuleGraph &moduleGraph,
-                            const string &path,
+collectModuleGraphPostOrder(const ModuleGraph &moduleGraph, const string &path,
                             std::unordered_set<string> &visited,
                             std::vector<string> &ordered) {
     if (!visited.emplace(path).second) {
@@ -27,7 +26,8 @@ ModuleGraph::ModuleRecord &
 ModuleGraph::requireRecord(const string &path) {
     auto found = records_.find(path);
     if (found == records_.end()) {
-        throw std::runtime_error("module record not found: " + toStdString(path));
+        throw std::runtime_error("module record not found: " +
+                                 toStdString(path));
     }
     return *found->second;
 }
@@ -36,7 +36,8 @@ const ModuleGraph::ModuleRecord &
 ModuleGraph::requireRecord(const string &path) const {
     auto found = records_.find(path);
     if (found == records_.end()) {
-        throw std::runtime_error("module record not found: " + toStdString(path));
+        throw std::runtime_error("module record not found: " +
+                                 toStdString(path));
     }
     return *found->second;
 }
@@ -44,9 +45,8 @@ ModuleGraph::requireRecord(const string &path) const {
 CompilationUnit &
 ModuleGraph::getOrCreate(const SourceBuffer &source) {
     auto inserted = records_.emplace(
-        source.path(),
-        std::make_unique<ModuleRecord>(
-            std::make_unique<CompilationUnit>(source)));
+        source.path(), std::make_unique<ModuleRecord>(
+                           std::make_unique<CompilationUnit>(source)));
     if (inserted.second) {
         const auto &moduleName = inserted.first->second->unit->moduleName();
         moduleNameToPath_[moduleName] = source.path();

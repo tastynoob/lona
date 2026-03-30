@@ -1,17 +1,17 @@
-#include "func.hh"
-#include "lona/module/compilation_unit.hh"
 #include "../abi/abi.hh"
 #include "../abi/native_abi.hh"
+#include "../type/buildin.hh"
 #include "../type/scope.hh"
 #include "../type/type.hh"
-#include "../type/buildin.hh"
+#include "func.hh"
+#include "lona/module/compilation_unit.hh"
 #include <cassert>
 
 namespace lona {
 
 llvm::Value *
-reinterpretObjectValueBits(Scope *scope, llvm::Value *value,
-                           TypeClass *srcType, TypeClass *dstType) {
+reinterpretObjectValueBits(Scope *scope, llvm::Value *value, TypeClass *srcType,
+                           TypeClass *dstType) {
     if (!scope || !value || !srcType || !dstType) {
         return value;
     }
@@ -25,9 +25,10 @@ reinterpretObjectValueBits(Scope *scope, llvm::Value *value,
         return value;
     }
 
-    auto sourceBitWidth = static_cast<unsigned>(scope->types()->getTypeAllocSize(srcType) * 8);
-    auto *bitsType = llvm::IntegerType::get(scope->builder.getContext(),
-                                            sourceBitWidth);
+    auto sourceBitWidth =
+        static_cast<unsigned>(scope->types()->getTypeAllocSize(srcType) * 8);
+    auto *bitsType =
+        llvm::IntegerType::get(scope->builder.getContext(), sourceBitWidth);
     llvm::Value *bits = value;
     if (value->getType()->isPointerTy()) {
         bits = scope->builder.CreatePtrToInt(value, bitsType);
@@ -66,10 +67,8 @@ coerceObjectValueToType(Scope *scope, Object *src, TypeClass *dstType) {
     return reinterpretObjectValueBits(scope, value, srcType, dstType);
 }
 
-
 void
-Object::createllvmValue(Scope *scope)
-{
+Object::createllvmValue(Scope *scope) {
     assert(!val && !isRegVal());
     if (isVariable()) {
         val = scope->allocate(type);
@@ -104,7 +103,8 @@ Object::set(Scope *scope, Object *src) {
     }
 
     assert(val->getType()->isPointerTy());
-    builder.CreateStore(coerceObjectValueToType(scope, src, this->getType()), val);
+    builder.CreateStore(coerceObjectValueToType(scope, src, this->getType()),
+                        val);
 }
 
 llvm::Value *
@@ -116,56 +116,65 @@ ConstVar::get(Scope *scope) {
 
     if (auto *base = asUnqualified<BaseType>(type)) {
         switch (base->type) {
-        case BaseType::I8:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::int8_t>(value), true);
-            return val;
-        case BaseType::U8:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::uint8_t>(value), false);
-            return val;
-        case BaseType::I16:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::int16_t>(value), true);
-            return val;
-        case BaseType::U16:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::uint16_t>(value), false);
-            return val;
-        case BaseType::I32:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::int32_t>(value), true);
-            return val;
-        case BaseType::U32:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::uint32_t>(value), false);
-            return val;
-        case BaseType::I64:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::int64_t>(value), true);
-            return val;
-        case BaseType::U64:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::uint64_t>(value), false);
-            return val;
-        case BaseType::USIZE:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<std::uint64_t>(value), false);
-            return val;
-        case BaseType::F32:
-            val = llvm::ConstantFP::get(scope->getLLVMType(type),
-                                        std::any_cast<float>(value));
-            return val;
-        case BaseType::F64:
-            val = llvm::ConstantFP::get(scope->getLLVMType(type),
-                                        std::any_cast<double>(value));
-            return val;
-        case BaseType::BOOL:
-            val = llvm::ConstantInt::get(scope->getLLVMType(type),
-                                         std::any_cast<bool>(value));
-            return val;
-        default:
-            break;
+            case BaseType::I8:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<std::int8_t>(value),
+                                             true);
+                return val;
+            case BaseType::U8:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<std::uint8_t>(value),
+                                             false);
+                return val;
+            case BaseType::I16:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<std::int16_t>(value),
+                                             true);
+                return val;
+            case BaseType::U16:
+                val = llvm::ConstantInt::get(
+                    scope->getLLVMType(type),
+                    std::any_cast<std::uint16_t>(value), false);
+                return val;
+            case BaseType::I32:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<std::int32_t>(value),
+                                             true);
+                return val;
+            case BaseType::U32:
+                val = llvm::ConstantInt::get(
+                    scope->getLLVMType(type),
+                    std::any_cast<std::uint32_t>(value), false);
+                return val;
+            case BaseType::I64:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<std::int64_t>(value),
+                                             true);
+                return val;
+            case BaseType::U64:
+                val = llvm::ConstantInt::get(
+                    scope->getLLVMType(type),
+                    std::any_cast<std::uint64_t>(value), false);
+                return val;
+            case BaseType::USIZE:
+                val = llvm::ConstantInt::get(
+                    scope->getLLVMType(type),
+                    std::any_cast<std::uint64_t>(value), false);
+                return val;
+            case BaseType::F32:
+                val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                            std::any_cast<float>(value));
+                return val;
+            case BaseType::F64:
+                val = llvm::ConstantFP::get(scope->getLLVMType(type),
+                                            std::any_cast<double>(value));
+                return val;
+            case BaseType::BOOL:
+                val = llvm::ConstantInt::get(scope->getLLVMType(type),
+                                             std::any_cast<bool>(value));
+                return val;
+            default:
+                break;
         }
     }
 
@@ -194,8 +203,8 @@ TupleVar::getField(Scope *scope, const ::string &name) {
     }
 
     auto *field = fieldType->newObj(Object::VARIABLE);
-    field->setllvmValue(builder.CreateStructGEP(scope->getLLVMType(type), val,
-                                                fieldIndex));
+    field->setllvmValue(
+        builder.CreateStructGEP(scope->getLLVMType(type), val, fieldIndex));
     return field;
 }
 
@@ -213,14 +222,14 @@ StructVar::getField(Scope *scope, const ::string &name) {
     if (isRegVal()) {
         auto *aggregate = get(scope);
         auto *field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
-        field->bindllvmValue(
-            builder.CreateExtractValue(aggregate, {static_cast<unsigned>(member->second)}));
+        field->bindllvmValue(builder.CreateExtractValue(
+            aggregate, {static_cast<unsigned>(member->second)}));
         return field;
     }
 
     auto *field = fieldType->newObj(Object::VARIABLE);
-    field->setllvmValue(builder.CreateStructGEP(scope->getLLVMType(type), val,
-                                                member->second));
+    field->setllvmValue(
+        builder.CreateStructGEP(scope->getLLVMType(type), val, member->second));
     return field;
 }
 
@@ -234,13 +243,14 @@ StructVar::set(Scope *scope, Object *src) {
     if (usesNativeAbiPackedRegisterAggregate(*scope->types(), type)) {
         llvm::Value *packedValue = nullptr;
         if (!src->isRegVal() && src->isVariable() && src->getllvmValue()) {
-            packedValue = loadNativeAbiDirectValue(builder, *scope->types(), type,
-                                                   src->getllvmValue());
+            packedValue = loadNativeAbiDirectValue(builder, *scope->types(),
+                                                   type, src->getllvmValue());
         } else {
-            packedValue = packNativeAbiDirectValue(builder, *scope->types(), type,
-                                                   src->get(scope));
+            packedValue = packNativeAbiDirectValue(builder, *scope->types(),
+                                                   type, src->get(scope));
         }
-        storeNativeAbiDirectValue(builder, *scope->types(), type, packedValue, val);
+        storeNativeAbiDirectValue(builder, *scope->types(), type, packedValue,
+                                  val);
         return;
     }
 
@@ -324,15 +334,15 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
         if (argInfo.packedRegisterAggregate) {
             if (arg->isVariable() && !arg->isRegVal() && arg->getllvmValue()) {
                 llvmargs.push_back(loadNativeAbiDirectValue(
-                    builder, *scope->types(), expectedType, arg->getllvmValue()));
+                    builder, *scope->types(), expectedType,
+                    arg->getllvmValue()));
             } else {
                 llvmargs.push_back(packNativeAbiDirectValue(
                     builder, *scope->types(), expectedType, arg->get(scope)));
             }
             return;
         }
-        llvmargs.push_back(
-            coerceObjectValueToType(scope, arg, expectedType));
+        llvmargs.push_back(coerceObjectValueToType(scope, arg, expectedType));
     };
 
     std::size_t startIndex = 0;

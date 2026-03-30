@@ -38,10 +38,10 @@ ModuleInterface::globalSymbolNameFor(const ::string &localName,
 }
 
 void
-ModuleInterface::refresh(string sourcePath, string moduleKey,
-                         string moduleName, std::uint64_t sourceHash) {
+ModuleInterface::refresh(string sourcePath, string moduleKey, string moduleName,
+                         std::uint64_t sourceHash) {
     const bool changed = sourcePath_ != sourcePath || moduleKey_ != moduleKey ||
-        moduleName_ != moduleName || sourceHash_ != sourceHash;
+                         moduleName_ != moduleName || sourceHash_ != sourceHash;
     sourcePath_ = std::move(sourcePath);
     moduleKey_ = std::move(moduleKey);
     moduleName_ = std::move(moduleName);
@@ -66,7 +66,8 @@ ModuleInterface::declareStructType(const ::string &localName,
                                    StructDeclKind declKind) {
     auto found = localTypes_.find(localName);
     if (found != localTypes_.end()) {
-        auto *type = found->second.type ? found->second.type->as<StructType>() : nullptr;
+        auto *type =
+            found->second.type ? found->second.type->as<StructType>() : nullptr;
         if (type) {
             type->setDeclKind(declKind);
             found->second.declKind = declKind;
@@ -89,16 +90,16 @@ ModuleInterface::declareFunction(string localName, FuncType *type,
                                  std::vector<string> paramNames) {
     auto abiKind = type ? type->getAbiKind() : AbiKind::Native;
     return localFunctions_
-        .emplace(localName,
-                 FunctionDecl{localName,
-                              functionSymbolNameFor(localName, abiKind),
-                              abiKind, type,
-                              std::move(paramNames)})
+        .emplace(
+            localName,
+            FunctionDecl{localName, functionSymbolNameFor(localName, abiKind),
+                         abiKind, type, std::move(paramNames)})
         .second;
 }
 
 bool
-ModuleInterface::declareGlobal(string localName, TypeClass *type, bool isExtern) {
+ModuleInterface::declareGlobal(string localName, TypeClass *type,
+                               bool isExtern) {
     return localGlobals_
         .emplace(localName,
                  GlobalDecl{localName, globalSymbolNameFor(localName, isExtern),
@@ -187,14 +188,16 @@ ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
 }
 
 TupleType *
-ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes) {
+ModuleInterface::getOrCreateTupleType(
+    const std::vector<TypeClass *> &itemTypes) {
     auto tupleName = TupleType::buildName(itemTypes);
     auto found = derivedTypes_.find(tupleName);
     if (found != derivedTypes_.end()) {
         return found->second->as<TupleType>();
     }
 
-    auto type = std::make_unique<TupleType>(std::vector<TypeClass *>(itemTypes));
+    auto type =
+        std::make_unique<TupleType>(std::vector<TypeClass *>(itemTypes));
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[tupleName] = typePtr;
@@ -202,10 +205,9 @@ ModuleInterface::getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes)
 }
 
 FuncType *
-ModuleInterface::getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                         TypeClass *retType,
-                                         std::vector<BindingKind> argBindingKinds,
-                                         AbiKind abiKind) {
+ModuleInterface::getOrCreateFunctionType(
+    const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+    std::vector<BindingKind> argBindingKinds, AbiKind abiKind) {
     if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
         return nullptr;
     }

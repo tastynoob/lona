@@ -7,8 +7,8 @@ bool
 isCAbiDirectType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
-        (storageType->as<BaseType>() || storageType->as<PointerType>() ||
-         storageType->as<IndexablePointerType>());
+           (storageType->as<BaseType>() || storageType->as<PointerType>() ||
+            storageType->as<IndexablePointerType>());
 }
 
 llvm::Type *
@@ -24,7 +24,8 @@ getCAbiDirectLLVMType(TypeTable &types, TypeClass *type) {
 }
 
 AbiFunctionSignature
-classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf) {
+classifyCFunctionAbi(TypeTable &types, FuncType *funcType,
+                     bool hasImplicitSelf) {
     AbiFunctionSignature signature;
     signature.sourceType = funcType;
     signature.abiKind = AbiKind::C;
@@ -44,7 +45,8 @@ classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf)
     signature.sourceArgInfos.reserve(argTypes.size());
     for (std::size_t i = 0; i < argTypes.size(); ++i) {
         if (funcType->getArgBindingKind(i) == BindingKind::Ref) {
-            throw std::runtime_error("#[extern \"C\"] ref parameters are not supported");
+            throw std::runtime_error(
+                "#[extern \"C\"] ref parameters are not supported");
         }
         AbiValueInfo info;
         info.passKind = AbiPassKind::Direct;
@@ -66,7 +68,8 @@ classifyCFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf)
 }
 
 llvm::FunctionType *
-getCAbiFunctionType(TypeTable &types, FuncType *funcType, bool hasImplicitSelf) {
+getCAbiFunctionType(TypeTable &types, FuncType *funcType,
+                    bool hasImplicitSelf) {
     return classifyCFunctionAbi(types, funcType, hasImplicitSelf).llvmType;
 }
 

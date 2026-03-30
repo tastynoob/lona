@@ -1,11 +1,9 @@
 #pragma once
 
-
 #include <llvm-18/llvm/IR/IRBuilder.h>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/Type.h>
-
 
 namespace lona {
 
@@ -18,5 +16,3 @@ public:
 };
 
 }
-
-

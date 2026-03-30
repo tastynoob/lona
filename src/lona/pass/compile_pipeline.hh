@@ -5,11 +5,11 @@
 #include "lona/sema/hir.hh"
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
+#include <functional>
+#include <iosfwd>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
-#include <functional>
-#include <iosfwd>
 #include <memory>
 #include <string>
 #include <vector>

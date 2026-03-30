@@ -27,7 +27,7 @@ class SourceFile {
     std::string path;
 
     llvm::Module* module;
-    llvm::IRBuilder<> *builder;
+    llvm::IRBuilder<>* builder;
 
     GlobalScope* global;
     TypeTable* typeMgr;
@@ -58,24 +58,20 @@ class Package {
 
     std::vector<Package*> packages;
     std::vector<SourceFile*> files;
+
 public:
-    Package(const std::string & directory_path) {
+    Package(const std::string& directory_path) {
         this->path = directory_path;
-        this->name = directory_path.substr(directory_path.find_last_of("/\\") + 1);
+        this->name =
+            directory_path.substr(directory_path.find_last_of("/\\") + 1);
     }
 
-    void addPackage(Package *pkg) {
-        packages.push_back(pkg);
-    }
+    void addPackage(Package* pkg) { packages.push_back(pkg); }
 
-    void addFile(SourceFile *file) {
-        files.push_back(file);
-    }
+    void addFile(SourceFile* file) { files.push_back(file); }
 
     const std::string& getName() const { return name; }
     const std::string& getPath() const { return path; }
-
 };
-
 
 }

@@ -346,16 +346,18 @@ class HIRFunc : public HIRNode {
     bool hasSelf = false;
     HIRBlock *body = nullptr;
     bool topLevelEntry = false;
+    bool languageEntry = false;
     bool guaranteedReturn = false;
 
 public:
     HIRFunc(llvm::Function *llvmFunction, FuncType *funcType,
             const location &loc = location(), bool topLevelEntry = false,
-            bool guaranteedReturn = false)
+            bool languageEntry = false, bool guaranteedReturn = false)
         : HIRNode(loc),
           llvmFunction(llvmFunction),
           funcType(funcType),
           topLevelEntry(topLevelEntry),
+          languageEntry(languageEntry),
           guaranteedReturn(guaranteedReturn) {}
 
     llvm::Function *getLLVMFunction() const { return llvmFunction; }
@@ -374,6 +376,7 @@ public:
     void setBody(HIRBlock *value) { body = value; }
 
     bool isTopLevelEntry() const { return topLevelEntry; }
+    bool isLanguageEntry() const { return languageEntry; }
     bool hasGuaranteedReturn() const { return guaranteedReturn; }
 };
 

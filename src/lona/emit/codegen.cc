@@ -5,9 +5,11 @@
 #include "lona/declare/support.hh"
 #include "lona/emit/debug.hh"
 #include "lona/err/err.hh"
+#include "lona/module/module_graph.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/calls.hh"
 #include "lona/sema/hir.hh"
+#include "lona/sema/moduleentry.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -29,6 +31,53 @@
 namespace lona {
 namespace llvmcodegen_impl {
 
+FuncType *
+getOrCreateModuleEntryType(TypeTable *typeMgr) {
+    return typeMgr->getOrCreateFunctionType({}, i32Ty);
+}
+
+llvm::Function *
+getOrCreateModuleInitDeclaration(GlobalScope *global, TypeTable *typeMgr,
+                                 const CompilationUnit &unit) {
+    auto symbolName = moduleInitEntrySymbolName(unit);
+    if (auto *existing = global->module.getFunction(symbolName)) {
+        return existing;
+    }
+
+    auto *func = llvm::Function::Create(
+        typeMgr->getLLVMFunctionType(getOrCreateModuleEntryType(typeMgr)),
+        llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
+        global->module);
+    annotateFunctionAbi(*func, AbiKind::Native);
+    return func;
+}
+
+llvm::GlobalVariable *
+getOrCreateModuleInitState(GlobalScope *global, const CompilationUnit &unit) {
+    auto symbolName = moduleInitStateSymbolName(unit);
+    if (auto *existing = global->module.getGlobalVariable(symbolName)) {
+        return existing;
+    }
+
+    auto *i32Type = llvm::Type::getInt32Ty(global->module.getContext());
+    return new llvm::GlobalVariable(
+        global->module, i32Type, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(i32Type, 0), llvm::Twine(symbolName));
+}
+
+llvm::GlobalVariable *
+getOrCreateModuleInitResult(GlobalScope *global, const CompilationUnit &unit) {
+    auto symbolName = moduleInitResultSymbolName(unit);
+    if (auto *existing = global->module.getGlobalVariable(symbolName)) {
+        return existing;
+    }
+
+    auto *i32Type = llvm::Type::getInt32Ty(global->module.getContext());
+    return new llvm::GlobalVariable(
+        global->module, i32Type, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(i32Type, 0), llvm::Twine(symbolName));
+}
+
 class FunctionCompiler {
     struct LoopContext {
         llvm::BasicBlock *continueBlock = nullptr;
@@ -40,9 +89,13 @@ class FunctionCompiler {
     FuncScope *scope;
     llvm::LLVMContext &context;
     DebugInfoContext *debug;
+    const CompilationUnit *unit;
+    const ModuleGraph *moduleGraph;
     llvm::DISubprogram *debugSubprogram = nullptr;
     AbiFunctionSignature abiSignature;
     bool returnByPointer = false;
+    llvm::GlobalVariable *moduleInitState = nullptr;
+    llvm::GlobalVariable *moduleInitResult = nullptr;
     location currentLocation;
     bool hasCurrentLocation = false;
     std::vector<LoopContext> loopStack;
@@ -1156,14 +1209,120 @@ class FunctionCompiler {
         }
     }
 
+    void finalizeModuleEntryResult() {
+        if (!moduleInitState || !moduleInitResult || !scope ||
+            !scope->retVal()) {
+            return;
+        }
+        auto *resultValue = scope->retVal()->get(scope);
+        scope->builder.CreateStore(resultValue, moduleInitResult);
+        scope->builder.CreateStore(scope->builder.getInt32(2), moduleInitState);
+    }
+
+    void emitModuleInitFailure(llvm::Value *resultValue) {
+        assert(moduleInitState);
+        assert(moduleInitResult);
+        scope->builder.CreateStore(resultValue, moduleInitResult);
+        scope->builder.CreateStore(scope->builder.getInt32(2), moduleInitState);
+        scope->builder.CreateRet(resultValue);
+    }
+
+    void emitModuleEntryPrologue(HIRFunc *hirFunc, llvm::Function *llvmFunc) {
+        if (!hirFunc->isTopLevelEntry() || !unit) {
+            return;
+        }
+        if (hirFunc->getFuncType()->getRetType() != i32Ty ||
+            !hirFunc->getParams().empty() || hirFunc->hasSelfBinding()) {
+            functionError(hirFunc,
+                          "module entry must use the canonical `() -> i32` "
+                          "signature");
+        }
+
+        moduleInitState = getOrCreateModuleInitState(global, *unit);
+        moduleInitResult = getOrCreateModuleInitResult(global, *unit);
+
+        auto *entryBB = scope->builder.GetInsertBlock();
+        auto *doneBB =
+            llvm::BasicBlock::Create(context, "module.init.done", llvmFunc);
+        auto *checkRunningBB = llvm::BasicBlock::Create(
+            context, "module.init.check_running", llvmFunc);
+        auto *runningBB =
+            llvm::BasicBlock::Create(context, "module.init.reentry", llvmFunc);
+        auto *runBB =
+            llvm::BasicBlock::Create(context, "module.init.run", llvmFunc);
+
+        auto *stateValue = scope->builder.CreateLoad(
+            scope->builder.getInt32Ty(), moduleInitState, "module.init.state");
+        auto *isDone = scope->builder.CreateICmpEQ(
+            stateValue, scope->builder.getInt32(2), "module.init.done_flag");
+        scope->builder.CreateCondBr(isDone, doneBB, checkRunningBB);
+
+        scope->builder.SetInsertPoint(doneBB);
+        auto *cachedResult = scope->builder.CreateLoad(
+            scope->builder.getInt32Ty(), moduleInitResult,
+            "module.init.cached_result");
+        scope->builder.CreateRet(cachedResult);
+
+        scope->builder.SetInsertPoint(checkRunningBB);
+        auto *runningState = scope->builder.CreateLoad(
+            scope->builder.getInt32Ty(), moduleInitState,
+            "module.init.running_state");
+        auto *isRunning = scope->builder.CreateICmpEQ(
+            runningState, scope->builder.getInt32(1),
+            "module.init.running_flag");
+        scope->builder.CreateCondBr(isRunning, runningBB, runBB);
+
+        scope->builder.SetInsertPoint(runningBB);
+        scope->builder.CreateRet(scope->builder.getInt32(1));
+
+        scope->builder.SetInsertPoint(runBB);
+        scope->builder.CreateStore(scope->builder.getInt32(1), moduleInitState);
+
+        if (!moduleGraph) {
+            return;
+        }
+
+        for (const auto &dependencyPath :
+             moduleGraph->dependenciesOf(unit->path())) {
+            auto *dependencyUnit = moduleGraph->find(dependencyPath);
+            if (!dependencyUnit) {
+                functionError(
+                    hirFunc,
+                    "module dependency is missing from the module graph");
+            }
+
+            auto *depInit = getOrCreateModuleInitDeclaration(global, typeMgr,
+                                                             *dependencyUnit);
+            auto *depResult =
+                scope->builder.CreateCall(depInit, {}, "module.init.dep");
+            auto *depOkBB = llvm::BasicBlock::Create(
+                context, "module.init.dep_ok", llvmFunc);
+            auto *depFailBB = llvm::BasicBlock::Create(
+                context, "module.init.dep_fail", llvmFunc);
+            auto *depSucceeded = scope->builder.CreateICmpEQ(
+                depResult, scope->builder.getInt32(0),
+                "module.init.dep_success");
+            scope->builder.CreateCondBr(depSucceeded, depOkBB, depFailBB);
+
+            scope->builder.SetInsertPoint(depFailBB);
+            emitModuleInitFailure(depResult);
+
+            scope->builder.SetInsertPoint(depOkBB);
+        }
+    }
+
 public:
     FunctionCompiler(TypeTable *typeMgr, GlobalScope *global, HIRFunc *hirFunc,
-                     DebugInfoContext *debug = nullptr)
+                     DebugInfoContext *debug = nullptr,
+                     const CompilationUnit *unit = nullptr,
+                     const ModuleGraph *moduleGraph = nullptr)
         : typeMgr(typeMgr),
           global(global),
           scope(nullptr),
           context(global->module.getContext()),
-          debug(debug) {
+          debug(debug),
+          unit(unit),
+          moduleGraph(moduleGraph) {
         if (!hirFunc) {
             error("missing HIR function");
         }
@@ -1263,6 +1422,8 @@ public:
             scope->initRetBlock(retBB);
         }
 
+        emitModuleEntryPrologue(hirFunc, llvmFunc);
+
         unsigned debugArgIndex = hirFunc->hasSelfBinding() ? 2 : 1;
 
         auto expectedArgs =
@@ -1312,6 +1473,7 @@ public:
                     context, sourceLine(hirFunc->getLocation()),
                     sourceColumn(hirFunc->getLocation()), debugSubprogram));
             }
+            finalizeModuleEntryResult();
         }
 
         ensureTerminatorForCurrentBlock();
@@ -1323,15 +1485,21 @@ class ModuleCompiler {
     GlobalScope *global;
     TypeTable *typeMgr;
     DebugInfoContext *debug;
+    const CompilationUnit *unit;
+    const ModuleGraph *moduleGraph;
 
 public:
     ModuleCompiler(GlobalScope *global, HIRModule *module,
-                   DebugInfoContext *debug = nullptr)
+                   DebugInfoContext *debug = nullptr,
+                   const CompilationUnit *unit = nullptr,
+                   const ModuleGraph *moduleGraph = nullptr)
         : global(global),
           typeMgr(declarationsupport_impl::requireTypeTable(global)),
-          debug(debug) {
+          debug(debug),
+          unit(unit),
+          moduleGraph(moduleGraph) {
         for (auto *func : module->getFunctions()) {
-            FunctionCompiler(typeMgr, global, func, debug);
+            FunctionCompiler(typeMgr, global, func, debug, unit, moduleGraph);
         }
     }
 };
@@ -1344,15 +1512,16 @@ compileModule(Scope *global, AstNode *root, bool emitDebugInfo) {
     assert(globalScope);
     initBuildinType(globalScope);
 
-    auto resolvedModule = resolveModule(globalScope, root, nullptr);
+    auto resolvedModule = resolveModule(globalScope, root, nullptr, true);
     auto hirModule = analyzeModule(globalScope, *resolvedModule, nullptr);
     emitHIRModule(global, hirModule.get(), emitDebugInfo,
-                  globalScope->module.getName().str());
+                  globalScope->module.getName().str(), nullptr, nullptr);
 }
 
 void
 emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo,
-              const std::string &primarySourcePath) {
+              const std::string &primarySourcePath, const CompilationUnit *unit,
+              const ModuleGraph *moduleGraph) {
     auto *globalScope = dynamic_cast<GlobalScope *>(global);
     assert(globalScope);
     initBuildinType(globalScope);
@@ -1364,7 +1533,8 @@ emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo,
             primarySourcePath.empty() ? globalScope->module.getName().str()
                                       : primarySourcePath);
     }
-    llvmcodegen_impl::ModuleCompiler(globalScope, module, debug.get());
+    llvmcodegen_impl::ModuleCompiler(globalScope, module, debug.get(), unit,
+                                     moduleGraph);
 
     if (debug) {
         debug->finalize();

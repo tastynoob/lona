@@ -17,7 +17,8 @@ abiFunctionMetadataValue(AbiKind abiKind) {
 }
 
 AbiFunctionSignature
-classifyFunctionAbi(TypeTable &types, FuncType *funcType, bool hasImplicitSelf) {
+classifyFunctionAbi(TypeTable &types, FuncType *funcType,
+                    bool hasImplicitSelf) {
     if (!funcType || funcType->getAbiKind() == AbiKind::Native) {
         return classifyNativeFunctionAbi(types, funcType, hasImplicitSelf);
     }
@@ -33,10 +34,11 @@ getFunctionAbiLLVMType(TypeTable &types, FuncType *funcType,
 void
 annotateFunctionAbi(llvm::Function &func, AbiKind abiKind) {
     auto &context = func.getContext();
-    func.setMetadata(abiFunctionMetadataKey(),
-                     llvm::MDNode::get(
-                         context,
-                         llvm::MDString::get(context, abiFunctionMetadataValue(abiKind))));
+    func.setMetadata(
+        abiFunctionMetadataKey(),
+        llvm::MDNode::get(
+            context,
+            llvm::MDString::get(context, abiFunctionMetadataValue(abiKind))));
 }
 
 std::optional<AbiKind>

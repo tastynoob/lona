@@ -12,6 +12,7 @@
 #include "lona/sema/hir.hh"
 #include "lona/sema/initializer.hh"
 #include "lona/sema/injectedmember.hh"
+#include "lona/sema/moduleentry.hh"
 #include "lona/sema/operatorresolver.hh"
 #include "lona/sym/func.hh"
 #include "lona/type/buildin.hh"
@@ -42,27 +43,32 @@ requireTypeTable(Scope *scope) {
     return typeMgr;
 }
 
-llvm::StringRef
-languageEntrySymbolName() {
-    return "__lona_main__";
-}
-
 FuncType *
-getOrCreateMainType(TypeTable *typeMgr) {
+getOrCreateModuleEntryType(TypeTable *typeMgr) {
     return typeMgr->getOrCreateFunctionType({}, i32Ty);
 }
 
 llvm::Function *
-getOrCreateTopLevelEntry(GlobalScope *global, TypeTable *typeMgr) {
-    auto *mainType = getOrCreateMainType(typeMgr);
-    auto entryName = languageEntrySymbolName();
+getOrCreateModuleEntry(GlobalScope *global, TypeTable *typeMgr,
+                       const CompilationUnit *unit, bool languageEntry) {
+    auto *entryType = getOrCreateModuleEntryType(typeMgr);
+    auto entryName = languageEntry ? languageEntrySymbolName().str()
+                     : unit        ? moduleInitEntrySymbolName(*unit)
+                                   : std::string();
+    if (entryName.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "module init entry is missing its symbol name",
+            "Synthetic module entry requires a compilation unit.");
+    }
     if (auto *existing = global->module.getFunction(entryName)) {
         return existing;
     }
 
-    auto *entry = llvm::Function::Create(
-        typeMgr->getLLVMFunctionType(mainType), llvm::Function::ExternalLinkage,
-        llvm::Twine(entryName), global->module);
+    auto *entry =
+        llvm::Function::Create(typeMgr->getLLVMFunctionType(entryType),
+                               llvm::Function::ExternalLinkage,
+                               llvm::Twine(entryName), global->module);
     annotateFunctionAbi(*entry, AbiKind::Native);
     return entry;
 }
@@ -2642,10 +2648,11 @@ public:
 private:
     void prepareFunctionShell() {
         if (resolved.isTopLevelEntry()) {
-            hirFunc =
-                makeHIR<HIRFunc>(getOrCreateTopLevelEntry(global, typeMgr),
-                                 getOrCreateMainType(typeMgr), resolved.loc(),
-                                 true, resolved.guaranteedReturn());
+            hirFunc = makeHIR<HIRFunc>(
+                getOrCreateModuleEntry(global, typeMgr, unit,
+                                       resolved.isLanguageEntry()),
+                getOrCreateModuleEntryType(typeMgr), resolved.loc(), true,
+                resolved.isLanguageEntry(), resolved.guaranteedReturn());
         } else {
             auto *lofunc = requireDeclaredFunction(resolved.loc());
             auto *funcType =
@@ -2657,7 +2664,7 @@ private:
             }
             hirFunc = makeHIR<HIRFunc>(
                 llvm::cast<llvm::Function>(lofunc->getllvmValue()), funcType,
-                resolved.loc(), false, resolved.guaranteedReturn());
+                resolved.loc(), false, false, resolved.guaranteedReturn());
         }
     }
 

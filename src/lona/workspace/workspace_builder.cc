@@ -11,19 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <llvm/Bitcode/BitcodeReader.h>
-#include <llvm/Bitcode/BitcodeWriter.h>
-#include <llvm/ADT/SmallString.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/Transforms/Utils/ModuleUtils.h>
-#include <llvm/Linker/Linker.h>
-#include <llvm/Support/Error.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/MemoryBuffer.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/raw_os_ostream.h>
-#include <llvm/TargetParser/Triple.h>
+#include <iomanip>
 #include <llvm-18/llvm/IR/LLVMContext.h>
 #include <llvm-18/llvm/IR/Module.h>
 #include <llvm-18/llvm/IR/PassManager.h>
@@ -31,8 +19,20 @@
 #include <llvm-18/llvm/Passes/OptimizationLevel.h>
 #include <llvm-18/llvm/Passes/PassBuilder.h>
 #include <llvm-18/llvm/Target/TargetMachine.h>
+#include <llvm/ADT/SmallString.h>
+#include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Linker/Linker.h>
+#include <llvm/Support/Error.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/raw_os_ostream.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <optional>
-#include <iomanip>
 #include <sstream>
 #include <utility>
 
@@ -42,16 +42,16 @@ namespace workspace_builder_impl {
 llvm::OptimizationLevel
 getOptimizationLevel(int optLevel) {
     switch (optLevel) {
-    case 0:
-        return llvm::OptimizationLevel::O0;
-    case 1:
-        return llvm::OptimizationLevel::O1;
-    case 2:
-        return llvm::OptimizationLevel::O2;
-    case 3:
-        return llvm::OptimizationLevel::O3;
-    default:
-        return llvm::OptimizationLevel::O0;
+        case 0:
+            return llvm::OptimizationLevel::O0;
+        case 1:
+            return llvm::OptimizationLevel::O1;
+        case 2:
+            return llvm::OptimizationLevel::O2;
+        case 3:
+            return llvm::OptimizationLevel::O3;
+        default:
+            return llvm::OptimizationLevel::O0;
     }
 }
 
@@ -74,7 +74,8 @@ optimizeModule(llvm::Module &module, int optLevel) {
     passBuilder.crossRegisterProxies(loopAM, functionAM, cgsccAM, moduleAM);
 
     llvm::ModulePassManager modulePasses =
-        passBuilder.buildPerModuleDefaultPipeline(getOptimizationLevel(optLevel));
+        passBuilder.buildPerModuleDefaultPipeline(
+            getOptimizationLevel(optLevel));
     modulePasses.run(module, moduleAM);
 }
 
@@ -91,7 +92,8 @@ verifyCompiledModule(llvm::Module &module, std::ostream &out) {
 }
 
 std::unique_ptr<llvm::Module>
-parseArtifactBitcodeModule(const ModuleArtifact &artifact, llvm::LLVMContext &context) {
+parseArtifactBitcodeModule(const ModuleArtifact &artifact,
+                           llvm::LLVMContext &context) {
     llvm::StringRef bytes(
         reinterpret_cast<const char *>(artifact.bitcode().data()),
         artifact.bitcode().size());
@@ -126,7 +128,7 @@ hostedArgvName() {
 bool
 isLanguageEntryType(llvm::FunctionType *funcType) {
     return funcType && funcType->getNumParams() == 0 &&
-        funcType->getReturnType()->isIntegerTy(32);
+           funcType->getReturnType()->isIntegerTy(32);
 }
 
 void
@@ -136,10 +138,10 @@ linkSyntheticModule(llvm::Linker &linker, std::unique_ptr<llvm::Module> module,
         return;
     }
     if (linker.linkInModule(std::move(module))) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Internal,
-            "failed to link synthetic " + context + " module",
-            "Check for duplicate entry symbols or incompatible LLVM module state.");
+        throw DiagnosticError(DiagnosticError::Category::Internal,
+                              "failed to link synthetic " + context + " module",
+                              "Check for duplicate entry symbols or "
+                              "incompatible LLVM module state.");
     }
 }
 
@@ -167,7 +169,8 @@ nativeAbiMarkerSectionFor(llvm::StringRef targetTriple) {
 }
 
 void
-ensureNativeAbiVersionField(llvm::Module &module, llvm::StringRef targetTriple) {
+ensureNativeAbiVersionField(llvm::Module &module,
+                            llvm::StringRef targetTriple) {
     if (!moduleUsesNativeAbi(module)) {
         return;
     }
@@ -180,9 +183,9 @@ ensureNativeAbiVersionField(llvm::Module &module, llvm::StringRef targetTriple) 
     auto &context = module.getContext();
     auto payload = lonaNativeAbiVersionPayload();
     auto *init = llvm::ConstantDataArray::getString(context, payload, true);
-    auto *field = new llvm::GlobalVariable(
-        module, init->getType(), true, llvm::GlobalValue::InternalLinkage, init,
-        symbolName);
+    auto *field = new llvm::GlobalVariable(module, init->getType(), true,
+                                           llvm::GlobalValue::InternalLinkage,
+                                           init, symbolName);
     if (auto section = nativeAbiMarkerSectionFor(targetTriple)) {
         field->setSection(*section);
     }
@@ -203,10 +206,11 @@ getOrCreateHostedArgcGlobal(llvm::Module &module) {
     }
 
     auto &context = module.getContext();
-    return new llvm::GlobalVariable(module, llvm::Type::getInt32Ty(context), false,
-                                    llvm::GlobalValue::ExternalLinkage,
-                                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
-                                    hostedArgcName());
+    return new llvm::GlobalVariable(
+        module, llvm::Type::getInt32Ty(context), false,
+        llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
+        hostedArgcName());
 }
 
 llvm::GlobalVariable *
@@ -217,31 +221,33 @@ getOrCreateHostedArgvGlobal(llvm::Module &module) {
 
     auto &context = module.getContext();
     auto *ptrTy = llvm::PointerType::getUnqual(context);
-    return new llvm::GlobalVariable(module, ptrTy, false,
-                                    llvm::GlobalValue::ExternalLinkage,
-                                    llvm::ConstantPointerNull::get(ptrTy),
-                                    hostedArgvName());
+    return new llvm::GlobalVariable(
+        module, ptrTy, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantPointerNull::get(ptrTy), hostedArgvName());
 }
 
 std::unique_ptr<llvm::Module>
 createHostedMainShimModule(llvm::LLVMContext &context,
                            llvm::StringRef targetTriple) {
-    auto module = std::make_unique<llvm::Module>("lona.hosted_entry_shim", context);
+    auto module =
+        std::make_unique<llvm::Module>("lona.hosted_entry_shim", context);
     configureModuleTargetLayout(*module, targetTriple);
 
     auto *entryType =
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {}, false);
-    auto *entryDecl = llvm::Function::Create(
-        entryType, llvm::Function::ExternalLinkage, languageEntryName(), *module);
+    auto *entryDecl =
+        llvm::Function::Create(entryType, llvm::Function::ExternalLinkage,
+                               languageEntryName(), *module);
     annotateFunctionAbi(*entryDecl, AbiKind::Native);
 
     auto *argcGlobal = getOrCreateHostedArgcGlobal(*module);
     auto *argvGlobal = getOrCreateHostedArgvGlobal(*module);
 
-    auto *mainType = llvm::FunctionType::get(
-        llvm::Type::getInt32Ty(context),
-        {llvm::Type::getInt32Ty(context), llvm::PointerType::getUnqual(context)},
-        false);
+    auto *mainType =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context),
+                                {llvm::Type::getInt32Ty(context),
+                                 llvm::PointerType::getUnqual(context)},
+                                false);
     auto *wrapper = llvm::Function::Create(
         mainType, llvm::Function::ExternalLinkage, "main", *module);
     annotateFunctionAbi(*wrapper, AbiKind::C);
@@ -267,17 +273,21 @@ emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
 
     if (targetMachine.addPassesToEmitFile(passManager, objectOut, nullptr,
                                           llvm::CodeGenFileType::ObjectFile)) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "LLVM target machine cannot emit object files for the active target",
-                              "Check native target initialization and object emission setup.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "LLVM target machine cannot emit object files for the active "
+            "target",
+            "Check native target initialization and object emission setup.");
     }
 
     passManager.run(module);
-    out.write(objectData.data(), static_cast<std::streamsize>(objectData.size()));
+    out.write(objectData.data(),
+              static_cast<std::streamsize>(objectData.size()));
     if (!out) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't write the emitted object file.",
-                              "Check that the destination stream or file is writable.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write the emitted object file.",
+            "Check that the destination stream or file is writable.");
     }
 }
 
@@ -290,16 +300,19 @@ emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
             "I couldn't open output file `" + outputPath + "`.",
-            "Check that the path is writable and that parent directories exist.");
+            "Check that the path is writable and that parent directories "
+            "exist.");
     }
 
     llvm::legacy::PassManager passManager;
     auto &targetMachine = targetMachineFor(targetTriple);
     if (targetMachine.addPassesToEmitFile(passManager, out, nullptr,
                                           llvm::CodeGenFileType::ObjectFile)) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "LLVM target machine cannot emit object files for the active target",
-                              "Check native target initialization and object emission setup.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "LLVM target machine cannot emit object files for the active "
+            "target",
+            "Check native target initialization and object emission setup.");
     }
 
     passManager.run(module);
@@ -308,7 +321,8 @@ emitObjectFile(llvm::Module &module, llvm::StringRef targetTriple,
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
             "I couldn't write output file `" + outputPath + "`.",
-            "Check that the path is writable and that the filesystem has enough space.");
+            "Check that the path is writable and that the filesystem has "
+            "enough space.");
     }
 }
 
@@ -321,9 +335,11 @@ emitObjectData(llvm::Module &module, llvm::StringRef targetTriple) {
 
     if (targetMachine.addPassesToEmitFile(passManager, objectOut, nullptr,
                                           llvm::CodeGenFileType::ObjectFile)) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "LLVM target machine cannot emit object files for the active target",
-                              "Check native target initialization and object emission setup.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "LLVM target machine cannot emit object files for the active "
+            "target",
+            "Check native target initialization and object emission setup.");
     }
 
     passManager.run(module);
@@ -343,16 +359,20 @@ writeBinaryFile(const std::filesystem::path &path,
                 const ModuleArtifact::ByteBuffer &bytes) {
     std::ofstream out(path, std::ios::binary | std::ios::out);
     if (!out) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't open output file `" + path.string() + "`.",
-                              "Check that the path is writable and that parent directories exist.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't open output file `" + path.string() + "`.",
+            "Check that the path is writable and that parent directories "
+            "exist.");
     }
     out.write(reinterpret_cast<const char *>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
     if (!out) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't write output file `" + path.string() + "`.",
-                              "Check that the path is writable and that the filesystem has enough space.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write output file `" + path.string() + "`.",
+            "Check that the path is writable and that the filesystem has "
+            "enough space.");
     }
 }
 
@@ -366,10 +386,10 @@ readBinaryFileIfPresent(const std::filesystem::path &path) {
     in.seekg(0, std::ios::end);
     std::streamoff size = in.tellg();
     if (size < 0) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't inspect cached object file `" +
-                                  path.string() + "`.",
-                              "Check that the cache directory is readable.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't inspect cached object file `" + path.string() + "`.",
+            "Check that the cache directory is readable.");
     }
     in.seekg(0, std::ios::beg);
 
@@ -378,10 +398,10 @@ readBinaryFileIfPresent(const std::filesystem::path &path) {
         in.read(reinterpret_cast<char *>(bytes.data()), size);
     }
     if (!in) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't read cached object file `" +
-                                  path.string() + "`.",
-                              "Check that the cache directory is readable.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't read cached object file `" + path.string() + "`.",
+            "Check that the cache directory is readable.");
     }
     return bytes;
 }
@@ -409,9 +429,9 @@ accumulateOutputEmit(SessionStats &stats, double renderMs, double writeMs) {
 
 }  // namespace workspace_builder_impl
 
-using workspace_builder_impl::appendHIRFunctions;
 using workspace_builder_impl::accumulateArtifactEmit;
 using workspace_builder_impl::accumulateOutputEmit;
+using workspace_builder_impl::appendHIRFunctions;
 using workspace_builder_impl::createHostedMainShimModule;
 using workspace_builder_impl::emitBitcodeData;
 using workspace_builder_impl::emitObjectData;
@@ -433,18 +453,21 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
     : workspace_(workspace),
       loader_(loader),
       executor_(createSerialModuleExecutor()) {
-    pipeline_.addStage("collect-declarations", [this](IRPipelineContext &context) {
+    pipeline_.addStage("collect-declarations", [this](
+                                                   IRPipelineContext &context) {
         auto start = Clock::now();
         const bool exportEntryNamespace =
-            context.rootUnit && context.rootUnit->path() != context.entryUnit.path();
+            context.rootUnit &&
+            context.rootUnit->path() != context.entryUnit.path();
         auto dependencyStart = Clock::now();
         for (const auto &dependencyPath :
              context.moduleGraph.dependenciesOf(context.entryUnit.path())) {
             auto *loadedUnit = workspace_.moduleGraph().find(dependencyPath);
             if (loadedUnit == nullptr) {
-                throw DiagnosticError(DiagnosticError::Category::Internal,
-                                      "module graph dependency references a missing unit",
-                                      "This looks like a compiler module graph bug.");
+                throw DiagnosticError(
+                    DiagnosticError::Category::Internal,
+                    "module graph dependency references a missing unit",
+                    "This looks like a compiler module graph bug.");
             }
             loader_.validateImportedUnit(*loadedUnit);
             collectUnitDeclarations(&context.build.global, *loadedUnit, true);
@@ -454,7 +477,8 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         auto entryStart = Clock::now();
         collectUnitDeclarations(&context.build.global, context.entryUnit,
                                 exportEntryNamespace);
-        context.stats.entryDeclarationMs += elapsedMillis(entryStart, Clock::now());
+        context.stats.entryDeclarationMs +=
+            elapsedMillis(entryStart, Clock::now());
         context.stats.declarationMs += elapsedMillis(start, Clock::now());
         return 0;
     });
@@ -467,8 +491,11 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
     pipeline_.addStage("lower-hir", [](IRPipelineContext &context) {
         auto start = Clock::now();
         auto resolveStart = Clock::now();
-        auto resolved = resolveModule(&context.build.global, context.entryUnit.syntaxTree(),
-                                      &context.entryUnit);
+        auto resolved = resolveModule(
+            &context.build.global, context.entryUnit.syntaxTree(),
+            &context.entryUnit,
+            context.rootUnit != nullptr &&
+                context.rootUnit->path() == context.entryUnit.path());
         context.stats.resolveMs += elapsedMillis(resolveStart, Clock::now());
         auto analyzeStart = Clock::now();
         auto hirModule =
@@ -484,7 +511,8 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         auto start = Clock::now();
         emitHIRModule(&context.build.global, &context.programHIR,
                       context.options.debugInfo,
-                      toStdString(context.entryUnit.path()));
+                      toStdString(context.entryUnit.path()), &context.entryUnit,
+                      &context.moduleGraph);
         auto emitMs = elapsedMillis(start, Clock::now());
         context.stats.emitLlvmMs += emitMs;
         context.stats.codegenMs += emitMs;
@@ -505,7 +533,8 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
             return 0;
         }
         auto start = Clock::now();
-        const bool verifyOk = verifyCompiledModule(context.build.module, context.out);
+        const bool verifyOk =
+            verifyCompiledModule(context.build.module, context.out);
         auto verifyMs = elapsedMillis(start, Clock::now());
         context.stats.moduleVerifyMs += verifyMs;
         context.stats.verifyMs += verifyMs;
@@ -526,14 +555,17 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
 }
 
 std::unordered_map<string, std::uint64_t>
-WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) const {
+WorkspaceBuilder::collectDependencyInterfaceHashes(
+    const CompilationUnit &unit) const {
     std::unordered_map<string, std::uint64_t> hashes;
-    for (const auto &dependencyPath : workspace_.moduleGraph().dependenciesOf(unit.path())) {
+    for (const auto &dependencyPath :
+         workspace_.moduleGraph().dependenciesOf(unit.path())) {
         auto *dependency = workspace_.moduleGraph().find(dependencyPath);
         if (dependency == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module graph dependency references a missing unit",
-                                  "This looks like a compiler module graph bug.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "module graph dependency references a missing unit",
+                "This looks like a compiler module graph bug.");
         }
         hashes.emplace(dependency->moduleKey(), dependency->interfaceHash());
     }
@@ -542,8 +574,9 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(const CompilationUnit &unit) 
 
 std::string
 WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
-    std::string stem =
-        artifact.moduleName().empty() ? "module" : toStdString(artifact.moduleName());
+    std::string stem = artifact.moduleName().empty()
+                           ? "module"
+                           : toStdString(artifact.moduleName());
     for (char &ch : stem) {
         const unsigned char byte = static_cast<unsigned char>(ch);
         if (!(std::isalnum(byte) || ch == '_' || ch == '-')) {
@@ -554,16 +587,16 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
     std::vector<std::pair<string, std::uint64_t>> dependencies(
         artifact.dependencyInterfaceHashes().begin(),
         artifact.dependencyInterfaceHashes().end());
-    std::sort(dependencies.begin(), dependencies.end(),
-              [](const auto &lhs, const auto &rhs) {
-                  return lhs.first < rhs.first;
-              });
+    std::sort(
+        dependencies.begin(), dependencies.end(),
+        [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
 
     std::ostringstream cacheKey;
     cacheKey << artifact.moduleKey() << "|" << artifact.targetTriple() << "|O"
              << artifact.optLevel() << "|"
-             << (artifact.debugInfo() ? "g" : "ng") << "|src="
-             << artifact.sourceHash() << "|iface=" << artifact.interfaceHash()
+             << (artifact.debugInfo() ? "g" : "ng")
+             << "|src=" << artifact.sourceHash()
+             << "|iface=" << artifact.interfaceHash()
              << "|impl=" << artifact.implementationHash();
     for (const auto &[dependencyKey, dependencyHash] : dependencies) {
         cacheKey << "|dep=" << dependencyKey << ":" << dependencyHash;
@@ -599,7 +632,7 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
         return false;
     }
     return artifact.dependencyInterfaceHashes() ==
-        collectDependencyInterfaceHashes(unit);
+           collectDependencyInterfaceHashes(unit);
 }
 
 ModuleArtifact *
@@ -621,7 +654,8 @@ WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
     ModuleArtifact artifact(unit.path(), unit.moduleKey(), unit.moduleName(),
                             unit.sourceHash(), unit.interfaceHash(),
                             unit.implementationHash());
-    artifact.setDependencyInterfaceHashes(collectDependencyInterfaceHashes(unit));
+    artifact.setDependencyInterfaceHashes(
+        collectDependencyInterfaceHashes(unit));
     artifact.setCompileProfile(normalizeTargetTriple(options.targetTriple),
                                options.optLevel, options.debugInfo);
     return artifact;
@@ -630,7 +664,8 @@ WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
 int
 WorkspaceBuilder::ensureArtifactOutputs(ModuleArtifact &artifact,
                                         const CompileOptions &options,
-                                        bool requireObjects, bool requireBitcode,
+                                        bool requireObjects,
+                                        bool requireBitcode,
                                         SessionStats &stats) const {
     if (requireObjects && artifact.hasObjectCode()) {
         ++stats.reusedModuleObjects;
@@ -670,91 +705,103 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  const CompileOptions &options,
                                  bool requireObjects, bool requireBitcode,
                                  const std::filesystem::path *objectCacheDir,
-                                 SessionStats &stats,
-                                 std::ostream &out) const {
+                                 SessionStats &stats, std::ostream &out) const {
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
-    return executor_->execute(workspace_.buildQueue(), [&](const string &path) -> int {
-        auto *queuedUnit = workspace_.moduleGraph().find(path);
-        if (queuedUnit == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "module build queue references a missing unit",
-                                      "This looks like a compiler module queue bug.");
-        }
-
-        auto cacheLookupStart = Clock::now();
-        auto *cachedArtifact = reusableArtifactFor(*queuedUnit, options);
-        stats.cacheLookupMs += elapsedMillis(cacheLookupStart, Clock::now());
-        if (cachedArtifact != nullptr && requireBitcode && !cachedArtifact->hasBitcode()) {
-            cachedArtifact = nullptr;
-        }
-        if (cachedArtifact != nullptr && requireObjects && !cachedArtifact->hasObjectCode() &&
-            !cachedArtifact->hasBitcode()) {
-            cachedArtifact = nullptr;
-        }
-        if (cachedArtifact != nullptr) {
-            queuedUnit->markCompiled();
-            ++stats.reusedModules;
-            int artifactExitCode = ensureArtifactOutputs(
-                *cachedArtifact, options, requireObjects, requireBitcode, stats);
-            if (artifactExitCode != 0) {
-                return artifactExitCode;
+    return executor_->execute(
+        workspace_.buildQueue(), [&](const string &path) -> int {
+            auto *queuedUnit = workspace_.moduleGraph().find(path);
+            if (queuedUnit == nullptr) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Internal,
+                    "module build queue references a missing unit",
+                    "This looks like a compiler module queue bug.");
             }
-            return 0;
-        }
 
-        ModuleArtifact artifact = createArtifact(*queuedUnit, options);
-        if (!options.noCache && objectCacheDir != nullptr && requireObjects &&
-            !requireBitcode) {
-            auto cacheRestoreStart = Clock::now();
-            auto cachedObject = readBinaryFileIfPresent(
-                bundleObjectPath(artifact, *objectCacheDir));
-            stats.cacheRestoreMs += elapsedMillis(cacheRestoreStart, Clock::now());
-            if (cachedObject.has_value()) {
-                artifact.setObjectCode(std::move(*cachedObject));
-                workspace_.storeArtifact(std::move(artifact));
+            auto cacheLookupStart = Clock::now();
+            auto *cachedArtifact = reusableArtifactFor(*queuedUnit, options);
+            stats.cacheLookupMs +=
+                elapsedMillis(cacheLookupStart, Clock::now());
+            if (cachedArtifact != nullptr && requireBitcode &&
+                !cachedArtifact->hasBitcode()) {
+                cachedArtifact = nullptr;
+            }
+            if (cachedArtifact != nullptr && requireObjects &&
+                !cachedArtifact->hasObjectCode() &&
+                !cachedArtifact->hasBitcode()) {
+                cachedArtifact = nullptr;
+            }
+            if (cachedArtifact != nullptr) {
                 queuedUnit->markCompiled();
                 ++stats.reusedModules;
-                ++stats.reusedModuleObjects;
+                int artifactExitCode = ensureArtifactOutputs(
+                    *cachedArtifact, options, requireObjects, requireBitcode,
+                    stats);
+                if (artifactExitCode != 0) {
+                    return artifactExitCode;
+                }
                 return 0;
             }
-        }
-        int moduleExitCode =
-            compileModule(*queuedUnit, options, artifact, requireObjects,
-                          requireBitcode, stats, out);
-        if (moduleExitCode != 0) {
-            return moduleExitCode;
-        }
-        workspace_.storeArtifact(std::move(artifact));
-        return 0;
-    });
+
+            ModuleArtifact artifact = createArtifact(*queuedUnit, options);
+            if (!options.noCache && objectCacheDir != nullptr &&
+                requireObjects && !requireBitcode) {
+                auto cacheRestoreStart = Clock::now();
+                auto cachedObject = readBinaryFileIfPresent(
+                    bundleObjectPath(artifact, *objectCacheDir));
+                stats.cacheRestoreMs +=
+                    elapsedMillis(cacheRestoreStart, Clock::now());
+                if (cachedObject.has_value()) {
+                    artifact.setObjectCode(std::move(*cachedObject));
+                    workspace_.storeArtifact(std::move(artifact));
+                    queuedUnit->markCompiled();
+                    ++stats.reusedModules;
+                    ++stats.reusedModuleObjects;
+                    return 0;
+                }
+            }
+            int moduleExitCode =
+                compileModule(*queuedUnit, options, artifact, requireObjects,
+                              requireBitcode, stats, out);
+            if (moduleExitCode != 0) {
+                return moduleExitCode;
+            }
+            workspace_.storeArtifact(std::move(artifact));
+            return 0;
+        });
 }
 
 int
-WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &options,
+WorkspaceBuilder::compileModule(CompilationUnit &unit,
+                                const CompileOptions &options,
                                 ModuleArtifact &artifact, bool emitObject,
-                                bool emitBitcode,
-                                SessionStats &stats, std::ostream &out) const {
+                                bool emitBitcode, SessionStats &stats,
+                                std::ostream &out) const {
     unit.clearResolvedTypes();
     std::ostringstream ir;
-    IRPipelineContext context(unit, workspace_.moduleGraph(), options, ir, stats);
+    IRPipelineContext context(unit, workspace_.moduleGraph(), options, ir,
+                              stats);
     context.rootUnit = workspace_.moduleGraph().root();
     context.captureIRText = false;
     int exitCode = pipeline_.run(context);
     if (exitCode == 0) {
         unit.markCompiled();
-        artifact.setContainsNativeAbi(moduleUsesNativeAbi(context.build.module));
+        artifact.setContainsNativeAbi(
+            moduleUsesNativeAbi(context.build.module));
         if (emitBitcode) {
             auto emitStart = Clock::now();
             artifact.setBitcode(emitBitcodeData(context.build.module));
-            accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
+            accumulateArtifactEmit(stats,
+                                   elapsedMillis(emitStart, Clock::now()));
             ++stats.emittedModuleBitcode;
         }
         if (emitObject) {
-            ensureNativeAbiVersionField(context.build.module, options.targetTriple);
+            ensureNativeAbiVersionField(context.build.module,
+                                        options.targetTriple);
             auto emitStart = Clock::now();
             artifact.setObjectCode(
                 emitObjectData(context.build.module, options.targetTriple));
-            accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
+            accumulateArtifactEmit(stats,
+                                   elapsedMillis(emitStart, Clock::now()));
             ++stats.emittedModuleObjects;
         }
         ++stats.compiledModules;
@@ -767,13 +814,13 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit, const CompileOptions &opt
 WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                                 bool hostedEntry, bool verifyIR,
-                                SessionStats &stats,
-                                std::ostream &out) const {
+                                SessionStats &stats, std::ostream &out) const {
     auto *rootArtifact = workspace_.findArtifact(rootUnit.path());
     if (rootArtifact == nullptr) {
-        throw DiagnosticError(DiagnosticError::Category::Internal,
-                              "root module artifact was not produced",
-                              "This looks like a compiler module scheduling bug.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "root module artifact was not produced",
+            "This looks like a compiler module scheduling bug.");
     }
 
     double linkLoadMs = 0.0;
@@ -783,16 +830,18 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
     auto linkedModule = parseArtifactBitcodeModule(*rootArtifact, *context);
     linkLoadMs += elapsedMillis(loadStart, Clock::now());
     llvm::Linker linker(*linkedModule);
-    for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
+    for (const auto &path :
+         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         if (path == rootUnit.path()) {
             continue;
         }
         auto *artifact = workspace_.findArtifact(path);
         if (artifact == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "linked module is missing dependency artifact `" +
-                                      toStdString(path) + "`",
-                                  "This looks like a compiler module scheduling bug.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "linked module is missing dependency artifact `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module scheduling bug.");
         }
         loadStart = Clock::now();
         auto dependencyModule = parseArtifactBitcodeModule(*artifact, *context);
@@ -803,18 +852,21 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
                 DiagnosticError::Category::Internal,
                 "failed to link module `" + toStdString(artifact->path()) +
                     "` into root module `" + toStdString(rootUnit.path()) + "`",
-                "Check for duplicate IR symbols or incompatible LLVM module state.");
+                "Check for duplicate IR symbols or incompatible LLVM module "
+                "state.");
         }
         linkMergeMs += elapsedMillis(mergeStart, Clock::now());
     }
 
-    const bool hasLanguageEntry = moduleHasFunctionSymbol(*linkedModule, languageEntryName());
-    if (hasLanguageEntry && hostedEntry && !moduleHasFunctionSymbol(*linkedModule, "main")) {
+    const bool hasLanguageEntry =
+        moduleHasFunctionSymbol(*linkedModule, languageEntryName());
+    if (hasLanguageEntry && hostedEntry &&
+        !moduleHasFunctionSymbol(*linkedModule, "main")) {
         auto mergeStart = Clock::now();
-        linkSyntheticModule(
-            linker,
-            createHostedMainShimModule(*context, linkedModule->getTargetTriple()),
-            "hosted entry shim");
+        linkSyntheticModule(linker,
+                            createHostedMainShimModule(
+                                *context, linkedModule->getTargetTriple()),
+                            "hosted entry shim");
         linkMergeMs += elapsedMillis(mergeStart, Clock::now());
     }
 
@@ -837,7 +889,8 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
 std::size_t
 WorkspaceBuilder::loadedUnitCount() const {
     auto *root = workspace_.moduleGraph().root();
-    return root ? workspace_.moduleGraph().postOrderFrom(root->path()).size() : 0;
+    return root ? workspace_.moduleGraph().postOrderFrom(root->path()).size()
+                : 0;
 }
 
 int
@@ -853,8 +906,8 @@ WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
     }
 
     auto context = std::make_unique<llvm::LLVMContext>();
-    auto hostedShim =
-        createHostedMainShimModule(*context, normalizeTargetTriple(options.targetTriple));
+    auto hostedShim = createHostedMainShimModule(
+        *context, normalizeTargetTriple(options.targetTriple));
     if (options.verifyIR) {
         auto verifyStart = Clock::now();
         const bool ok = verifyCompiledModule(*hostedShim, out);
@@ -877,8 +930,9 @@ WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
 }
 
 int
-WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
-                         SessionStats &stats, std::ostream &out) const {
+WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
+                         const CompileOptions &options, SessionStats &stats,
+                         std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
     int exitCode =
         buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
@@ -886,9 +940,9 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit,
-                                targetUsesHostedEntry(options.targetTriple),
-                                options.verifyIR, stats, out);
+    auto linked =
+        linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+                      options.verifyIR, stats, out);
     if (!linked.module) {
         return 1;
     }
@@ -921,8 +975,8 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit, const CompileOptions &option
 int
 WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
                              const CompileOptions &options,
-                             const std::string &outputPath,
-                             SessionStats &stats, std::ostream &out) const {
+                             const std::string &outputPath, SessionStats &stats,
+                             std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
     int exitCode =
         buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
@@ -930,9 +984,9 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
         return exitCode;
     }
 
-    auto linked = linkArtifacts(rootUnit,
-                                targetUsesHostedEntry(options.targetTriple),
-                                options.verifyIR, stats, out);
+    auto linked =
+        linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+                      options.verifyIR, stats, out);
     if (!linked.module) {
         return 1;
     }
@@ -958,7 +1012,8 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
     if (!outputPath.empty()) {
         auto emitStart = Clock::now();
         emitObjectFile(*linked.module, options.targetTriple, outputPath);
-        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
+        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()),
+                             0.0);
         return 0;
     }
 
@@ -969,11 +1024,13 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
     out.write(reinterpret_cast<const char *>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
     if (!out) {
-        throw DiagnosticError(DiagnosticError::Category::Driver,
-                              "I couldn't write the emitted object file.",
-                              "Check that the destination stream or file is writable.");
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write the emitted object file.",
+            "Check that the destination stream or file is writable.");
     }
-    accumulateOutputEmit(stats, renderMs, elapsedMillis(writeStart, Clock::now()));
+    accumulateOutputEmit(stats, renderMs,
+                         elapsedMillis(writeStart, Clock::now()));
     return 0;
 }
 
@@ -1002,8 +1059,8 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     fs::path bundleStem = manifestPath.filename();
     bundleStem += ".d";
     fs::path bundleDir = cacheOutputPath.empty()
-        ? manifestPath.parent_path() / bundleStem
-        : fs::path(cacheOutputPath) / bundleStem;
+                             ? manifestPath.parent_path() / bundleStem
+                             : fs::path(cacheOutputPath) / bundleStem;
     fs::create_directories(bundleDir);
 
     int exitCode =
@@ -1016,19 +1073,22 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
 
     auto writeStart = Clock::now();
-    for (const auto &path : workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
+    for (const auto &path :
+         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
         auto *artifact = workspace_.findArtifact(path);
         if (artifact == nullptr) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "bundle emission is missing module artifact `" +
-                                      toStdString(path) + "`",
-                                  "This looks like a compiler module scheduling bug.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module artifact `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module scheduling bug.");
         }
         if (!artifact->hasObjectCode()) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "bundle emission is missing module object code for `" +
-                                      toStdString(artifact->path()) + "`",
-                                  "This looks like a compiler object emission bug.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module object code for `" +
+                    toStdString(artifact->path()) + "`",
+                "This looks like a compiler object emission bug.");
         }
 
         fs::path objectPath = bundleObjectPath(*artifact, bundleDir);

@@ -5,8 +5,8 @@
 namespace lona {
 
 void
-IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr  left,
-                         token_type op, ObjectPtr  right, ObjectPtr& res) {
+IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr left,
+                         token_type op, ObjectPtr right, ObjectPtr& res) {
     // if (!left->getType()->equal(this)) throw "Type mismatch";
     // llvm::Value* val = nullptr;
     // switch (op) {
@@ -22,12 +22,14 @@ IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr  left,
     //     case '/':
     //         if (isSigned()) {
     //             val =
-    //                 builder.CreateSDiv(left->get(builder), right->get(builder));
+    //                 builder.CreateSDiv(left->get(builder),
+    //                 right->get(builder));
     //         }
 
     //         else {
     //             val =
-    //                 builder.CreateUDiv(left->get(builder), right->get(builder));
+    //                 builder.CreateUDiv(left->get(builder),
+    //                 right->get(builder));
     //         }
     //         break;
     //     // boolean
@@ -39,8 +41,8 @@ IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr  left,
     //             val = builder.CreateICmpULT(left->get(builder),
     //                                         right->get(builder));
     //         }
-    //         res = new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
-    //         return;
+    //         res = new BaseVar(val, boolTy, Object::REG_VAL |
+    //         Object::READONLY); return;
     //     case '>':
     //         if (isSigned()) {
     //             val = builder.CreateICmpSGT(left->get(builder),
@@ -49,16 +51,16 @@ IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr  left,
     //             val = builder.CreateICmpUGT(left->get(builder),
     //                                         right->get(builder));
     //         }
-    //         res = new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
-    //         return;
+    //         res = new BaseVar(val, boolTy, Object::REG_VAL |
+    //         Object::READONLY); return;
     //     case Parser::token_type::LOGIC_EQUAL:  // ==
-    //         val = builder.CreateICmpEQ(left->get(builder), right->get(builder));
-    //         res = new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
-    //         return;
+    //         val = builder.CreateICmpEQ(left->get(builder),
+    //         right->get(builder)); res = new BaseVar(val, boolTy,
+    //         Object::REG_VAL | Object::READONLY); return;
     //     case Parser::token_type::LOGIC_NOT_EQUAL:  // !=
-    //         val = builder.CreateICmpNE(left->get(builder), right->get(builder));
-    //         res = new BaseVar(val, boolTy, Object::REG_VAL | Object::READONLY);
-    //         return;
+    //         val = builder.CreateICmpNE(left->get(builder),
+    //         right->get(builder)); res = new BaseVar(val, boolTy,
+    //         Object::REG_VAL | Object::READONLY); return;
     //     default:
     //         assert(false);
     //         break;
@@ -69,7 +71,7 @@ IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr  left,
 
 void
 IntType::unaryOperation(llvm::IRBuilder<>& builder, token_type op,
-                        ObjectPtr  value, ObjectPtr& res) {
+                        ObjectPtr value, ObjectPtr& res) {
     // if (!value->getType()->equal(this)) throw "Type mismatch";
     // ObjectPtr  val = nullptr;
     // switch (op) {
@@ -112,7 +114,7 @@ BoolType* boolTy = nullptr;
 
 void
 initBuildinType(Scope* scope) {
-    auto *typeTable = scope ? scope->types() : nullptr;
+    auto* typeTable = scope ? scope->types() : nullptr;
     if (!typeTable) {
         return;
     }

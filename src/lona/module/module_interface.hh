@@ -80,14 +80,13 @@ private:
     string globalSymbolNameFor(const ::string &localName, bool isExtern) const;
 
 public:
-    ModuleInterface(string sourcePath, string moduleKey,
-                    string moduleName, std::uint64_t sourceHash);
+    ModuleInterface(string sourcePath, string moduleKey, string moduleName,
+                    std::uint64_t sourceHash);
     ModuleInterface(std::string sourcePath, std::string moduleKey,
                     std::string moduleName, std::uint64_t sourceHash)
         : ModuleInterface(string(std::move(sourcePath)),
                           string(std::move(moduleKey)),
-                          string(std::move(moduleName)),
-                          sourceHash) {}
+                          string(std::move(moduleName)), sourceHash) {}
     ~ModuleInterface();
 
     const string &sourcePath() const { return sourcePath_; }
@@ -95,24 +94,24 @@ public:
     const string &moduleName() const { return moduleName_; }
     std::uint64_t sourceHash() const { return sourceHash_; }
 
-    void refresh(string sourcePath, string moduleKey,
-                 string moduleName, std::uint64_t sourceHash);
+    void refresh(string sourcePath, string moduleKey, string moduleName,
+                 std::uint64_t sourceHash);
     void refresh(std::string sourcePath, std::string moduleKey,
                  std::string moduleName, std::uint64_t sourceHash) {
-        refresh(string(std::move(sourcePath)),
-                string(std::move(moduleKey)),
-                string(std::move(moduleName)),
-                sourceHash);
+        refresh(string(std::move(sourcePath)), string(std::move(moduleKey)),
+                string(std::move(moduleName)), sourceHash);
     }
 
     bool collected() const { return collected_; }
     void markCollected() { collected_ = true; }
 
     void clear();
-    StructType *declareStructType(const ::string &localName,
-                                  StructDeclKind declKind = StructDeclKind::Native);
-    StructType *declareStructType(const std::string &localName,
-                                  StructDeclKind declKind = StructDeclKind::Native) {
+    StructType *declareStructType(
+        const ::string &localName,
+        StructDeclKind declKind = StructDeclKind::Native);
+    StructType *declareStructType(
+        const std::string &localName,
+        StructDeclKind declKind = StructDeclKind::Native) {
         return declareStructType(string(localName), declKind);
     }
     bool declareFunction(string localName, FuncType *type,
@@ -122,20 +121,23 @@ public:
         return declareFunction(string(std::move(localName)), type,
                                std::move(paramNames));
     }
-    bool declareGlobal(string localName, TypeClass *type, bool isExtern = false);
-    bool declareGlobal(std::string localName, TypeClass *type, bool isExtern = false) {
+    bool declareGlobal(string localName, TypeClass *type,
+                       bool isExtern = false);
+    bool declareGlobal(std::string localName, TypeClass *type,
+                       bool isExtern = false) {
         return declareGlobal(string(std::move(localName)), type, isExtern);
     }
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
-    IndexablePointerType *getOrCreateIndexablePointerType(TypeClass *elementType);
+    IndexablePointerType *getOrCreateIndexablePointerType(
+        TypeClass *elementType);
     ConstType *getOrCreateConstType(TypeClass *baseType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});
     TupleType *getOrCreateTupleType(const std::vector<TypeClass *> &itemTypes);
-    FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                      TypeClass *retType,
-                                      std::vector<BindingKind> argBindingKinds = {},
-                                      AbiKind abiKind = AbiKind::Native);
+    FuncType *getOrCreateFunctionType(
+        const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+        std::vector<BindingKind> argBindingKinds = {},
+        AbiKind abiKind = AbiKind::Native);
     const TypeDecl *findType(const ::string &localName) const;
     const TypeDecl *findType(const std::string &localName) const {
         return findType(string(localName));
@@ -152,7 +154,9 @@ public:
     TopLevelLookup lookupTopLevelName(const std::string &localName) const {
         return lookupTopLevelName(string(localName));
     }
-    const std::unordered_map<string, TypeDecl> &types() const { return localTypes_; }
+    const std::unordered_map<string, TypeDecl> &types() const {
+        return localTypes_;
+    }
     const std::unordered_map<string, FunctionDecl> &functions() const {
         return localFunctions_;
     }
@@ -161,6 +165,7 @@ public:
     }
 };
 
-std::uint64_t hashModuleSource(const std::string &content);
+std::uint64_t
+hashModuleSource(const std::string &content);
 
 }  // namespace lona

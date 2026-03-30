@@ -22,15 +22,16 @@ class FunctionResolver {
     ResolvedFunction &resolved_;
     std::unordered_map<string, const ResolvedLocalBinding *> locals_;
 
-    void declareBinding(const ResolvedLocalBinding *binding, const location &loc,
+    void declareBinding(const ResolvedLocalBinding *binding,
+                        const location &loc,
                         const std::string &duplicateMessage,
                         const std::string &duplicateHint) {
         if (unit_ && unit_->importsModule(binding->name())) {
             auto bindingName = toStdString(binding->name());
             error(loc,
                   "local binding `" + bindingName +
-                      "` conflicts with imported module alias `" +
-                      bindingName + "`",
+                      "` conflicts with imported module alias `" + bindingName +
+                      "`",
                   "Rename the local binding so `" + bindingName +
                       ".xxx` continues to refer to the imported module.");
         }
@@ -40,8 +41,7 @@ class FunctionResolver {
         }
     }
 
-    const ResolvedEntityRef *
-    resolvedExpr(const AstNode *node) const {
+    const ResolvedEntityRef *resolvedExpr(const AstNode *node) const {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             return resolved_.field(field);
         }
@@ -51,45 +51,50 @@ class FunctionResolver {
         return nullptr;
     }
 
-    void
-    resolveDotLike(const AstDotLike *node) {
+    void resolveDotLike(const AstDotLike *node) {
         if (!unit_ || !node) {
             return;
         }
 
         auto *parentBinding = resolvedExpr(node->parent);
-        if (!parentBinding || parentBinding->kind() != ResolvedEntityRef::Kind::Module) {
+        if (!parentBinding ||
+            parentBinding->kind() != ResolvedEntityRef::Kind::Module) {
             return;
         }
 
-        const auto *moduleNamespace = unit_->findImportedModule(parentBinding->resolvedName());
+        const auto *moduleNamespace =
+            unit_->findImportedModule(parentBinding->resolvedName());
         if (!moduleNamespace) {
-            internalError(
-                node->loc,
-                "resolved module selector parent is missing from the imported-module table",
-                "This looks like a compiler name-resolution bug.");
+            internalError(node->loc,
+                          "resolved module selector parent is missing from the "
+                          "imported-module table",
+                          "This looks like a compiler name-resolution bug.");
         }
 
         auto memberName = toStdString(node->field->text);
         auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
         if (lookup.isGlobal()) {
-            resolved_.bindDotLike(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
+            resolved_.bindDotLike(
+                node, ResolvedEntityRef::globalValue(lookup.resolvedName));
             return;
         }
         if (lookup.isFunction()) {
-            resolved_.bindDotLike(node, ResolvedEntityRef::globalValue(lookup.resolvedName));
+            resolved_.bindDotLike(
+                node, ResolvedEntityRef::globalValue(lookup.resolvedName));
             return;
         }
         if (lookup.isType()) {
-            resolved_.bindDotLike(node, ResolvedEntityRef::type(lookup.resolvedName));
+            resolved_.bindDotLike(node,
+                                  ResolvedEntityRef::type(lookup.resolvedName));
             return;
         }
 
         error(node->loc,
-              "unknown module member `" + toStdString(parentBinding->resolvedName()) +
-                  "." +
+              "unknown module member `" +
+                  toStdString(parentBinding->resolvedName()) + "." +
                   memberName + "`",
-              "Only directly imported top-level functions, globals, and types are available through `file.xxx`.");
+              "Only directly imported top-level functions, globals, and types "
+              "are available through `file.xxx`.");
     }
 
     void resolveStmt(const AstNode *node) {
@@ -107,13 +112,13 @@ class FunctionResolver {
                 resolveExpr(varDef->getInitVal());
             }
             auto *binding = module_.createLocalBinding(
-                ResolvedLocalBinding::Kind::Variable,
-                varDef->getBindingKind(),
+                ResolvedLocalBinding::Kind::Variable, varDef->getBindingKind(),
                 toStdString(varDef->getName()), varDef, varDef->loc);
-            declareBinding(binding, varDef->loc,
-                           "duplicate variable definition for `" +
-                               toStdString(varDef->getName()) + "`",
-                           "Rename one of the variables or reuse the existing binding.");
+            declareBinding(
+                binding, varDef->loc,
+                "duplicate variable definition for `" +
+                    toStdString(varDef->getName()) + "`",
+                "Rename one of the variables or reuse the existing binding.");
             resolved_.bindVariable(varDef, binding);
             return;
         }
@@ -144,8 +149,7 @@ class FunctionResolver {
             return;
         }
         if (node->is<AstStructDecl>() || node->is<AstFuncDecl>() ||
-            node->is<AstGlobalDecl>() ||
-            node->is<AstImport>()) {
+            node->is<AstGlobalDecl>() || node->is<AstImport>()) {
             return;
         }
         resolveExpr(node);
@@ -161,52 +165,52 @@ class FunctionResolver {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             auto local = locals_.find(field->name);
             if (local != locals_.end()) {
-                resolved_.bindField(field, ResolvedEntityRef::local(local->second));
+                resolved_.bindField(field,
+                                    ResolvedEntityRef::local(local->second));
                 return;
             }
 
             if (unit_) {
-                auto lookup = unit_->lookupTopLevelName(toStdString(field->name));
+                auto lookup =
+                    unit_->lookupTopLevelName(toStdString(field->name));
                 if (lookup.isFunction()) {
-                    resolved_.bindField(field,
-                                        ResolvedEntityRef::globalValue(
-                                            lookup.resolvedName));
+                    resolved_.bindField(field, ResolvedEntityRef::globalValue(
+                                                   lookup.resolvedName));
                     return;
                 }
                 if (lookup.isGlobal()) {
-                    resolved_.bindField(field,
-                                        ResolvedEntityRef::globalValue(
-                                            lookup.resolvedName));
+                    resolved_.bindField(field, ResolvedEntityRef::globalValue(
+                                                   lookup.resolvedName));
                     return;
                 }
                 if (lookup.isType()) {
-                    resolved_.bindField(field,
-                                        ResolvedEntityRef::type(lookup.resolvedName));
+                    resolved_.bindField(
+                        field, ResolvedEntityRef::type(lookup.resolvedName));
                     return;
                 }
                 if (lookup.isModule()) {
-                    resolved_.bindField(field,
-                                        ResolvedEntityRef::module(
-                                            lookup.resolvedName));
+                    resolved_.bindField(
+                        field, ResolvedEntityRef::module(lookup.resolvedName));
                     return;
                 }
             }
 
             auto *globalObject = global_->getObj(field->name);
             if (!globalObject) {
-                auto *globalType = typeMgr_
-                    ? typeMgr_->getType(llvm::StringRef(field->name.tochara(),
-                                                        field->name.size()))
-                    : nullptr;
+                auto *globalType =
+                    typeMgr_ ? typeMgr_->getType(llvm::StringRef(
+                                   field->name.tochara(), field->name.size()))
+                             : nullptr;
                 if (globalType) {
-                    resolved_.bindField(field,
-                                        ResolvedEntityRef::type(
-                                            toStdString(globalType->full_name)));
+                    resolved_.bindField(
+                        field, ResolvedEntityRef::type(
+                                   toStdString(globalType->full_name)));
                     return;
                 }
                 error(field->loc,
                       "undefined identifier `" + toStdString(field->name) + "`",
-                      "Declare it with `var` before using it, or check the spelling.");
+                      "Declare it with `var` before using it, or check the "
+                      "spelling.");
             }
             if (globalObject->as<ModuleObject>() &&
                 (!unit_ || !unit_->importsModule(toStdString(field->name)))) {
@@ -217,17 +221,18 @@ class FunctionResolver {
                           "` in this file before using `" +
                           toStdString(field->name) + ".xxx`.");
             }
-            resolved_.bindField(field,
-                                ResolvedEntityRef::globalValue(
-                                    toStdString(field->name)));
+            resolved_.bindField(field, ResolvedEntityRef::globalValue(
+                                           toStdString(field->name)));
             return;
         }
         if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
             if (unit_) {
-                auto lookup = unit_->lookupTopLevelName(toStdString(funcRef->name));
+                auto lookup =
+                    unit_->lookupTopLevelName(toStdString(funcRef->name));
                 if (lookup.isFunction()) {
                     resolved_.bindFunctionRef(
-                        funcRef, ResolvedEntityRef::globalValue(lookup.resolvedName));
+                        funcRef,
+                        ResolvedEntityRef::globalValue(lookup.resolvedName));
                     return;
                 }
             }
@@ -237,10 +242,11 @@ class FunctionResolver {
                 error(funcRef->loc,
                       "undefined function reference `" +
                           toStdString(funcRef->name) + "`",
-                      "Check the function name and make sure it is declared at top level.");
+                      "Check the function name and make sure it is declared at "
+                      "top level.");
             }
-            resolved_.bindFunctionRef(
-                funcRef, ResolvedEntityRef::globalValue(toStdString(funcRef->name)));
+            resolved_.bindFunctionRef(funcRef, ResolvedEntityRef::globalValue(
+                                                   toStdString(funcRef->name)));
             return;
         }
         if (auto *assign = dynamic_cast<const AstAssign *>(node)) {
@@ -323,10 +329,12 @@ class FunctionResolver {
 
 public:
     FunctionResolver(GlobalScope *global, TypeTable *typeMgr,
-                     const CompilationUnit *unit,
-                     ResolvedModule &module,
+                     const CompilationUnit *unit, ResolvedModule &module,
                      ResolvedFunction &resolved)
-        : global_(global), typeMgr_(typeMgr), unit_(unit), module_(module),
+        : global_(global),
+          typeMgr_(typeMgr),
+          unit_(unit),
+          module_(module),
           resolved_(resolved) {}
 
     void resolve() {
@@ -337,10 +345,11 @@ public:
         }
 
         for (auto *binding : resolved_.params()) {
-            declareBinding(binding, binding->loc(),
-                           "duplicate function parameter `" +
-                               toStdString(binding->name()) + "`",
-                           "Rename one of the parameters so each binding is unique.");
+            declareBinding(
+                binding, binding->loc(),
+                "duplicate function parameter `" +
+                    toStdString(binding->name()) + "`",
+                "Rename one of the parameters so each binding is unique.");
         }
 
         resolveStmt(resolved_.body());
@@ -351,40 +360,41 @@ class ModuleResolver {
     GlobalScope *global_;
     TypeTable *typeMgr_;
     const CompilationUnit *unit_;
-    std::unique_ptr<ResolvedModule> module_ = std::make_unique<ResolvedModule>();
+    bool rootModule_ = false;
+    std::unique_ptr<ResolvedModule> module_ =
+        std::make_unique<ResolvedModule>();
 
-    ResolvedFunction *createResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
-                                             string functionName,
-                                             string methodParentTypeName,
-                                             const location &loc,
-                                             bool topLevelEntry,
-                                             bool guaranteedReturn) {
+    ResolvedFunction *createResolvedFunction(
+        const AstFuncDecl *decl, const AstNode *body, string functionName,
+        string methodParentTypeName, const location &loc, bool topLevelEntry,
+        bool languageEntry, bool guaranteedReturn) {
         auto *resolved = module_->createFunction(
-            decl, body, std::move(functionName), std::move(methodParentTypeName), loc,
-            topLevelEntry, guaranteedReturn);
+            decl, body, std::move(functionName),
+            std::move(methodParentTypeName), loc, topLevelEntry, languageEntry,
+            guaranteedReturn);
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
-                ResolvedLocalBinding::Kind::Self, BindingKind::Value, "self", decl,
-                loc));
+                ResolvedLocalBinding::Kind::Self, BindingKind::Value, "self",
+                decl, loc));
         }
         if (decl && decl->args) {
             for (auto *arg : *decl->args) {
                 auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
                 if (!varDecl) {
-                    error(decl->loc,
-                          "invalid function argument declaration",
-                          "Each function parameter must be declared as a typed variable.");
+                    error(decl->loc, "invalid function argument declaration",
+                          "Each function parameter must be declared as a typed "
+                          "variable.");
                 }
                 resolved->addParam(module_->createLocalBinding(
-                    ResolvedLocalBinding::Kind::Parameter,
-                    varDecl->bindingKind,
+                    ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
                     toStdString(varDecl->field), varDecl, varDecl->loc));
             }
         }
         return resolved;
     }
 
-    void resolveFunction(AstFuncDecl *node, StructType *methodParent = nullptr) {
+    void resolveFunction(AstFuncDecl *node,
+                         StructType *methodParent = nullptr) {
         Function *function = nullptr;
         string resolvedFunctionName = node->name;
         if (methodParent) {
@@ -402,7 +412,8 @@ class ModuleResolver {
             function = obj ? obj->as<Function>() : nullptr;
         }
         if (!function) {
-            error(node->loc, "function declaration is missing from the symbol table",
+            error(node->loc,
+                  "function declaration is missing from the symbol table",
                   "Run declaration collection before name resolution.");
         }
 
@@ -410,9 +421,9 @@ class ModuleResolver {
             node, node->body,
             methodParent ? string(node->name) : resolvedFunctionName,
             methodParent ? string(methodParent->full_name) : string(),
-            node->loc, false,
-            node->body && node->body->hasTerminator());
-        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
+            node->loc, false, false, node->body && node->body->hasTerminator());
+        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
+            .resolve();
     }
 
     void resolveStruct(AstStructDecl *node) {
@@ -426,7 +437,8 @@ class ModuleResolver {
         auto *type = typeMgr_->getType(resolvedStructName);
         auto *structType = type ? type->as<StructType>() : nullptr;
         if (!structType) {
-            error(node->loc, "struct declaration is missing from the type table",
+            error(node->loc,
+                  "struct declaration is missing from the type table",
                   "Run type scanning before name resolution.");
         }
         auto *body = dynamic_cast<AstStatList *>(node->body);
@@ -442,14 +454,15 @@ class ModuleResolver {
     }
 
     void resolveTopLevel(AstStatList *body) {
-        bool hasTopLevelExec = false;
         auto *execBody = new AstStatList();
+        bool hasImports = false;
         for (auto *stmt : body->getBody()) {
             if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
                 resolveStruct(structDecl);
                 continue;
             }
             if (dynamic_cast<AstImport *>(stmt)) {
+                hasImports = true;
                 continue;
             }
             if (dynamic_cast<AstGlobalDecl *>(stmt)) {
@@ -459,27 +472,36 @@ class ModuleResolver {
                 resolveFunction(funcDecl);
                 continue;
             }
-            hasTopLevelExec = true;
             execBody->push(stmt);
         }
 
-        if (hasTopLevelExec) {
-            auto *resolved = createResolvedFunction(
-                nullptr, execBody, std::string(), std::string(), execBody->loc,
-                true, execBody->hasTerminator());
-            FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved).resolve();
+        const bool shouldCreateTopLevelEntry =
+            !rootModule_ || !execBody->isEmpty() || hasImports;
+        if (!shouldCreateTopLevelEntry) {
+            return;
         }
+
+        auto *resolved = createResolvedFunction(
+            nullptr, execBody, std::string(), std::string(), execBody->loc,
+            true, rootModule_, execBody->hasTerminator());
+        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
+            .resolve();
     }
 
 public:
-    explicit ModuleResolver(GlobalScope *global, const CompilationUnit *unit)
-        : global_(global), typeMgr_(global->types()), unit_(unit) {
+    explicit ModuleResolver(GlobalScope *global, const CompilationUnit *unit,
+                            bool rootModule)
+        : global_(global),
+          typeMgr_(global->types()),
+          unit_(unit),
+          rootModule_(rootModule) {
         assert(typeMgr_);
     }
 
     std::unique_ptr<ResolvedModule> resolve(AstNode *root) {
         auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body = dynamic_cast<AstStatList *>(program ? program->body : root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
         if (!body) {
             error("program body must be a statement list");
         }
@@ -510,25 +532,21 @@ ResolvedFunction::field(const AstField *node) const {
 
 const ResolvedLocalBinding *
 ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
-                                   BindingKind bindingKind,
-                                   string name, const AstNode *node,
-                                   const location &loc) {
-    localBindings_.push_back(
-        std::make_unique<ResolvedLocalBinding>(kind, bindingKind,
-                                               std::move(name), node, loc));
+                                   BindingKind bindingKind, string name,
+                                   const AstNode *node, const location &loc) {
+    localBindings_.push_back(std::make_unique<ResolvedLocalBinding>(
+        kind, bindingKind, std::move(name), node, loc));
     return localBindings_.back().get();
 }
 
 ResolvedFunction *
 ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
-                               string functionName,
-                               string methodParentTypeName,
+                               string functionName, string methodParentTypeName,
                                const location &loc, bool topLevelEntry,
-                               bool guaranteedReturn) {
+                               bool languageEntry, bool guaranteedReturn) {
     functions_.push_back(std::make_unique<ResolvedFunction>(
-        decl, body, std::move(functionName), std::move(methodParentTypeName), loc,
-        topLevelEntry,
-        guaranteedReturn));
+        decl, body, std::move(functionName), std::move(methodParentTypeName),
+        loc, topLevelEntry, languageEntry, guaranteedReturn));
     return functions_.back().get();
 }
 
@@ -551,8 +569,9 @@ ResolvedFunction::functionRef(const AstFuncRef *node) const {
 }
 
 std::unique_ptr<ResolvedModule>
-resolveModule(GlobalScope *global, AstNode *root, const CompilationUnit *unit) {
-    return resolve_impl::ModuleResolver(global, unit).resolve(root);
+resolveModule(GlobalScope *global, AstNode *root, const CompilationUnit *unit,
+              bool rootModule) {
+    return resolve_impl::ModuleResolver(global, unit, rootModule).resolve(root);
 }
 
 }  // namespace lona

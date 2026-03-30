@@ -13,33 +13,33 @@ escapeAstByteStringForJson(const string &value) {
     for (std::size_t i = 0; i < value.size(); ++i) {
         const unsigned char byte = static_cast<unsigned char>(value[i]);
         switch (byte) {
-        case '\n':
-            escaped += "\\n";
-            break;
-        case '\r':
-            escaped += "\\r";
-            break;
-        case '\t':
-            escaped += "\\t";
-            break;
-        case '\0':
-            escaped += "\\0";
-            break;
-        case '\\':
-            escaped += "\\\\";
-            break;
-        case '\"':
-            escaped += "\\\"";
-            break;
-        default:
-            if (byte >= 0x20 && byte <= 0x7E) {
-                escaped.push_back(static_cast<char>(byte));
-            } else {
-                escaped += "\\x";
-                escaped.push_back(kHexDigits[(byte >> 4) & 0x0F]);
-                escaped.push_back(kHexDigits[byte & 0x0F]);
-            }
-            break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            case '\0':
+                escaped += "\\0";
+                break;
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '\"':
+                escaped += "\\\"";
+                break;
+            default:
+                if (byte >= 0x20 && byte <= 0x7E) {
+                    escaped.push_back(static_cast<char>(byte));
+                } else {
+                    escaped += "\\x";
+                    escaped.push_back(kHexDigits[(byte >> 4) & 0x0F]);
+                    escaped.push_back(kHexDigits[byte & 0x0F]);
+                }
+                break;
         }
     }
 
@@ -92,32 +92,33 @@ AstConst::toJson(Json &root) {
     switch (this->vtype) {
         case Type::I8:
             root["value"] = isUnaryMinusOnlySignedMinLiteral()
-                ? getDeferredSignedMinMagnitude()
-                : static_cast<int>(*getBuf<std::int8_t>());
+                                ? getDeferredSignedMinMagnitude()
+                                : static_cast<int>(*getBuf<std::int8_t>());
             break;
         case Type::U8:
             root["value"] = static_cast<unsigned>(*getBuf<std::uint8_t>());
             break;
         case Type::I16:
             root["value"] = isUnaryMinusOnlySignedMinLiteral()
-                ? getDeferredSignedMinMagnitude()
-                : *getBuf<std::int16_t>();
+                                ? getDeferredSignedMinMagnitude()
+                                : *getBuf<std::int16_t>();
             break;
         case Type::U16:
             root["value"] = *getBuf<std::uint16_t>();
             break;
         case Type::I32:
             root["value"] = isUnaryMinusOnlySignedMinLiteral()
-                ? getDeferredSignedMinMagnitude()
-                : *getBuf<std::int32_t>();
+                                ? getDeferredSignedMinMagnitude()
+                                : *getBuf<std::int32_t>();
             break;
         case Type::U32:
             root["value"] = *getBuf<std::uint32_t>();
             break;
         case Type::I64:
-            root["value"] = isUnaryMinusOnlySignedMinLiteral()
-                ? getDeferredSignedMinMagnitude()
-                : static_cast<long long>(*getBuf<std::int64_t>());
+            root["value"] =
+                isUnaryMinusOnlySignedMinLiteral()
+                    ? getDeferredSignedMinMagnitude()
+                    : static_cast<long long>(*getBuf<std::int64_t>());
             break;
         case Type::U64:
             root["value"] = *getBuf<std::uint64_t>();
@@ -132,12 +133,10 @@ AstConst::toJson(Json &root) {
             root["value"] = *getBuf<double>();
             break;
         case Type::STRING:
-            root["value"] =
-                escapeAstByteStringForJson(*this->getBuf<string>());
+            root["value"] = escapeAstByteStringForJson(*this->getBuf<string>());
             break;
         case Type::CHAR:
-            root["value"] =
-                escapeAstByteStringForJson(*this->getBuf<string>());
+            root["value"] = escapeAstByteStringForJson(*this->getBuf<string>());
             break;
         case Type::BOOL:
             root["value"] = *getBuf<bool>();

@@ -47,45 +47,47 @@ tryExtractArrayDimension(const AstNode *node, std::int64_t &value) {
         return false;
     }
     switch (constant->getType()) {
-    case AstConst::Type::I8:
-        value = *constant->getBuf<std::int8_t>();
-        return true;
-    case AstConst::Type::U8:
-        value = *constant->getBuf<std::uint8_t>();
-        return true;
-    case AstConst::Type::I16:
-        value = *constant->getBuf<std::int16_t>();
-        return true;
-    case AstConst::Type::U16:
-        value = *constant->getBuf<std::uint16_t>();
-        return true;
-    case AstConst::Type::I32:
-        value = *constant->getBuf<std::int32_t>();
-        return true;
-    case AstConst::Type::U32:
-        value = *constant->getBuf<std::uint32_t>();
-        return true;
-    case AstConst::Type::I64:
-        value = *constant->getBuf<std::int64_t>();
-        return true;
-    case AstConst::Type::U64: {
-        const auto raw = *constant->getBuf<std::uint64_t>();
-        if (raw > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-            return false;
+        case AstConst::Type::I8:
+            value = *constant->getBuf<std::int8_t>();
+            return true;
+        case AstConst::Type::U8:
+            value = *constant->getBuf<std::uint8_t>();
+            return true;
+        case AstConst::Type::I16:
+            value = *constant->getBuf<std::int16_t>();
+            return true;
+        case AstConst::Type::U16:
+            value = *constant->getBuf<std::uint16_t>();
+            return true;
+        case AstConst::Type::I32:
+            value = *constant->getBuf<std::int32_t>();
+            return true;
+        case AstConst::Type::U32:
+            value = *constant->getBuf<std::uint32_t>();
+            return true;
+        case AstConst::Type::I64:
+            value = *constant->getBuf<std::int64_t>();
+            return true;
+        case AstConst::Type::U64: {
+            const auto raw = *constant->getBuf<std::uint64_t>();
+            if (raw > static_cast<std::uint64_t>(
+                          std::numeric_limits<std::int64_t>::max())) {
+                return false;
+            }
+            value = static_cast<std::int64_t>(raw);
+            return true;
         }
-        value = static_cast<std::int64_t>(raw);
-        return true;
-    }
-    case AstConst::Type::USIZE: {
-        const auto raw = *constant->getBuf<std::uint64_t>();
-        if (raw > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-            return false;
+        case AstConst::Type::USIZE: {
+            const auto raw = *constant->getBuf<std::uint64_t>();
+            if (raw > static_cast<std::uint64_t>(
+                          std::numeric_limits<std::int64_t>::max())) {
+                return false;
+            }
+            value = static_cast<std::int64_t>(raw);
+            return true;
         }
-        value = static_cast<std::int64_t>(raw);
-        return true;
-    }
-    default:
-        return false;
+        default:
+            return false;
     }
 }
 

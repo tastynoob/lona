@@ -13,6 +13,7 @@ class Driver {
 
     AstNode *tree;  // finally astTree
     const SourceBuffer *source = nullptr;
+
 public:
     Driver();
 

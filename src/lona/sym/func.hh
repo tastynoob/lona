@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-
 namespace lona {
 
 class Function : public Object {
@@ -13,8 +12,7 @@ class Function : public Object {
 
 public:
     Function(llvm::Function *val, FuncType *type,
-             std::vector<string> paramNames = {},
-             bool hasImplicitSelf = false)
+             std::vector<string> paramNames = {}, bool hasImplicitSelf = false)
         : Object((llvm::Function *)val, (TypeClass *)type),
           paramNames_(std::move(paramNames)),
           hasImplicitSelf_(hasImplicitSelf) {}
@@ -30,9 +28,8 @@ public:
     }
 };
 
-Object *emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
-                         std::vector<Object *> &args,
-                         bool hasImplicitSelf = false);
-
+Object *
+emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
+                 std::vector<Object *> &args, bool hasImplicitSelf = false);
 
 }

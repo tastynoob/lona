@@ -1,12 +1,12 @@
 #pragma once
 
-#include "../ast/astnode.hh"
 #include "../ast/array_dim.hh"
-#include "../visitor.hh"
+#include "../ast/astnode.hh"
 #include "../sym/object.hh"
+#include "../visitor.hh"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
@@ -30,8 +30,10 @@ class TargetMachine;
 
 namespace lona {
 
-std::string normalizeTargetTriple(const std::string &triple);
-bool targetUsesHostedEntry(llvm::StringRef triple);
+std::string
+normalizeTargetTriple(const std::string &triple);
+bool
+targetUsesHostedEntry(llvm::StringRef triple);
 class TypeClass;
 class ConstType;
 class PointerType;
@@ -41,18 +43,21 @@ class TupleType;
 class TypeTable;
 class Function;
 
-const llvm::DataLayout &defaultTargetDataLayout();
-const std::string &defaultTargetTriple();
-llvm::TargetMachine &targetMachineFor(llvm::StringRef triple);
-void configureModuleTargetLayout(llvm::Module &module, llvm::StringRef triple);
+const llvm::DataLayout &
+defaultTargetDataLayout();
+const std::string &
+defaultTargetTriple();
+llvm::TargetMachine &
+targetMachineFor(llvm::StringRef triple);
+void
+configureModuleTargetLayout(llvm::Module &module, llvm::StringRef triple);
 
 class TypeClass {
 public:
     string const full_name;
     int typeSize = 0;  // the size of the type in bytes
 
-    TypeClass(string full_name)
-        : full_name(full_name) {}
+    TypeClass(string full_name) : full_name(full_name) {}
 
     template<typename T>
     T *as() {
@@ -61,7 +66,7 @@ public:
 
     bool equal(TypeClass *t) { return this == t; }
 
-    virtual llvm::Type* buildLLVMType(TypeTable& types) = 0;
+    virtual llvm::Type *buildLLVMType(TypeTable &types) = 0;
 
     virtual ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) {
         return new BaseVar(this, specifiers);
@@ -70,11 +75,23 @@ public:
 
 class BaseType : public TypeClass {
 public:
-    enum Type { U8, I8, U16, I16, U32, I32, U64, I64, USIZE, F32, F64, BOOL } type;
-    BaseType(Type type, string full_name)
-        : TypeClass(full_name), type(type) {}
+    enum Type {
+        U8,
+        I8,
+        U16,
+        I16,
+        U32,
+        I32,
+        U64,
+        I64,
+        USIZE,
+        F32,
+        F64,
+        BOOL
+    } type;
+    BaseType(Type type, string full_name) : TypeClass(full_name), type(type) {}
 
-    llvm::Type* buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class ConstType : public TypeClass {
@@ -118,11 +135,13 @@ private:
 
     bool opaque = false;
     StructDeclKind declKind = StructDeclKind::Native;
+
 public:
-    StructType(llvm::StringMap<ValueTy> &&members,
-               string full_name,
+    StructType(llvm::StringMap<ValueTy> &&members, string full_name,
                StructDeclKind declKind = StructDeclKind::Native)
-        : TypeClass(full_name), members(members), opaque(false),
+        : TypeClass(full_name),
+          members(members),
+          opaque(false),
           declKind(declKind) {}
 
     // create opaque struct
@@ -192,8 +211,12 @@ public:
     const llvm::StringMap<AccessKind> &getMemberAccesses() const {
         return memberAccess;
     }
-    const llvm::StringSet<> &getEmbeddedMembers() const { return embeddedMembers; }
-    const llvm::StringMap<FuncType *> &getMethodTypes() const { return methodTypes; }
+    const llvm::StringSet<> &getEmbeddedMembers() const {
+        return embeddedMembers;
+    }
+    const llvm::StringMap<FuncType *> &getMethodTypes() const {
+        return methodTypes;
+    }
     std::vector<ValueTy> getMembersInOrder() const {
         std::vector<ValueTy> ordered(members.size(), {nullptr, -1});
         for (const auto &member : members) {
@@ -206,7 +229,7 @@ public:
         return ordered;
     }
 
-    llvm::Type *buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 
     ObjectPtr newObj(uint32_t specifiers = Object::EMPTY) override {
         return new StructVar(this, specifiers);
@@ -227,7 +250,8 @@ public:
             }
             auto *itemType = itemTypes[i];
             if (itemType) {
-                name.append(itemType->full_name.tochara(), itemType->full_name.size());
+                name.append(itemType->full_name.tochara(),
+                            itemType->full_name.size());
             } else {
                 name += "<unknown>";
             }
@@ -253,21 +277,24 @@ public:
 class FuncType : public TypeClass {
     std::vector<TypeClass *> argTypes;
     std::vector<BindingKind> argBindingKinds;
-    TypeClass * retType = nullptr;
+    TypeClass *retType = nullptr;
     AbiKind abiKind = AbiKind::Native;
+
 public:
-    static string buildName(const std::vector<TypeClass *> &argTypes,
-                            TypeClass *retType,
-                            const std::vector<BindingKind> &argBindingKinds = {},
-                            AbiKind abiKind = AbiKind::Native) {
+    static string buildName(
+        const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+        const std::vector<BindingKind> &argBindingKinds = {},
+        AbiKind abiKind = AbiKind::Native) {
         std::string funcTypeName = abiKind == AbiKind::C ? "fc" : "fn";
         if (retType) {
             funcTypeName += "_";
-            funcTypeName.append(retType->full_name.tochara(), retType->full_name.size());
+            funcTypeName.append(retType->full_name.tochara(),
+                                retType->full_name.size());
         }
         for (std::size_t i = 0; i < argTypes.size(); ++i) {
             funcTypeName += ".";
-            if (!argBindingKinds.empty() && argBindingKinds[i] == BindingKind::Ref) {
+            if (!argBindingKinds.empty() &&
+                argBindingKinds[i] == BindingKind::Ref) {
                 funcTypeName += "&";
             }
             auto *argType = argTypes[i];
@@ -281,7 +308,7 @@ public:
         return string(funcTypeName.c_str());
     }
 
-    auto& getArgTypes() const { return argTypes; }
+    auto &getArgTypes() const { return argTypes; }
     const auto &getArgBindingKinds() const { return argBindingKinds; }
     BindingKind getArgBindingKind(std::size_t index) const {
         if (index >= argBindingKinds.size()) {
@@ -293,9 +320,8 @@ public:
     AbiKind getAbiKind() const { return abiKind; }
     bool isExternC() const { return abiKind == AbiKind::C; }
 
-    FuncType(std::vector<TypeClass *> &&args,
-             TypeClass *retType, string full_name,
-             std::vector<BindingKind> argBindingKinds = {},
+    FuncType(std::vector<TypeClass *> &&args, TypeClass *retType,
+             string full_name, std::vector<BindingKind> argBindingKinds = {},
              AbiKind abiKind = AbiKind::Native)
         : TypeClass(full_name),
           argTypes(args),
@@ -309,7 +335,7 @@ public:
         // if hasSroa, the first arg is the return value
     }
 
-    llvm::Type *buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class PointerType : public TypeClass {
@@ -341,20 +367,21 @@ public:
             name += ":";
             if (auto *retType = func->getRetType()) {
                 name += " ";
-                name.append(retType->full_name.tochara(), retType->full_name.size());
+                name.append(retType->full_name.tochara(),
+                            retType->full_name.size());
             }
             name += ")";
             return string(name.c_str());
         }
-        return pointeeType ? pointeeType->full_name + "*" : string("<unknown>*");
+        return pointeeType ? pointeeType->full_name + "*"
+                           : string("<unknown>*");
     }
 
     PointerType(TypeClass *pointeeType)
-        : TypeClass(buildName(pointeeType)),
-          pointeeType(pointeeType) {}
+        : TypeClass(buildName(pointeeType)), pointeeType(pointeeType) {}
     TypeClass *getPointeeType() { return pointeeType; }
 
-    llvm::Type *buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class IndexablePointerType : public TypeClass {
@@ -367,11 +394,10 @@ public:
     }
 
     explicit IndexablePointerType(TypeClass *elementType)
-        : TypeClass(buildName(elementType)),
-          elementType(elementType) {}
+        : TypeClass(buildName(elementType)), elementType(elementType) {}
 
     TypeClass *getElementType() { return elementType; }
-    llvm::Type *buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class ArrayType : public TypeClass {
@@ -425,10 +451,11 @@ public:
         auto values = staticDimensions(&ok);
         return ok && !values.empty();
     }
-    llvm::Type *buildLLVMType(TypeTable& types) override;
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
-TypeClass *stripTopLevelConst(TypeClass *type);
+TypeClass *
+stripTopLevelConst(TypeClass *type);
 
 template<typename T>
 inline T *
@@ -437,21 +464,24 @@ asUnqualified(TypeClass *type) {
     return storageType ? storageType->as<T>() : nullptr;
 }
 
-bool isConstQualifiedType(TypeClass *type);
-bool isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType);
-TypeClass *materializeValueType(TypeTable *typeTable, TypeClass *type);
-bool isFullyWritableValueType(TypeClass *type);
-bool isFullyWritableStructFieldType(TypeClass *type);
-
-
+bool
+isConstQualifiedType(TypeClass *type);
+bool
+isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType);
+TypeClass *
+materializeValueType(TypeTable *typeTable, TypeClass *type);
+bool
+isFullyWritableValueType(TypeClass *type);
+bool
+isFullyWritableStructFieldType(TypeClass *type);
 
 class TypeTable {
     struct TypeMap {
-        TypeClass* type; // main type
-        TypeMap* pointer; // main type's pointer type
-        TypeMap* array; // main type's array type
+        TypeClass *type;   // main type
+        TypeMap *pointer;  // main type's pointer type
+        TypeMap *array;    // main type's array type
         TypeMap() : type(nullptr), pointer(nullptr), array(nullptr) {}
-        TypeMap(TypeClass* type)
+        TypeMap(TypeClass *type)
             : type(type), pointer(nullptr), array(nullptr) {}
     };
 
@@ -460,7 +490,7 @@ class TypeTable {
         return nextId++;
     }
 
-    llvm::Module& module;
+    llvm::Module &module;
     std::size_t instanceId_;
 
     llvm::StringMap<TypeMap> typeMap;
@@ -476,10 +506,11 @@ class TypeTable {
     struct MethodBindingKeyHash {
         std::size_t operator()(const MethodBindingKey &key) const {
             return std::hash<const StructType *>{}(key.parent) ^
-                (std::hash<string>{}(key.name) << 1);
+                   (std::hash<string>{}(key.name) << 1);
         }
     };
-    std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash> methodFunctions_;
+    std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash>
+        methodFunctions_;
     std::unordered_set<llvm::StructType *> materializingStructBodies_;
 
     void completeStructBodyIfNeeded(StructType *structType,
@@ -513,11 +544,11 @@ class TypeTable {
     }
 
 public:
-    TypeTable(llvm::Module& module)
+    TypeTable(llvm::Module &module)
         : module(module), instanceId_(nextInstanceId()) {}
 
-    llvm::LLVMContext& getContext() { return module.getContext(); }
-    llvm::Module& getModule() { return module; }
+    llvm::LLVMContext &getContext() { return module.getContext(); }
+    llvm::Module &getModule() { return module; }
     std::size_t instanceId() const { return instanceId_; }
     llvm::Type *getLLVMType(TypeClass *type) {
         if (!type) {
@@ -534,8 +565,8 @@ public:
         }
 
         if (auto *structType = type->as<StructType>()) {
-            auto *llvmStruct = llvm::cast<llvm::StructType>(
-                structType->buildLLVMType(*this));
+            auto *llvmStruct =
+                llvm::cast<llvm::StructType>(structType->buildLLVMType(*this));
             llvmTypes_[type] = llvmStruct;
             completeStructBodyIfNeeded(structType, llvmStruct);
             return llvmStruct;
@@ -567,14 +598,15 @@ public:
                 return 0;
             }
         }
-        type->typeSize = static_cast<int>(module.getDataLayout().getTypeAllocSize(llvmType));
+        type->typeSize =
+            static_cast<int>(module.getDataLayout().getTypeAllocSize(llvmType));
         return static_cast<std::uint64_t>(type->typeSize);
     }
     bool shouldReturnByPointer(TypeClass *type) {
         auto *storageType = stripTopLevelConst(type);
         return storageType &&
-            (storageType->as<StructType>() || storageType->as<TupleType>() ||
-             storageType->as<ArrayType>());
+               (storageType->as<StructType>() || storageType->as<TupleType>() ||
+                storageType->as<ArrayType>());
     }
 
     bool addType(llvm::StringRef name, TypeClass *type) {
@@ -660,11 +692,12 @@ public:
         return tupleType;
     }
 
-    FuncType *getOrCreateFunctionType(const std::vector<TypeClass *> &argTypes,
-                                      TypeClass *retType,
-                                      std::vector<BindingKind> argBindingKinds = {},
-                                      AbiKind abiKind = AbiKind::Native) {
-        if (!argBindingKinds.empty() && argBindingKinds.size() != argTypes.size()) {
+    FuncType *getOrCreateFunctionType(
+        const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+        std::vector<BindingKind> argBindingKinds = {},
+        AbiKind abiKind = AbiKind::Native) {
+        if (!argBindingKinds.empty() &&
+            argBindingKinds.size() != argTypes.size()) {
             return nullptr;
         }
         for (auto *argType : argTypes) {
@@ -672,14 +705,14 @@ public:
                 return nullptr;
             }
         }
-        auto funcTypeName = FuncType::buildName(argTypes, retType,
-                                                argBindingKinds, abiKind);
+        auto funcTypeName =
+            FuncType::buildName(argTypes, retType, argBindingKinds, abiKind);
         if (auto *existing = getType(funcTypeName)) {
             return existing->as<FuncType>();
         }
-        auto *funcType = new FuncType(std::vector<TypeClass *>(argTypes), retType,
-                                      funcTypeName, std::move(argBindingKinds),
-                                      abiKind);
+        auto *funcType =
+            new FuncType(std::vector<TypeClass *>(argTypes), retType,
+                         funcTypeName, std::move(argBindingKinds), abiKind);
         addType(funcTypeName, funcType);
         return funcType;
     }
@@ -701,19 +734,22 @@ public:
                 if (existingStruct) {
                     existingStruct->setDeclKind(structType->getDeclKind());
                     if (existingStruct->isOpaque() && !structType->isOpaque()) {
-                        existingStruct->complete(structType->getMembers(),
-                                                 structType->getMemberAccesses(),
-                                                 structType->getEmbeddedMembers());
+                        existingStruct->complete(
+                            structType->getMembers(),
+                            structType->getMemberAccesses(),
+                            structType->getEmbeddedMembers());
                     }
                     for (const auto &method : structType->getMethodTypes()) {
                         if (!existingStruct->getMethodType(method.first())) {
                             std::vector<string> paramNames;
                             if (const auto *storedParamNames =
-                                    structType->getMethodParamNames(method.first())) {
+                                    structType->getMethodParamNames(
+                                        method.first())) {
                                 paramNames = *storedParamNames;
                             }
-                            existingStruct->addMethodType(method.first(), method.second,
-                                                          std::move(paramNames));
+                            existingStruct->addMethodType(
+                                method.first(), method.second,
+                                std::move(paramNames));
                         }
                     }
                 }
@@ -793,7 +829,8 @@ public:
                 if (!internedItem) {
                     return nullptr;
                 }
-                reusedOriginalItems = reusedOriginalItems && internedItem == item;
+                reusedOriginalItems =
+                    reusedOriginalItems && internedItem == item;
                 itemTypes.push_back(internedItem);
             }
             if (auto *existing = getType(type->full_name)) {
@@ -832,10 +869,12 @@ public:
         return type;
     }
 
-    void bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func) {
+    void bindMethodFunction(StructType *parent, llvm::StringRef name,
+                            Function *func) {
         methodFunctions_[{parent, string(name)}] = func;
     }
-    Function *getMethodFunction(const StructType *parent, llvm::StringRef name) const {
+    Function *getMethodFunction(const StructType *parent,
+                                llvm::StringRef name) const {
         auto found = methodFunctions_.find({parent, string(name)});
         if (found == methodFunctions_.end()) {
             return nullptr;
@@ -870,7 +909,8 @@ public:
 
         if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
             auto *elementType = getType(indexable->base);
-            return elementType ? createIndexablePointerType(elementType) : nullptr;
+            return elementType ? createIndexablePointerType(elementType)
+                               : nullptr;
         }
 
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
@@ -912,9 +952,8 @@ public:
                 }
                 argTypes.push_back(argType);
             }
-            auto *funcType = getOrCreateFunctionType(argTypes, retType,
-                                                     std::move(argBindingKinds),
-                                                     AbiKind::Native);
+            auto *funcType = getOrCreateFunctionType(
+                argTypes, retType, std::move(argBindingKinds), AbiKind::Native);
             return funcType ? createPointerType(funcType) : nullptr;
         }
 
@@ -926,15 +965,15 @@ inline bool
 isByteCopyPlainType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
-        (storageType->as<BaseType>() || storageType->as<PointerType>() ||
-         storageType->as<IndexablePointerType>());
+           (storageType->as<BaseType>() || storageType->as<PointerType>() ||
+            storageType->as<IndexablePointerType>());
 }
 
 inline bool
 isPointerLikeType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
-    return storageType &&
-        (storageType->as<PointerType>() || storageType->as<IndexablePointerType>());
+    return storageType && (storageType->as<PointerType>() ||
+                           storageType->as<IndexablePointerType>());
 }
 
 inline TypeClass *
@@ -962,27 +1001,28 @@ isNumericStorageType(TypeClass *type) {
         return false;
     }
     switch (base->type) {
-    case BaseType::U8:
-    case BaseType::I8:
-    case BaseType::U16:
-    case BaseType::I16:
-    case BaseType::U32:
-    case BaseType::I32:
-    case BaseType::U64:
-    case BaseType::I64:
-    case BaseType::USIZE:
-    case BaseType::F32:
-    case BaseType::F64:
-        return true;
-    default:
-        return false;
+        case BaseType::U8:
+        case BaseType::I8:
+        case BaseType::U16:
+        case BaseType::I16:
+        case BaseType::U32:
+        case BaseType::I32:
+        case BaseType::U64:
+        case BaseType::I64:
+        case BaseType::USIZE:
+        case BaseType::F32:
+        case BaseType::F64:
+            return true;
+        default:
+            return false;
     }
 }
 
 inline bool
 isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
     return dstType && srcType &&
-        isConstQualificationConvertible(dstType, materializeValueType(nullptr, srcType));
+           isConstQualificationConvertible(
+               dstType, materializeValueType(nullptr, srcType));
 }
 
 }  // namespace lona

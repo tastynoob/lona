@@ -1,8 +1,8 @@
 #include "cmdline.hpp"
 #include "lona/driver/session.hh"
 #include "lona/err/err.hh"
-#include <fstream>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -67,24 +67,25 @@ main(int argc, char *argv[]) {
     cmdline::parser cli;
     cli.add<std::string>(
         "emit", 0,
-        "select output artifact: ir, entry (hosted entry object), obj (single final object), or objects (module object bundle)",
+        "select output artifact: ir, entry (hosted entry object), obj (single "
+        "final object), or objects (module object bundle)",
         false, "",
         cmdline::oneof<std::string>("ir", "entry", "obj", "objects"));
-    cli.add<std::string>(
-        "target", 0,
-        "LLVM target triple, for example x86_64-none-elf or x86_64-unknown-linux-gnu",
-        false, "");
-    cli.add<std::string>(
-        "cache-dir", 0,
-        "output directory for `--emit objects` bundle members",
-        false, "./lona_cache");
+    cli.add<std::string>("target", 0,
+                         "LLVM target triple, for example x86_64-none-elf or "
+                         "x86_64-unknown-linux-gnu",
+                         false, "");
+    cli.add<std::string>("cache-dir", 0,
+                         "output directory for `--emit objects` bundle members",
+                         false, "./lona_cache");
     cli.add<std::string>(
         "include-dir", 'I',
-        "add a module include search directory; searched after the importing file directory and may be repeated",
+        "add a module include search directory; searched after the importing "
+        "file directory and may be repeated",
         false, "");
-    cli.add<std::string>(
-        "lto", 0, "link-time optimization mode: off or full", false, "off",
-        cmdline::oneof<std::string>("off", "full"));
+    cli.add<std::string>("lto", 0, "link-time optimization mode: off or full",
+                         false, "off",
+                         cmdline::oneof<std::string>("off", "full"));
     cli.add("no-cache", 0, "disable module artifact reuse for this compile");
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
@@ -116,7 +117,8 @@ main(int argc, char *argv[]) {
 
     if (emitEntry) {
         if (args.size() != 1) {
-            std::cerr << "`--emit entry` requires an explicit output object path\n";
+            std::cerr
+                << "`--emit entry` requires an explicit output object path\n";
             std::cerr << cli.usage();
             return 1;
         }
@@ -126,7 +128,8 @@ main(int argc, char *argv[]) {
     }
 
     if (emitObjects && args.size() != 2) {
-        std::cerr << "`--emit objects` requires an explicit manifest output path\n";
+        std::cerr
+            << "`--emit objects` requires an explicit manifest output path\n";
         std::cerr << cli.usage();
         return 1;
     }
@@ -142,7 +145,8 @@ main(int argc, char *argv[]) {
         return 1;
     }
     if (emitEntry && ltoMode != "off") {
-        std::cerr << "`--emit entry` does not support `--lto " << ltoMode << "`\n";
+        std::cerr << "`--emit entry` does not support `--lto " << ltoMode
+                  << "`\n";
         std::cerr << cli.usage();
         return 1;
     }
@@ -166,7 +170,8 @@ main(int argc, char *argv[]) {
                 lona::DiagnosticError(
                     lona::DiagnosticError::Category::Driver,
                     "I couldn't open output file `" + outputPath + "`.",
-                    "Check that the path is writable and that parent directories exist."),
+                    "Check that the path is writable and that parent "
+                    "directories exist."),
                 std::cerr);
             flushProcessStreamsAndExit(1);
         }
@@ -175,8 +180,7 @@ main(int argc, char *argv[]) {
 
     lona::SessionOptions options;
     const bool compileMode = emitIR || emitEntry || emitObject || emitObjects ||
-                             cli.exist("no-cache") ||
-                             cli.exist("verify-ir") ||
+                             cli.exist("no-cache") || cli.exist("verify-ir") ||
                              cli.exist("debug") || cli.exist("opt") ||
                              cli.exist("target") || ltoMode != "off";
     if (emitObjects) {
@@ -201,12 +205,12 @@ main(int argc, char *argv[]) {
         cli.exist("target") ? cli.get<std::string>("target") : std::string();
     options.compile.includePaths = std::move(normalizedArgs.includePaths);
     options.compile.ltoMode = ltoMode == "full"
-        ? lona::CompileOptions::LTOMode::Full
-        : lona::CompileOptions::LTOMode::Off;
+                                  ? lona::CompileOptions::LTOMode::Full
+                                  : lona::CompileOptions::LTOMode::Off;
 
     int exitCode = emitEntry
-        ? session.runEntry(options, *out, std::cerr)
-        : session.runFile(inputPath, options, *out, std::cerr);
+                       ? session.runEntry(options, *out, std::cerr)
+                       : session.runFile(inputPath, options, *out, std::cerr);
     if (cli.exist("stats")) {
         session.printStats(std::cerr);
     }

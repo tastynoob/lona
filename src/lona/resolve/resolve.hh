@@ -111,11 +111,13 @@ class ResolvedFunction {
     string methodParentTypeName_;
     location loc_;
     bool topLevelEntry_ = false;
+    bool languageEntry_ = false;
     bool guaranteedReturn_ = false;
 
     std::vector<const ResolvedLocalBinding *> params_;
     const ResolvedLocalBinding *selfBinding_ = nullptr;
-    std::unordered_map<const AstVarDef *, const ResolvedLocalBinding *> variables_;
+    std::unordered_map<const AstVarDef *, const ResolvedLocalBinding *>
+        variables_;
     std::unordered_map<const AstField *, ResolvedEntityRef> fields_;
     std::unordered_map<const AstDotLike *, ResolvedEntityRef> dotLikes_;
     std::unordered_map<const AstFuncRef *, ResolvedEntityRef> functionRefs_;
@@ -123,14 +125,15 @@ class ResolvedFunction {
 public:
     ResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
                      string functionName, string methodParentTypeName,
-                     const location &loc,
-                     bool topLevelEntry, bool guaranteedReturn)
+                     const location &loc, bool topLevelEntry,
+                     bool languageEntry, bool guaranteedReturn)
         : decl_(decl),
           body_(body),
           functionName_(std::move(functionName)),
           methodParentTypeName_(std::move(methodParentTypeName)),
           loc_(loc),
           topLevelEntry_(topLevelEntry),
+          languageEntry_(languageEntry),
           guaranteedReturn_(guaranteedReturn) {}
 
     const AstFuncDecl *decl() const { return decl_; }
@@ -141,16 +144,24 @@ public:
     const string &methodParentTypeName() const { return methodParentTypeName_; }
     const location &loc() const { return loc_; }
     bool isTopLevelEntry() const { return topLevelEntry_; }
+    bool isLanguageEntry() const { return languageEntry_; }
     bool guaranteedReturn() const { return guaranteedReturn_; }
 
-    void addParam(const ResolvedLocalBinding *binding) { params_.push_back(binding); }
-    const std::vector<const ResolvedLocalBinding *> &params() const { return params_; }
+    void addParam(const ResolvedLocalBinding *binding) {
+        params_.push_back(binding);
+    }
+    const std::vector<const ResolvedLocalBinding *> &params() const {
+        return params_;
+    }
 
     bool hasSelfBinding() const { return selfBinding_ != nullptr; }
-    void setSelfBinding(const ResolvedLocalBinding *binding) { selfBinding_ = binding; }
+    void setSelfBinding(const ResolvedLocalBinding *binding) {
+        selfBinding_ = binding;
+    }
     const ResolvedLocalBinding *selfBinding() const { return selfBinding_; }
 
-    void bindVariable(const AstVarDef *node, const ResolvedLocalBinding *binding) {
+    void bindVariable(const AstVarDef *node,
+                      const ResolvedLocalBinding *binding) {
         variables_[node] = binding;
     }
     const ResolvedLocalBinding *variable(const AstVarDef *node) const;
@@ -176,24 +187,23 @@ class ResolvedModule {
     std::vector<std::unique_ptr<ResolvedFunction>> functions_;
 
 public:
-    const ResolvedLocalBinding *createLocalBinding(ResolvedLocalBinding::Kind kind,
-                                                   BindingKind bindingKind,
-                                                   string name,
-                                                   const AstNode *node,
-                                                   const location &loc);
+    const ResolvedLocalBinding *createLocalBinding(
+        ResolvedLocalBinding::Kind kind, BindingKind bindingKind, string name,
+        const AstNode *node, const location &loc);
 
-    ResolvedFunction *createFunction(const AstFuncDecl *decl, const AstNode *body,
-                                     string functionName,
+    ResolvedFunction *createFunction(const AstFuncDecl *decl,
+                                     const AstNode *body, string functionName,
                                      string methodParentTypeName,
                                      const location &loc, bool topLevelEntry,
-                                     bool guaranteedReturn);
+                                     bool languageEntry, bool guaranteedReturn);
 
     const std::vector<std::unique_ptr<ResolvedFunction>> &functions() const {
         return functions_;
     }
 };
 
-std::unique_ptr<ResolvedModule> resolveModule(GlobalScope *global, AstNode *root,
-                                              const CompilationUnit *unit = nullptr);
+std::unique_ptr<ResolvedModule>
+resolveModule(GlobalScope *global, AstNode *root,
+              const CompilationUnit *unit = nullptr, bool rootModule = false);
 
 }  // namespace lona

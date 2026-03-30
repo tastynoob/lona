@@ -5,9 +5,8 @@
 #include <string.h>
 #include <string>
 
-#include "location.hh"
 #include "../util/string.hh"
-
+#include "location.hh"
 
 namespace lona {
 
@@ -79,9 +78,7 @@ public:
         os << "AstToken(" << tokenTypeToStr(type) << ", " << text << ")";
     }
 
-    const int toInt() {
-        return text.toI32();
-    }
+    const int toInt() { return text.toI32(); }
 };
 
 std::ostream &

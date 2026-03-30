@@ -53,7 +53,8 @@ void
 hashTypeNode(std::uint64_t &seed, const TypeNode *node);
 
 void
-hashArrayDimensions(std::uint64_t &seed, const std::vector<AstNode *> &dimensions) {
+hashArrayDimensions(std::uint64_t &seed,
+                    const std::vector<AstNode *> &dimensions) {
     seed = combineHash(seed, dimensions.size());
     for (auto *dimension : dimensions) {
         if (dimension == nullptr) {
@@ -82,7 +83,8 @@ hashParamSignature(std::uint64_t &seed, AstNode *node) {
     if (auto *def = dynamic_cast<AstVarDef *>(node)) {
         hashText(seed, "param");
         hashText(seed, bindingKindKeyword(def->getBindingKind()));
-        hashText(seed, def->isReadOnlyBinding() ? "readonly-binding" : "mutable-binding");
+        hashText(seed, def->isReadOnlyBinding() ? "readonly-binding"
+                                                : "mutable-binding");
         hashText(seed, toStdString(def->getName()));
         hashTypeNode(seed, def->getTypeNode());
         return;
@@ -99,51 +101,51 @@ hashInferredGlobalType(std::uint64_t &seed, const AstNode *node) {
     if (auto *constant = dynamic_cast<const AstConst *>(node)) {
         hashText(seed, "global-infer:const");
         switch (constant->getType()) {
-        case AstConst::Type::I8:
-            hashText(seed, "i8");
-            return;
-        case AstConst::Type::U8:
-        case AstConst::Type::CHAR:
-            hashText(seed, "u8");
-            return;
-        case AstConst::Type::I16:
-            hashText(seed, "i16");
-            return;
-        case AstConst::Type::U16:
-            hashText(seed, "u16");
-            return;
-        case AstConst::Type::I32:
-            hashText(seed, "i32");
-            return;
-        case AstConst::Type::U32:
-            hashText(seed, "u32");
-            return;
-        case AstConst::Type::I64:
-            hashText(seed, "i64");
-            return;
-        case AstConst::Type::U64:
-            hashText(seed, "u64");
-            return;
-        case AstConst::Type::USIZE:
-            hashText(seed, "usize");
-            return;
-        case AstConst::Type::F32:
-            hashText(seed, "f32");
-            return;
-        case AstConst::Type::F64:
-            hashText(seed, "f64");
-            return;
-        case AstConst::Type::BOOL:
-            hashText(seed, "bool");
-            return;
-        case AstConst::Type::STRING:
-            hashText(seed, "indexable-ptr");
-            hashText(seed, "const");
-            hashText(seed, "u8");
-            return;
-        case AstConst::Type::NULLPTR:
-            hashText(seed, "null-pointer-untyped");
-            return;
+            case AstConst::Type::I8:
+                hashText(seed, "i8");
+                return;
+            case AstConst::Type::U8:
+            case AstConst::Type::CHAR:
+                hashText(seed, "u8");
+                return;
+            case AstConst::Type::I16:
+                hashText(seed, "i16");
+                return;
+            case AstConst::Type::U16:
+                hashText(seed, "u16");
+                return;
+            case AstConst::Type::I32:
+                hashText(seed, "i32");
+                return;
+            case AstConst::Type::U32:
+                hashText(seed, "u32");
+                return;
+            case AstConst::Type::I64:
+                hashText(seed, "i64");
+                return;
+            case AstConst::Type::U64:
+                hashText(seed, "u64");
+                return;
+            case AstConst::Type::USIZE:
+                hashText(seed, "usize");
+                return;
+            case AstConst::Type::F32:
+                hashText(seed, "f32");
+                return;
+            case AstConst::Type::F64:
+                hashText(seed, "f64");
+                return;
+            case AstConst::Type::BOOL:
+                hashText(seed, "bool");
+                return;
+            case AstConst::Type::STRING:
+                hashText(seed, "indexable-ptr");
+                hashText(seed, "const");
+                hashText(seed, "u8");
+                return;
+            case AstConst::Type::NULLPTR:
+                hashText(seed, "null-pointer-untyped");
+                return;
         }
     }
     if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
@@ -220,8 +222,8 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
             seed = combineHash(seed, 0);
         }
         hashTypeNode(seed, funcDecl->retType);
-        hashText(seed, funcDecl->hasBody() ? "func-body:present"
-                                           : "func-body:none");
+        hashText(seed,
+                 funcDecl->hasBody() ? "func-body:present" : "func-body:none");
         return;
     }
     if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(node)) {
@@ -276,7 +278,8 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashTypeNode(seed, pointer->base);
         return;
     }
-    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+    if (auto *indexable =
+            dynamic_cast<const IndexablePointerTypeNode *>(node)) {
         hashText(seed, "indexable-ptr");
         hashTypeNode(seed, indexable->base);
         return;
@@ -315,8 +318,8 @@ computeInterfaceHash(AstNode *root) {
 }
 
 TypeClass *
-resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node,
-                bool validateLayout = true) {
+resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
+                TypeNode *node, bool validateLayout = true) {
     if (!typeTable || !node) {
         return nullptr;
     }
@@ -332,7 +335,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     TypeClass *resolved = nullptr;
 
     if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
-        auto *baseType = resolveTypeNode(typeTable, unit, qualified->base, false);
+        auto *baseType =
+            resolveTypeNode(typeTable, unit, qualified->base, false);
         resolved = baseType ? typeTable->createConstType(baseType) : nullptr;
         unit.cacheResolvedType(node, resolved);
         return resolved;
@@ -379,15 +383,18 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
     }
 
     if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-        auto *elementType = resolveTypeNode(typeTable, unit, indexable->base, false);
-        resolved = elementType ? typeTable->createIndexablePointerType(elementType)
-                               : nullptr;
+        auto *elementType =
+            resolveTypeNode(typeTable, unit, indexable->base, false);
+        resolved = elementType
+                       ? typeTable->createIndexablePointerType(elementType)
+                       : nullptr;
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }
 
     if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto *elementType = resolveTypeNode(typeTable, unit, array->base, false);
+        auto *elementType =
+            resolveTypeNode(typeTable, unit, array->base, false);
         if (!elementType) {
             return nullptr;
         }
@@ -418,8 +425,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit, TypeNode *nod
         argBindingKinds.reserve(func->args.size());
         for (auto *arg : func->args) {
             argBindingKinds.push_back(funcParamBindingKind(arg));
-            auto *argType =
-                resolveTypeNode(typeTable, unit, unwrapFuncParamType(arg), false);
+            auto *argType = resolveTypeNode(typeTable, unit,
+                                            unwrapFuncParamType(arg), false);
             if (!argType) {
                 return nullptr;
             }
@@ -477,7 +484,8 @@ CompilationUnit::implementationHash() const {
 }
 
 void
-CompilationUnit::attachInterface(std::shared_ptr<ModuleInterface> moduleInterface) {
+CompilationUnit::attachInterface(
+    std::shared_ptr<ModuleInterface> moduleInterface) {
     moduleInterface_ = std::move(moduleInterface);
     if (moduleInterface_) {
         moduleInterface_->refresh(path_, moduleKey_, moduleName_,
@@ -492,7 +500,7 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
     const auto newName = compilation_unit_impl::deriveModuleName(newPath);
     const auto newHash = hashModuleSource(source.content());
     const bool changed = !source_ || path_ != newPath || !moduleInterface_ ||
-        moduleInterface_->sourceHash() != newHash;
+                         moduleInterface_->sourceHash() != newHash;
 
     path_ = source.path();
     moduleKey_ = std::move(newKey);
@@ -516,7 +524,8 @@ CompilationUnit::setSyntaxTree(AstNode *tree) {
     syntaxTree_ = applyBuiltinTags(tree);
     validateBuiltinTagResults(syntaxTree_);
     invalidateCaches();
-    stage_ = tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;
+    stage_ =
+        tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;
 }
 
 void
@@ -559,7 +568,8 @@ bool
 CompilationUnit::addImportedModule(string alias, const CompilationUnit &unit) {
     ImportedModule imported = {unit.path(), unit.moduleKey(), unit.moduleName(),
                                unit.interface()};
-    return importedModules_.emplace(std::move(alias), std::move(imported)).second;
+    return importedModules_.emplace(std::move(alias), std::move(imported))
+        .second;
 }
 
 const CompilationUnit::ImportedModule *
@@ -630,7 +640,8 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
         lookup.kind = TopLevelLookupKind::Type;
         lookup.importedModule = &moduleNamespace;
         lookup.typeDecl = member.typeDecl;
-        lookup.resolvedName = member.typeDecl ? member.typeDecl->exportedName : string();
+        lookup.resolvedName =
+            member.typeDecl ? member.typeDecl->exportedName : string();
         return lookup;
     }
     if (member.isFunction()) {
@@ -674,9 +685,9 @@ CompilationUnit::ensureHashes() const {
     if (hashesReady_) {
         return;
     }
-    interfaceHash_ = syntaxTree_
-        ? compilation_unit_impl::computeInterfaceHash(syntaxTree_)
-        : 0;
+    interfaceHash_ =
+        syntaxTree_ ? compilation_unit_impl::computeInterfaceHash(syntaxTree_)
+                    : 0;
     implementationHash_ = sourceHash();
     hashesReady_ = true;
 }

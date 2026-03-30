@@ -1,8 +1,8 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
-#include "module_interface.hh"
 #include "lona/source/source_manager.hh"
+#include "module_interface.hh"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -87,9 +87,11 @@ public:
     bool hasSyntaxTree() const { return syntaxTree_ != nullptr; }
     bool dependenciesScanned() const {
         return static_cast<int>(stage_) >=
-            static_cast<int>(CompilationUnitStage::DependenciesScanned);
+               static_cast<int>(CompilationUnitStage::DependenciesScanned);
     }
-    bool interfaceCollected() const { return moduleInterface_ && moduleInterface_->collected(); }
+    bool interfaceCollected() const {
+        return moduleInterface_ && moduleInterface_->collected();
+    }
     AstNode *syntaxTree() const { return syntaxTree_; }
     AstNode *requireSyntaxTree() const;
     ModuleInterface *interface() { return moduleInterface_.get(); }
@@ -119,15 +121,18 @@ public:
     void clearInterface();
     bool bindLocalType(string localName, string resolvedName);
     bool bindLocalType(std::string localName, string resolvedName) {
-        return bindLocalType(string(std::move(localName)), std::move(resolvedName));
+        return bindLocalType(string(std::move(localName)),
+                             std::move(resolvedName));
     }
     bool bindLocalFunction(string localName, string resolvedName);
     bool bindLocalFunction(std::string localName, string resolvedName) {
-        return bindLocalFunction(string(std::move(localName)), std::move(resolvedName));
+        return bindLocalFunction(string(std::move(localName)),
+                                 std::move(resolvedName));
     }
     bool bindLocalGlobal(string localName, string resolvedName);
     bool bindLocalGlobal(std::string localName, string resolvedName) {
-        return bindLocalGlobal(string(std::move(localName)), std::move(resolvedName));
+        return bindLocalGlobal(string(std::move(localName)),
+                               std::move(resolvedName));
     }
     const string *findLocalType(const ::string &localName) const;
     const string *findLocalType(const std::string &localName) const {

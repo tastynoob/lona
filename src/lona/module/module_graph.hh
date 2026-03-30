@@ -50,7 +50,8 @@ public:
         return findByModuleName(string(moduleName));
     }
     const CompilationUnit *findByModuleName(const string &moduleName) const;
-    const CompilationUnit *findByModuleName(const std::string &moduleName) const {
+    const CompilationUnit *findByModuleName(
+        const std::string &moduleName) const {
         return findByModuleName(string(moduleName));
     }
 
@@ -60,7 +61,9 @@ public:
     const CompilationUnit *root() const;
 
     void resetDependencies(const string &path);
-    void resetDependencies(const std::string &path) { resetDependencies(string(path)); }
+    void resetDependencies(const std::string &path) {
+        resetDependencies(string(path));
+    }
     void addDependency(const string &path, string dependencyPath);
     void addDependency(const std::string &path, std::string dependencyPath) {
         addDependency(string(path), string(std::move(dependencyPath)));

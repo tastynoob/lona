@@ -3,8 +3,8 @@
 
 namespace lona {
 
-ModuleArtifact::ModuleArtifact(string path, string moduleKey,
-                               string moduleName, std::uint64_t sourceHash,
+ModuleArtifact::ModuleArtifact(string path, string moduleKey, string moduleName,
+                               std::uint64_t sourceHash,
                                std::uint64_t interfaceHash,
                                std::uint64_t implementationHash)
     : path_(std::move(path)),

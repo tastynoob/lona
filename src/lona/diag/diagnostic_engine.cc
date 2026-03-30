@@ -8,16 +8,16 @@ namespace lona {
 std::string
 diagnosticCategoryLabel(DiagnosticError::Category category) {
     switch (category) {
-    case DiagnosticError::Category::Lexical:
-        return "lexical error";
-    case DiagnosticError::Category::Syntax:
-        return "syntax error";
-    case DiagnosticError::Category::Semantic:
-        return "semantic error";
-    case DiagnosticError::Category::Driver:
-        return "driver error";
-    case DiagnosticError::Category::Internal:
-        return "internal error";
+        case DiagnosticError::Category::Lexical:
+            return "lexical error";
+        case DiagnosticError::Category::Syntax:
+            return "syntax error";
+        case DiagnosticError::Category::Semantic:
+            return "semantic error";
+        case DiagnosticError::Category::Driver:
+            return "driver error";
+        case DiagnosticError::Category::Internal:
+            return "internal error";
     }
     return "error";
 }
@@ -54,7 +54,8 @@ std::string
 DiagnosticEngine::render(const DiagnosticError &error,
                          const std::string &fallbackPath) const {
     std::ostringstream out;
-    out << diagnosticCategoryLabel(error.category()) << ": " << error.what() << '\n';
+    out << diagnosticCategoryLabel(error.category()) << ": " << error.what()
+        << '\n';
 
     if (!error.hasLocation() || !hasUsableDiagnosticLocation(error.where())) {
         if (!error.hint().empty()) {
@@ -69,7 +70,8 @@ DiagnosticEngine::render(const DiagnosticError &error,
     const auto path = diagnosticLocationPath(error, fallbackPath);
 
     if (!path.empty()) {
-        out << " --> " << path << ':' << lineNumber << ':' << columnNumber << '\n';
+        out << " --> " << path << ':' << lineNumber << ':' << columnNumber
+            << '\n';
     } else {
         out << " --> " << lineNumber << ':' << columnNumber << '\n';
     }

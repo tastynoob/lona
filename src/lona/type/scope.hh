@@ -23,7 +23,9 @@ public:
     Scope(llvm::IRBuilder<> &builder, llvm::Module &module)
         : builder(builder), module(module) {}
     Scope(Scope *parent)
-        : builder(parent->builder), module(parent->module), parent(parent),
+        : builder(parent->builder),
+          module(parent->module),
+          parent(parent),
           typeTable(parent->typeTable) {}
 
     ~Scope();
@@ -35,8 +37,10 @@ public:
     TypeTable *types() const { return typeTable; }
     llvm::Type *getLLVMType(TypeClass *type) const;
     llvm::FunctionType *getLLVMFunctionType(FuncType *type) const;
-    void bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func);
-    Function *getMethodFunction(const StructType *parent, llvm::StringRef name) const;
+    void bindMethodFunction(StructType *parent, llvm::StringRef name,
+                            Function *func);
+    Function *getMethodFunction(const StructType *parent,
+                                llvm::StringRef name) const;
     void addObj(llvm::StringRef name, Object *var);
     void addObj(const ::string &name, Object *var) {
         addObj(llvm::StringRef(name.tochara(), name.size()), var);
@@ -52,9 +56,7 @@ public:
         return getObj(llvm::StringRef(name.tochara(), name.size()));
     }
 
-    void pushOp(ObjectPtr obj) {
-        opStack.push(obj);
-    }
+    void pushOp(ObjectPtr obj) { opStack.push(obj); }
 
     ObjectPtr popOp() {
         if (opStack.empty()) {
@@ -85,9 +87,7 @@ class FuncScope : public Scope {
     bool returned = false;
 
     int num_sub_scope = 0;
-    int getNextScopeId() {
-        return ++num_sub_scope;
-    }
+    int getNextScopeId() { return ++num_sub_scope; }
 
 public:
     // used for struct body
@@ -122,10 +122,10 @@ public:
     llvm::Value *allocate(TypeClass *type, bool is_temp = false) override;
 };
 
-
 class LocalScope : public Scope {
-    FuncScope* const funcScope; // top
+    FuncScope *const funcScope;  // top
     std::string name;
+
 public:
     LocalScope(FuncScope *func) : Scope(func), funcScope(func) {
         name = func->getName() + "." + std::to_string(func->getNextScopeId());
@@ -133,14 +133,15 @@ public:
 
     LocalScope(LocalScope *parent)
         : Scope(parent), funcScope(parent->funcScope) {
-        name = funcScope->getName() + "." + std::to_string(funcScope->getNextScopeId());
+        name = funcScope->getName() + "." +
+               std::to_string(funcScope->getNextScopeId());
     }
 
-    llvm::Value *allocate(TypeClass *type, bool t = false) override { return funcScope->allocate(type, t); }
-
-    std::string getName() override {
-        return name;
+    llvm::Value *allocate(TypeClass *type, bool t = false) override {
+        return funcScope->allocate(type, t);
     }
+
+    std::string getName() override { return name; }
 };
 
 }

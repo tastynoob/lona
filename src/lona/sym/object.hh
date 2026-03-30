@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lona/util/string.hh"
 #include <any>
 #include <cassert>
 #include <iostream>
@@ -7,9 +8,8 @@
 #include <llvm-18/llvm/IR/Type.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
-#include <sys/types.h>
 #include <string>
-#include "lona/util/string.hh"
+#include <sys/types.h>
 
 namespace lona {
 
@@ -35,7 +35,7 @@ public:
         REF_ALIAS = 1 << 3,
     };
 
-    Object(TypeClass* type, uint32_t specifiers = EMPTY)
+    Object(TypeClass *type, uint32_t specifiers = EMPTY)
         : type(type), specifiers(specifiers) {}
 
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
@@ -47,9 +47,7 @@ public:
     }
 
     // check if bind to llvm value
-    bool isBindllvm() {
-        return val != nullptr;
-    }
+    bool isBindllvm() { return val != nullptr; }
 
     void createllvmValue(Scope *scope);
 
@@ -58,13 +56,9 @@ public:
         this->val = val;
     }
 
-    void setllvmValue(llvm::Value *val) {
-        this->val = val;
-    }
+    void setllvmValue(llvm::Value *val) { this->val = val; }
 
-    void setType(TypeClass *newType) {
-        this->type = newType;
-    }
+    void setType(TypeClass *newType) { this->type = newType; }
 
     uint32_t getSpecifiers() { return specifiers; }
     TypeClass *getType() { return type; }
@@ -73,8 +67,6 @@ public:
     bool isRegVal() { return specifiers & REG_VAL; }
     bool isReadOnly() { return specifiers & READONLY; }
     bool isRefAlias() { return specifiers & REF_ALIAS; }
-
-    
 
     virtual llvm::Value *get(Scope *scope);
     virtual void set(Scope *scope, Object *src);
@@ -94,6 +86,7 @@ public:
 // only Basevar can be modified by const
 class ConstVar : public BaseVar {
     std::any value;
+
 public:
     ConstVar(TypeClass *type, std::any value)
         : BaseVar(type, Object::REG_VAL | Object::READONLY), value(value) {}
@@ -103,13 +96,11 @@ public:
 
 class PointerVar : public Object {
     ObjectPtr pointee;
+
 public:
     PointerVar(ObjectPtr obj)
-        : Object(obj->getType(), obj->getSpecifiers()), pointee(obj) {
-    }
-    void set(Scope *scope, Object *src) override {
-        assert(false);
-    }
+        : Object(obj->getType(), obj->getSpecifiers()), pointee(obj) {}
+    void set(Scope *scope, Object *src) override { assert(false); }
     llvm::Value *get(Scope *scope) override { return val; }
 };
 
@@ -156,7 +147,5 @@ public:
     llvm::Value *get(Scope *scope) override;
     void set(Scope *scope, Object *src) override;
 };
-
-
 
 }  // namespace lona

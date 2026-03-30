@@ -59,7 +59,8 @@ friendlySyntaxMessage(const std::string &rawMessage) {
     constexpr char prefix[] = "syntax error, unexpected ";
     if (rawMessage.rfind(prefix, 0) == 0) {
         auto detail = rawMessage.substr(sizeof(prefix) - 1);
-        detail = replaceAllInDiagnosticText(detail, ", expecting ", "; expected ");
+        detail =
+            replaceAllInDiagnosticText(detail, ", expecting ", "; expected ");
         detail = replaceAllInDiagnosticText(detail, " or ", ", ");
         detail = trimDiagnosticTrailingPunctuation(detail);
         return "I couldn't parse this statement: unexpected " + detail + '.';

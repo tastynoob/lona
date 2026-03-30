@@ -6,6 +6,8 @@
 
 namespace lona {
 
+class ModuleGraph;
+
 class AstVisitor {
 #define DEF_VISIT(classname)                                      \
     virtual Object *visit(classname *node) {                      \
@@ -99,14 +101,17 @@ void
 scanningType(Scope *global, AstNode *root);
 
 void
-collectUnitDeclarations(Scope *global, CompilationUnit &unit, bool exportNamespace);
+collectUnitDeclarations(Scope *global, CompilationUnit &unit,
+                        bool exportNamespace);
 
 void
 defineUnitGlobals(Scope *global, CompilationUnit &unit);
 
 void
 emitHIRModule(Scope *global, HIRModule *module, bool emitDebugInfo = false,
-              const std::string &primarySourcePath = std::string());
+              const std::string &primarySourcePath = std::string(),
+              const CompilationUnit *unit = nullptr,
+              const ModuleGraph *moduleGraph = nullptr);
 
 StructType *
 createStruct(Scope *scope, AstStructDecl *node);

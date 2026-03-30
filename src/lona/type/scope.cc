@@ -21,7 +21,8 @@ Scope::getLLVMFunctionType(FuncType *type) const {
 }
 
 void
-Scope::bindMethodFunction(StructType *parent, llvm::StringRef name, Function *func) {
+Scope::bindMethodFunction(StructType *parent, llvm::StringRef name,
+                          Function *func) {
     assert(typeTable);
     typeTable->bindMethodFunction(parent, name, func);
 }
@@ -81,8 +82,7 @@ FuncScope::allocate(TypeClass *type, bool is_temp) {
         if (entryBB.empty()) {
             alloc_point = builder.CreateAlloca(llvmType);
         } else {
-            auto t =
-                new llvm::AllocaInst(llvmType, 0, "", &entryBB.front());
+            auto t = new llvm::AllocaInst(llvmType, 0, "", &entryBB.front());
             alloc_point = t;
         }
     }

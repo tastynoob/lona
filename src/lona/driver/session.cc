@@ -8,8 +8,7 @@
 namespace lona {
 
 CompilerSession::CompilerSession()
-    : loader_(workspace_),
-      builder_(workspace_, loader_) {}
+    : loader_(workspace_), builder_(workspace_, loader_) {}
 
 CompilerSession::~CompilerSession() = default;
 
@@ -27,9 +26,10 @@ CompilerSession::runEntry(const SessionOptions &options, std::ostream &out,
     try {
         loader_.setIncludePaths(options.compile.includePaths);
         if (options.outputMode != OutputMode::EntryObject) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "entry emission was invoked with the wrong output mode",
-                                  "This looks like a driver/session integration bug.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "entry emission was invoked with the wrong output mode",
+                "This looks like a driver/session integration bug.");
         }
         return finish(builder_.emitHostedEntryObject(
             options.compile, options.outputPath, lastStats_, out));
@@ -38,16 +38,16 @@ CompilerSession::runEntry(const SessionOptions &options, std::ostream &out,
         return finish(1);
     } catch (const std::exception &ex) {
         diagnostics().emit(
-            DiagnosticError(DiagnosticError::Category::Internal,
-                            ex.what(),
-                            "This looks like a compiler bug or infrastructure failure."),
+            DiagnosticError(
+                DiagnosticError::Category::Internal, ex.what(),
+                "This looks like a compiler bug or infrastructure failure."),
             diag);
         return finish(1);
     } catch (const char *ex) {
         diagnostics().emit(
-            DiagnosticError(DiagnosticError::Category::Internal,
-                            ex,
-                            "This looks like a compiler bug or infrastructure failure."),
+            DiagnosticError(
+                DiagnosticError::Category::Internal, ex,
+                "This looks like a compiler bug or infrastructure failure."),
             diag);
         return finish(1);
     }
@@ -64,10 +64,14 @@ CompilerSession::printStats(std::ostream &out) const {
     out << "    loaded-units: " << lastStats_.loadedUnits << '\n';
     out << "    compiled-modules: " << lastStats_.compiledModules << '\n';
     out << "    reused-modules: " << lastStats_.reusedModules << '\n';
-    out << "    emitted-module-bitcode: " << lastStats_.emittedModuleBitcode << '\n';
-    out << "    reused-module-bitcode: " << lastStats_.reusedModuleBitcode << '\n';
-    out << "    emitted-module-objects: " << lastStats_.emittedModuleObjects << '\n';
-    out << "    reused-module-objects: " << lastStats_.reusedModuleObjects << '\n';
+    out << "    emitted-module-bitcode: " << lastStats_.emittedModuleBitcode
+        << '\n';
+    out << "    reused-module-bitcode: " << lastStats_.reusedModuleBitcode
+        << '\n';
+    out << "    emitted-module-objects: " << lastStats_.emittedModuleObjects
+        << '\n';
+    out << "    reused-module-objects: " << lastStats_.reusedModuleObjects
+        << '\n';
     out << "  timing-ms:\n";
     out << "    total-ms: " << lastStats_.totalMs << '\n';
     out << "    parse-ms: " << lastStats_.parseMs << '\n';
@@ -75,7 +79,8 @@ CompilerSession::printStats(std::ostream &out) const {
     out << "    declarations-ms: " << lastStats_.declarationMs << '\n';
     out << "      dependency-declarations-ms: "
         << lastStats_.dependencyDeclarationMs << '\n';
-    out << "      entry-declarations-ms: " << lastStats_.entryDeclarationMs << '\n';
+    out << "      entry-declarations-ms: " << lastStats_.entryDeclarationMs
+        << '\n';
     out << "    lower-ms: " << lastStats_.lowerMs << '\n';
     out << "      resolve-ms: " << lastStats_.resolveMs << '\n';
     out << "      analyze-ms: " << lastStats_.analyzeMs << '\n';
@@ -116,10 +121,9 @@ CompilerSession::runFile(const std::string &inputPath,
     try {
         loader_.setIncludePaths(options.compile.includePaths);
         auto &unit = loader_.loadRootUnit(inputPath);
-        loader_.loadTransitiveUnits([this](
-                                        const CompilationUnit &,
-                                        double parseMs,
-                                        double dependencyScanMs) {
+        loader_.loadTransitiveUnits([this](const CompilationUnit &,
+                                           double parseMs,
+                                           double dependencyScanMs) {
             lastStats_.parseMs += parseMs;
             lastStats_.dependencyScanMs += dependencyScanMs;
         });
@@ -130,12 +134,14 @@ CompilerSession::runFile(const std::string &inputPath,
         }
 
         if (options.outputMode == OutputMode::LLVMIR) {
-            return finish(builder_.emitIR(unit, options.compile, lastStats_, out));
+            return finish(
+                builder_.emitIR(unit, options.compile, lastStats_, out));
         }
         if (options.outputMode == OutputMode::EntryObject) {
-            throw DiagnosticError(DiagnosticError::Category::Internal,
-                                  "entry object emission should not load source files",
-                                  "Use CompilerSession::runEntry instead.");
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "entry object emission should not load source files",
+                "Use CompilerSession::runEntry instead.");
         }
         if (options.outputMode == OutputMode::ObjectFile) {
             return finish(builder_.emitObject(
@@ -143,8 +149,8 @@ CompilerSession::runFile(const std::string &inputPath,
         }
         if (options.outputMode == OutputMode::ObjectBundle) {
             return finish(builder_.emitObjectBundle(
-                unit, options.compile, options.outputPath, options.cacheOutputPath,
-                lastStats_, out));
+                unit, options.compile, options.outputPath,
+                options.cacheOutputPath, lastStats_, out));
         }
         auto *jsonTree = unit.requireSyntaxTree();
         Json root = Json::object();
@@ -156,16 +162,16 @@ CompilerSession::runFile(const std::string &inputPath,
         return finish(1);
     } catch (const std::exception &ex) {
         diagnostics().emit(
-            DiagnosticError(DiagnosticError::Category::Internal,
-                            ex.what(),
-                            "This looks like a compiler bug or infrastructure failure."),
+            DiagnosticError(
+                DiagnosticError::Category::Internal, ex.what(),
+                "This looks like a compiler bug or infrastructure failure."),
             diag, inputPath);
         return finish(1);
     } catch (const char *ex) {
         diagnostics().emit(
-            DiagnosticError(DiagnosticError::Category::Internal,
-                            ex,
-                            "This looks like a compiler bug or infrastructure failure."),
+            DiagnosticError(
+                DiagnosticError::Category::Internal, ex,
+                "This looks like a compiler bug or infrastructure failure."),
             diag, inputPath);
         return finish(1);
     }

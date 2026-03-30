@@ -1,7 +1,7 @@
 #pragma once
 
-#include "module_interface.hh"
 #include "lona/source/source_manager.hh"
+#include "module_interface.hh"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -15,9 +15,9 @@ public:
     std::shared_ptr<ModuleInterface> getOrCreate(const SourceBuffer &source,
                                                  const string &moduleKey,
                                                  const string &moduleName);
-    std::shared_ptr<ModuleInterface> getOrCreate(const SourceBuffer &source,
-                                                 const std::string &moduleKey,
-                                                 const std::string &moduleName) {
+    std::shared_ptr<ModuleInterface> getOrCreate(
+        const SourceBuffer &source, const std::string &moduleKey,
+        const std::string &moduleName) {
         return getOrCreate(source, string(moduleKey), string(moduleName));
     }
     const ModuleInterface *find(const string &path) const;

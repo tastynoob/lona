@@ -31,13 +31,13 @@ public:
     ModuleArtifact(string path, string moduleKey, string moduleName,
                    std::uint64_t sourceHash, std::uint64_t interfaceHash,
                    std::uint64_t implementationHash);
-    ModuleArtifact(std::string path, std::string moduleKey, std::string moduleName,
-                   std::uint64_t sourceHash, std::uint64_t interfaceHash,
+    ModuleArtifact(std::string path, std::string moduleKey,
+                   std::string moduleName, std::uint64_t sourceHash,
+                   std::uint64_t interfaceHash,
                    std::uint64_t implementationHash)
-        : ModuleArtifact(string(std::move(path)),
-                         string(std::move(moduleKey)),
-                         string(std::move(moduleName)),
-                         sourceHash, interfaceHash, implementationHash) {}
+        : ModuleArtifact(string(std::move(path)), string(std::move(moduleKey)),
+                         string(std::move(moduleName)), sourceHash,
+                         interfaceHash, implementationHash) {}
 
     const string &path() const { return path_; }
     const string &moduleKey() const { return moduleKey_; }
@@ -61,7 +61,8 @@ public:
     void setDependencyInterfaceHashes(
         std::unordered_map<string, std::uint64_t> dependencyInterfaceHashes);
     void setCompileProfile(string targetTriple, int optLevel, bool debugInfo);
-    void setCompileProfile(std::string targetTriple, int optLevel, bool debugInfo) {
+    void setCompileProfile(std::string targetTriple, int optLevel,
+                           bool debugInfo) {
         setCompileProfile(string(std::move(targetTriple)), optLevel, debugInfo);
     }
     void setBitcode(ByteBuffer bitcode);

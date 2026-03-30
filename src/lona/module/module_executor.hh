@@ -20,6 +20,7 @@ public:
     int execute(ModuleBuildQueue &queue, BuildTask task) override;
 };
 
-std::unique_ptr<ModuleExecutor> createSerialModuleExecutor();
+std::unique_ptr<ModuleExecutor>
+createSerialModuleExecutor();
 
 }  // namespace lona

@@ -1,21 +1,18 @@
 #include "string.hh"
 
-
-
 #pragma once
 
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <llvm-18/llvm/ADT/StringRef.h>
 #include <sys/types.h>
-#include <charconv>
 
 #include "panic.hh"
 
-
-string::string_data* string::string_data::create(const char* s)
-{
+string::string_data*
+string::string_data::create(const char* s) {
     uint32_t len = std::strlen(s);
     string_data* sd = (string_data*)new char[sizeof(string_data) + len + 1];
     sd->size = len;
@@ -24,8 +21,8 @@ string::string_data* string::string_data::create(const char* s)
     return sd;
 }
 
-string::string_data* string::string_data::create(const char* s, uint32_t size)
-{
+string::string_data*
+string::string_data::create(const char* s, uint32_t size) {
     string_data* sd = (string_data*)new char[sizeof(string_data) + size + 1];
     sd->size = size;
     sd->ref_cnt = 1;
@@ -36,8 +33,8 @@ string::string_data* string::string_data::create(const char* s, uint32_t size)
     return sd;
 }
 
-string::string_data* string::string_data::create(uint32_t size)
-{
+string::string_data*
+string::string_data::create(uint32_t size) {
     string_data* sd = (string_data*)new char[sizeof(string_data) + size + 1];
     sd->size = size;
     sd->ref_cnt = 1;
@@ -45,8 +42,8 @@ string::string_data* string::string_data::create(uint32_t size)
     return sd;
 }
 
-string::string_data* string::string_data::createReverse(uint32_t cap)
-{
+string::string_data*
+string::string_data::createReverse(uint32_t cap) {
     string_data* sd = (string_data*)new char[sizeof(string_data) + cap + 1];
     sd->size = 0;
     sd->ref_cnt = 1;
@@ -54,7 +51,8 @@ string::string_data* string::string_data::createReverse(uint32_t cap)
     return sd;
 }
 
-std::ostream& operator<<(std::ostream& os, const string& str) {
+std::ostream&
+operator<<(std::ostream& os, const string& str) {
     os << str.tochara();
     return os;
 }

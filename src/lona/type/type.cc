@@ -30,16 +30,16 @@ struct TypeTargetLayout {
         std::string error;
         auto *target = llvm::TargetRegistry::lookupTarget(triple, error);
         if (!target) {
-            throw std::runtime_error("failed to resolve LLVM target `" + triple +
-                                     "`: " + error);
+            throw std::runtime_error("failed to resolve LLVM target `" +
+                                     triple + "`: " + error);
         }
 
         llvm::TargetOptions options;
         machine.reset(target->createTargetMachine(triple, "generic", "",
                                                   options, relocModel));
         if (!machine) {
-            throw std::runtime_error("failed to create LLVM target machine for `" +
-                                     triple + "`");
+            throw std::runtime_error(
+                "failed to create LLVM target machine for `" + triple + "`");
         }
         dataLayout = machine->createDataLayout();
     }
@@ -53,7 +53,8 @@ typeTargetLayoutCacheKey(llvm::StringRef triple) {
 TypeTargetLayout &
 cachedTypeTargetLayoutFor(llvm::StringRef triple) {
     static std::once_flag once;
-    static std::unordered_map<std::string, std::unique_ptr<TypeTargetLayout>> layouts;
+    static std::unordered_map<std::string, std::unique_ptr<TypeTargetLayout>>
+        layouts;
     static std::string initError;
     static std::mutex mutex;
     std::call_once(once, [] {
@@ -169,7 +170,8 @@ materializeValueType(TypeTable *typeTable, TypeClass *type) {
         return materializeValueType(typeTable, qualified->getBaseType());
     }
     if (auto *array = type->as<ArrayType>()) {
-        auto *elementType = materializeValueType(typeTable, array->getElementType());
+        auto *elementType =
+            materializeValueType(typeTable, array->getElementType());
         return rematerializeValueArrayType(typeTable, array, elementType);
     }
     if (auto *tuple = type->as<TupleType>()) {
@@ -178,7 +180,8 @@ materializeValueType(TypeTable *typeTable, TypeClass *type) {
         bool reusedOriginalItems = true;
         for (auto *itemType : tuple->getItemTypes()) {
             auto *materializedItem = materializeValueType(typeTable, itemType);
-            reusedOriginalItems = reusedOriginalItems && materializedItem == itemType;
+            reusedOriginalItems =
+                reusedOriginalItems && materializedItem == itemType;
             itemTypes.push_back(materializedItem);
         }
         return rematerializeValueTupleType(typeTable, tuple, itemTypes,
@@ -210,32 +213,32 @@ isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
     if (auto *targetPointer = targetType->as<PointerType>()) {
         auto *sourcePointer = sourceType->as<PointerType>();
         return sourcePointer &&
-            isConstQualificationConvertible(targetPointer->getPointeeType(),
-                                            sourcePointer->getPointeeType());
+               isConstQualificationConvertible(targetPointer->getPointeeType(),
+                                               sourcePointer->getPointeeType());
     }
     if (auto *targetIndexable = targetType->as<IndexablePointerType>()) {
         auto *sourceIndexable = sourceType->as<IndexablePointerType>();
-        return sourceIndexable &&
-            isConstQualificationConvertible(targetIndexable->getElementType(),
-                                            sourceIndexable->getElementType());
+        return sourceIndexable && isConstQualificationConvertible(
+                                      targetIndexable->getElementType(),
+                                      sourceIndexable->getElementType());
     }
     if (auto *targetArray = targetType->as<ArrayType>()) {
         auto *sourceArray = sourceType->as<ArrayType>();
         return sourceArray &&
-            targetArray->getDimensions() == sourceArray->getDimensions() &&
-            isConstQualificationConvertible(targetArray->getElementType(),
-                                            sourceArray->getElementType());
+               targetArray->getDimensions() == sourceArray->getDimensions() &&
+               isConstQualificationConvertible(targetArray->getElementType(),
+                                               sourceArray->getElementType());
     }
     if (auto *targetTuple = targetType->as<TupleType>()) {
         auto *sourceTuple = sourceType->as<TupleType>();
-        if (!sourceTuple ||
-            targetTuple->getItemTypes().size() !=
-                sourceTuple->getItemTypes().size()) {
+        if (!sourceTuple || targetTuple->getItemTypes().size() !=
+                                sourceTuple->getItemTypes().size()) {
             return false;
         }
         for (std::size_t i = 0; i < targetTuple->getItemTypes().size(); ++i) {
-            if (!isConstQualificationConvertible(targetTuple->getItemTypes()[i],
-                                                 sourceTuple->getItemTypes()[i])) {
+            if (!isConstQualificationConvertible(
+                    targetTuple->getItemTypes()[i],
+                    sourceTuple->getItemTypes()[i])) {
                 return false;
             }
         }
@@ -252,8 +255,9 @@ isFullyWritableValueType(TypeClass *type) {
     if (isConstQualifiedType(type)) {
         return false;
     }
-    if (type->as<BaseType>() || type->as<StructType>() || type->as<FuncType>() ||
-        type->as<PointerType>() || type->as<IndexablePointerType>()) {
+    if (type->as<BaseType>() || type->as<StructType>() ||
+        type->as<FuncType>() || type->as<PointerType>() ||
+        type->as<IndexablePointerType>()) {
         return true;
     }
     if (auto *array = type->as<ArrayType>()) {
@@ -292,7 +296,7 @@ TupleType::getMember(llvm::StringRef name, ValueTy &member) const {
 }
 
 llvm::Type *
-BaseType::buildLLVMType(TypeTable& types) {
+BaseType::buildLLVMType(TypeTable &types) {
     switch (type) {
         case Type::U8:
         case Type::I8:
@@ -307,9 +311,9 @@ BaseType::buildLLVMType(TypeTable& types) {
         case Type::I64:
             return llvm::Type::getInt64Ty(types.getContext());
         case Type::USIZE:
-            return llvm::IntegerType::get(types.getContext(),
-                                          types.getModule().getDataLayout()
-                                              .getPointerSizeInBits(0));
+            return llvm::IntegerType::get(
+                types.getContext(),
+                types.getModule().getDataLayout().getPointerSizeInBits(0));
         case Type::F32:
             return llvm::Type::getFloatTy(types.getContext());
         case Type::F64:
@@ -328,8 +332,7 @@ ConstType::buildLLVMType(TypeTable &types) {
 
 llvm::Type *
 StructType::buildLLVMType(TypeTable &types) {
-    return llvm::StructType::create(types.getContext(),
-                                    full_name.tochara());
+    return llvm::StructType::create(types.getContext(), full_name.tochara());
 }
 
 llvm::Type *
@@ -373,7 +376,8 @@ ArrayType::buildLLVMType(TypeTable &types) {
 
     llvm::Type *llvmType = types.getLLVMType(elementType);
     for (auto it = extents.rbegin(); it != extents.rend(); ++it) {
-        llvmType = llvm::ArrayType::get(llvmType, static_cast<std::uint64_t>(*it));
+        llvmType =
+            llvm::ArrayType::get(llvmType, static_cast<std::uint64_t>(*it));
     }
     return llvmType;
 }

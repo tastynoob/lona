@@ -33,7 +33,8 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
         }
         return name;
     }
-    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+    if (auto *indexable =
+            dynamic_cast<const IndexablePointerTypeNode *>(node)) {
         auto name = describeTypeNode(indexable->base, nullDescription);
         name += "[*]";
         return name;
