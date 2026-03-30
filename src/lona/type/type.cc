@@ -187,6 +187,9 @@ materializeValueType(TypeTable *typeTable, TypeClass *type) {
         return rematerializeValueTupleType(typeTable, tuple, itemTypes,
                                            reusedOriginalItems);
     }
+    if (type->as<DynTraitType>()) {
+        return type;
+    }
     return type;
 }
 
@@ -244,6 +247,10 @@ isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
         }
         return true;
     }
+    if (auto *targetDyn = targetType->as<DynTraitType>()) {
+        auto *sourceDyn = sourceType->as<DynTraitType>();
+        return sourceDyn && targetDyn->traitName() == sourceDyn->traitName();
+    }
     return targetType == sourceType;
 }
 
@@ -257,6 +264,7 @@ isFullyWritableValueType(TypeClass *type) {
     }
     if (type->as<BaseType>() || type->as<StructType>() ||
         type->as<FuncType>() || type->as<PointerType>() ||
+        type->as<DynTraitType>() ||
         type->as<IndexablePointerType>()) {
         return true;
     }
@@ -328,6 +336,13 @@ BaseType::buildLLVMType(TypeTable &types) {
 llvm::Type *
 ConstType::buildLLVMType(TypeTable &types) {
     return baseType ? types.getLLVMType(baseType) : nullptr;
+}
+
+llvm::Type *
+DynTraitType::buildLLVMType(TypeTable &types) {
+    auto *ptrType = llvm::PointerType::getUnqual(types.getContext());
+    return llvm::StructType::get(types.getContext(), {ptrType, ptrType},
+                                 false);
 }
 
 llvm::Type *

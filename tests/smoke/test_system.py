@@ -145,6 +145,38 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     )
 
 
+def test_system_trait_dyn_dispatch_runtime(compiler: CompilerHarness) -> None:
+    program = compiler.write_source(
+        "system/trait_dyn.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        var point = Point(value = 41)
+        var h Hash dyn = cast[Hash dyn](&point)
+        ret h.hash()
+        """,
+    )
+
+    build_result, exe = compiler.build_system_executable(
+        program,
+        output_name="trait_dyn",
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+
+
 def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo_root: Path) -> None:
     cc_bin = _detect_cc()
 

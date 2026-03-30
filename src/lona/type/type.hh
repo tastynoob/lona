@@ -36,6 +36,7 @@ bool
 targetUsesHostedEntry(llvm::StringRef triple);
 class TypeClass;
 class ConstType;
+class DynTraitType;
 class PointerType;
 class IndexablePointerType;
 class StructType;
@@ -119,6 +120,21 @@ public:
         }
         return obj;
     }
+};
+
+class DynTraitType : public TypeClass {
+    string traitName_;
+
+public:
+    static string buildName(const ::string &traitName) {
+        return traitName + " dyn";
+    }
+
+    explicit DynTraitType(string traitName)
+        : TypeClass(buildName(traitName)), traitName_(std::move(traitName)) {}
+
+    const string &traitName() const { return traitName_; }
+    llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
 class StructType : public TypeClass {
@@ -653,6 +669,20 @@ public:
         return indexableType;
     }
 
+    DynTraitType *createDynTraitType(const ::string &traitName) {
+        auto typeName = DynTraitType::buildName(traitName);
+        if (auto *type = getType(typeName)) {
+            return type->as<DynTraitType>();
+        }
+        auto *dynType = new DynTraitType(traitName);
+        addType(typeName, dynType);
+        return dynType;
+    }
+
+    DynTraitType *createDynTraitType(const std::string &traitName) {
+        return createDynTraitType(string(traitName));
+    }
+
     ConstType *createConstType(TypeClass *baseType) {
         if (!baseType) {
             return nullptr;
@@ -777,6 +807,13 @@ public:
                 return type;
             }
             return createConstType(baseType);
+        }
+        if (auto *dynTrait = type->as<DynTraitType>()) {
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            addType(type->full_name, dynTrait);
+            return dynTrait;
         }
         if (auto *pointer = type->as<PointerType>()) {
             auto *pointeeType = internType(pointer->getPointeeType());
@@ -924,6 +961,20 @@ public:
         if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
             auto *baseType = getType(qualified->base);
             return baseType ? createConstType(baseType) : nullptr;
+        }
+
+        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+            auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+            if (!base) {
+                return nullptr;
+            }
+            auto rawName = base->hasSyntax()
+                               ? describeDotLikeSyntax(base->syntax)
+                               : toStdString(base->name);
+            if (rawName.empty() || getType(llvm::StringRef(rawName))) {
+                return nullptr;
+            }
+            return createDynTraitType(rawName);
         }
 
         if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {

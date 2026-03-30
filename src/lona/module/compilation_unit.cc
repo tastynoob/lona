@@ -396,6 +396,37 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
         return resolved;
     }
 
+    if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+        auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+        if (!base) {
+            unit.cacheResolvedType(node, nullptr);
+            return nullptr;
+        }
+
+        auto rawName = baseTypeName(base);
+        std::string moduleName;
+        std::string memberName;
+        CompilationUnit::TopLevelLookup lookup;
+        if (!splitBaseTypeName(base, moduleName, memberName)) {
+            lookup = unit.lookupTopLevelName(rawName);
+        } else {
+            const auto *imported = unit.findImportedModule(moduleName);
+            if (!imported) {
+                unit.cacheResolvedType(node, nullptr);
+                return nullptr;
+            }
+            lookup = unit.lookupTopLevelName(*imported, memberName);
+        }
+
+        if (!lookup.isTrait()) {
+            unit.cacheResolvedType(node, nullptr);
+            return nullptr;
+        }
+        resolved = typeTable->createDynTraitType(lookup.resolvedName);
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
+    }
+
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         auto *type = resolveTypeNode(typeTable, unit, pointer->base, false);
         for (uint32_t i = 0; type && i < pointer->dim; ++i) {

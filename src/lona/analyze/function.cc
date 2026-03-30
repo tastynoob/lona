@@ -763,6 +763,111 @@ class FunctionAnalyzer {
         return traitDecl;
     }
 
+    const ModuleInterface::TraitDecl *requireVisibleDynTraitDecl(
+        TypeClass *type, const location &loc, const std::string &context) {
+        auto *dynType = asUnqualified<DynTraitType>(type);
+        if (!dynType) {
+            internalError(loc,
+                          context + " expected a resolved `Trait dyn` type",
+                          "This looks like a trait-object typing bug.");
+        }
+        if (!unit) {
+            internalError(
+                loc, "trait object analysis requires compilation-unit context",
+                "Compile trait-enabled code through the workspace pipeline.");
+        }
+        auto *traitDecl =
+            unit->findVisibleTraitByResolvedName(dynType->traitName());
+        if (!traitDecl) {
+            internalError(loc,
+                          "resolved dyn trait `" +
+                              toStdString(dynType->traitName()) +
+                              "` is missing from the visible interface graph",
+                          "This looks like a trait interface materialization "
+                          "bug.");
+        }
+        return traitDecl;
+    }
+
+    const ModuleInterface::TraitMethodDecl *findTraitMethodDecl(
+        const ModuleInterface::TraitDecl &traitDecl, llvm::StringRef methodName,
+        std::size_t *slotIndex = nullptr) {
+        const auto methodNameText = methodName.str();
+        for (std::size_t i = 0; i < traitDecl.methods.size(); ++i) {
+            if (toStdString(traitDecl.methods[i].localName) == methodNameText) {
+                if (slotIndex) {
+                    *slotIndex = i;
+                }
+                return &traitDecl.methods[i];
+            }
+        }
+        return nullptr;
+    }
+
+    [[noreturn]] void errorTraitNotDynCompatible(
+        const ModuleInterface::TraitDecl &traitDecl,
+        const ModuleInterface::TraitMethodDecl &method, const location &loc) {
+        error(loc,
+              "trait `" + toStdString(traitDecl.exportedName) +
+                  "` is not dyn-compatible in trait v0",
+              "Method `" + toStdString(method.localName) +
+                  "` uses `set` receiver access. Dynamic trait objects "
+                  "currently support get-only methods only; keep this trait "
+                  "on the static `Trait.method(value, ...)` path.");
+    }
+
+    const ModuleInterface::TraitDecl *requireDynCompatibleTrait(
+        TypeClass *dynType, const location &loc, const std::string &context) {
+        auto *traitDecl = requireVisibleDynTraitDecl(dynType, loc, context);
+        for (const auto &method : traitDecl->methods) {
+            if (method.receiverAccess != AccessKind::GetOnly) {
+                errorTraitNotDynCompatible(*traitDecl, method, loc);
+            }
+        }
+        return traitDecl;
+    }
+
+    TypeClass *resolveTraitMethodTypeBySpelling(const string &typeName,
+                                                const location &loc,
+                                                const std::string &context) {
+        if (toStdString(typeName) == "void") {
+            return nullptr;
+        }
+        return requireTypeByName(typeName, loc, context);
+    }
+
+    FuncType *getOrCreateTraitDynSlotType(
+        const ModuleInterface::TraitMethodDecl &traitMethod,
+        const location &loc) {
+        std::vector<TypeClass *> argTypes;
+        std::vector<BindingKind> argBindingKinds;
+        TypeClass *erasedByteType =
+            traitMethod.receiverAccess == AccessKind::GetOnly
+                ? static_cast<TypeClass *>(typeMgr->createConstType(u8Ty))
+                : static_cast<TypeClass *>(u8Ty);
+        argTypes.push_back(typeMgr->createPointerType(erasedByteType));
+        argBindingKinds.push_back(BindingKind::Value);
+        for (std::size_t i = 0; i < traitMethod.paramTypeSpellings.size();
+             ++i) {
+            auto *argType = resolveTraitMethodTypeBySpelling(
+                traitMethod.paramTypeSpellings[i], loc,
+                "trait dyn slot parameter type");
+            argTypes.push_back(argType);
+            argBindingKinds.push_back(traitMethod.paramBindingKinds[i]);
+        }
+        auto *retType = resolveTraitMethodTypeBySpelling(
+            traitMethod.returnTypeSpelling, loc, "trait dyn slot return type");
+        auto *slotType = typeMgr->getOrCreateFunctionType(
+            argTypes, retType, std::move(argBindingKinds));
+        if (!slotType) {
+            internalError(loc,
+                          "failed to build trait dyn slot signature for `" +
+                              toStdString(traitMethod.localName) + "`",
+                          "This looks like a trait-object signature bug.");
+        }
+        return slotType;
+    }
+
     HIRExpr *materializeResolvedEntity(const ResolvedEntityRef *binding,
                                        const location &loc,
                                        const std::string &name) {
@@ -1006,6 +1111,72 @@ class FunctionAnalyzer {
         return makeHIR<HIRBitCast>(expr, targetType, loc);
     }
 
+    HIRExpr *analyzeTraitObjectCast(AstCastExpr *node, TypeClass *targetType) {
+        auto *dynType = asUnqualified<DynTraitType>(targetType);
+        if (!dynType) {
+            internalError(node ? node->loc : location(),
+                          "trait-object cast is missing its dyn target type",
+                          "This looks like a cast-analysis bug.");
+        }
+
+        auto *borrowSyntax = node && node->value ? node->value->as<AstUnaryOper>()
+                                                 : nullptr;
+        if (!borrowSyntax || borrowSyntax->op != '&' || !borrowSyntax->expr) {
+            error(node ? node->loc : location(),
+                  "trait object construction requires an explicit borrow",
+                  "Write `cast[" + describeResolvedType(targetType) +
+                      "](&value)`. Implicit boxing and temporary capture are "
+                      "not supported.");
+        }
+
+        auto *source = requireNonCallExpr(borrowSyntax->expr);
+        if (!isAddressable(source)) {
+            error(borrowSyntax->expr->loc,
+                  "trait object construction expects an addressable source",
+                  "Borrow a variable, field, dereferenced pointer, or array "
+                  "element. Temporaries cannot become `Trait dyn`.");
+        }
+
+        auto *traitDecl = requireDynCompatibleTrait(
+            targetType, node->loc, "trait object construction");
+        auto *selfType = asUnqualified<StructType>(source->getType());
+        if (!selfType) {
+            error(borrowSyntax->expr->loc,
+                  "trait object construction expects a concrete struct value "
+                  "for trait `" +
+                      toStdString(traitDecl->exportedName) + "`",
+                  "Only struct types can currently satisfy `impl Type: Trait`.");
+        }
+
+        auto visibleImpls = unit->findVisibleTraitImpls(
+            traitDecl->exportedName, toStdString(selfType->full_name));
+        if (visibleImpls.empty()) {
+            error(borrowSyntax->expr->loc,
+                  "type `" + describeResolvedType(selfType) +
+                      "` does not implement trait `" +
+                      toStdString(traitDecl->exportedName) + "`",
+                  "Add `impl " + describeResolvedType(selfType) + ": " +
+                      toStdString(traitDecl->exportedName) +
+                      "` in a visible module before constructing `" +
+                      describeResolvedType(targetType) + "`.");
+        }
+
+        TypeClass *sourceDynType =
+            isConstQualifiedType(source->getType())
+                ? typeMgr->createConstType(dynType)
+                : static_cast<TypeClass *>(dynType);
+        if (!isConstQualificationConvertible(targetType, sourceDynType)) {
+            error(node->loc,
+                  "trait object construction cannot drop const from the "
+                  "borrowed source",
+                  "Cast to `" +
+                      describeResolvedType(typeMgr->createConstType(dynType)) +
+                      "` instead, or borrow a writable value.");
+        }
+
+        return makeHIR<HIRTraitObjectCast>(source, targetType, node->loc);
+    }
+
     HIRExpr *analyzeCastExpr(AstCastExpr *node) {
         if (!node || !node->targetType || !node->value) {
             error(
@@ -1015,6 +1186,9 @@ class FunctionAnalyzer {
 
         auto *targetType = requireType(node->targetType, node->targetType->loc,
                                        "unknown cast target type");
+        if (asUnqualified<DynTraitType>(targetType)) {
+            return analyzeTraitObjectCast(node, targetType);
+        }
         auto *value = requireNonCallExpr(node->value);
         if (isNullLiteralExpr(value)) {
             if (!isPointerLikeType(targetType)) {
@@ -2320,6 +2494,64 @@ class FunctionAnalyzer {
                                  false);
     }
 
+    HIRExpr *analyzeTraitObjectCall(AstFieldCall *node, AstDotLike *calleeSyntax,
+                                    HIRExpr *receiver) {
+        if (!calleeSyntax || !receiver) {
+            internalError(node ? node->loc : location(),
+                          "trait-object call is missing its receiver syntax",
+                          "This looks like a trait-object call bug.");
+        }
+
+        auto *traitDecl = requireDynCompatibleTrait(
+            receiver->getType(), calleeSyntax->loc, "trait object call");
+        const auto methodName = toStdString(calleeSyntax->field->text);
+        std::size_t slotIndex = 0;
+        const auto *traitMethod =
+            findTraitMethodDecl(*traitDecl, toStringRef(methodName), &slotIndex);
+        if (!traitMethod) {
+            error(calleeSyntax->loc,
+                  "unknown trait method `" +
+                      toStdString(traitDecl->exportedName) + "." +
+                      methodName + "`",
+                  "Check the trait method name, or update the trait "
+                  "declaration.");
+        }
+
+        std::vector<FormalCallArg> formals;
+        formals.reserve(traitMethod->paramTypeSpellings.size());
+        for (std::size_t i = 0; i < traitMethod->paramTypeSpellings.size();
+             ++i) {
+            auto *paramType = resolveTraitMethodTypeBySpelling(
+                traitMethod->paramTypeSpellings[i], calleeSyntax->loc,
+                "trait object call parameter type");
+            const string *paramName =
+                i < traitMethod->paramNames.size()
+                    ? &traitMethod->paramNames[i]
+                    : nullptr;
+            formals.push_back({paramName, paramType,
+                               traitMethod->paramBindingKinds[i],
+                               FormalCallArgKind::FunctionParameter, i});
+        }
+
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        auto boundArgs = bindCallArgs(
+            normalizedArgs, formals,
+            {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
+             !traitMethod->paramNames.empty()});
+
+        std::vector<HIRExpr *> args;
+        args.reserve(boundArgs.size());
+        for (const auto &arg : boundArgs) {
+            args.push_back(arg.expr);
+        }
+
+        auto *slotFuncType = getOrCreateTraitDynSlotType(*traitMethod, node->loc);
+        auto *retType = slotFuncType ? slotFuncType->getRetType() : nullptr;
+        return makeHIR<HIRTraitObjectCall>(receiver, traitDecl->exportedName,
+                                           methodName, slotIndex, slotFuncType,
+                                           std::move(args), retType, node->loc);
+    }
+
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
         auto *binding = resolved.functionRef(node);
         if (!binding || !binding->valid()) {
@@ -2743,6 +2975,24 @@ class FunctionAnalyzer {
         }
 
         auto *parent = requireExpr(node->parent);
+        if (auto *dynTraitType = asUnqualified<DynTraitType>(parent->getType())) {
+            auto *traitDecl = requireDynCompatibleTrait(
+                dynTraitType, node->loc, "trait object member lookup");
+            auto fieldName = toStdString(node->field->text);
+            if (traitDecl->findMethod(fieldName)) {
+                error(node->loc,
+                      "trait-object method selectors can only be used as "
+                      "direct call callees",
+                      "Write `value." + fieldName + "(...)` on `" +
+                          describeResolvedType(parent->getType()) + "`.");
+            }
+            error(node->loc,
+                  "unknown trait method `" +
+                      toStdString(traitDecl->exportedName) + "." + fieldName +
+                      "`",
+                  "Check the trait method name, or update the trait "
+                  "declaration.");
+        }
         auto fieldName = toStdString(node->field->text);
         auto attempt = lookupMemberWithImplicitDeref(
             parent, fieldName, node->loc, !isExplicitDerefSyntax(node->parent));
@@ -2786,6 +3036,9 @@ class FunctionAnalyzer {
                 callee = resolvedDotLike;
             } else {
                 auto *receiver = requireExpr(dotLikeNode->parent);
+                if (asUnqualified<DynTraitType>(receiver->getType())) {
+                    return analyzeTraitObjectCall(node, dotLikeNode, receiver);
+                }
                 auto fieldName = toStdString(dotLikeNode->field->text);
                 auto attempt = lookupMemberWithImplicitDeref(
                     receiver, fieldName, node->loc,

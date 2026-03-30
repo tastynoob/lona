@@ -16,6 +16,7 @@ class ArrayType;
 class PointerType;
 class IndexablePointerType;
 class ConstType;
+class DynTraitType;
 class TupleType;
 class AstNode;
 
@@ -178,6 +179,10 @@ public:
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(
         TypeClass *elementType);
+    DynTraitType *getOrCreateDynTraitType(const ::string &traitName);
+    DynTraitType *getOrCreateDynTraitType(const std::string &traitName) {
+        return getOrCreateDynTraitType(string(traitName));
+    }
     ConstType *getOrCreateConstType(TypeClass *baseType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,
                                     std::vector<AstNode *> dimensions = {});

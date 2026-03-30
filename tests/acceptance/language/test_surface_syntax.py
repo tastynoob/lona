@@ -385,6 +385,135 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_dyn_dispatch.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def forward(value Hash dyn) Hash dyn {
+            ret value
+        }
+
+        def invoke(value Hash dyn) i32 {
+            ret value.hash()
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var h Hash dyn = cast[Hash dyn](&point)
+            ret invoke(forward(h))
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait dyn dispatch ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait dyn dispatch ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait dyn dispatch ir",
+    )
+
+    failures = [
+        (
+            "trait_dyn_non_addressable_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Point: Hash
+
+            def main() i32 {
+                var h Hash dyn = cast[Hash dyn](&Point(value = 41))
+                ret 0
+            }
+            """,
+            [
+                "trait object construction expects an addressable source",
+                "Temporaries cannot become `Trait dyn`.",
+            ],
+        ),
+        (
+            "trait_dyn_missing_impl_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+            }
+
+            def main() i32 {
+                var point = Point(value = 41)
+                var h Hash dyn = cast[Hash dyn](&point)
+                ret 0
+            }
+            """,
+            [
+                "does not implement trait",
+                "before constructing `",
+                "Hash dyn`",
+            ],
+        ),
+        (
+            "trait_dyn_set_receiver_bad.lo",
+            """
+            trait Hash {
+                set def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                set def hash() i32 {
+                    self.value = self.value + 1
+                    ret self.value
+                }
+            }
+
+            impl Point: Hash
+
+            def main() i32 {
+                var point = Point(value = 41)
+                var h Hash dyn = cast[Hash dyn](&point)
+                ret 0
+            }
+            """,
+            [
+                "is not dyn-compatible in trait v0",
+                "Dynamic trait objects currently support get-only methods only",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
+
 def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields(
     compiler: CompilerHarness,
 ) -> None:

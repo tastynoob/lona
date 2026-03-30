@@ -172,6 +172,35 @@ class InterfaceCollector {
             return baseType ? interface_->getOrCreateConstType(baseType)
                             : nullptr;
         }
+        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+            auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+            if (!base) {
+                return nullptr;
+            }
+
+            auto rawName = baseTypeName(base);
+            std::string moduleName;
+            std::string traitName;
+            if (!splitBaseTypeName(base, moduleName, traitName)) {
+                auto lookup = interface_->lookupTopLevelName(rawName);
+                if (!lookup.isTrait() || !lookup.traitDecl) {
+                    return nullptr;
+                }
+                return interface_->getOrCreateDynTraitType(
+                    lookup.traitDecl->exportedName);
+            }
+
+            const auto *imported = unit_.findImportedModule(moduleName);
+            if (!imported || !imported->interface) {
+                return nullptr;
+            }
+            auto lookup = imported->interface->lookupTopLevelName(traitName);
+            if (!lookup.isTrait() || !lookup.traitDecl) {
+                return nullptr;
+            }
+            return interface_->getOrCreateDynTraitType(
+                lookup.traitDecl->exportedName);
+        }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = baseTypeName(base);
             std::string moduleName;

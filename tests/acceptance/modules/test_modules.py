@@ -338,6 +338,103 @@ def test_imported_trait_uses_imported_impl_for_static_dispatch(
     assert_not_contains(ir, "store i32 27", label="local import precedence ir")
 
 
+def test_imported_trait_supports_local_impl_dynamic_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_dyn_import_local_impl/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_dyn_import_local_impl/main.lo",
+        """
+        import dep
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: dep.Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var h dep.Hash dyn = cast[dep.Hash dyn](&point)
+            ret h.hash()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@__lona_trait_witness__", label="imported trait local dyn ir")
+    assert_regex(
+        ir,
+        r"@__lona_trait_witness__.*\[ptr @.*Point\.hash\]",
+        label="imported trait local dyn ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="imported trait local dyn ir",
+    )
+
+
+def test_imported_trait_uses_imported_impl_for_dynamic_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_dyn_import_dep_impl/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        impl Point: Hash
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_dyn_import_dep_impl/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var point dep.Point = dep.make()
+            var h dep.Hash dyn = cast[dep.Hash dyn](&point)
+            ret h.hash()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"@__lona_trait_witness__.*\[ptr @dep\.Point\.hash\]",
+        label="imported trait imported dyn ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="imported trait imported dyn ir",
+    )
+
+
 def test_import_supports_nested_module_paths_from_include_root(
     compiler: CompilerHarness,
 ) -> None:

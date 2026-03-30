@@ -133,6 +133,17 @@ public:
     HIRExpr *getExpr() const { return expr; }
 };
 
+class HIRTraitObjectCast : public HIRExpr {
+    HIRExpr *source_;
+
+public:
+    HIRTraitObjectCast(HIRExpr *source, TypeClass *targetType,
+                       const location &loc = location())
+        : HIRExpr(targetType, loc), source_(source) {}
+
+    HIRExpr *getSource() const { return source_; }
+};
+
 class HIRUnaryOper : public HIRExpr {
     UnaryOperatorBinding binding_;
     HIRExpr *expr;
@@ -224,6 +235,35 @@ public:
 
     HIRExpr *getCallee() const { return callee; }
     const std::vector<HIRExpr *> &getArgs() const { return args; }
+};
+
+class HIRTraitObjectCall : public HIRExpr {
+    HIRExpr *receiver_;
+    string traitName_;
+    string methodName_;
+    std::size_t slotIndex_ = 0;
+    FuncType *slotFuncType_ = nullptr;
+    std::vector<HIRExpr *> args_;
+
+public:
+    HIRTraitObjectCall(HIRExpr *receiver, string traitName, string methodName,
+                       std::size_t slotIndex, FuncType *slotFuncType,
+                       std::vector<HIRExpr *> args, TypeClass *type = nullptr,
+                       const location &loc = location())
+        : HIRExpr(type, loc),
+          receiver_(receiver),
+          traitName_(std::move(traitName)),
+          methodName_(std::move(methodName)),
+          slotIndex_(slotIndex),
+          slotFuncType_(slotFuncType),
+          args_(std::move(args)) {}
+
+    HIRExpr *getReceiver() const { return receiver_; }
+    const string &getTraitName() const { return traitName_; }
+    const string &getMethodName() const { return methodName_; }
+    std::size_t getSlotIndex() const { return slotIndex_; }
+    FuncType *getSlotFuncType() const { return slotFuncType_; }
+    const std::vector<HIRExpr *> &getArgs() const { return args_; }
 };
 
 class HIRIndex : public HIRExpr {

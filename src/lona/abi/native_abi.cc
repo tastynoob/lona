@@ -25,7 +25,8 @@ hasNativeAbiFixedAggregateLayout(TypeClass *type) {
     if (!storageType) {
         return false;
     }
-    if (storageType->as<StructType>() || storageType->as<TupleType>()) {
+    if (storageType->as<StructType>() || storageType->as<TupleType>() ||
+        storageType->as<DynTraitType>()) {
         return true;
     }
     if (auto *array = storageType->as<ArrayType>()) {
@@ -102,6 +103,7 @@ isNativeAbiAggregateType(TypeClass *type) {
     auto *storageType = stripTopLevelConst(type);
     return storageType &&
            (storageType->as<StructType>() || storageType->as<TupleType>() ||
+            storageType->as<DynTraitType>() ||
             storageType->as<ArrayType>());
 }
 

@@ -166,6 +166,21 @@ ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
     return typePtr->as<IndexablePointerType>();
 }
 
+DynTraitType *
+ModuleInterface::getOrCreateDynTraitType(const ::string &traitName) {
+    auto typeName = DynTraitType::buildName(traitName);
+    auto found = derivedTypes_.find(typeName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<DynTraitType>();
+    }
+
+    auto type = std::make_unique<DynTraitType>(traitName);
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[typeName] = typePtr;
+    return typePtr->as<DynTraitType>();
+}
+
 ConstType *
 ModuleInterface::getOrCreateConstType(TypeClass *baseType) {
     if (!baseType) {

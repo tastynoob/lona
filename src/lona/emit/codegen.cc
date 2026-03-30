@@ -78,6 +78,13 @@ getOrCreateModuleInitResult(GlobalScope *global, const CompilationUnit &unit) {
         llvm::ConstantInt::get(i32Type, 0), llvm::Twine(symbolName));
 }
 
+std::string
+traitWitnessSymbolName(llvm::StringRef traitName, llvm::StringRef selfTypeName) {
+    return "__lona_trait_witness__" +
+           mangleModuleEntryComponent(traitName) + "__" +
+           mangleModuleEntryComponent(selfTypeName);
+}
+
 class FunctionCompiler {
     struct LoopContext {
         llvm::BasicBlock *continueBlock = nullptr;
@@ -158,6 +165,78 @@ class FunctionCompiler {
         return globalValue;
     }
 
+    const ModuleInterface::TraitDecl *requireVisibleTraitDecl(
+        llvm::StringRef resolvedName, const location &loc,
+        const std::string &contextName) {
+        if (!unit) {
+            error(loc,
+                  contextName +
+                      " requires workspace trait metadata during LLVM lowering",
+                  "This looks like a compiler pipeline bug.");
+        }
+        auto *traitDecl = unit->findVisibleTraitByResolvedName(
+            string(resolvedName.str()));
+        if (!traitDecl) {
+            error(loc,
+                  "unknown trait `" + resolvedName.str() + "` during " +
+                      contextName,
+                  "This looks like a compiler pipeline bug.");
+        }
+        return traitDecl;
+    }
+
+    llvm::ArrayType *getTraitWitnessLLVMType(std::size_t slotCount) {
+        auto *ptrType = llvm::PointerType::getUnqual(context);
+        return llvm::ArrayType::get(ptrType, slotCount);
+    }
+
+    llvm::GlobalVariable *getOrCreateTraitWitnessTable(
+        const ModuleInterface::TraitDecl &traitDecl, StructType *selfType,
+        const location &loc) {
+        if (!selfType) {
+            error(loc,
+                  "trait witness table lowering requires a concrete struct type",
+                  "This looks like a compiler pipeline bug.");
+        }
+
+        auto symbolName = traitWitnessSymbolName(
+            toStringRef(traitDecl.exportedName), toStringRef(selfType->full_name));
+        if (auto *existing = global->module.getGlobalVariable(symbolName)) {
+            return existing;
+        }
+
+        std::vector<llvm::Constant *> slots;
+        slots.reserve(traitDecl.methods.size());
+        auto *ptrType = llvm::PointerType::getUnqual(context);
+        for (const auto &method : traitDecl.methods) {
+            auto *callee =
+                scope->getMethodFunction(selfType, toStringRef(method.localName));
+            if (!callee || !callee->getllvmValue()) {
+                error(loc,
+                      "missing method `" + toStdString(selfType->full_name) +
+                          "." + toStdString(method.localName) +
+                          "` for trait witness lowering",
+                      "This looks like a compiler pipeline bug.");
+            }
+            auto *calleeConstant =
+                llvm::dyn_cast<llvm::Constant>(callee->getllvmValue());
+            if (!calleeConstant) {
+                error(loc,
+                      "trait witness lowering expected a constant method symbol",
+                      "This looks like a compiler pipeline bug.");
+            }
+            slots.push_back(llvm::ConstantExpr::getPointerCast(
+                calleeConstant, ptrType));
+        }
+
+        auto *witnessType = getTraitWitnessLLVMType(traitDecl.methods.size());
+        auto *initializer = llvm::ConstantArray::get(witnessType, slots);
+        return new llvm::GlobalVariable(
+            global->module, witnessType, true,
+            llvm::GlobalValue::InternalLinkage, initializer,
+            llvm::Twine(symbolName));
+    }
+
     Object *materializeLocal(TypeClass *type, Object *initVal) {
         auto *obj = type->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
@@ -165,6 +244,98 @@ class FunctionCompiler {
             obj->set(scope, initVal);
         }
         return obj;
+    }
+
+    Object *emitTraitObjectCast(HIRTraitObjectCast *cast) {
+        auto *source = compileExpr(cast->getSource());
+        if (!source) {
+            error("trait object cast requires a source value");
+        }
+
+        auto *dynType = asUnqualified<DynTraitType>(cast->getType());
+        if (!dynType) {
+            error("trait object cast is missing its dyn trait type");
+        }
+        auto *selfType = asUnqualified<StructType>(source->getType());
+        if (!selfType) {
+            error("trait object cast requires a concrete struct source type");
+        }
+        if (!source->isVariable() || source->isRegVal() ||
+            !source->getllvmValue()) {
+            error("trait object cast requires an addressable source value");
+        }
+
+        const auto *traitDecl = requireVisibleTraitDecl(
+            toStringRef(dynType->traitName()), cast->getLocation(),
+            "trait object cast");
+        auto *witness = getOrCreateTraitWitnessTable(*traitDecl, selfType,
+                                                     cast->getLocation());
+        auto *llvmDynType = scope->getLLVMType(cast->getType());
+        auto *ptrType = llvm::PointerType::getUnqual(context);
+
+        llvm::Value *aggregate = llvm::UndefValue::get(llvmDynType);
+        auto *dataPtr = source->getllvmValue();
+        if (dataPtr->getType() != ptrType) {
+            dataPtr = scope->builder.CreatePointerCast(dataPtr, ptrType);
+        }
+        auto *witnessPtr = llvm::ConstantExpr::getPointerCast(witness, ptrType);
+        aggregate = scope->builder.CreateInsertValue(aggregate, dataPtr, {0});
+        aggregate =
+            scope->builder.CreateInsertValue(aggregate, witnessPtr, {1});
+        return makeReadonlyValue(cast->getType(), aggregate);
+    }
+
+    Object *emitTraitObjectCall(HIRTraitObjectCall *call) {
+        auto *receiver = compileExpr(call->getReceiver());
+        if (!receiver) {
+            error("trait object call requires a receiver value");
+        }
+        auto *slotFuncType = call->getSlotFuncType();
+        if (!slotFuncType || slotFuncType->getArgTypes().empty()) {
+            error("trait object call is missing its slot function type");
+        }
+
+        const auto *traitDecl = requireVisibleTraitDecl(
+            toStringRef(call->getTraitName()), call->getLocation(),
+            "trait object call");
+        if (call->getSlotIndex() >= traitDecl->methods.size()) {
+            error("trait object call slot index is out of range");
+        }
+
+        auto *aggregate = receiver->get(scope);
+        auto *ptrType = llvm::PointerType::getUnqual(context);
+        auto *dataPtr =
+            scope->builder.CreateExtractValue(aggregate, {0}, "trait.data");
+        auto *witnessPtr = scope->builder.CreateExtractValue(
+            aggregate, {1}, "trait.witness");
+        if (dataPtr->getType() != ptrType) {
+            dataPtr = scope->builder.CreatePointerCast(dataPtr, ptrType);
+        }
+        if (witnessPtr->getType() != ptrType) {
+            witnessPtr = scope->builder.CreatePointerCast(witnessPtr, ptrType);
+        }
+
+        auto *witnessType = getTraitWitnessLLVMType(traitDecl->methods.size());
+        auto *zero = scope->builder.getInt32(0);
+        auto *slotPtr = scope->builder.CreateInBoundsGEP(
+            witnessType, witnessPtr,
+            {zero, scope->builder.getInt32(call->getSlotIndex())},
+            "trait.slot.ptr");
+        auto *slotValue =
+            scope->builder.CreateLoad(ptrType, slotPtr, "trait.slot");
+
+        std::vector<Object *> args;
+        args.reserve(1 + call->getArgs().size());
+        args.push_back(
+            makeReadonlyValue(slotFuncType->getArgTypes().front(), dataPtr));
+        for (auto *argExpr : call->getArgs()) {
+            auto *arg = compileExpr(argExpr);
+            if (!arg) {
+                error("trait object call argument did not produce a value");
+            }
+            args.push_back(arg);
+        }
+        return emitFunctionCall(scope, slotValue, slotFuncType, args, false);
     }
 
     Object *materializeBinding(Object *obj, Object *initVal = nullptr) {
@@ -419,6 +590,10 @@ class FunctionCompiler {
             setLocation(bitCast);
             return emitBitCopyCast(bitCast);
         }
+        if (auto *traitObjectCast = dynamic_cast<HIRTraitObjectCast *>(expr)) {
+            setLocation(traitObjectCast);
+            return emitTraitObjectCast(traitObjectCast);
+        }
         if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
             setLocation(assign);
             auto *dst = compileExpr(assign->getLeft());
@@ -527,6 +702,10 @@ class FunctionCompiler {
             }
             return emitFunctionCall(scope, calleeValue, funcType, args,
                                     hasImplicitSelf);
+        }
+        if (auto *traitObjectCall = dynamic_cast<HIRTraitObjectCall *>(expr)) {
+            setLocation(traitObjectCall);
+            return emitTraitObjectCall(traitObjectCall);
         }
         if (auto *index = dynamic_cast<HIRIndex *>(expr)) {
             setLocation(index);

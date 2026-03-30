@@ -276,6 +276,54 @@ def test_trait_static_dispatch_lowers_to_direct_method_call(
     assert_not_contains(ir, "witness", label="trait static dispatch ir")
 
 
+def test_trait_dyn_dispatch_lowers_to_witness_indirection_without_struct_vptrs(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "trait_dyn_frontend.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var h Hash dyn = cast[Hash dyn](&point)
+            ret h.hash()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_regex(ir, r"%.*Point = type \{ i32 \}", label="trait dyn dispatch ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait dyn dispatch ir")
+    assert_regex(
+        ir,
+        r"@__lona_trait_witness__.* = internal constant \[1 x ptr\] \[ptr @.*Point\.hash\]",
+        label="trait dyn dispatch ir",
+    )
+    assert_contains(
+        ir,
+        "getelementptr inbounds [1 x ptr], ptr %trait.witness",
+        label="trait dyn dispatch ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait dyn dispatch ir",
+    )
+    assert_not_contains(ir, "type { ptr, i32 }", label="trait dyn dispatch ir")
+
+
 def test_object_bundle_reuses_cached_objects_across_cli_invocations(
     compiler: CompilerHarness,
 ) -> None:
