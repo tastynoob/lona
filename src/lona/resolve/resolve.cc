@@ -88,13 +88,18 @@ class FunctionResolver {
                                   ResolvedEntityRef::type(lookup.resolvedName));
             return;
         }
+        if (lookup.isTrait()) {
+            resolved_.bindDotLike(
+                node, ResolvedEntityRef::trait(lookup.resolvedName));
+            return;
+        }
 
         error(node->loc,
               "unknown module member `" +
                   toStdString(parentBinding->resolvedName()) + "." +
                   memberName + "`",
-              "Only directly imported top-level functions, globals, and types "
-              "are available through `file.xxx`.");
+              "Only directly imported top-level functions, globals, types, "
+              "and traits are available through `file.xxx`.");
     }
 
     void resolveStmt(const AstNode *node) {
@@ -187,6 +192,11 @@ class FunctionResolver {
                 if (lookup.isType()) {
                     resolved_.bindField(
                         field, ResolvedEntityRef::type(lookup.resolvedName));
+                    return;
+                }
+                if (lookup.isTrait()) {
+                    resolved_.bindField(
+                        field, ResolvedEntityRef::trait(lookup.resolvedName));
                     return;
                 }
                 if (lookup.isModule()) {

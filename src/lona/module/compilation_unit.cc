@@ -704,6 +704,60 @@ CompilationUnit::lookupTopLevelName(const ImportedModule &moduleNamespace,
     return lookup;
 }
 
+const ModuleInterface::TraitDecl *
+CompilationUnit::findVisibleTraitByResolvedName(
+    const ::string &resolvedName) const {
+    if (moduleInterface_) {
+        if (const auto *traitDecl =
+                moduleInterface_->findTraitByExportedName(resolvedName)) {
+            return traitDecl;
+        }
+    }
+
+    for (const auto &entry : importedModules_) {
+        const auto &imported = entry.second;
+        if (!imported.interface) {
+            continue;
+        }
+        if (const auto *traitDecl =
+                imported.interface->findTraitByExportedName(resolvedName)) {
+            return traitDecl;
+        }
+    }
+
+    return nullptr;
+}
+
+std::vector<CompilationUnit::VisibleTraitImpl>
+CompilationUnit::findVisibleTraitImpls(const ::string &traitName,
+                                       const ::string &selfTypeSpelling) const {
+    std::vector<VisibleTraitImpl> matches;
+
+    if (moduleInterface_) {
+        for (const auto &implDecl : moduleInterface_->traitImpls()) {
+            if (implDecl.traitName == traitName &&
+                implDecl.selfTypeSpelling == selfTypeSpelling) {
+                matches.push_back(VisibleTraitImpl{&implDecl, nullptr});
+            }
+        }
+    }
+
+    for (const auto &entry : importedModules_) {
+        const auto &imported = entry.second;
+        if (!imported.interface) {
+            continue;
+        }
+        for (const auto &implDecl : imported.interface->traitImpls()) {
+            if (implDecl.traitName == traitName &&
+                implDecl.selfTypeSpelling == selfTypeSpelling) {
+                matches.push_back(VisibleTraitImpl{&implDecl, &imported});
+            }
+        }
+    }
+
+    return matches;
+}
+
 void
 CompilationUnit::clearInterface() {
     if (moduleInterface_) {

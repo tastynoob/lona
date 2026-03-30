@@ -281,6 +281,28 @@ ModuleInterface::findTrait(const ::string &localName) const {
     return &found->second;
 }
 
+const ModuleInterface::TraitDecl *
+ModuleInterface::findTraitByExportedName(const ::string &exportedName) const {
+    for (const auto &entry : localTraits_) {
+        if (entry.second.exportedName == exportedName) {
+            return &entry.second;
+        }
+    }
+    return nullptr;
+}
+
+const ModuleInterface::TraitImplDecl *
+ModuleInterface::findTraitImpl(const ::string &traitName,
+                               const ::string &selfTypeSpelling) const {
+    for (const auto &implDecl : traitImpls_) {
+        if (implDecl.traitName == traitName &&
+            implDecl.selfTypeSpelling == selfTypeSpelling) {
+            return &implDecl;
+        }
+    }
+    return nullptr;
+}
+
 const ModuleInterface::GlobalDecl *
 ModuleInterface::findGlobal(const ::string &localName) const {
     auto found = localGlobals_.find(localName);

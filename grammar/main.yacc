@@ -103,7 +103,7 @@
 %type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
 %type <node> expr_paren atom_expr postfix_expr dot_like func_pointer_expr dot_like_name
-%type <node> param_decl var_def
+%type <node> param_decl var_def trait_var_def
 %type <stat_list> pragram_statlist struct_statlist trait_statlist stat_list stat_compound
 %type <var_decl> field_decl var_decl
 
@@ -421,6 +421,33 @@ trait_stat
     | trait_func_decl {
         $$ = $1;
     }
+    | struct_decl {
+        $$ = $1;
+    }
+    | global_decl {
+        $$ = $1;
+    }
+    | trait_var_def NEWLINE {
+        $$ = $1;
+    }
+    | stat_ret {
+        $$ = $1;
+    }
+    | stat_break {
+        $$ = $1;
+    }
+    | stat_continue {
+        $$ = $1;
+    }
+    | stat_compound {
+        $$ = $1;
+    }
+    | stat_if {
+        $$ = $1;
+    }
+    | stat_for {
+        $$ = $1;
+    }
     | tag_stat {
         $$ = $1;
     }
@@ -454,6 +481,24 @@ var_def
     | VAR FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5); }
     | FIELD ':' '=' opt_newlines expr { $$ = new AstVarDef(*$1, $5); }
     | FIELD ':' '=' opt_newlines brace_init { $$ = new AstVarDef(*$1, $5); }
+    ;
+
+trait_var_def
+    : VAR var_decl { $$ = new AstVarDef($2); }
+    | VAR var_decl '=' opt_newlines expr { $$ = new AstVarDef($2, $5); }
+    | VAR var_decl '=' opt_newlines brace_init { $$ = new AstVarDef($2, $5); }
+    | TYPE_CONST FIELD '=' opt_newlines expr { $$ = new AstVarDef(*$2, $5, true); }
+    | TYPE_CONST FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5, true); }
+    | TYPE_CONST var_decl '=' opt_newlines expr { $$ = new AstVarDef($2, $5, true); }
+    | TYPE_CONST var_decl '=' opt_newlines brace_init { $$ = new AstVarDef($2, $5, true); }
+    | REF FIELD type_name '=' opt_newlines expr {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $6);
+    }
+    | REF FIELD type_name '=' opt_newlines brace_init {
+        $$ = new AstVarDef(new AstVarDecl(BindingKind::Ref, *$2, $3), $6);
+    }
+    | VAR FIELD '=' opt_newlines expr { $$ = new AstVarDef(*$2, $5); }
+    | VAR FIELD '=' opt_newlines brace_init { $$ = new AstVarDef(*$2, $5); }
     ;
 
 global_decl

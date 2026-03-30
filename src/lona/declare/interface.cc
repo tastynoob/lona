@@ -92,6 +92,23 @@ class InterfaceCollector {
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
+    struct ResolvedTraitRef {
+        const ModuleInterface::TraitDecl *decl = nullptr;
+        string resolvedName;
+        bool localToUnit = false;
+    };
+
+    struct ResolvedSelfTypeRef {
+        StructType *structType = nullptr;
+        string resolvedName;
+        bool localToUnit = false;
+    };
+
+    struct ValidatedTraitImpl {
+        ModuleInterface::TraitImplDecl decl;
+        location loc;
+    };
+
     void validateImportAliasConflict(AstStructDecl *structDecl) {
         const auto name = toStdString(structDecl->name);
         if (!unit_.importsModule(name)) {
@@ -237,6 +254,280 @@ class InterfaceCollector {
         return nullptr;
     }
 
+    static std::string describeResolvedTypeName(TypeClass *type) {
+        return type ? toStdString(type->full_name) : std::string("void");
+    }
+
+    static std::string describeTraitMemberContext(AstTraitDecl *traitDecl) {
+        return traitDecl ? "`" + toStdString(traitDecl->name) + "`"
+                         : std::string("<trait>");
+    }
+
+    [[noreturn]] void errorUnsupportedTraitBodyStmt(AstTraitDecl *traitDecl,
+                                                    AstNode *stmt) {
+        const auto traitName = describeTraitMemberContext(traitDecl);
+        if (auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt)) {
+            error(fieldDecl->loc,
+                  "trait " + traitName + " cannot declare field `" +
+                      toStdString(fieldDecl->field) + "`",
+                  "Trait v0 only allows method signatures inside trait "
+                  "bodies.");
+        }
+        if (auto *varDef = dynamic_cast<AstVarDef *>(stmt)) {
+            error(varDef->loc,
+                  "trait " + traitName + " cannot declare local variable `" +
+                      toStdString(varDef->getName()) + "`",
+                  "Trait bodies describe interfaces only. Move executable "
+                  "code out of the trait and keep only `def name(...)` "
+                  "signatures here.");
+        }
+        if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(stmt)) {
+            error(globalDecl->loc,
+                  "trait " + traitName + " cannot declare global `" +
+                      toStdString(globalDecl->getName()) + "`",
+                  "Move globals to module scope. Trait v0 only allows method "
+                  "signatures inside trait bodies.");
+        }
+        if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
+            error(structDecl->loc,
+                  "trait " + traitName + " cannot declare nested struct `" +
+                      toStdString(structDecl->name) + "`",
+                  "Move nested types to module scope. Trait bodies only allow "
+                  "method signatures in trait v0.");
+        }
+
+        error(stmt ? stmt->loc : (traitDecl ? traitDecl->loc : location()),
+              "trait " + traitName + " cannot contain executable statements",
+              "Trait v0 only allows method signatures inside trait bodies.");
+    }
+
+    ResolvedTraitRef resolveTraitRef(AstNode *traitSyntax,
+                                     const location &loc) {
+        std::vector<std::string> segments;
+        if (!collectDotLikeSegments(traitSyntax, segments) || segments.empty()) {
+            error(loc, "invalid trait reference in impl header",
+                  "Use a trait name like `Hash` or `dep.Hash` after `:`.");
+        }
+
+        if (segments.size() == 1) {
+            if (const auto *traitDecl = interface_->findTrait(segments[0])) {
+                return {traitDecl, traitDecl->exportedName, true};
+            }
+            error(loc, "unknown trait `" + segments[0] + "` in impl header",
+                  "Declare the trait in this module or import the module that "
+                  "defines it before writing `impl Type: Trait`.");
+        }
+
+        if (segments.size() != 2) {
+            error(loc,
+                  "trait references only support directly imported module "
+                  "members in trait v0",
+                  "Use `Trait` or `dep.Trait`. Re-exported multi-hop trait "
+                  "paths are not supported yet.");
+        }
+
+        const auto *imported = unit_.findImportedModule(segments[0]);
+        if (!imported || !imported->interface) {
+            error(loc, "unknown imported module alias `" + segments[0] + "`",
+                  "Add an explicit `import " + segments[0] +
+                      "` before referring to `" + describeDotLikeSyntax(
+                                                       traitSyntax, "<trait>") +
+                      "`.");
+        }
+
+        auto lookup = imported->interface->lookupTopLevelName(segments[1]);
+        if (!lookup.isTrait() || !lookup.traitDecl) {
+            error(loc,
+                  "unknown trait `" + describeDotLikeSyntax(traitSyntax,
+                                                            "<trait>") +
+                      "` in impl header",
+                  "Only directly imported top-level traits are available "
+                  "through `file.Trait`.");
+        }
+        return {lookup.traitDecl, lookup.traitDecl->exportedName, false};
+    }
+
+    ResolvedSelfTypeRef resolveImplSelfType(TypeNode *selfTypeNode,
+                                            const location &loc) {
+        auto *base = dynamic_cast<BaseTypeNode *>(selfTypeNode);
+        if (!base) {
+            error(loc,
+                  "trait impl self type must name a concrete struct type",
+                  "Write `impl Point: Hash`, not pointers, arrays, tuples, or "
+                  "qualified forms.");
+        }
+
+        auto *type = resolveType(base);
+        auto *structType = type ? type->as<StructType>() : nullptr;
+        if (!structType) {
+            error(loc,
+                  "trait impl self type must resolve to a concrete struct: `" +
+                      describeTypeNode(selfTypeNode, "<unknown type>") + "`",
+                  "Trait v0 currently supports impls for struct types only.");
+        }
+
+        std::string moduleName;
+        std::string memberName;
+        const bool localToUnit =
+            !splitBaseTypeName(base, moduleName, memberName);
+        return {structType, structType->full_name, localToUnit};
+    }
+
+    static AccessKind inferMethodReceiverAccess(StructType *selfType,
+                                                FuncType *methodType,
+                                                const location &loc,
+                                                llvm::StringRef methodName) {
+        if (!selfType || !methodType || methodType->getArgTypes().empty()) {
+            internalError(loc,
+                          "trait impl validation is missing the implicit self "
+                          "parameter for method `" +
+                              methodName.str() + "`",
+                          "This looks like a method interface bug.");
+        }
+        auto *selfPointeeType =
+            getRawPointerPointeeType(methodType->getArgTypes().front());
+        if (!selfPointeeType ||
+            asUnqualified<StructType>(selfPointeeType) != selfType) {
+            internalError(loc,
+                          "trait impl validation found an invalid self "
+                          "parameter for method `" +
+                              methodName.str() + "`",
+                          "This looks like a method interface bug.");
+        }
+        return selfPointeeType == selfType ? AccessKind::GetSet
+                                           : AccessKind::GetOnly;
+    }
+
+    void validateTraitMethodMatch(const ModuleInterface::TraitDecl &traitDecl,
+                                  const ModuleInterface::TraitMethodDecl &method,
+                                  StructType *selfType,
+                                  const location &implLoc) {
+        auto *methodType = selfType->getMethodType(toStringRef(method.localName));
+        const auto implLabel =
+            "`" + describeResolvedType(selfType) + ": " +
+            toStdString(traitDecl.exportedName) + "`";
+        if (!methodType) {
+            error(implLoc,
+                  "impl " + implLabel + " is missing method `" +
+                      toStdString(method.localName) + "`",
+                  "Define `def " + toStdString(method.localName) +
+                      "(...)` on `" + describeResolvedType(selfType) +
+                      "` with the same signature as trait `" +
+                      toStdString(traitDecl.exportedName) + "`.");
+        }
+
+        auto actualReceiverAccess = inferMethodReceiverAccess(
+            selfType, methodType, implLoc, toStringRef(method.localName));
+        if (actualReceiverAccess != method.receiverAccess) {
+            error(
+                implLoc,
+                "impl " + implLabel + " has receiver access mismatch for `" +
+                    toStdString(method.localName) + "`",
+                "Trait `" + toStdString(traitDecl.exportedName) + "` expects `" +
+                    accessKindKeyword(method.receiverAccess) + " def " +
+                    toStdString(method.localName) + "`.");
+        }
+
+        const auto &argTypes = methodType->getArgTypes();
+        const std::size_t actualParamCount =
+            argTypes.empty() ? 0 : argTypes.size() - 1;
+        if (actualParamCount != method.paramTypeSpellings.size()) {
+            error(implLoc,
+                  "impl " + implLabel + " has parameter count mismatch for `" +
+                      toStdString(method.localName) + "`: expected " +
+                      std::to_string(method.paramTypeSpellings.size()) +
+                      ", got " + std::to_string(actualParamCount),
+                  "Match the trait method signature exactly.");
+        }
+
+        for (std::size_t i = 0; i < actualParamCount; ++i) {
+            const auto actualBindingKind = methodType->getArgBindingKind(i + 1);
+            if (actualBindingKind != method.paramBindingKinds[i]) {
+                error(implLoc,
+                      "impl " + implLabel +
+                          " has parameter binding mismatch for `" +
+                          toStdString(method.localName) + "` at index " +
+                          std::to_string(i),
+                      "Trait `" + toStdString(traitDecl.exportedName) +
+                          "` expects `" +
+                          bindingKindKeyword(method.paramBindingKinds[i]) +
+                          "` at that position.");
+            }
+
+            const auto actualTypeName =
+                describeResolvedTypeName(argTypes[i + 1]);
+            if (actualTypeName != method.paramTypeSpellings[i]) {
+                error(implLoc,
+                      "impl " + implLabel + " has parameter type mismatch for `" +
+                          toStdString(method.localName) + "` at index " +
+                          std::to_string(i) + ": expected `" +
+                          toStdString(method.paramTypeSpellings[i]) + "`, got `" +
+                          actualTypeName + "`",
+                      "Match the trait method parameter types exactly.");
+            }
+        }
+
+        const auto actualReturnTypeName =
+            describeResolvedTypeName(methodType->getRetType());
+        if (actualReturnTypeName != method.returnTypeSpelling) {
+            error(implLoc,
+                  "impl " + implLabel + " has return type mismatch for `" +
+                      toStdString(method.localName) + "`: expected `" +
+                      toStdString(method.returnTypeSpelling) + "`, got `" +
+                      actualReturnTypeName + "`",
+                  "Match the trait method return type exactly.");
+        }
+    }
+
+    void checkVisibleTraitImplConflicts(
+        const std::vector<ValidatedTraitImpl> &validatedImpls) {
+        std::unordered_map<std::string, std::string> seenSources;
+
+        auto makeKey = [](const string &traitName, const string &selfTypeName) {
+            return toStdString(traitName) + "|" + toStdString(selfTypeName);
+        };
+
+        for (const auto &importedEntry : unit_.importedModules()) {
+            const auto &alias = importedEntry.first;
+            const auto &imported = importedEntry.second;
+            if (!imported.interface) {
+                continue;
+            }
+            for (const auto &implDecl : imported.interface->traitImpls()) {
+                auto key = makeKey(implDecl.traitName, implDecl.selfTypeSpelling);
+                auto source = "imported module `" + toStdString(alias) + "`";
+                auto found = seenSources.find(key);
+                if (found != seenSources.end()) {
+                    error(unit_.syntaxTree() ? unit_.syntaxTree()->loc : location(),
+                          "duplicate visible impl for trait `" +
+                              toStdString(implDecl.traitName) + "` and type `" +
+                              toStdString(implDecl.selfTypeSpelling) + "`",
+                          "Only one visible `impl Type: Trait` is allowed for each "
+                          "(Trait, Type) pair. Existing source: " +
+                              found->second + ", new source: " + source + ".");
+                }
+                seenSources.emplace(std::move(key), std::move(source));
+            }
+        }
+
+        for (const auto &entry : validatedImpls) {
+            auto key = makeKey(entry.decl.traitName, entry.decl.selfTypeSpelling);
+            auto found = seenSources.find(key);
+            if (found != seenSources.end()) {
+                error(entry.loc,
+                      "duplicate visible impl for trait `" +
+                          toStdString(entry.decl.traitName) + "` and type `" +
+                          toStdString(entry.decl.selfTypeSpelling) + "`",
+                      "Only one visible `impl Type: Trait` is allowed for each "
+                      "(Trait, Type) pair. Existing source: " + found->second +
+                          ".");
+            }
+            seenSources.emplace(
+                std::move(key),
+                "current module `" + toStdString(unit_.moduleName()) + "`");
+        }
+    }
+
     std::vector<ModuleInterface::TraitMethodDecl>
     collectTraitMethods(AstTraitDecl *traitDecl) {
         std::vector<ModuleInterface::TraitMethodDecl> methods;
@@ -246,24 +537,15 @@ class InterfaceCollector {
             return methods;
         }
 
+        std::unordered_map<std::string, location> seenMethods;
+
         for (auto *stmt : body->getBody()) {
             if (dynamic_cast<AstTagNode *>(stmt)) {
                 continue;
             }
-            if (auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt)) {
-                error(fieldDecl->loc,
-                      "trait `" + toStdString(traitDecl->name) +
-                          "` only supports method declarations",
-                      "Remove field declarations from the trait body and keep "
-                      "only `def name(...)` signatures in trait v0.");
-            }
             auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
             if (!funcDecl) {
-                error(stmt ? stmt->loc : traitDecl->loc,
-                      "unsupported trait member in `" +
-                          toStdString(traitDecl->name) + "`",
-                      "Trait v0 only supports method declarations inside "
-                      "trait bodies.");
+                errorUnsupportedTraitBodyStmt(traitDecl, stmt);
             }
             if (funcDecl->hasBody()) {
                 error(funcDecl->loc,
@@ -272,6 +554,16 @@ class InterfaceCollector {
                       "Keep only the method signature inside the trait. "
                       "`impl Type: Trait { ... }` bodies are not supported "
                       "yet either.");
+            }
+            auto inserted =
+                seenMethods.emplace(toStdString(funcDecl->name), funcDecl->loc);
+            if (!inserted.second) {
+                error(funcDecl->loc,
+                      "duplicate trait method `" +
+                          toStdString(funcDecl->name) + "` in trait `" +
+                          toStdString(traitDecl->name) + "`",
+                      "Trait method names must be unique within the same "
+                      "trait.");
             }
 
             ModuleInterface::TraitMethodDecl method;
@@ -289,12 +581,49 @@ class InterfaceCollector {
                               "`" +
                                   toStdString(funcDecl->name) + "`");
                     }
-                    method.paramTypeSpellings.push_back(
-                        describeTypeNode(varDecl->typeNode, "void"));
+                    auto *paramType = resolveType(varDecl->typeNode);
+                    if (!paramType) {
+                        error(varDecl->loc,
+                              "unknown type for trait method parameter `" +
+                                  toStdString(varDecl->field) + "` in `" +
+                                  toStdString(funcDecl->name) + "`: " +
+                                  describeTypeNode(varDecl->typeNode, "void"));
+                    }
+                    rejectBareFunctionType(
+                        paramType, varDecl->typeNode,
+                        "unsupported bare function trait parameter type for `" +
+                            toStdString(varDecl->field) + "` in `" +
+                            toStdString(funcDecl->name) + "`",
+                        varDecl->loc);
+                    rejectOpaqueStructByValue(
+                        paramType, varDecl->typeNode, varDecl->loc,
+                        "parameter `" + toStdString(varDecl->field) +
+                            "` in trait method `" +
+                            toStdString(funcDecl->name) + "`");
+                    method.paramTypeSpellings.push_back(paramType->full_name);
                 }
             }
-            method.returnTypeSpelling =
-                describeTypeNode(funcDecl->retType, "void");
+            if (funcDecl->retType) {
+                auto *retType = resolveType(funcDecl->retType);
+                if (!retType) {
+                    error(funcDecl->loc,
+                          "unknown return type for trait method `" +
+                              toStdString(funcDecl->name) + "`: " +
+                              describeTypeNode(funcDecl->retType, "void"));
+                }
+                rejectBareFunctionType(
+                    retType, funcDecl->retType,
+                    "unsupported bare function return type for trait method `" +
+                        toStdString(funcDecl->name) + "`",
+                    funcDecl->loc);
+                rejectOpaqueStructByValue(
+                    retType, funcDecl->retType, funcDecl->loc,
+                    "return type of trait method `" +
+                        toStdString(funcDecl->name) + "`");
+                method.returnTypeSpelling = retType->full_name;
+            } else {
+                method.returnTypeSpelling = "void";
+            }
             methods.push_back(std::move(method));
         }
         return methods;
@@ -359,6 +688,11 @@ class InterfaceCollector {
                       "module.");
             }
         }
+    }
+
+    std::vector<ValidatedTraitImpl> validateTraitImpls() {
+        std::vector<ValidatedTraitImpl> validated;
+        validated.reserve(traitImplDecls_.size());
 
         for (auto *traitImplDecl : traitImplDecls_) {
             if (traitImplDecl->hasBody()) {
@@ -368,10 +702,40 @@ class InterfaceCollector {
                       "Keep the actual method implementations as inherent "
                       "methods on the concrete type.");
             }
-            interface_->declareTraitImpl(
-                describeTypeNode(traitImplDecl->selfType, "<unknown type>"),
-                describeDotLikeSyntax(traitImplDecl->trait, "<unknown trait>"),
-                traitImplDecl->hasBody());
+
+            auto traitRef = resolveTraitRef(traitImplDecl->trait,
+                                            traitImplDecl->loc);
+            auto selfRef =
+                resolveImplSelfType(traitImplDecl->selfType, traitImplDecl->loc);
+            if (!traitRef.localToUnit && !selfRef.localToUnit) {
+                error(traitImplDecl->loc,
+                      "impl `" + toStdString(selfRef.resolvedName) + ": " +
+                          toStdString(traitRef.resolvedName) +
+                          "` violates the trait orphan rule",
+                      "At least one side of `impl Type: Trait` must be defined "
+                      "in the current module.");
+            }
+
+            for (const auto &method : traitRef.decl->methods) {
+                validateTraitMethodMatch(*traitRef.decl, method,
+                                         selfRef.structType,
+                                         traitImplDecl->loc);
+            }
+
+            validated.push_back(ValidatedTraitImpl{
+                ModuleInterface::TraitImplDecl{selfRef.resolvedName,
+                                               traitRef.resolvedName, false},
+                traitImplDecl->loc});
+        }
+
+        return validated;
+    }
+
+    void declareValidatedTraitImpls(
+        const std::vector<ValidatedTraitImpl> &validatedImpls) {
+        for (const auto &implDecl : validatedImpls) {
+            interface_->declareTraitImpl(implDecl.decl.selfTypeSpelling,
+                                         implDecl.decl.traitName, false);
         }
     }
 
@@ -601,6 +965,9 @@ public:
         completeStructs();
         declareGlobals();
         declareFunctions();
+        auto validatedTraitImpls = validateTraitImpls();
+        checkVisibleTraitImplConflicts(validatedTraitImpls);
+        declareValidatedTraitImpls(validatedTraitImpls);
         interface_->markCollected();
     }
 };
@@ -693,9 +1060,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
     }
 
     for (const auto &entry : interface->traits()) {
-        auto runtimeName =
-            exportNamespace ? entry.second.exportedName : entry.first;
-        unit.bindLocalTrait(entry.first, runtimeName);
+        unit.bindLocalTrait(entry.first, entry.second.exportedName);
     }
 
     for (const auto &entry : interface->functions()) {

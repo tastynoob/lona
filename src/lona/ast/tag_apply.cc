@@ -312,6 +312,12 @@ applyBuiltinTagsImpl(AstNode *node, bool allowTagsInList) {
         }
         return structDecl;
     }
+    if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(node)) {
+        if (traitDecl->body) {
+            applyBuiltinTagsImpl(traitDecl->body, false);
+        }
+        return traitDecl;
+    }
     if (auto *ifNode = dynamic_cast<AstIf *>(node)) {
         applyBuiltinTagsImpl(ifNode->then, false);
         applyBuiltinTagsImpl(ifNode->els, false);
@@ -378,6 +384,12 @@ validateBuiltinTagResults(AstNode *node) {
         }
         if (structDecl->body) {
             validateBuiltinTagResults(structDecl->body);
+        }
+        return;
+    }
+    if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(node)) {
+        if (traitDecl->body) {
+            validateBuiltinTagResults(traitDecl->body);
         }
         return;
     }

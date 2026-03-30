@@ -698,11 +698,69 @@ class FunctionAnalyzer {
                   ".func(...)` or `" + moduleName + ".Type(...)` instead.");
     }
 
+    [[noreturn]] void diagnoseTraitNamespaceValueUse(
+        const std::string &traitName, const location &loc) {
+        error(loc, "trait namespaces can't be used as runtime values",
+              "Call a concrete trait member like `" + traitName +
+                  ".method(value, ...)` instead.");
+    }
+
     [[noreturn]] void diagnoseModuleNamespaceCall(const std::string &moduleName,
                                                   const location &loc) {
         error(loc, "module `" + moduleName + "` does not support call syntax",
               "Call a concrete member like `" + moduleName +
                   ".func(...)` or `" + moduleName + ".Type(...)` instead.");
+    }
+
+    [[noreturn]] void diagnoseTraitNamespaceCall(const std::string &traitName,
+                                                 const location &loc) {
+        error(loc, "trait `" + traitName + "` does not support call syntax",
+              "Use explicit trait-qualified call syntax like `" + traitName +
+                  ".method(value, ...)`.");
+    }
+
+    const ResolvedEntityRef *resolvedTraitBinding(const AstNode *node) const {
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            auto *binding = resolved.field(field);
+            if (binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+                return binding;
+            }
+            return nullptr;
+        }
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            auto *binding = resolved.dotLike(dotLike);
+            if (binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+                return binding;
+            }
+        }
+        return nullptr;
+    }
+
+    const ModuleInterface::TraitDecl *requireVisibleTraitDecl(
+        const ResolvedEntityRef *binding, const location &loc,
+        const AstNode *syntax) {
+        if (!binding || binding->kind() != ResolvedEntityRef::Kind::Trait) {
+            internalError(loc,
+                          "trait-qualified operation is missing its resolved "
+                          "trait binding",
+                          "Run name resolution before HIR lowering.");
+        }
+        if (!unit) {
+            internalError(
+                loc, "trait analysis requires compilation-unit context",
+                "Compile trait-enabled code through the workspace pipeline.");
+        }
+        auto *traitDecl = unit->findVisibleTraitByResolvedName(
+            binding->resolvedName());
+        if (!traitDecl) {
+            internalError(loc,
+                          "resolved trait `" + toStdString(binding->resolvedName()) +
+                              "` is missing from the visible interface graph",
+                          "This looks like a trait interface materialization "
+                          "bug.");
+        }
+        (void)syntax;
+        return traitDecl;
     }
 
     HIRExpr *materializeResolvedEntity(const ResolvedEntityRef *binding,
@@ -728,6 +786,9 @@ class FunctionAnalyzer {
                                                "type identifier");
                 return makeHIR<HIRValue>(new TypeObject(type), loc);
             }
+            case ResolvedEntityRef::Kind::Trait:
+                diagnoseTraitNamespaceValueUse(
+                    toStdString(binding->resolvedName()), loc);
             case ResolvedEntityRef::Kind::Invalid:
                 break;
         }
@@ -2012,6 +2073,10 @@ class FunctionAnalyzer {
         if (binding && binding->kind() == ResolvedEntityRef::Kind::Module) {
             diagnoseModuleNamespaceValueUse(toStdString(node->name), node->loc);
         }
+        if (binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+            diagnoseTraitNamespaceValueUse(toStdString(binding->resolvedName()),
+                                           node->loc);
+        }
         return materializeResolvedEntity(binding, node->loc,
                                          toStdString(node->name));
     }
@@ -2021,8 +2086,238 @@ class FunctionAnalyzer {
         if (!binding || !binding->valid()) {
             return nullptr;
         }
+        if (binding->kind() == ResolvedEntityRef::Kind::Trait) {
+            diagnoseTraitNamespaceValueUse(toStdString(binding->resolvedName()),
+                                           node->loc);
+        }
         return materializeResolvedEntity(binding, node->loc,
                                          describeMemberOwnerSyntax(node));
+    }
+
+    HIRExpr *lowerResolvedCall(HIRExpr *callee, CallArgList normalizedArgs,
+                               const location &callLoc,
+                               bool allowImplicitDeref) {
+        auto callAttempt = resolveCallWithImplicitDeref(
+            callee, std::move(normalizedArgs), callLoc, allowImplicitDeref);
+        callee = callAttempt.callee;
+        auto resolution = std::move(callAttempt.resolution);
+        switch (resolution.kind) {
+            case CallResolutionKind::ConstructorCall: {
+                auto *structType =
+                    resolution.callee.asType()
+                        ? asUnqualified<StructType>(resolution.callee.asType())
+                        : nullptr;
+                if (!structType) {
+                    internalError(
+                        callLoc,
+                        "constructor resolution is missing its struct type",
+                        "This looks like a compiler pipeline bug.");
+                }
+
+                auto members = orderedStructMembers(structType, callLoc);
+                std::vector<FormalCallArg> formals;
+                formals.reserve(members.size());
+                for (std::size_t i = 0; i < members.size(); ++i) {
+                    formals.push_back({&members[i].first, members[i].second,
+                                       BindingKind::Value,
+                                       FormalCallArgKind::ConstructorField, i});
+                }
+                auto boundArgs =
+                    bindCallArgs(resolution.args, formals,
+                                 {callLoc, CallBindingTargetKind::Constructor,
+                                  structType, true});
+
+                std::vector<HIRExpr *> fields;
+                fields.reserve(boundArgs.size());
+                for (const auto &arg : boundArgs) {
+                    fields.push_back(arg.expr);
+                }
+                return makeHIR<HIRStructLiteral>(std::move(fields), structType,
+                                                 callLoc);
+            }
+            case CallResolutionKind::ArrayIndex: {
+                auto *arrayType = asUnqualified<ArrayType>(callee->getType());
+                auto *indexableType =
+                    asUnqualified<IndexablePointerType>(callee->getType());
+                const auto indexArity = arrayType ? arrayType->indexArity()
+                                                  : (indexableType ? 1u : 0u);
+                auto *elementType = resolution.resultEntity.valueType();
+                if (!arrayType && !indexableType) {
+                    internalError(
+                        callLoc,
+                        "array index resolution is missing its indexable type",
+                        "This looks like a compiler pipeline bug.");
+                }
+                if (arrayType && !arrayType->hasStaticLayout()) {
+                    error(callLoc,
+                          "array indexing requires fixed explicit dimensions "
+                          "or an indexable pointer",
+                          "Use positive integer literal dimensions like "
+                          "`i32[4]`, or an indexable pointer like `T[*]` and "
+                          "write `ptr(i)`.");
+                }
+                std::vector<FormalCallArg> formals;
+                formals.reserve(indexArity);
+                for (size_t i = 0; i < indexArity; ++i) {
+                    formals.push_back({nullptr, i32Ty, BindingKind::Value,
+                                       FormalCallArgKind::ArrayIndex, i});
+                }
+                auto boundArgs =
+                    bindCallArgs(resolution.args, formals,
+                                 {callLoc, CallBindingTargetKind::ArrayIndex,
+                                  nullptr, false});
+                std::vector<HIRExpr *> args;
+                args.reserve(boundArgs.size());
+                for (const auto &arg : boundArgs) {
+                    args.push_back(arg.expr);
+                }
+                return makeHIR<HIRIndex>(callee, std::move(args), elementType,
+                                         callLoc);
+            }
+            case CallResolutionKind::FunctionCall:
+            case CallResolutionKind::FunctionPointerCall: {
+                auto *funcType = resolution.callType;
+                if (!funcType) {
+                    internalError(
+                        callLoc,
+                        "call resolution is missing its function type",
+                        "This looks like a compiler pipeline bug.");
+                }
+
+                const auto &paramTypes = funcType->getArgTypes();
+                std::vector<FormalCallArg> formals;
+                formals.reserve(paramTypes.size() - resolution.argOffset);
+                for (size_t i = 0; i + resolution.argOffset < paramTypes.size();
+                     ++i) {
+                    const string *paramName =
+                        resolution.paramNames &&
+                                i < resolution.paramNames->size()
+                            ? &resolution.paramNames->at(i)
+                            : nullptr;
+                    formals.push_back(
+                        {paramName, paramTypes[i + resolution.argOffset],
+                         funcType->getArgBindingKind(i + resolution.argOffset),
+                         FormalCallArgKind::FunctionParameter, i});
+                }
+                auto boundArgs = bindCallArgs(
+                    resolution.args, formals,
+                    {callLoc, CallBindingTargetKind::FunctionCall, nullptr,
+                     resolution.paramNames && !resolution.paramNames->empty()});
+
+                std::vector<HIRExpr *> args;
+                args.reserve(boundArgs.size());
+                for (const auto &arg : boundArgs) {
+                    args.push_back(arg.expr);
+                }
+
+                auto *retType = funcType->getRetType();
+                return makeHIR<HIRCall>(callee, std::move(args), retType,
+                                        callLoc);
+            }
+            case CallResolutionKind::NotCallable:
+                diagnoseCallFailure(callee, callLoc, resolution);
+            default:
+                internalError(
+                    callLoc,
+                    "call resolution produced an unsupported result kind",
+                    "This looks like a compiler pipeline bug.");
+        }
+    }
+
+    HIRExpr *analyzeTraitQualifiedCall(AstFieldCall *node,
+                                       AstDotLike *calleeSyntax,
+                                       const ResolvedEntityRef *traitBinding) {
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        if (normalizedArgs.empty()) {
+            error(node->loc,
+                  "trait-qualified call requires the receiver as its first "
+                  "argument",
+                  "Write calls like `Trait.method(value, ...)`.");
+        }
+
+        const auto *traitDecl = requireVisibleTraitDecl(
+            traitBinding, calleeSyntax ? calleeSyntax->loc : node->loc,
+            calleeSyntax ? calleeSyntax->parent : nullptr);
+        const auto fieldName = toStdString(
+            calleeSyntax ? calleeSyntax->field->text : string());
+        const auto *traitMethod =
+            traitDecl->findMethod(fieldName);
+        if (!traitMethod) {
+            error(node->loc,
+                  "unknown trait method `" +
+                      toStdString(traitBinding->resolvedName()) + "." +
+                      fieldName + "`",
+                  "Check the trait method name, or update the trait "
+                  "declaration.");
+        }
+
+        const auto &receiverSpec = normalizedArgs.front();
+        if (receiverSpec.name.has_value()) {
+            error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
+                  "trait-qualified receiver must be passed positionally",
+                  "Write `Trait.method(value, ...)`, not a named receiver "
+                  "argument.");
+        }
+        if (receiverSpec.bindingKind == BindingKind::Ref) {
+            error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
+                  "trait-qualified receiver cannot be passed with `ref`",
+                  "Reference binding rules apply to the trait method's "
+                  "declared parameters, not to the implicit receiver.");
+        }
+
+        auto *receiver = requireNonCallExpr(receiverSpec.value);
+        auto lookupAttempt = lookupMemberWithImplicitDeref(
+            receiver, fieldName, receiverSpec.loc,
+            !isExplicitDerefSyntax(receiverSpec.value));
+        auto *receiverStructType = lookupAttempt.lookup.owner.structType;
+        if (!receiverStructType) {
+            error(receiverSpec.loc,
+                  "trait-qualified call expects a struct receiver for trait `" +
+                      toStdString(traitBinding->resolvedName()) + "`",
+                  "Pass a concrete struct value that implements the trait.");
+        }
+
+        auto visibleImpls = unit->findVisibleTraitImpls(
+            traitBinding->resolvedName(),
+            toStdString(receiverStructType->full_name));
+        if (visibleImpls.empty()) {
+            error(receiverSpec.loc,
+                  "type `" + describeResolvedType(receiverStructType) +
+                      "` does not implement trait `" +
+                      toStdString(traitBinding->resolvedName()) + "`",
+                  "Add `impl " + describeResolvedType(receiverStructType) +
+                      ": " + toStdString(traitBinding->resolvedName()) +
+                      "` in a visible module.");
+        }
+
+        if (lookupAttempt.lookup.result.kind != LookupResultKind::Method) {
+            error(receiverSpec.loc,
+                  "trait-qualified call expected method `" + fieldName +
+                      "` on `" + describeResolvedType(receiverStructType) + "`",
+                  "Implement the required inherent method before writing the "
+                  "trait impl.");
+        }
+
+        auto *callee = materializeMemberExpr(
+            lookupAttempt.parent, fieldName, lookupAttempt.lookup,
+            calleeSyntax ? calleeSyntax->loc : node->loc, true);
+        if (!callee) {
+            internalError(node->loc,
+                          "trait-qualified call did not produce a method "
+                          "selector",
+                          "This looks like a trait-qualified call lowering "
+                          "bug.");
+        }
+
+        CallArgList remainingArgs;
+        remainingArgs.reserve(normalizedArgs.size() - 1);
+        for (std::size_t i = 1; i < normalizedArgs.size(); ++i) {
+            remainingArgs.push_back(normalizedArgs[i]);
+        }
+
+        (void)traitMethod;
+        return lowerResolvedCall(callee, std::move(remainingArgs), node->loc,
+                                 false);
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
@@ -2435,6 +2730,14 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeDotLike(AstDotLike *node) {
+        if (auto *traitBinding = resolvedTraitBinding(node->parent)) {
+            error(node->loc,
+                  "trait-qualified member selectors can only be used as "
+                  "direct call callees",
+                  "Write `" + toStdString(traitBinding->resolvedName()) +
+                      "." + toStdString(node->field->text) +
+                      "(value, ...)`.");
+        }
         if (auto *resolvedDotLike = analyzeResolvedDotLike(node)) {
             return resolvedDotLike;
         }
@@ -2453,6 +2756,7 @@ class FunctionAnalyzer {
 
     HIRExpr *analyzeCall(AstFieldCall *node,
                          TypeClass *expectedType = nullptr) {
+        (void)expectedType;
         auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
         HIRExpr *callee = nullptr;
         if (auto *fieldNode =
@@ -2462,9 +2766,22 @@ class FunctionAnalyzer {
                 diagnoseModuleNamespaceCall(toStdString(fieldNode->name),
                                             node->loc);
             }
+            if (binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+                diagnoseTraitNamespaceCall(toStdString(binding->resolvedName()),
+                                           node->loc);
+            }
         }
         if (auto *dotLikeNode =
                 node->value ? node->value->as<AstDotLike>() : nullptr) {
+            if (auto *binding = resolved.dotLike(dotLikeNode);
+                binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+                diagnoseTraitNamespaceCall(toStdString(binding->resolvedName()),
+                                           node->loc);
+            }
+            if (auto *traitBinding = resolvedTraitBinding(dotLikeNode->parent)) {
+                return analyzeTraitQualifiedCall(node, dotLikeNode,
+                                                 traitBinding);
+            }
             if (auto *resolvedDotLike = analyzeResolvedDotLike(dotLikeNode)) {
                 callee = resolvedDotLike;
             } else {
@@ -2505,133 +2822,8 @@ class FunctionAnalyzer {
         if (!callee) {
             callee = requireExpr(node->value);
         }
-        auto callAttempt =
-            resolveCallWithImplicitDeref(callee, normalizedArgs, node->loc,
-                                         !isExplicitDerefSyntax(node->value));
-        callee = callAttempt.callee;
-        auto resolution = std::move(callAttempt.resolution);
-        switch (resolution.kind) {
-            case CallResolutionKind::ConstructorCall: {
-                auto *structType =
-                    resolution.callee.asType()
-                        ? asUnqualified<StructType>(resolution.callee.asType())
-                        : nullptr;
-                if (!structType) {
-                    internalError(
-                        node->loc,
-                        "constructor resolution is missing its struct type",
-                        "This looks like a compiler pipeline bug.");
-                }
-
-                auto members = orderedStructMembers(structType, node->loc);
-                std::vector<FormalCallArg> formals;
-                formals.reserve(members.size());
-                for (std::size_t i = 0; i < members.size(); ++i) {
-                    formals.push_back({&members[i].first, members[i].second,
-                                       BindingKind::Value,
-                                       FormalCallArgKind::ConstructorField, i});
-                }
-                auto boundArgs =
-                    bindCallArgs(resolution.args, formals,
-                                 {node->loc, CallBindingTargetKind::Constructor,
-                                  structType, true});
-
-                std::vector<HIRExpr *> fields;
-                fields.reserve(boundArgs.size());
-                for (const auto &arg : boundArgs) {
-                    fields.push_back(arg.expr);
-                }
-                return makeHIR<HIRStructLiteral>(std::move(fields), structType,
-                                                 node->loc);
-            }
-            case CallResolutionKind::ArrayIndex: {
-                auto *arrayType = asUnqualified<ArrayType>(callee->getType());
-                auto *indexableType =
-                    asUnqualified<IndexablePointerType>(callee->getType());
-                const auto indexArity = arrayType ? arrayType->indexArity()
-                                                  : (indexableType ? 1u : 0u);
-                auto *elementType = resolution.resultEntity.valueType();
-                if (!arrayType && !indexableType) {
-                    internalError(
-                        node->loc,
-                        "array index resolution is missing its indexable type",
-                        "This looks like a compiler pipeline bug.");
-                }
-                if (arrayType && !arrayType->hasStaticLayout()) {
-                    error(node->loc,
-                          "array indexing requires fixed explicit dimensions "
-                          "or an indexable pointer",
-                          "Use positive integer literal dimensions like "
-                          "`i32[4]`, or an indexable pointer like `T[*]` and "
-                          "write `ptr(i)`.");
-                }
-                std::vector<FormalCallArg> formals;
-                formals.reserve(indexArity);
-                for (size_t i = 0; i < indexArity; ++i) {
-                    formals.push_back({nullptr, i32Ty, BindingKind::Value,
-                                       FormalCallArgKind::ArrayIndex, i});
-                }
-                auto boundArgs =
-                    bindCallArgs(resolution.args, formals,
-                                 {node->loc, CallBindingTargetKind::ArrayIndex,
-                                  nullptr, false});
-                const auto actualArgCount = boundArgs.size();
-                std::vector<HIRExpr *> args;
-                args.reserve(actualArgCount);
-                for (const auto &arg : boundArgs) {
-                    args.push_back(arg.expr);
-                }
-                return makeHIR<HIRIndex>(callee, std::move(args), elementType,
-                                         node->loc);
-            }
-            case CallResolutionKind::FunctionCall:
-            case CallResolutionKind::FunctionPointerCall: {
-                auto *funcType = resolution.callType;
-                if (!funcType) {
-                    internalError(
-                        node->loc,
-                        "call resolution is missing its function type",
-                        "This looks like a compiler pipeline bug.");
-                }
-
-                const auto &paramTypes = funcType->getArgTypes();
-                std::vector<FormalCallArg> formals;
-                formals.reserve(paramTypes.size() - resolution.argOffset);
-                for (size_t i = 0; i + resolution.argOffset < paramTypes.size();
-                     ++i) {
-                    const string *paramName =
-                        resolution.paramNames &&
-                                i < resolution.paramNames->size()
-                            ? &resolution.paramNames->at(i)
-                            : nullptr;
-                    formals.push_back(
-                        {paramName, paramTypes[i + resolution.argOffset],
-                         funcType->getArgBindingKind(i + resolution.argOffset),
-                         FormalCallArgKind::FunctionParameter, i});
-                }
-                auto boundArgs = bindCallArgs(
-                    resolution.args, formals,
-                    {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
-                     resolution.paramNames && !resolution.paramNames->empty()});
-
-                std::vector<HIRExpr *> args;
-                args.reserve(boundArgs.size());
-                for (const auto &arg : boundArgs) {
-                    args.push_back(arg.expr);
-                }
-
-                auto *retType = funcType->getRetType();
-                return makeHIR<HIRCall>(callee, std::move(args), retType,
-                                        node->loc);
-            }
-            case CallResolutionKind::NotCallable:
-                diagnoseCallFailure(callee, node->loc, resolution);
-            default:
-                internalError(
-                    node->loc,
-                    "call resolution produced an unsupported result kind",
-                    "This looks like a compiler pipeline bug.");
-        }
+        return lowerResolvedCall(callee, std::move(normalizedArgs), node->loc,
+                                 !isExplicitDerefSyntax(node->value));
     }
 
 public:

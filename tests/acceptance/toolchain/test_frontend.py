@@ -243,6 +243,39 @@ def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -
         assert object_path.parent == expected_cache_bundle_dir
 
 
+def test_trait_static_dispatch_lowers_to_direct_method_call(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "trait_static_frontend.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            ret Hash.hash(point)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_regex(ir, r"%.*Point.*= type \{ i32 \}", label="trait static dispatch ir")
+    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="trait static dispatch ir")
+    assert_not_contains(ir, "call i32 %", label="trait static dispatch ir")
+    assert_not_contains(ir, "witness", label="trait static dispatch ir")
+
+
 def test_object_bundle_reuses_cached_objects_across_cli_invocations(
     compiler: CompilerHarness,
 ) -> None:

@@ -258,6 +258,83 @@ def test_import_prefers_current_directory_over_include_paths(
     )
     ir = compiler.emit_ir(main_path, include_paths=[include_dir]).expect_ok().stdout
     assert_contains(ir, "store i32 13", label="local import precedence ir")
+
+
+def test_imported_trait_supports_local_impl_static_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_import_local_impl/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_import_local_impl/main.lo",
+        """
+        import dep
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: dep.Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            ret dep.Hash.hash(point)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="imported trait local impl ir")
+    assert_not_contains(ir, "trait namespaces can't be used", label="imported trait local impl ir")
+
+
+def test_imported_trait_uses_imported_impl_for_static_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_import_dep_impl/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        impl Point: Hash
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_import_dep_impl/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var point = dep.make()
+            ret dep.Hash.hash(point)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(ir, r"call i32 @dep\.Point\.hash\(ptr ", label="imported trait imported impl ir")
     assert_not_contains(ir, "store i32 27", label="local import precedence ir")
 
 

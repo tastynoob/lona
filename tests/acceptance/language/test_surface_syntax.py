@@ -240,6 +240,10 @@ def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
 
         struct Point {
             value i32
+
+            def hash() u64 {
+                ret cast[u64](self.value)
+            }
         }
 
         impl Point: Hash
@@ -250,6 +254,135 @@ def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
         """,
     )
     assert_contains(ir, "define i32 @main()", label="trait header ir")
+
+
+def test_trait_v0_static_qualified_calls_and_impl_validation(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_static_dispatch.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            ret Hash.hash(point)
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait static dispatch ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.hash\(ptr ",
+        label="trait static dispatch ir",
+    )
+
+    failures = [
+        (
+            "trait_impl_missing_method.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+            }
+
+            impl Point: Hash
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            ["is missing method `hash`"],
+        ),
+        (
+            "trait_impl_receiver_mismatch.lo",
+            """
+            trait Hash {
+                set def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Point: Hash
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            ["receiver access mismatch for `hash`"],
+        ),
+        (
+            "trait_impl_param_type_mismatch.lo",
+            """
+            trait Hash {
+                def hash(value i32) i32
+            }
+
+            struct Point {
+                value i32
+
+                def hash(value i64) i32 {
+                    ret self.value + cast[i32](value)
+                }
+            }
+
+            impl Point: Hash
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            ["parameter type mismatch for `hash` at index 0"],
+        ),
+        (
+            "trait_impl_duplicate_visible.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Point: Hash
+            impl Point: Hash
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            ["duplicate visible impl for trait"],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
 
 
 def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields(
@@ -268,8 +401,8 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
             }
             """,
             [
-                "trait `Hash` only supports method declarations",
-                "keep only `def name(...)` signatures in trait v0",
+                "trait `Hash` cannot declare field `value`",
+                "Trait v0 only allows method signatures inside trait bodies.",
             ],
         ),
         (
@@ -311,6 +444,54 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
             [
                 "trait impl bodies are not supported in trait v0",
                 "Declare only `impl Type: Trait` headers for now.",
+            ],
+        ),
+        (
+            "trait_local_var_bad.lo",
+            """
+            trait Hash {
+                var tmp i32 = 0
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait `Hash` cannot declare local variable `tmp`",
+                "Trait bodies describe interfaces only.",
+            ],
+        ),
+        (
+            "trait_global_bad.lo",
+            """
+            trait Hash {
+                global tmp i32 = 0
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait `Hash` cannot declare global `tmp`",
+                "Move globals to module scope.",
+            ],
+        ),
+        (
+            "trait_ret_bad.lo",
+            """
+            trait Hash {
+                ret 0
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "trait `Hash` cannot contain executable statements",
+                "Trait v0 only allows method signatures inside trait bodies.",
             ],
         ),
     ]

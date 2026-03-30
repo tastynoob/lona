@@ -56,6 +56,13 @@ public:
         bool isGlobal() const { return kind == TopLevelLookupKind::Global; }
     };
 
+    struct VisibleTraitImpl {
+        const ModuleInterface::TraitImplDecl *implDecl = nullptr;
+        const ImportedModule *importedModule = nullptr;
+
+        bool isImported() const { return importedModule != nullptr; }
+    };
+
 private:
     string path_;
     string moduleKey_;
@@ -117,6 +124,9 @@ public:
     const ImportedModule *findImportedModule(const std::string &alias) const {
         return findImportedModule(string(alias));
     }
+    const std::unordered_map<string, ImportedModule> &importedModules() const {
+        return importedModules_;
+    }
     bool importsModule(const ::string &alias) const;
     bool importsModule(const std::string &alias) const {
         return importsModule(string(alias));
@@ -168,6 +178,18 @@ public:
     TopLevelLookup lookupTopLevelName(const ImportedModule &moduleNamespace,
                                       const std::string &name) const {
         return lookupTopLevelName(moduleNamespace, string(name));
+    }
+    const ModuleInterface::TraitDecl *findVisibleTraitByResolvedName(
+        const ::string &resolvedName) const;
+    const ModuleInterface::TraitDecl *findVisibleTraitByResolvedName(
+        const std::string &resolvedName) const {
+        return findVisibleTraitByResolvedName(string(resolvedName));
+    }
+    std::vector<VisibleTraitImpl> findVisibleTraitImpls(
+        const ::string &traitName, const ::string &selfTypeSpelling) const;
+    std::vector<VisibleTraitImpl> findVisibleTraitImpls(
+        const std::string &traitName, const std::string &selfTypeSpelling) const {
+        return findVisibleTraitImpls(string(traitName), string(selfTypeSpelling));
     }
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;

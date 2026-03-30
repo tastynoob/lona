@@ -59,6 +59,7 @@ public:
         LocalBinding,
         GlobalValue,
         Type,
+        Trait,
         Module,
     };
 
@@ -87,6 +88,13 @@ public:
     static ResolvedEntityRef type(string name) {
         ResolvedEntityRef ref;
         ref.kind_ = Kind::Type;
+        ref.resolvedName_ = std::move(name);
+        return ref;
+    }
+
+    static ResolvedEntityRef trait(string name) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::Trait;
         ref.resolvedName_ = std::move(name);
         return ref;
     }

@@ -49,6 +49,15 @@ public:
         string localName;
         string exportedName;
         std::vector<TraitMethodDecl> methods;
+
+        const TraitMethodDecl *findMethod(const ::string &name) const {
+            for (const auto &method : methods) {
+                if (method.localName == name) {
+                    return &method;
+                }
+            }
+            return nullptr;
+        }
     };
 
     struct TraitImplDecl {
@@ -188,6 +197,16 @@ public:
     const TraitDecl *findTrait(const ::string &localName) const;
     const TraitDecl *findTrait(const std::string &localName) const {
         return findTrait(string(localName));
+    }
+    const TraitDecl *findTraitByExportedName(const ::string &exportedName) const;
+    const TraitDecl *findTraitByExportedName(const std::string &exportedName) const {
+        return findTraitByExportedName(string(exportedName));
+    }
+    const TraitImplDecl *findTraitImpl(const ::string &traitName,
+                                       const ::string &selfTypeSpelling) const;
+    const TraitImplDecl *findTraitImpl(const std::string &traitName,
+                                       const std::string &selfTypeSpelling) const {
+        return findTraitImpl(string(traitName), string(selfTypeSpelling));
     }
     const GlobalDecl *findGlobal(const ::string &localName) const;
     const GlobalDecl *findGlobal(const std::string &localName) const {
