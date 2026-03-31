@@ -98,6 +98,17 @@ ModuleInterface::declareTrait(string localName,
 }
 
 bool
+ModuleInterface::defineTraitMethods(string localName,
+                                    std::vector<TraitMethodDecl> methods) {
+    auto found = localTraits_.find(localName);
+    if (found == localTraits_.end()) {
+        return false;
+    }
+    found->second.methods = std::move(methods);
+    return true;
+}
+
+bool
 ModuleInterface::declareTraitImpl(string selfTypeSpelling, string traitName,
                                   bool hasBody) {
     traitImpls_.push_back(

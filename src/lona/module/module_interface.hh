@@ -169,6 +169,13 @@ public:
                       std::vector<TraitMethodDecl> methods = {}) {
         return declareTrait(string(std::move(localName)), std::move(methods));
     }
+    bool defineTraitMethods(string localName,
+                            std::vector<TraitMethodDecl> methods);
+    bool defineTraitMethods(std::string localName,
+                            std::vector<TraitMethodDecl> methods) {
+        return defineTraitMethods(string(std::move(localName)),
+                                  std::move(methods));
+    }
     bool declareTraitImpl(string selfTypeSpelling, string traitName,
                           bool hasBody = false);
     bool declareTraitImpl(std::string selfTypeSpelling, std::string traitName,

@@ -456,6 +456,95 @@ def test_trait_v0_qualified_calls_bind_named_args_from_trait_signatures(
     assert_regex(ir, r"call i32 @.*Point\.add\(ptr [^,]+, i32 1\)", label="trait named args ir")
 
 
+def test_trait_v0_allows_local_trait_dyn_fields_before_trait_declaration(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_local_dyn_field.lo",
+        """
+        struct Holder {
+            hash Hash dyn
+        }
+
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value
+            }
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var hash Hash dyn = cast[Hash dyn](&point)
+            var holder = Holder(hash = hash)
+            ret holder.hash.hash()
+        }
+        """,
+    )
+    assert_regex(ir, r"%.*Holder = type \{ \{ ptr, ptr \} \}", label="trait local dyn field ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait local dyn field ir")
+
+
+def test_trait_v0_allows_self_and_forward_local_trait_dyn_signatures(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_local_dyn_signatures.lo",
+        """
+        trait Hash {
+            def merge(other Hash dyn) i32
+        }
+
+        trait UseLater {
+            def connect(other Later dyn) i32
+        }
+
+        trait Later {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def merge(other Hash dyn) i32 {
+                ret self.value + 1
+            }
+
+            def connect(other Later dyn) i32 {
+                ret other.hash()
+            }
+
+            def hash() i32 {
+                ret self.value
+            }
+        }
+
+        impl Point: Hash
+        impl Point: UseLater
+        impl Point: Later
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var hash Hash dyn = cast[Hash dyn](&point)
+            var later Later dyn = cast[Later dyn](&point)
+            ret Hash.merge(point, hash) + UseLater.connect(point, later)
+        }
+        """,
+    )
+    assert_contains(ir, "@__lona_trait_witness__", label="trait local dyn signatures ir")
+    assert_regex(ir, r"call i32 @.*Point\.merge\(ptr ", label="trait local dyn signatures ir")
+    assert_contains(ir, "call i32 %trait.slot(ptr %trait.data)", label="trait local dyn signatures ir")
+
+
 def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
     compiler: CompilerHarness,
 ) -> None:

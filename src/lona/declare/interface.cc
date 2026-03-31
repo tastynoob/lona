@@ -706,15 +706,27 @@ class InterfaceCollector {
         }
     }
 
-    void declareTraits() {
+    void declareTraitNames() {
         for (auto *traitDecl : traitDecls_) {
-            auto methods = collectTraitMethods(traitDecl);
-            if (!interface_->declareTrait(toStdString(traitDecl->name),
-                                          std::move(methods))) {
+            if (!interface_->declareTrait(toStdString(traitDecl->name), {})) {
                 error(traitDecl->loc,
                       "duplicate trait `" + toStdString(traitDecl->name) + "`",
                       "Choose a distinct top-level trait name in this "
                       "module.");
+            }
+        }
+    }
+
+    void defineTraitMethods() {
+        for (auto *traitDecl : traitDecls_) {
+            auto methods = collectTraitMethods(traitDecl);
+            if (!interface_->defineTraitMethods(toStdString(traitDecl->name),
+                                                std::move(methods))) {
+                internalError(traitDecl->loc,
+                              "trait method collection ran before trait "
+                              "declaration registration",
+                              "This looks like a trait interface collection "
+                              "ordering bug.");
             }
         }
     }
@@ -990,8 +1002,9 @@ public:
         interface_->clear();
         collectTopLevelLists(unit_.syntaxTree());
         declareStructs();
+        declareTraitNames();
         completeStructs();
-        declareTraits();
+        defineTraitMethods();
         declareGlobals();
         declareFunctions();
         auto validatedTraitImpls = validateTraitImpls();
