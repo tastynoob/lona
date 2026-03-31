@@ -47,3 +47,18 @@
 - 或其它显式携带长度信息的运行时容器
 
 而不是直接把 `T[]` 解释成半值半指针结构。
+
+## 4. `Trait dyn` 的可写性扩展
+
+当前稳定语义里，`Trait dyn` 仍然只支持 get-only 方法；只要 trait 中出现 `set def`，整个 trait 就不能进入动态分派。
+
+如果继续推进，更合适的方向不是引入新的 dyn 关键字，而是沿用已有 `const` 规则，把 trait object 分成：
+
+- `Trait dyn`
+- `const Trait dyn`
+
+并让 setter 只对可写 dyn receiver 放行。
+
+这部分已经单独形成计划文档：
+
+- [trait_v0_dyn_mutability.md](trait_v0_dyn_mutability.md)
