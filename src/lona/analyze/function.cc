@@ -3082,17 +3082,17 @@ class FunctionAnalyzer {
                 callee = resolvedDotLike;
             } else {
                 auto *receiver = requireExpr(dotLikeNode->parent);
-                if (asUnqualified<DynTraitType>(receiver->getType())) {
-                    return analyzeTraitObjectCall(node, dotLikeNode, receiver);
-                }
-                if (!isExplicitDerefSyntax(dotLikeNode->parent)) {
+                auto *traitObjectReceiver = receiver;
+                if (!asUnqualified<DynTraitType>(traitObjectReceiver->getType()) &&
+                    !isExplicitDerefSyntax(dotLikeNode->parent)) {
                     if (auto *derefReceiver =
-                            implicitDeref(receiver, dotLikeNode->loc);
-                        derefReceiver &&
-                        asUnqualified<DynTraitType>(derefReceiver->getType())) {
-                        return analyzeTraitObjectCall(node, dotLikeNode,
-                                                      derefReceiver);
+                            implicitDeref(receiver, dotLikeNode->loc)) {
+                        traitObjectReceiver = derefReceiver;
                     }
+                }
+                if (asUnqualified<DynTraitType>(traitObjectReceiver->getType())) {
+                    return analyzeTraitObjectCall(node, dotLikeNode,
+                                                  traitObjectReceiver);
                 }
                 auto fieldName = toStdString(dotLikeNode->field->text);
                 auto attempt = lookupMemberWithImplicitDeref(

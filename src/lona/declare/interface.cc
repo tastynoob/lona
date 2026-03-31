@@ -1076,8 +1076,7 @@ materializeDeclaredGlobal(Scope &scope, TypeTable *typeMgr, TypeClass *type,
 }
 
 void
-materializeStructMethodBindings(Scope &global, TypeTable *typeMgr,
-                                StructType *structType) {
+materializeStructMethodBindings(TypeTable *typeMgr, StructType *structType) {
     if (!typeMgr || !structType) {
         return;
     }
@@ -1181,7 +1180,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         if (!structType) {
             continue;
         }
-        materializeStructMethodBindings(*global, typeMgr, structType);
+        materializeStructMethodBindings(typeMgr, structType);
     }
 
     for (const auto &implDecl : interface->traitImpls()) {
@@ -1190,7 +1189,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         if (!structType) {
             continue;
         }
-        materializeStructMethodBindings(*global, typeMgr, structType);
+        materializeStructMethodBindings(typeMgr, structType);
     }
 
     unit.markInterfaceCollected();
