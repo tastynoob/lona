@@ -1,7 +1,7 @@
 .vscode
-.claude/
+.claude
 .idea
-.humanize*
+.humanize
 build/
 .cache/
 __pycache__/
@@ -34,6 +34,6 @@ __pycache__/
 
 
 tmp*
-draft.md
-plan.md
+*draft.md
+*plan.md
 

@@ -1,0 +1,146 @@
+// Trait + composition sample: embedded structs, promoted access, static trait calls,
+// and explicit `Trait dyn` views built from both `self` and embedded subobjects.
+
+trait Metric {
+    def score() i32
+}
+
+trait Weighted {
+    def weight(bias i32) i32
+}
+
+struct Identity {
+    cluster i32
+    slot i32
+
+    def machine_id() i32 {
+        ret self.cluster * 100 + self.slot
+    }
+
+    def weight(bias i32) i32 {
+        ret self.machine_id() + bias
+    }
+}
+
+impl Identity: Weighted
+
+struct RollingCounter {
+    set total i32
+
+    set def record(delta i32) i32 {
+        self.total = self.total + delta
+        ret self.total
+    }
+
+    def score() i32 {
+        ret self.total * 2
+    }
+
+    def weight(bias i32) i32 {
+        ret self.total + bias
+    }
+}
+
+impl RollingCounter: Metric
+impl RollingCounter: Weighted
+
+struct RetryBudget {
+    set remaining i32
+
+    set def spend(cost i32) i32 {
+        self.remaining = self.remaining - cost
+        ret self.remaining
+    }
+
+    def weight(bias i32) i32 {
+        ret self.remaining * 10 + bias
+    }
+}
+
+impl RetryBudget: Weighted
+
+struct WorkerService {
+    _ Identity
+    _ RollingCounter
+    _ RetryBudget
+
+    set def handle(batch i32) i32 {
+        self.record(batch)
+        self.spend(1)
+        ret self.score()
+    }
+
+    def score() i32 {
+        ret self.machine_id() + self.RollingCounter.score() + self.remaining
+    }
+
+    def weight(bias i32) i32 {
+        var from_id = self.Identity.weight(bias)
+        var from_counter = self.RollingCounter.weight(bias)
+        var from_budget = self.RetryBudget.weight(bias)
+        ret from_id + from_counter + from_budget
+    }
+
+    set def counter_view() Metric dyn {
+        ret cast[Metric dyn](&self.RollingCounter)
+    }
+
+    set def service_view() Metric dyn {
+        ret cast[Metric dyn](&self)
+    }
+}
+
+impl WorkerService: Metric
+impl WorkerService: Weighted
+
+def invoke_metric(value Metric dyn) i32 {
+    ret value.score()
+}
+
+def invoke_metric_ptr(value Metric dyn*) i32 {
+    ret value.score()
+}
+
+def run() i32 {
+    var worker = WorkerService(
+        Identity = Identity(cluster = 1, slot = 4),
+        RollingCounter = RollingCounter(total = 3),
+        RetryBudget = RetryBudget(remaining = 6)
+    )
+
+    if worker.machine_id() != worker.Identity.machine_id() {
+        ret 1
+    }
+
+    if Metric.score(worker.RollingCounter) != 6 {
+        ret 2
+    }
+
+    if Weighted.weight(worker.Identity, bias = 3) != 107 {
+        ret 3
+    }
+
+    if Weighted.weight(worker, bias = 2) != 173 {
+        ret 4
+    }
+
+    if worker.handle(4) != 123 {
+        ret 5
+    }
+
+    var counter_metric Metric dyn = worker.counter_view()
+    var service_metric Metric dyn = worker.service_view()
+    var service_metric_ptr Metric dyn* = &service_metric
+
+    if invoke_metric(counter_metric) != 14 {
+        ret 6
+    }
+
+    if invoke_metric_ptr(service_metric_ptr) != 123 {
+        ret 7
+    }
+
+    ret worker.cluster + worker.RollingCounter.total + worker.RetryBudget.remaining + service_metric.score()
+}
+
+ret run()

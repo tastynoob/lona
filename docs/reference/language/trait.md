@@ -8,6 +8,10 @@
 - `Trait dyn` 显式、非 owning 的动态 trait object
 - `cast[Trait dyn](&value)` 借用式构造
 
+本文只描述用户可见的语法和语义规则。
+如果你关心 witness table、slot 顺序和 LLVM lowering，见
+[../../internals/compiler/trait_lowering.md](../../internals/compiler/trait_lowering.md)。
+
 ## 1. trait 声明
 
 ```lona

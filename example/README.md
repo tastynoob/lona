@@ -9,6 +9,7 @@
 - [data_model_suite.lo](data_model_suite.lo): 结构体、字段、方法、构造函数、普通指针读写和 `null` 空指针。
 - [function_pointer_suite.lo](function_pointer_suite.lo): `(Args: Ret)` 函数指针、显式函数取指针、已初始化的函数指针存储和间接调用。
 - [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`sizeof(expr)` / `sizeof[T]()`、`usize`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
+- [trait_composition_suite.lo](trait_composition_suite.lo): `trait`、`impl Type: Trait`、`Trait.method(...)`、`Trait dyn`，以及嵌入式组合带来的 promoted 字段/方法访问。
 
 ## Modules
 
@@ -20,8 +21,9 @@
 1. 先看 [algorithms_suite.lo](algorithms_suite.lo) 了解基础控制流。
 2. 再看 [data_model_suite.lo](data_model_suite.lo) 和 [function_pointer_suite.lo](function_pointer_suite.lo)。
 3. 需要看 system-level `C FFI` 和真实运行样例时，查 [c_ffi_linked_list.lo](c_ffi_linked_list.lo)。
-4. 需要看当前语法收口结果时，查 [syntax_suite.lo](syntax_suite.lo)。
-5. 需要模块导入时，查 [modules/main.lo](modules/main.lo)。
+4. 需要看 `trait` 和组合特性的联动时，查 [trait_composition_suite.lo](trait_composition_suite.lo)。
+5. 需要看当前语法收口结果时，查 [syntax_suite.lo](syntax_suite.lo)。
+6. 需要模块导入时，查 [modules/main.lo](modules/main.lo)。
 
 说明：
 
