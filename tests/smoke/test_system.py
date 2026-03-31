@@ -177,6 +177,53 @@ def test_system_trait_dyn_dispatch_runtime(compiler: CompilerHarness) -> None:
     compiler.run_executable(exe).expect_exit_code(42)
 
 
+def test_system_trait_dyn_dispatch_runtime_from_pointer_backed_sources(
+    compiler: CompilerHarness,
+) -> None:
+    program = compiler.write_source(
+        "system/trait_dyn_pointer_backed.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+
+            set def borrow_hash() Hash dyn {
+                ret cast[Hash dyn](&self)
+            }
+        }
+
+        impl Point: Hash
+
+        def invoke(value Hash dyn) i32 {
+            ret value.hash()
+        }
+
+        var point = Point(value = 41)
+        var ptr Point* = &point
+        var from_ptr Hash dyn = cast[Hash dyn](&ptr)
+        var from_self Hash dyn = point.borrow_hash()
+        if invoke(from_ptr) != 42 {
+            ret 1
+        }
+        ret invoke(from_self)
+        """,
+    )
+
+    build_result, exe = compiler.build_system_executable(
+        program,
+        output_name="trait_dyn_pointer_backed",
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+
+
 def test_system_trait_dyn_dispatch_runtime_with_indirect_result_aggregate(
     compiler: CompilerHarness,
 ) -> None:

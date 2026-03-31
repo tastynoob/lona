@@ -1133,13 +1133,31 @@ class FunctionAnalyzer {
         if (!isAddressable(source)) {
             error(borrowSyntax->expr->loc,
                   "trait object construction expects an addressable source",
-                  "Borrow a variable, field, dereferenced pointer, or array "
-                  "element. Temporaries cannot become `Trait dyn`.");
+                  "Borrow a variable, field, pointer-backed value like "
+                  "`self`, or array element. Temporaries cannot become "
+                  "`Trait dyn`.");
         }
 
         auto *traitDecl = requireDynCompatibleTrait(
             targetType, node->loc, "trait object construction");
-        auto *selfType = asUnqualified<StructType>(source->getType());
+        auto *borrowedSource = source;
+        auto *selfType = asUnqualified<StructType>(borrowedSource->getType());
+        if (!selfType) {
+            auto *sourcePointer = asUnqualified<PointerType>(source->getType());
+            auto *pointeeType =
+                sourcePointer ? sourcePointer->getPointeeType() : nullptr;
+            selfType = asUnqualified<StructType>(pointeeType);
+            if (selfType) {
+                borrowedSource = implicitDeref(source, borrowSyntax->expr->loc);
+                if (!borrowedSource || !isAddressable(borrowedSource)) {
+                    internalError(
+                        borrowSyntax->expr->loc,
+                        "trait object construction failed to materialize a "
+                        "pointer-backed borrow source",
+                        "This looks like a trait-object borrow lowering bug.");
+                }
+            }
+        }
         if (!selfType) {
             error(borrowSyntax->expr->loc,
                   "trait object construction expects a concrete struct value "
@@ -1162,7 +1180,7 @@ class FunctionAnalyzer {
         }
 
         TypeClass *sourceDynType =
-            isConstQualifiedType(source->getType())
+            isConstQualifiedType(borrowedSource->getType())
                 ? typeMgr->createConstType(dynType)
                 : static_cast<TypeClass *>(dynType);
         if (!isConstQualificationConvertible(targetType, sourceDynType)) {
@@ -1174,7 +1192,8 @@ class FunctionAnalyzer {
                       "` instead, or borrow a writable value.");
         }
 
-        return makeHIR<HIRTraitObjectCast>(source, targetType, node->loc);
+        return makeHIR<HIRTraitObjectCast>(borrowedSource, targetType,
+                                           node->loc);
     }
 
     HIRExpr *analyzeCastExpr(AstCastExpr *node) {

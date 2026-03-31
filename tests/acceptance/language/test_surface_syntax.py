@@ -674,6 +674,53 @@ def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_trait_v0_accepts_pointer_backed_trait_object_sources(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_dyn_pointer_backed_sources.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+
+            set def borrow_hash() Hash dyn {
+                ret cast[Hash dyn](&self)
+            }
+        }
+
+        impl Point: Hash
+
+        def invoke(value Hash dyn) i32 {
+            ret value.hash()
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var ptr Point* = &point
+            var from_ptr Hash dyn = cast[Hash dyn](&ptr)
+            var from_self Hash dyn = point.borrow_hash()
+            ret invoke(from_ptr) + invoke(from_self) - 42
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait dyn pointer-backed ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait dyn pointer-backed ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait dyn pointer-backed ir",
+    )
+
+
 def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields(
     compiler: CompilerHarness,
 ) -> None:
