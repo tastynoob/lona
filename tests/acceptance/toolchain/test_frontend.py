@@ -324,6 +324,57 @@ def test_trait_dyn_dispatch_lowers_to_witness_indirection_without_struct_vptrs(
     assert_not_contains(ir, "type { ptr, i32 }", label="trait dyn dispatch ir")
 
 
+def test_trait_dyn_indirect_results_keep_self_before_sret_in_witness_calls(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "trait_dyn_indirect_result.lo",
+        """
+        struct Big {
+            a i64
+            b i64
+            c i64
+        }
+
+        trait Factory {
+            def make() Big
+        }
+
+        struct Maker {
+            seed i64
+
+            def make() Big {
+                ret Big(a = self.seed, b = self.seed + 1, c = self.seed + 2)
+            }
+        }
+
+        impl Maker: Factory
+
+        def main() i32 {
+            var maker = Maker(seed = 40)
+            var f Factory dyn = cast[Factory dyn](&maker)
+            var big = f.make()
+            if big.c == 42 {
+                ret 42
+            }
+            ret 1
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_regex(ir, r"%.*Big = type \{ i64, i64, i64 \}", label="trait dyn indirect result ir")
+    assert_regex(
+        ir,
+        r"^define void @.*Maker\.make\(ptr [^,]+, ptr [^)]+\)",
+        label="trait dyn indirect result ir",
+    )
+    assert_regex(
+        ir,
+        r"call void %trait\.slot\(ptr %trait\.data, ptr [^)]+\)",
+        label="trait dyn indirect result ir",
+    )
+
+
 def test_object_bundle_reuses_cached_objects_across_cli_invocations(
     compiler: CompilerHarness,
 ) -> None:

@@ -990,8 +990,8 @@ public:
         interface_->clear();
         collectTopLevelLists(unit_.syntaxTree());
         declareStructs();
-        declareTraits();
         completeStructs();
+        declareTraits();
         declareGlobals();
         declareFunctions();
         auto validatedTraitImpls = validateTraitImpls();

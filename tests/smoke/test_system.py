@@ -177,6 +177,57 @@ def test_system_trait_dyn_dispatch_runtime(compiler: CompilerHarness) -> None:
     compiler.run_executable(exe).expect_exit_code(42)
 
 
+def test_system_trait_dyn_dispatch_runtime_with_indirect_result_aggregate(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "system/trait_dyn_big_dep.lo",
+        """
+        struct Big {
+            a i64
+            b i64
+            c i64
+        }
+
+        trait Factory {
+            def make() Big
+        }
+
+        struct Maker {
+            seed i64
+
+            def make() Big {
+                ret Big(a = self.seed, b = self.seed + 1, c = self.seed + 2)
+            }
+        }
+
+        impl Maker: Factory
+        """,
+    )
+    program = compiler.write_source(
+        "system/trait_dyn_big_main.lo",
+        """
+        import trait_dyn_big_dep
+
+        var maker = trait_dyn_big_dep.Maker(seed = 40)
+        var factory trait_dyn_big_dep.Factory dyn =
+            cast[trait_dyn_big_dep.Factory dyn](&maker)
+        var big = factory.make()
+        if big.c == 42 {
+            ret 42
+        }
+        ret 1
+        """,
+    )
+
+    build_result, exe = compiler.build_system_executable(
+        program,
+        output_name="trait_dyn_big",
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+
+
 def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo_root: Path) -> None:
     cc_bin = _detect_cc()
 

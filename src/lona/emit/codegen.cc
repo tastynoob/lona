@@ -335,7 +335,7 @@ class FunctionCompiler {
             }
             args.push_back(arg);
         }
-        return emitFunctionCall(scope, slotValue, slotFuncType, args, false);
+        return emitFunctionCall(scope, slotValue, slotFuncType, args, true);
     }
 
     Object *materializeBinding(Object *obj, Object *initVal = nullptr) {

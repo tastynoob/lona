@@ -385,6 +385,77 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_trait_v0_allows_same_module_struct_types_in_trait_signatures(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_same_module_struct_signature.lo",
+        """
+        struct Big {
+            value i32
+        }
+
+        trait Factory {
+            def make() Big
+            def score(item Big) i32
+        }
+
+        struct Maker {
+            seed i32
+
+            def make() Big {
+                ret Big(value = self.seed + 1)
+            }
+
+            def score(item Big) i32 {
+                ret item.value + self.seed
+            }
+        }
+
+        impl Maker: Factory
+
+        def main() i32 {
+            var maker = Maker(seed = 20)
+            var item = Factory.make(maker)
+            ret Factory.score(maker, item)
+        }
+        """,
+    )
+    assert_regex(ir, r"%.*Big = type \{ i32 \}", label="trait same-module struct ir")
+    assert_regex(ir, r"call i32 @.*Maker\.score\(ptr ", label="trait same-module struct ir")
+
+
+def test_trait_v0_qualified_calls_bind_named_args_from_trait_signatures(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_named_args.lo",
+        """
+        trait Add {
+            def add(x i32) i32
+        }
+
+        struct Point {
+            value i32
+
+            def add(y i32) i32 {
+                ret self.value + y
+            }
+        }
+
+        impl Point: Add
+
+        def main() i32 {
+            var point = Point(value = 41)
+            ret Add.add(point, x = 1)
+        }
+        """,
+    )
+    assert_regex(ir, r"call i32 @.*Point\.add\(ptr [^,]+, i32 1\)", label="trait named args ir")
+
+
 def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
     compiler: CompilerHarness,
 ) -> None:

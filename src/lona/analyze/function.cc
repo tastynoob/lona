@@ -2489,9 +2489,36 @@ class FunctionAnalyzer {
             remainingArgs.push_back(normalizedArgs[i]);
         }
 
-        (void)traitMethod;
-        return lowerResolvedCall(callee, std::move(remainingArgs), node->loc,
-                                 false);
+        std::vector<FormalCallArg> formals;
+        formals.reserve(traitMethod->paramTypeSpellings.size());
+        for (std::size_t i = 0; i < traitMethod->paramTypeSpellings.size();
+             ++i) {
+            auto *paramType = resolveTraitMethodTypeBySpelling(
+                traitMethod->paramTypeSpellings[i], node->loc,
+                "trait-qualified call parameter type");
+            const string *paramName =
+                i < traitMethod->paramNames.size()
+                    ? &traitMethod->paramNames[i]
+                    : nullptr;
+            formals.push_back({paramName, paramType,
+                               traitMethod->paramBindingKinds[i],
+                               FormalCallArgKind::FunctionParameter, i});
+        }
+        auto boundArgs = bindCallArgs(
+            remainingArgs, formals,
+            {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
+             !traitMethod->paramNames.empty()});
+
+        std::vector<HIRExpr *> args;
+        args.reserve(boundArgs.size());
+        for (const auto &arg : boundArgs) {
+            args.push_back(arg.expr);
+        }
+
+        auto *retType = resolveTraitMethodTypeBySpelling(
+            traitMethod->returnTypeSpelling, node->loc,
+            "trait-qualified call return type");
+        return makeHIR<HIRCall>(callee, std::move(args), retType, node->loc);
     }
 
     HIRExpr *analyzeTraitObjectCall(AstFieldCall *node, AstDotLike *calleeSyntax,
