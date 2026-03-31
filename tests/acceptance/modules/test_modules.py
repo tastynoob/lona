@@ -435,6 +435,71 @@ def test_imported_trait_uses_imported_impl_for_dynamic_dispatch(
     )
 
 
+def test_wrapper_trait_impl_on_imported_self_type_carries_methods_downstream(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_import_wrapper_other/other.lo",
+        """
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    compiler.write_source(
+        "trait_import_wrapper_other/dep.lo",
+        """
+        import other
+
+        trait Hash {
+            def hash() i32
+        }
+
+        impl other.Point: Hash
+
+        def make() other.Point {
+            ret other.make()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_import_wrapper_other/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var point = dep.make()
+            var h dep.Hash dyn = cast[dep.Hash dyn](&point)
+            ret dep.Hash.hash(point) + h.hash() - 42
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"call i32 @other\.Point\.hash\(ptr ",
+        label="wrapper imported-self impl ir",
+    )
+    assert_regex(
+        ir,
+        r"@__lona_trait_witness__.*\[ptr @other\.Point\.hash\]",
+        label="wrapper imported-self impl ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="wrapper imported-self impl ir",
+    )
+
+
 def test_import_supports_nested_module_paths_from_include_root(
     compiler: CompilerHarness,
 ) -> None:

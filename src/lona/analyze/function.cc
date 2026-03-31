@@ -3085,6 +3085,15 @@ class FunctionAnalyzer {
                 if (asUnqualified<DynTraitType>(receiver->getType())) {
                     return analyzeTraitObjectCall(node, dotLikeNode, receiver);
                 }
+                if (!isExplicitDerefSyntax(dotLikeNode->parent)) {
+                    if (auto *derefReceiver =
+                            implicitDeref(receiver, dotLikeNode->loc);
+                        derefReceiver &&
+                        asUnqualified<DynTraitType>(derefReceiver->getType())) {
+                        return analyzeTraitObjectCall(node, dotLikeNode,
+                                                      derefReceiver);
+                    }
+                }
                 auto fieldName = toStdString(dotLikeNode->field->text);
                 auto attempt = lookupMemberWithImplicitDeref(
                     receiver, fieldName, node->loc,

@@ -1076,6 +1076,41 @@ materializeDeclaredGlobal(Scope &scope, TypeTable *typeMgr, TypeClass *type,
 }
 
 void
+materializeStructMethodBindings(Scope &global, TypeTable *typeMgr,
+                                StructType *structType) {
+    if (!typeMgr || !structType) {
+        return;
+    }
+
+    for (const auto &method : structType->getMethodTypes()) {
+        auto *storedMethodType = typeMgr->internType(method.second);
+        auto *methodType =
+            storedMethodType ? storedMethodType->as<FuncType>() : nullptr;
+        if (!methodType) {
+            continue;
+        }
+        if (typeMgr->getMethodFunction(structType, method.first())) {
+            continue;
+        }
+        auto methodName =
+            toStdString(structType->full_name) + "." + method.first().str();
+        auto *llvmFunc = llvm::Function::Create(
+            getFunctionAbiLLVMType(*typeMgr, methodType, true),
+            llvm::Function::ExternalLinkage, llvm::Twine(methodName),
+            typeMgr->getModule());
+        annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
+        std::vector<string> paramNames;
+        if (const auto *storedParamNames =
+                structType->getMethodParamNames(method.first())) {
+            paramNames = *storedParamNames;
+        }
+        typeMgr->bindMethodFunction(
+            structType, method.first(),
+            new Function(llvmFunc, methodType, std::move(paramNames), true));
+    }
+}
+
+void
 materializeUnitInterface(Scope *global, CompilationUnit &unit,
                          bool exportNamespace) {
     initBuildinType(global);
@@ -1146,33 +1181,16 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         if (!structType) {
             continue;
         }
-        for (const auto &method : structType->getMethodTypes()) {
-            auto *storedMethodType = typeMgr->internType(method.second);
-            auto *methodType =
-                storedMethodType ? storedMethodType->as<FuncType>() : nullptr;
-            if (!methodType) {
-                continue;
-            }
-            if (typeMgr->getMethodFunction(structType, method.first())) {
-                continue;
-            }
-            auto methodName =
-                toStdString(structType->full_name) + "." + method.first().str();
-            auto *llvmFunc = llvm::Function::Create(
-                getFunctionAbiLLVMType(*typeMgr, methodType, true),
-                llvm::Function::ExternalLinkage, llvm::Twine(methodName),
-                typeMgr->getModule());
-            annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
-            std::vector<string> paramNames;
-            if (const auto *storedParamNames =
-                    structType->getMethodParamNames(method.first())) {
-                paramNames = *storedParamNames;
-            }
-            typeMgr->bindMethodFunction(
-                structType, method.first(),
-                new Function(llvmFunc, methodType, std::move(paramNames),
-                             true));
+        materializeStructMethodBindings(*global, typeMgr, structType);
+    }
+
+    for (const auto &implDecl : interface->traitImpls()) {
+        auto *selfType = typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
+        auto *structType = selfType ? selfType->as<StructType>() : nullptr;
+        if (!structType) {
+            continue;
         }
+        materializeStructMethodBindings(*global, typeMgr, structType);
     }
 
     unit.markInterfaceCollected();

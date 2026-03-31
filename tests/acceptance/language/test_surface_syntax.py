@@ -721,6 +721,47 @@ def test_trait_v0_accepts_pointer_backed_trait_object_sources(
     )
 
 
+def test_trait_v0_trait_object_pointers_reuse_implicit_deref_for_calls(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_dyn_pointer_call.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def invoke(ptr Hash dyn*) i32 {
+            ret ptr.hash()
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var h Hash dyn = cast[Hash dyn](&point)
+            var ptr Hash dyn* = &h
+            ret invoke(ptr)
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait dyn ptr call ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait dyn ptr call ir",
+    )
+
+
 def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields(
     compiler: CompilerHarness,
 ) -> None:
