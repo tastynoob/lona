@@ -74,6 +74,12 @@ isExternCByValueAggregateType(TypeClass *type) {
 }
 
 bool
+isExternCTraitObjectType(TypeClass *type) {
+    auto *storageType = stripTopLevelConst(type);
+    return storageType && storageType->as<DynTraitType>();
+}
+
+bool
 isCCompatibleStructIdentity(StructType *type) {
     return type && (type->isOpaque() || type->isReprC());
 }
@@ -122,6 +128,14 @@ validateExternCType(AstFuncDecl *node, StructType *methodParent,
               "#[extern \"C\"] function `" + funcName + "` uses unsupported " +
                   subject + ": " + typeName,
               "Callback support is not implemented in C FFI v0 yet.");
+    }
+    if (isExternCTraitObjectType(type)) {
+        error(loc,
+              "#[extern \"C\"] function `" + funcName + "` uses unsupported " +
+                  subject + ": " + typeName,
+              "Trait objects are internal runtime values in trait v0. Pass "
+              "an explicit opaque pointer type across the C boundary "
+              "instead.");
     }
     if (auto *pointerType = asUnqualified<PointerType>(type)) {
         if (!isCCompatiblePointerTarget(pointerType->getPointeeType())) {

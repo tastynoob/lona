@@ -551,6 +551,36 @@ def test_invalid_ffi_declarations_are_rejected(compiler: CompilerHarness) -> Non
             ],
         ),
         (
+            "ffi_trait_dyn_param_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            #[extern "C"]
+            def bad(value Hash dyn) i32
+            """,
+            [
+                'semantic error: #[extern "C"] function `bad` uses unsupported parameter `value`: Hash dyn',
+                'help: Trait objects are internal runtime values in trait v0. Pass an explicit opaque pointer type across the C boundary instead.',
+            ],
+        ),
+        (
+            "ffi_trait_dyn_return_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            #[extern "C"]
+            def bad() Hash dyn
+            """,
+            [
+                'semantic error: #[extern "C"] function `bad` uses unsupported return type: Hash dyn',
+                'help: Trait objects are internal runtime values in trait v0. Pass an explicit opaque pointer type across the C boundary instead.',
+            ],
+        ),
+        (
             "ffi_opaque_var_bad.lo",
             """
             struct FILE
