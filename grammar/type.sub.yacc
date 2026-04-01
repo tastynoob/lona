@@ -1,6 +1,41 @@
+type_bracket_item
+    : expr { $$ = $1; }
+    | TYPE { $$ = new AstField($1->text, $1->loc); }
+    ;
+
+type_bracket_item_seq
+    : type_bracket_item {
+        $$ = new std::vector<AstNode *>;
+        $$->push_back($1);
+    }
+    | type_bracket_item_seq ',' opt_newlines type_bracket_item {
+        $$ = $1;
+        $$->push_back($4);
+    }
+    ;
+
 single_type
-    : dot_like_name { $$ = new BaseTypeNode($1, @$); }
+    : dot_like_name {
+        if (auto *field = dynamic_cast<AstField *>($1);
+            field && field->name == string("any")) {
+            $$ = new AnyTypeNode(@$);
+        } else {
+            $$ = new BaseTypeNode($1, @$);
+        }
+    }
     | TYPE { $$ = new BaseTypeNode($1->text, @$); }
+    | dot_like_name '<' opt_newlines type_name_seq opt_newlines '>' {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "generic apply uses `![...]`, not `<>`",
+            "Write `Name![T]` instead of `Name<T>` in generic v0.");
+    }
+    | TYPE '<' opt_newlines type_name_seq opt_newlines '>' {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "generic apply uses `![...]`, not `<>`",
+            "Write `Name![T]` instead of `Name<T>` in generic v0.");
+    }
     ;
 
 tuple_type
@@ -23,12 +58,16 @@ type_primary
 
 postfix_type
     : type_primary { $$ = $1; }
+    | postfix_type '!' '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
+        $$ = new AppliedTypeNode($1, *$5, @$);
+        delete $5;
+    }
     | postfix_type '*' %prec type_suffix { $$ = new PointerTypeNode($1, 1, @$); }
     | postfix_type '[' opt_newlines '*' opt_newlines ']' %prec type_suffix {
         $$ = new IndexablePointerTypeNode($1, @$);
     }
     | postfix_type '[' opt_newlines ']' %prec type_suffix { $$ = new ArrayTypeNode($1, {}, @$); }
-    | postfix_type '[' opt_newlines expr_seq opt_newlines ']' %prec type_suffix {
+    | postfix_type '[' opt_newlines type_bracket_item_seq opt_newlines ']' %prec type_suffix {
         $$ = new ArrayTypeNode($1, *$4, @$);
         delete $4;
     }

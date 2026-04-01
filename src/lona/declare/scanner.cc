@@ -140,6 +140,9 @@ class TypeCollector : public AstVisitorAny {
     }
 
     Object *visit(AstStructDecl *node) override {
+        if (node->hasTypeParams()) {
+            return nullptr;
+        }
         auto *structTy =
             declareStructType(typeMgr, node, unit, exportNamespace);
         if (!node->body || !node->body->is<AstStatList>()) {
@@ -157,6 +160,9 @@ class TypeCollector : public AstVisitorAny {
     }
 
     Object *visit(AstFuncDecl *node) override {
+        if (node->hasTypeParams()) {
+            return nullptr;
+        }
         declareFunction(*scope, typeMgr, node, nullptr, unit, exportNamespace);
         return nullptr;
     }
@@ -175,7 +181,9 @@ public:
         }
 
         for (auto *it : structDecls) {
-            StructVisitor(typeMgr, it, unit, exportNamespace);
+            if (!it->hasTypeParams()) {
+                StructVisitor(typeMgr, it, unit, exportNamespace);
+            }
         }
 
         for (auto *it : structDecls) {

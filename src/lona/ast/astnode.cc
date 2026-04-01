@@ -268,6 +268,7 @@ DEF_ACCEPT(AstTupleLiteral)
 DEF_ACCEPT(AstBraceInitItem)
 DEF_ACCEPT(AstBraceInit)
 DEF_ACCEPT(AstNamedCallArg)
+DEF_ACCEPT(AstTypeApply)
 DEF_ACCEPT(AstStructDecl)
 DEF_ACCEPT(AstTraitDecl)
 DEF_ACCEPT(AstTraitImplDecl)
@@ -536,10 +537,12 @@ AstStatList::AstStatList(AstNode *node)
 }
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
+                         std::vector<AstToken *> *typeParams,
                          std::vector<AstNode *> *args, TypeNode *retType,
                          AbiKind abiKind, AccessKind receiverAccess)
     : AstNode(name.loc),
       name(name.text),
+      typeParams(typeParams),
       args(args),
       body(body),
       retType(retType),

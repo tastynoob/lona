@@ -105,6 +105,10 @@ struct TypeNode {
     virtual ~TypeNode() = default;
 };
 
+struct AnyTypeNode : public TypeNode {
+    explicit AnyTypeNode(const location &loc = location()) : TypeNode(loc) {}
+};
+
 struct BaseTypeNode : public TypeNode {
     string name;
     AstNode *syntax = nullptr;
@@ -115,6 +119,15 @@ struct BaseTypeNode : public TypeNode {
         : TypeNode(loc), syntax(syntax) {}
 
     bool hasSyntax() const { return syntax != nullptr; }
+};
+
+struct AppliedTypeNode : public TypeNode {
+    TypeNode *base;
+    std::vector<TypeNode *> args;
+
+    AppliedTypeNode(TypeNode *base, std::vector<TypeNode *> args = {},
+                    const location &loc = location())
+        : TypeNode(loc), base(base), args(std::move(args)) {}
 };
 
 struct DynTypeNode : public TypeNode {
@@ -327,7 +340,8 @@ class AstField : public AstNode {
 public:
     string const name;
     AstField(AstToken &token);
-    // AstField(string &token);
+    AstField(string name, const location &loc = location())
+        : AstNode(loc), name(name) {}
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;
@@ -335,11 +349,12 @@ public:
 
 class AstFuncRef : public AstNode {
 public:
-    string const name;
+    AstNode *const value;
     std::vector<TypeNode *> *const argTypes;
 
-    AstFuncRef(AstToken &name, std::vector<TypeNode *> *argTypes)
-        : AstNode(name.loc), name(name.text), argTypes(argTypes) {}
+    AstFuncRef(AstNode *value, std::vector<TypeNode *> *argTypes,
+               const location &loc = location())
+        : AstNode(loc), value(value), argTypes(argTypes) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -433,18 +448,37 @@ public:
     Object *accept(AstVisitor &visitor) override;
 };
 
+class AstTypeApply : public AstNode {
+public:
+    AstNode *const value;
+    std::vector<TypeNode *> *const typeArgs;
+
+    AstTypeApply(AstNode *value, std::vector<TypeNode *> *typeArgs,
+                 const location &loc = location())
+        : AstNode(loc), value(value), typeArgs(typeArgs) {}
+
+    void toJson(Json &root) override;
+    Object *accept(AstVisitor &visitor) override;
+};
+
 class AstStructDecl : public AstNode {
 public:
     string const name;
+    std::vector<AstToken *> *const typeParams = nullptr;
     AstNode *const body;
     StructDeclKind declKind;
 
     AstStructDecl(AstToken &field, AstNode *body,
+                  std::vector<AstToken *> *typeParams = nullptr,
                   StructDeclKind declKind = StructDeclKind::Native)
         : AstNode(field.loc),
           name(field.text),
+          typeParams(typeParams),
           body(body),
           declKind(declKind) {}
+    bool hasTypeParams() const {
+        return typeParams != nullptr && !typeParams->empty();
+    }
     bool hasBody() const { return body != nullptr; }
     bool isOpaqueDecl() const { return declKind == StructDeclKind::Opaque; }
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
@@ -468,14 +502,23 @@ public:
 
 class AstTraitImplDecl : public AstNode {
 public:
+    std::vector<AstToken *> *const typeParams = nullptr;
     TypeNode *const selfType;
     AstNode *const trait;
     AstNode *const body;
 
     AstTraitImplDecl(TypeNode *selfType, AstNode *trait, AstNode *body,
+                     std::vector<AstToken *> *typeParams = nullptr,
                      const location &loc = location())
-        : AstNode(loc), selfType(selfType), trait(trait), body(body) {}
+        : AstNode(loc),
+          typeParams(typeParams),
+          selfType(selfType),
+          trait(trait),
+          body(body) {}
 
+    bool hasTypeParams() const {
+        return typeParams != nullptr && !typeParams->empty();
+    }
     bool hasBody() const { return body != nullptr; }
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -603,17 +646,22 @@ public:
 class AstFuncDecl : public AstNode {
 public:
     string const name;
+    std::vector<AstToken *> *const typeParams = nullptr;
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
     TypeNode *const retType;
     AbiKind abiKind;
     AccessKind receiverAccess = AccessKind::GetOnly;
+    bool hasTypeParams() const {
+        return typeParams != nullptr && !typeParams->empty();
+    }
     bool hasArgs() const { return args != nullptr; }
     bool hasBody() const { return body != nullptr; }
     bool isExternC() const { return abiKind == AbiKind::C; }
     void setAbiKind(AbiKind kind) { abiKind = kind; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
+                std::vector<AstToken *> *typeParams = nullptr,
                 std::vector<AstNode *> *args = nullptr,
                 TypeNode *retType = nullptr, AbiKind abiKind = AbiKind::Native,
                 AccessKind receiverAccess = AccessKind::GetOnly);

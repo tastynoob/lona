@@ -6,6 +6,61 @@
 
 namespace lona {
 
+namespace {
+
+bool
+isBuiltinTypeNameText(llvm::StringRef name) {
+    return name == "u8" || name == "i8" || name == "u16" || name == "i16" ||
+           name == "u32" || name == "i32" || name == "u64" || name == "i64" ||
+           name == "usize" || name == "int" || name == "uint" ||
+           name == "f32" || name == "f64" || name == "bool";
+}
+
+const BaseTypeNode *
+rootBaseTypeNode(const TypeNode *node) {
+    if (!node) {
+        return nullptr;
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        return base;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        return rootBaseTypeNode(applied->base);
+    }
+    return nullptr;
+}
+
+bool
+isNamedTypeConstructorBase(const TypeNode *node) {
+    auto *root = rootBaseTypeNode(node);
+    if (!root) {
+        return false;
+    }
+    auto rawName = baseTypeName(root);
+    return !rawName.empty() &&
+           !isBuiltinTypeNameText(
+               llvm::StringRef(rawName.c_str(), rawName.size()));
+}
+
+bool
+isLegacyGenericApplyArraySuffix(const ArrayTypeNode *array) {
+    if (!array || !isNamedTypeConstructorBase(array->base) ||
+        array->dim.empty()) {
+        return false;
+    }
+
+    for (auto *dimension : array->dim) {
+        if (!dynamic_cast<AstField *>(dimension) &&
+            !dynamic_cast<AstDotLike *>(dimension) &&
+            !dynamic_cast<AstTypeApply *>(dimension)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
 std::string
 baseTypeName(const BaseTypeNode *node) {
     if (!node) {
@@ -73,6 +128,69 @@ errorReservedInitialListType(const location &loc) {
 }
 
 [[noreturn]] void
+errorPointerOnlyAnyType(const location &loc, const TypeNode *node) {
+    error(loc,
+          "bare `any` is not a value type in generic v0: " +
+              describeTypeNode(node, "<unknown type>"),
+          "Use `any*`, `any const*`, `any[*]`, or `any const[*]` at an "
+          "explicit erased-pointer boundary instead.");
+}
+
+TypeNode *
+typeNodeFromBracketItem(AstNode *node) {
+    if (!node) {
+        return nullptr;
+    }
+    if (auto *field = dynamic_cast<AstField *>(node)) {
+        return new BaseTypeNode(node, field->loc);
+    }
+    if (dynamic_cast<AstDotLike *>(node)) {
+        return new BaseTypeNode(node, node->loc);
+    }
+    if (auto *applied = dynamic_cast<AstTypeApply *>(node)) {
+        auto *base = typeNodeFromBracketItem(applied->value);
+        if (!base) {
+            return nullptr;
+        }
+        return new AppliedTypeNode(
+            base, applied->typeArgs ? *applied->typeArgs
+                                    : std::vector<TypeNode *>{},
+            applied->loc);
+    }
+    return nullptr;
+}
+
+TypeNode *
+createBracketSuffixTypeNode(TypeNode *base, std::vector<AstNode *> *items,
+                            const location &loc) {
+    if (!items) {
+        return new ArrayTypeNode(base, {}, loc);
+    }
+
+    if (isNamedTypeConstructorBase(base) && !items->empty()) {
+        std::vector<TypeNode *> typeArgs;
+        typeArgs.reserve(items->size());
+        bool allTypeArgs = true;
+        for (auto *item : *items) {
+            auto *typeArg = typeNodeFromBracketItem(item);
+            if (!typeArg) {
+                allTypeArgs = false;
+                break;
+            }
+            typeArgs.push_back(typeArg);
+        }
+        if (allTypeArgs) {
+            return new AppliedTypeNode(base, std::move(typeArgs), loc);
+        }
+        for (auto *typeArg : typeArgs) {
+            delete typeArg;
+        }
+    }
+
+    return new ArrayTypeNode(base, *items, loc);
+}
+
+[[noreturn]] void
 errorInvalidTypeNodeArrayDimension(const location &loc) {
     error(loc, "fixed-dimension arrays require positive integer literal sizes",
           "Use explicit sizes like `i32[4][5]` or `i32[5,4]`. Dimension "
@@ -91,6 +209,12 @@ errorUnsupportedTypeNodeUnsizedArray(const location &loc,
 }
 
 [[noreturn]] void
+errorLegacyTypeNodeGenericApplySyntax(const location &loc) {
+    error(loc, "generic apply uses `![...]`, not `[...]`",
+          "Write `name![T](...)` or `Type![T]` in generic v0.");
+}
+
+[[noreturn]] void
 errorLegacyTypeNodeIndexablePointerSyntax(const location &loc,
                                           const TypeNode *node) {
     error(loc,
@@ -102,20 +226,33 @@ errorLegacyTypeNodeIndexablePointerSyntax(const location &loc,
 }
 
 void
-validateTypeNodeLayout(const TypeNode *node) {
+validateTypeNodeLayoutImpl(const TypeNode *node, bool allowDirectAny) {
     if (!node) {
         return;
     }
+    if (dynamic_cast<const AnyTypeNode *>(node)) {
+        if (!allowDirectAny) {
+            errorPointerOnlyAnyType(node->loc, node);
+        }
+        return;
+    }
     if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
-        validateTypeNodeLayout(param->type);
+        validateTypeNodeLayoutImpl(param->type, false);
+        return;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        validateTypeNodeLayoutImpl(applied->base, false);
+        for (auto *arg : applied->args) {
+            validateTypeNodeLayoutImpl(arg, false);
+        }
         return;
     }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
-        validateTypeNodeLayout(qualified->base);
+        validateTypeNodeLayoutImpl(qualified->base, allowDirectAny);
         return;
     }
     if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
-        validateTypeNodeLayout(dynType->base);
+        validateTypeNodeLayoutImpl(dynType->base, false);
         return;
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
@@ -124,16 +261,19 @@ validateTypeNodeLayout(const TypeNode *node) {
             isBareUnsizedArraySyntax(array->dim)) {
             errorLegacyTypeNodeIndexablePointerSyntax(pointer->loc, pointer);
         }
-        validateTypeNodeLayout(pointer->base);
+        validateTypeNodeLayoutImpl(pointer->base, true);
         return;
     }
     if (auto *indexable =
             dynamic_cast<const IndexablePointerTypeNode *>(node)) {
-        validateTypeNodeLayout(indexable->base);
+        validateTypeNodeLayoutImpl(indexable->base, true);
         return;
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
-        validateTypeNodeLayout(array->base);
+        validateTypeNodeLayoutImpl(array->base, false);
+        if (isLegacyGenericApplyArraySuffix(array)) {
+            errorLegacyTypeNodeGenericApplySyntax(array->loc);
+        }
         if (hasUnsizedArrayDimensions(array->dim)) {
             errorUnsupportedTypeNodeUnsizedArray(array->loc, array);
         }
@@ -148,17 +288,22 @@ validateTypeNodeLayout(const TypeNode *node) {
     }
     if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
         for (auto *item : tuple->items) {
-            validateTypeNodeLayout(item);
+            validateTypeNodeLayoutImpl(item, false);
         }
         return;
     }
     if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
         for (auto *arg : func->args) {
-            validateTypeNodeLayout(arg);
+            validateTypeNodeLayoutImpl(arg, false);
         }
-        validateTypeNodeLayout(func->ret);
+        validateTypeNodeLayoutImpl(func->ret, false);
         return;
     }
+}
+
+void
+validateTypeNodeLayout(const TypeNode *node) {
+    validateTypeNodeLayoutImpl(node, false);
 }
 
 }  // namespace lona

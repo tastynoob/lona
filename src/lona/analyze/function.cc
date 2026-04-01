@@ -719,6 +719,123 @@ class FunctionAnalyzer {
                   ".method(value, ...)`.");
     }
 
+    [[noreturn]] void diagnoseGenericFunctionValueUse(
+        const std::string &functionName, const location &loc) {
+        error(loc,
+              "generic function `" + functionName +
+                  "` cannot be used as a runtime value before instantiation",
+              "Call it directly, for example `" + functionName +
+                  "![T](...)`, or wait until monomorphization support lands.");
+    }
+
+    [[noreturn]] void diagnoseGenericTypeApplyTarget(const location &loc) {
+        error(loc,
+              "explicit type arguments currently apply to top-level generic "
+              "functions only",
+              "Use `name![T](...)` with a generic top-level function. "
+              "Generic methods, constructors, and value-level specialization "
+              "are not implemented in generic v0 yet.");
+    }
+
+    [[noreturn]] void diagnoseGenericTypeValueUse(const std::string &typeName,
+                                                  const location &loc) {
+        error(loc,
+              "generic type template `" + typeName +
+                  "` cannot be used as a runtime type without `![...]` arguments",
+              "Write `" + typeName +
+                  "![T]` with explicit type arguments before using it in "
+                  "runtime contexts.");
+    }
+
+    [[noreturn]] void diagnoseGenericTypeCall(const std::string &typeName,
+                                              const location &loc) {
+        error(loc,
+              "generic type template `" + typeName +
+                  "` cannot be constructed without `![...]` arguments",
+              "Write `" + typeName +
+                  "![T](...)` once concrete generic constructor support lands. "
+                  "Bare template names do not denote runtime constructible "
+                  "types.");
+    }
+
+    [[noreturn]] void diagnoseGenericInstantiationPending(
+        const std::string &functionName, const location &loc) {
+        error(loc,
+              "generic function instantiation is not implemented yet for `" +
+                  functionName + "`",
+              "This round wires generic signatures, scopes, and call "
+              "diagnostics only. Monomorphization lands in later generic v0 "
+              "tasks.");
+    }
+
+    const ResolvedEntityRef *resolvedEntityBinding(const AstNode *node) const {
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            return resolved.field(field);
+        }
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            return resolved.dotLike(dotLike);
+        }
+        if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
+            return resolved.functionRef(funcRef);
+        }
+        return nullptr;
+    }
+
+    const AstNode *funcRefTargetNode(const AstFuncRef *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->value;
+        }
+        return node->value;
+    }
+
+    std::vector<TypeNode *> *funcRefExplicitTypeArgs(const AstFuncRef *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->typeArgs;
+        }
+        return nullptr;
+    }
+
+    const ResolvedEntityRef *resolvedGenericFunctionBinding(
+        const AstNode *node) const {
+        auto *binding = resolvedEntityBinding(node);
+        if (!binding ||
+            binding->kind() != ResolvedEntityRef::Kind::GenericFunction) {
+            return nullptr;
+        }
+        return binding;
+    }
+
+    const ModuleInterface::FunctionDecl *
+    resolvedGenericFunctionDecl(const AstNode *node) const {
+        auto *binding = resolvedGenericFunctionBinding(node);
+        return binding ? binding->functionDecl() : nullptr;
+    }
+
+    std::string describeGenericCallable(const AstNode *node) const {
+        if (!node) {
+            return "<generic function>";
+        }
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            return toStdString(field->name);
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node)) {
+            return describeGenericCallable(typeApply->value);
+        }
+        if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
+            return describeGenericCallable(funcRef->value);
+        }
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            return describeMemberOwnerSyntax(dotLike);
+        }
+        return "<generic function>";
+    }
+
     const ResolvedEntityRef *resolvedTraitBinding(const AstNode *node) const {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             auto *binding = resolved.field(field);
@@ -886,11 +1003,15 @@ class FunctionAnalyzer {
                                                 "global identifier");
                 return makeHIR<HIRValue>(obj, loc);
             }
+            case ResolvedEntityRef::Kind::GenericFunction:
+                diagnoseGenericFunctionValueUse(name, loc);
             case ResolvedEntityRef::Kind::Type: {
                 auto *type = requireTypeByName(binding->resolvedName(), loc,
                                                "type identifier");
                 return makeHIR<HIRValue>(new TypeObject(type), loc);
             }
+            case ResolvedEntityRef::Kind::GenericType:
+                diagnoseGenericTypeValueUse(name, loc);
             case ResolvedEntityRef::Kind::Trait:
                 diagnoseTraitNamespaceValueUse(
                     toStdString(binding->resolvedName()), loc);
@@ -1843,6 +1964,13 @@ class FunctionAnalyzer {
         if (auto *dotLike = node->as<AstDotLike>()) {
             return analyzeDotLike(dotLike);
         }
+        if (auto *typeApply = node->as<AstTypeApply>()) {
+            if (resolvedGenericFunctionDecl(typeApply->value)) {
+                diagnoseGenericFunctionValueUse(
+                    describeGenericCallable(typeApply->value), typeApply->loc);
+            }
+            diagnoseGenericTypeApplyTarget(typeApply->loc);
+        }
         if (auto *castExpr = node->as<AstCastExpr>()) {
             return analyzeCastExpr(castExpr);
         }
@@ -2287,6 +2415,525 @@ class FunctionAnalyzer {
                                          describeMemberOwnerSyntax(node));
     }
 
+    const ModuleInterface::TypeDecl *
+    resolveVisibleTypeDecl(BaseTypeNode *base,
+                           const ModuleInterface *ownerInterface = nullptr) const {
+        if (!base || !unit) {
+            return nullptr;
+        }
+
+        auto rawName = baseTypeName(base);
+        std::string moduleName;
+        std::string memberName;
+        if (!splitBaseTypeName(base, moduleName, memberName)) {
+            if (ownerInterface) {
+                auto ownerLookup = ownerInterface->lookupTopLevelName(rawName);
+                if (ownerLookup.isType()) {
+                    return ownerLookup.typeDecl;
+                }
+            }
+            auto lookup = unit->lookupTopLevelName(rawName);
+            return lookup.isType() ? lookup.typeDecl : nullptr;
+        }
+
+        if (ownerInterface) {
+            if (moduleName == ownerInterface->moduleName()) {
+                auto ownerLookup = ownerInterface->lookupTopLevelName(memberName);
+                if (ownerLookup.isType()) {
+                    return ownerLookup.typeDecl;
+                }
+            }
+            if (const auto *ownerImported =
+                    ownerInterface->findImportedModule(moduleName);
+                ownerImported && ownerImported->interface) {
+                auto ownerLookup =
+                    ownerImported->interface->lookupTopLevelName(memberName);
+                if (ownerLookup.isType()) {
+                    return ownerLookup.typeDecl;
+                }
+            }
+        }
+
+        const auto *imported = unit->findImportedModule(moduleName);
+        if (!imported || !imported->interface) {
+            return nullptr;
+        }
+        auto lookup = unit->lookupTopLevelName(*imported, memberName);
+        return lookup.isType() ? lookup.typeDecl : nullptr;
+    }
+
+    std::string buildAppliedTypeName(const std::string &baseName,
+                                     const std::vector<TypeClass *> &args) {
+        std::string name = baseName.empty() ? std::string("<type>")
+                                            : baseName;
+        name += "![";
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += args[i] ? describeResolvedType(args[i]) : "<unknown type>";
+        }
+        name += "]";
+        return name;
+    }
+
+    std::string appliedTypeDisplayName(BaseTypeNode *base,
+                                       const ModuleInterface::TypeDecl *typeDecl,
+                                       const ModuleInterface *ownerInterface) const {
+        if (!base) {
+            return typeDecl ? toStdString(typeDecl->exportedName)
+                            : std::string("<type>");
+        }
+
+        std::string moduleName;
+        std::string memberName;
+        if (splitBaseTypeName(base, moduleName, memberName)) {
+            return baseTypeName(base);
+        }
+
+        auto rawName = baseTypeName(base);
+        if (ownerInterface) {
+            auto ownerLookup = ownerInterface->lookupTopLevelName(rawName);
+            if (ownerLookup.isType() && ownerLookup.typeDecl) {
+                return toStdString(ownerLookup.typeDecl->exportedName);
+            }
+        }
+
+        auto localLookup = unit->lookupTopLevelName(rawName);
+        if (localLookup.isType()) {
+            return rawName;
+        }
+        return typeDecl ? toStdString(typeDecl->exportedName) : rawName;
+    }
+
+    TypeClass *substituteGenericSignatureType(
+        TypeNode *node, const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const std::string &functionName,
+        const ModuleInterface *ownerInterface) {
+        if (!node) {
+            return nullptr;
+        }
+
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+            return substituteGenericSignatureType(param->type, genericArgs, loc,
+                                                 functionName, ownerInterface);
+        }
+        if (dynamic_cast<AnyTypeNode *>(node)) {
+            return typeMgr->createAnyType();
+        }
+        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+            auto rawName = baseTypeName(base);
+            if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
+                return found->second;
+            }
+            if (auto *typeDecl = resolveVisibleTypeDecl(base, ownerInterface)) {
+                if (typeDecl->type) {
+                    return typeDecl->type;
+                }
+            }
+            auto *type =
+                unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
+            if (!type) {
+                error(loc,
+                      "generic function `" + functionName +
+                          "` uses unsupported signature type `" + rawName +
+                          "` before instantiation",
+                      "This signature still depends on generic substitution "
+                      "or an unsupported template form.");
+            }
+            return type;
+        }
+        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+            auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
+            auto *typeDecl = resolveVisibleTypeDecl(base, ownerInterface);
+            if (!typeDecl) {
+                error(loc,
+                      "generic function `" + functionName +
+                          "` uses unsupported applied signature type `" +
+                          describeTypeNode(applied, "<unknown type>") +
+                          "` before instantiation");
+            }
+            if (!typeDecl->isGeneric()) {
+                error(loc,
+                      "generic function `" + functionName +
+                          "` applies `![...]` arguments to non-generic type `" +
+                          toStdString(typeDecl->exportedName) + "`");
+            }
+            if (applied->args.size() != typeDecl->typeParams.size()) {
+                error(loc,
+                      "generic type argument count mismatch for `" +
+                          toStdString(typeDecl->exportedName) + "`: expected " +
+                          std::to_string(typeDecl->typeParams.size()) +
+                          ", got " + std::to_string(applied->args.size()),
+                      "Match the number of `![` `]` type arguments to the "
+                      "generic type parameter list.");
+            }
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(applied->args.size());
+            for (auto *arg : applied->args) {
+                argTypes.push_back(substituteGenericSignatureType(
+                    arg, genericArgs, loc, functionName, ownerInterface));
+            }
+            return typeMgr->createOpaqueStructType(
+                buildAppliedTypeName(
+                    appliedTypeDisplayName(base, typeDecl, ownerInterface),
+                    argTypes),
+                typeDecl->declKind, typeDecl->exportedName, argTypes);
+        }
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+            auto *baseType = substituteGenericSignatureType(
+                qualified->base, genericArgs, loc, functionName,
+                ownerInterface);
+            return baseType ? typeMgr->createConstType(baseType) : nullptr;
+        }
+        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+            auto *type =
+                unit ? unit->resolveType(typeMgr, dynType) : typeMgr->getType(node);
+            if (!type) {
+                error(loc,
+                      "generic function `" + functionName +
+                          "` uses unsupported dyn signature type `" +
+                          describeTypeNode(node, "<unknown type>") +
+                          "` before instantiation");
+            }
+            return type;
+        }
+        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+            auto *baseType = substituteGenericSignatureType(
+                pointer->base, genericArgs, loc, functionName, ownerInterface);
+            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
+                baseType = typeMgr->createPointerType(baseType);
+            }
+            return baseType;
+        }
+        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+            auto *elementType = substituteGenericSignatureType(
+                indexable->base, genericArgs, loc, functionName,
+                ownerInterface);
+            return elementType ? typeMgr->createIndexablePointerType(elementType)
+                               : nullptr;
+        }
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+            auto *elementType = substituteGenericSignatureType(
+                array->base, genericArgs, loc, functionName, ownerInterface);
+            return elementType ? typeMgr->createArrayType(elementType, array->dim)
+                               : nullptr;
+        }
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->items.size());
+            for (auto *item : tuple->items) {
+                itemTypes.push_back(substituteGenericSignatureType(
+                    item, genericArgs, loc, functionName, ownerInterface));
+            }
+            return typeMgr->getOrCreateTupleType(itemTypes);
+        }
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
+            std::vector<TypeClass *> argTypes;
+            std::vector<BindingKind> argBindingKinds;
+            argTypes.reserve(func->args.size());
+            argBindingKinds.reserve(func->args.size());
+            for (auto *arg : func->args) {
+                argBindingKinds.push_back(funcParamBindingKind(arg));
+                argTypes.push_back(substituteGenericSignatureType(
+                    unwrapFuncParamType(arg), genericArgs, loc, functionName,
+                    ownerInterface));
+            }
+            auto *retType = substituteGenericSignatureType(
+                func->ret, genericArgs, loc, functionName, ownerInterface);
+            auto *funcType = typeMgr->getOrCreateFunctionType(
+                argTypes, retType, std::move(argBindingKinds));
+            return funcType ? typeMgr->createPointerType(funcType) : nullptr;
+        }
+
+        error(loc,
+              "generic function `" + functionName +
+                  "` uses unsupported signature type `" +
+                  describeTypeNode(node, "<unknown type>") +
+                  "` before instantiation");
+    }
+
+    void inferGenericArgsFromPattern(
+        TypeNode *pattern, TypeClass *actualType,
+        std::unordered_map<std::string, TypeClass *> &selectedByName,
+        const location &loc, const std::string &functionName,
+        const ModuleInterface *ownerInterface) {
+        if (!pattern || !actualType) {
+            return;
+        }
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(pattern)) {
+            inferGenericArgsFromPattern(param->type, actualType, selectedByName,
+                                        loc, functionName, ownerInterface);
+            return;
+        }
+        if (auto *base = dynamic_cast<BaseTypeNode *>(pattern)) {
+            auto rawName = baseTypeName(base);
+            auto found = selectedByName.find(rawName);
+            if (found == selectedByName.end()) {
+                return;
+            }
+            if (!found->second) {
+                found->second = actualType;
+                return;
+            }
+            if (found->second != actualType) {
+                error(loc,
+                      "cannot infer a single concrete type for `" + rawName +
+                          "` in `" + functionName + "`",
+                      "Pass explicit type arguments like `" + functionName +
+                          "![T](...)` when inference would need to choose "
+                          "between different concrete argument types.");
+            }
+            return;
+        }
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(pattern)) {
+            if (auto *actualConst = actualType->as<ConstType>()) {
+                inferGenericArgsFromPattern(qualified->base,
+                                            actualConst->getBaseType(),
+                                            selectedByName, loc, functionName,
+                                            ownerInterface);
+            } else {
+                inferGenericArgsFromPattern(qualified->base, actualType,
+                                            selectedByName, loc, functionName,
+                                            ownerInterface);
+            }
+            return;
+        }
+        if (auto *pointer = dynamic_cast<PointerTypeNode *>(pattern)) {
+            auto *current = actualType;
+            for (uint32_t i = 0; i < pointer->dim; ++i) {
+                auto *pointerType = asUnqualified<PointerType>(current);
+                if (!pointerType) {
+                    return;
+                }
+                current = pointerType->getPointeeType();
+            }
+            inferGenericArgsFromPattern(pointer->base, current, selectedByName,
+                                        loc, functionName, ownerInterface);
+            return;
+        }
+        if (auto *indexable =
+                dynamic_cast<IndexablePointerTypeNode *>(pattern)) {
+            auto *indexableType = asUnqualified<IndexablePointerType>(actualType);
+            if (!indexableType) {
+                return;
+            }
+            inferGenericArgsFromPattern(indexable->base,
+                                        indexableType->getElementType(),
+                                        selectedByName, loc, functionName,
+                                        ownerInterface);
+            return;
+        }
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(pattern)) {
+            auto *arrayType = asUnqualified<ArrayType>(actualType);
+            if (!arrayType) {
+                return;
+            }
+            inferGenericArgsFromPattern(array->base, arrayType->getElementType(),
+                                        selectedByName, loc, functionName,
+                                        ownerInterface);
+            return;
+        }
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(pattern)) {
+            auto *tupleType = asUnqualified<TupleType>(actualType);
+            if (!tupleType ||
+                tupleType->getItemTypes().size() != tuple->items.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < tuple->items.size(); ++i) {
+                inferGenericArgsFromPattern(tuple->items[i],
+                                            tupleType->getItemTypes()[i],
+                                            selectedByName, loc, functionName,
+                                            ownerInterface);
+            }
+            return;
+        }
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(pattern)) {
+            auto *pointerType = asUnqualified<PointerType>(actualType);
+            auto *funcType =
+                pointerType ? pointerType->getPointeeType()->as<FuncType>()
+                            : nullptr;
+            if (!funcType ||
+                funcType->getArgTypes().size() != func->args.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < func->args.size(); ++i) {
+                inferGenericArgsFromPattern(unwrapFuncParamType(func->args[i]),
+                                            funcType->getArgTypes()[i],
+                                            selectedByName, loc, functionName,
+                                            ownerInterface);
+            }
+            inferGenericArgsFromPattern(func->ret, funcType->getRetType(),
+                                        selectedByName, loc, functionName,
+                                        ownerInterface);
+            return;
+        }
+        if (auto *applied = dynamic_cast<AppliedTypeNode *>(pattern)) {
+            auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
+            auto *typeDecl = resolveVisibleTypeDecl(base, ownerInterface);
+            auto *actualStruct = asUnqualified<StructType>(actualType);
+            if (!typeDecl || !actualStruct ||
+                !actualStruct->isAppliedTemplateInstance()) {
+                return;
+            }
+            if (actualStruct->getAppliedTemplateName() !=
+                typeDecl->exportedName) {
+                return;
+            }
+            const auto &actualArgs = actualStruct->getAppliedTypeArgs();
+            if (actualArgs.size() != applied->args.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < applied->args.size(); ++i) {
+                inferGenericArgsFromPattern(applied->args[i], actualArgs[i],
+                                            selectedByName, loc, functionName,
+                                            ownerInterface);
+            }
+            return;
+        }
+    }
+
+    std::unordered_map<std::string, TypeClass *> resolveGenericCallTypeArgs(
+        const ModuleInterface::FunctionDecl &functionDecl,
+        const CallArgList &normalizedArgs,
+        std::vector<TypeNode *> *explicitTypeArgs, const location &loc,
+        const std::string &functionName,
+        const ModuleInterface *ownerInterface) {
+        const auto paramCount = functionDecl.paramTypeNodes.size();
+        if (functionDecl.paramBindingKinds.size() != paramCount) {
+            internalError(loc,
+                          "generic function `" + functionName +
+                              "` is missing parameter binding metadata",
+                          "Rebuild interface collection before analyzing "
+                          "generic calls.");
+        }
+
+        std::vector<FormalCallArg> syntaxFormals;
+        syntaxFormals.reserve(paramCount);
+        for (std::size_t i = 0; i < paramCount; ++i) {
+            const string *paramName =
+                i < functionDecl.paramNames.size()
+                    ? &functionDecl.paramNames[i]
+                    : nullptr;
+            syntaxFormals.push_back({paramName, nullptr,
+                                     functionDecl.paramBindingKinds[i],
+                                     FormalCallArgKind::FunctionParameter, i});
+        }
+        auto orderedArgs = collectOrderedCallArgs(
+            normalizedArgs, syntaxFormals,
+            {loc, CallBindingTargetKind::FunctionCall, nullptr,
+             !functionDecl.paramNames.empty()});
+
+        std::unordered_map<std::string, std::size_t> genericIndexByName;
+        std::unordered_map<std::string, TypeClass *> selectedByName;
+        genericIndexByName.reserve(functionDecl.typeParams.size());
+        selectedByName.reserve(functionDecl.typeParams.size());
+        for (std::size_t i = 0; i < functionDecl.typeParams.size(); ++i) {
+            auto name = toStdString(functionDecl.typeParams[i].localName);
+            genericIndexByName.emplace(name, i);
+            selectedByName.emplace(name, nullptr);
+        }
+
+        std::vector<TypeClass *> selected(functionDecl.typeParams.size(),
+                                          nullptr);
+        if (explicitTypeArgs && !explicitTypeArgs->empty()) {
+            if (explicitTypeArgs->size() != functionDecl.typeParams.size()) {
+                error(loc,
+                      "generic type argument count mismatch for `" +
+                          functionName + "`: expected " +
+                          std::to_string(functionDecl.typeParams.size()) +
+                          ", got " + std::to_string(explicitTypeArgs->size()),
+                    "Match the number of `![` `]` type arguments to the "
+                      "generic parameter list.");
+            }
+            for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
+                auto *type = requireType(
+                    explicitTypeArgs->at(i), explicitTypeArgs->at(i)->loc,
+                    "unknown generic type argument at index " +
+                        std::to_string(i) + " for `" + functionName + "`");
+                selected[i] = type;
+                selectedByName[toStdString(functionDecl.typeParams[i].localName)] =
+                    type;
+            }
+        } else if (!functionDecl.typeParams.empty()) {
+            for (std::size_t i = 0; i < paramCount; ++i) {
+                auto *expr = requireNonCallExpr(orderedArgs[i].value);
+                auto *actualType = expr ? expr->getType() : nullptr;
+                if (!actualType) {
+                    error(orderedArgs[i].loc,
+                          "cannot infer generic type argument from a "
+                          "non-value expression in `" +
+                              functionName + "`");
+                }
+                inferGenericArgsFromPattern(functionDecl.paramTypeNodes[i],
+                                            actualType, selectedByName,
+                                            orderedArgs[i].loc, functionName,
+                                            ownerInterface);
+            }
+            for (std::size_t i = 0; i < selected.size(); ++i) {
+                auto *inferred =
+                    selectedByName[toStdString(functionDecl.typeParams[i].localName)];
+                selected[i] = inferred;
+                if (!inferred) {
+                    error(loc,
+                          "cannot infer generic type argument `" +
+                              toStdString(
+                                  functionDecl.typeParams[i].localName) +
+                              "` for `" + functionName + "`",
+                          "Pass explicit type arguments like `" + functionName +
+                              "![T](...)`.");
+                }
+            }
+        }
+
+        std::unordered_map<std::string, TypeClass *> genericArgs;
+        genericArgs.reserve(functionDecl.typeParams.size());
+        for (std::size_t i = 0; i < functionDecl.typeParams.size(); ++i) {
+            genericArgs.emplace(
+                toStdString(functionDecl.typeParams[i].localName), selected[i]);
+        }
+        return genericArgs;
+    }
+
+    HIRExpr *analyzeGenericFunctionCall(
+        AstFieldCall *node, const ModuleInterface::FunctionDecl *functionDecl,
+        std::vector<TypeNode *> *explicitTypeArgs,
+        const std::string &functionName,
+        const ModuleInterface *ownerInterface) {
+        if (!functionDecl || !functionDecl->isGeneric()) {
+            internalError(node ? node->loc : location(),
+                          "generic call lowering is missing its template "
+                          "signature",
+                          "Run interface collection before analyzing "
+                          "generic calls.");
+        }
+
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        auto genericArgs = resolveGenericCallTypeArgs(
+            *functionDecl, normalizedArgs, explicitTypeArgs, node->loc,
+            functionName, ownerInterface);
+
+        std::vector<FormalCallArg> typedFormals;
+        typedFormals.reserve(functionDecl->paramTypeNodes.size());
+        for (std::size_t i = 0; i < functionDecl->paramTypeNodes.size();
+             ++i) {
+            const string *paramName =
+                i < functionDecl->paramNames.size()
+                    ? &functionDecl->paramNames[i]
+                    : nullptr;
+            auto *paramType = substituteGenericSignatureType(
+                functionDecl->paramTypeNodes[i], genericArgs, node->loc,
+                functionName, ownerInterface);
+            typedFormals.push_back({paramName, paramType,
+                                    functionDecl->paramBindingKinds[i],
+                                    FormalCallArgKind::FunctionParameter, i});
+        }
+        (void)bindCallArgs(normalizedArgs, typedFormals,
+                           {node->loc, CallBindingTargetKind::FunctionCall,
+                            nullptr, !functionDecl->paramNames.empty()});
+        diagnoseGenericInstantiationPending(functionName, node->loc);
+    }
+
     HIRExpr *lowerResolvedCall(HIRExpr *callee, CallArgList normalizedArgs,
                                const location &callLoc,
                                bool allowImplicitDeref) {
@@ -2599,12 +3246,106 @@ class FunctionAnalyzer {
     }
 
     HIRExpr *analyzeFuncRef(AstFuncRef *node) {
+        auto functionName = describeGenericCallable(node->value);
         auto *binding = resolved.functionRef(node);
         if (!binding || !binding->valid()) {
             internalError(node->loc,
                           "missing resolved function reference for `" +
-                              toStdString(node->name) + "`",
+                              functionName + "`",
                           "Run name resolution before HIR lowering.");
+        }
+        auto *explicitTypeArgs = funcRefExplicitTypeArgs(node);
+        if (explicitTypeArgs && !explicitTypeArgs->empty() &&
+            binding->kind() != ResolvedEntityRef::Kind::GenericFunction) {
+            diagnoseGenericTypeApplyTarget(node->loc);
+        }
+        if (binding->kind() == ResolvedEntityRef::Kind::GenericFunction) {
+            if (!explicitTypeArgs || explicitTypeArgs->empty()) {
+                diagnoseGenericFunctionValueUse(functionName, node->loc);
+            }
+
+            auto *functionDecl = binding->functionDecl();
+            if (!functionDecl || !functionDecl->isGeneric()) {
+                internalError(node->loc,
+                              "generic function reference is missing template "
+                              "metadata for `" +
+                                  functionName + "`",
+                              "Run interface collection before HIR lowering.");
+            }
+
+            if (explicitTypeArgs->size() != functionDecl->typeParams.size()) {
+                error(node->loc,
+                      "generic type argument count mismatch for `" +
+                          functionName + "`: expected " +
+                          std::to_string(functionDecl->typeParams.size()) +
+                          ", got " + std::to_string(explicitTypeArgs->size()),
+                      "Match the number of `![` `]` type arguments to the "
+                      "generic parameter list.");
+            }
+
+            std::unordered_map<std::string, TypeClass *> genericArgs;
+            genericArgs.reserve(functionDecl->typeParams.size());
+            for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
+                auto *type = requireType(
+                    explicitTypeArgs->at(i), explicitTypeArgs->at(i)->loc,
+                    "unknown generic type argument at index " +
+                        std::to_string(i) + " for `" + functionName + "`");
+                genericArgs.emplace(
+                    toStdString(functionDecl->typeParams[i].localName), type);
+            }
+
+            std::vector<TypeClass *> expectedArgTypes;
+            expectedArgTypes.reserve(functionDecl->paramTypeNodes.size());
+            std::vector<BindingKind> expectedBindingKinds;
+            expectedBindingKinds.reserve(functionDecl->paramTypeNodes.size());
+            for (std::size_t i = 0; i < functionDecl->paramTypeNodes.size();
+                 ++i) {
+                expectedBindingKinds.push_back(functionDecl->paramBindingKinds[i]);
+                expectedArgTypes.push_back(substituteGenericSignatureType(
+                    functionDecl->paramTypeNodes[i], genericArgs, node->loc,
+                    functionName, binding->ownerInterface()));
+            }
+
+            const auto actualArgCount = node->argTypes ? node->argTypes->size() : 0;
+            const bool omittedExplicitSignature = actualArgCount == 0;
+            if (!omittedExplicitSignature &&
+                expectedArgTypes.size() != actualArgCount) {
+                error(node->loc,
+                      "function reference parameter count mismatch for `" +
+                          functionName + "`: expected " +
+                          std::to_string(expectedArgTypes.size()) + ", got " +
+                          std::to_string(actualArgCount));
+            }
+
+            for (size_t i = 0; i < actualArgCount; ++i) {
+                auto actualBindingKind =
+                    funcParamBindingKind(node->argTypes->at(i));
+                auto *actualType = requireType(
+                    unwrapFuncParamType(node->argTypes->at(i)),
+                    node->argTypes->at(i)->loc,
+                    "unknown function reference parameter type at index " +
+                        std::to_string(i) + " for `" + functionName + "`: " +
+                        describeTypeNode(node->argTypes->at(i)));
+                auto *expectedType = expectedArgTypes[i];
+                auto expectedBindingKind = expectedBindingKinds[i];
+                if (actualBindingKind != expectedBindingKind ||
+                    actualType != expectedType) {
+                    auto expectedDescription =
+                        (expectedBindingKind == BindingKind::Ref ? "ref " : "") +
+                        describeResolvedType(expectedType);
+                    auto actualDescription =
+                        (actualBindingKind == BindingKind::Ref ? "ref " : "") +
+                        describeResolvedType(actualType);
+                    error(node->argTypes->at(i)->loc,
+                          "function reference parameter type mismatch at index " +
+                              std::to_string(i) + " for `" +
+                              functionName + "`: expected " +
+                              expectedDescription + ", got " +
+                              actualDescription);
+                }
+            }
+
+            diagnoseGenericInstantiationPending(functionName, node->loc);
         }
 
         auto *func = requireGlobalFunction(binding->resolvedName(), node->loc,
@@ -2614,7 +3355,7 @@ class FunctionAnalyzer {
         if (!funcType) {
             internalError(node->loc,
                           "invalid resolved function reference target `" +
-                              toStdString(node->name) + "`",
+                              functionName + "`",
                           "This looks like a compiler pipeline bug.");
         }
 
@@ -2623,7 +3364,7 @@ class FunctionAnalyzer {
         if (expectedArgTypes.size() != actualArgCount) {
             error(node->loc,
                   "function reference parameter count mismatch for `" +
-                      toStdString(node->name) + "`: expected " +
+                      functionName + "`: expected " +
                       std::to_string(expectedArgTypes.size()) + ", got " +
                       std::to_string(actualArgCount));
         }
@@ -2635,7 +3376,7 @@ class FunctionAnalyzer {
                 unwrapFuncParamType(node->argTypes->at(i)),
                 node->argTypes->at(i)->loc,
                 "unknown function reference parameter type at index " +
-                    std::to_string(i) + " for `" + toStdString(node->name) +
+                    std::to_string(i) + " for `" + functionName +
                     "`: " + describeTypeNode(node->argTypes->at(i)));
             auto *expectedType = expectedArgTypes[i];
             auto expectedBindingKind = funcType->getArgBindingKind(i);
@@ -2650,7 +3391,7 @@ class FunctionAnalyzer {
                 error(node->argTypes->at(i)->loc,
                       "function reference parameter type mismatch at index " +
                           std::to_string(i) + " for `" +
-                          toStdString(node->name) + "`: expected " +
+                          functionName + "`: expected " +
                           expectedDescription + ", got " + actualDescription);
             }
         }
@@ -3053,6 +3794,17 @@ class FunctionAnalyzer {
     HIRExpr *analyzeCall(AstFieldCall *node,
                          TypeClass *expectedType = nullptr) {
         (void)expectedType;
+        if (auto *typeApplyNode =
+                node->value ? node->value->as<AstTypeApply>() : nullptr) {
+            if (auto *binding =
+                    resolvedGenericFunctionBinding(typeApplyNode->value)) {
+                return analyzeGenericFunctionCall(
+                    node, binding->functionDecl(), typeApplyNode->typeArgs,
+                    describeGenericCallable(typeApplyNode->value),
+                    binding->ownerInterface());
+            }
+            diagnoseGenericTypeApplyTarget(typeApplyNode->loc);
+        }
         auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
         HIRExpr *callee = nullptr;
         if (auto *fieldNode =
@@ -3066,6 +3818,34 @@ class FunctionAnalyzer {
                 diagnoseTraitNamespaceCall(toStdString(binding->resolvedName()),
                                            node->loc);
             }
+            if (binding &&
+                binding->kind() == ResolvedEntityRef::Kind::GenericFunction) {
+                return analyzeGenericFunctionCall(
+                    node, binding->functionDecl(), nullptr,
+                    toStdString(fieldNode->name), binding->ownerInterface());
+            }
+            if (binding &&
+                binding->kind() == ResolvedEntityRef::Kind::GenericType) {
+                diagnoseGenericTypeCall(toStdString(fieldNode->name), node->loc);
+            }
+        }
+        if (auto *funcRefNode =
+                node->value ? node->value->as<AstFuncRef>() : nullptr) {
+            if (auto *binding = resolved.functionRef(funcRefNode);
+                binding &&
+                binding->kind() == ResolvedEntityRef::Kind::GenericFunction) {
+                if (auto *explicitTypeArgs = funcRefExplicitTypeArgs(funcRefNode);
+                    explicitTypeArgs && !explicitTypeArgs->empty()) {
+                    return analyzeGenericFunctionCall(
+                        node, binding->functionDecl(), explicitTypeArgs,
+                        describeGenericCallable(funcRefNode->value),
+                        binding->ownerInterface());
+                }
+                return analyzeGenericFunctionCall(
+                    node, binding->functionDecl(), nullptr,
+                    describeGenericCallable(funcRefNode->value),
+                    binding->ownerInterface());
+            }
         }
         if (auto *dotLikeNode =
                 node->value ? node->value->as<AstDotLike>() : nullptr) {
@@ -3073,6 +3853,20 @@ class FunctionAnalyzer {
                 binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
                 diagnoseTraitNamespaceCall(toStdString(binding->resolvedName()),
                                            node->loc);
+            }
+            if (auto *binding = resolved.dotLike(dotLikeNode);
+                binding &&
+                binding->kind() == ResolvedEntityRef::Kind::GenericFunction) {
+                return analyzeGenericFunctionCall(
+                    node, binding->functionDecl(), nullptr,
+                    describeMemberOwnerSyntax(dotLikeNode),
+                    binding->ownerInterface());
+            }
+            if (auto *binding = resolved.dotLike(dotLikeNode);
+                binding &&
+                binding->kind() == ResolvedEntityRef::Kind::GenericType) {
+                diagnoseGenericTypeCall(describeMemberOwnerSyntax(dotLikeNode),
+                                        node->loc);
             }
             if (auto *traitBinding = resolvedTraitBinding(dotLikeNode->parent)) {
                 return analyzeTraitQualifiedCall(node, dotLikeNode,

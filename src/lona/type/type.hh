@@ -2,6 +2,7 @@
 
 #include "../ast/array_dim.hh"
 #include "../ast/astnode.hh"
+#include "../ast/type_node_string.hh"
 #include "../sym/object.hh"
 #include "../visitor.hh"
 #include <algorithm>
@@ -35,6 +36,7 @@ normalizeTargetTriple(const std::string &triple);
 bool
 targetUsesHostedEntry(llvm::StringRef triple);
 class TypeClass;
+class AnyType;
 class ConstType;
 class DynTraitType;
 class PointerType;
@@ -95,6 +97,13 @@ public:
     llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
+class AnyType : public TypeClass {
+public:
+    AnyType() : TypeClass("any") {}
+
+    llvm::Type *buildLLVMType(TypeTable &types) override;
+};
+
 class ConstType : public TypeClass {
     TypeClass *baseType;
 
@@ -151,6 +160,8 @@ private:
 
     bool opaque = false;
     StructDeclKind declKind = StructDeclKind::Native;
+    string appliedTemplateName;
+    std::vector<TypeClass *> appliedTypeArgs;
 
 public:
     StructType(llvm::StringMap<ValueTy> &&members, string full_name,
@@ -162,8 +173,14 @@ public:
 
     // create opaque struct
     StructType(string full_name,
-               StructDeclKind declKind = StructDeclKind::Native)
-        : TypeClass(full_name), opaque(true), declKind(declKind) {}
+               StructDeclKind declKind = StructDeclKind::Native,
+               string appliedTemplateName = {},
+               std::vector<TypeClass *> appliedTypeArgs = {})
+        : TypeClass(full_name),
+          opaque(true),
+          declKind(declKind),
+          appliedTemplateName(std::move(appliedTemplateName)),
+          appliedTypeArgs(std::move(appliedTypeArgs)) {}
 
     bool isOpaque() const { return opaque; }
     StructDeclKind getDeclKind() const { return declKind; }
@@ -171,6 +188,16 @@ public:
     bool isReprC() const { return declKind == StructDeclKind::ReprC; }
     bool isNativeDecl() const { return declKind == StructDeclKind::Native; }
     void setDeclKind(StructDeclKind kind) { declKind = kind; }
+    bool isAppliedTemplateInstance() const { return !appliedTemplateName.empty(); }
+    const string &getAppliedTemplateName() const { return appliedTemplateName; }
+    const std::vector<TypeClass *> &getAppliedTypeArgs() const {
+        return appliedTypeArgs;
+    }
+    void setAppliedTemplateInfo(string templateName,
+                                std::vector<TypeClass *> typeArgs) {
+        appliedTemplateName = std::move(templateName);
+        appliedTypeArgs = std::move(typeArgs);
+    }
 
     void complete(const llvm::StringMap<ValueTy> &newMembers,
                   const llvm::StringMap<AccessKind> &newMemberAccess = {},
@@ -649,6 +676,42 @@ public:
         return getType(llvm::StringRef(name.tochara(), name.size()));
     }
 
+    StructType *createOpaqueStructType(const ::string &fullName,
+                                       StructDeclKind declKind =
+                                           StructDeclKind::Native,
+                                       string appliedTemplateName = {},
+                                       std::vector<TypeClass *> appliedTypeArgs =
+                                           {}) {
+        if (auto *type = getType(fullName)) {
+            auto *structType = type->as<StructType>();
+            if (structType) {
+                structType->setDeclKind(declKind);
+                if (!appliedTemplateName.empty()) {
+                    structType->setAppliedTemplateInfo(
+                        std::move(appliedTemplateName),
+                        std::move(appliedTypeArgs));
+                }
+            }
+            return structType;
+        }
+        auto *structType = new StructType(fullName, declKind,
+                                          std::move(appliedTemplateName),
+                                          std::move(appliedTypeArgs));
+        addType(fullName, structType);
+        return structType;
+    }
+
+    StructType *createOpaqueStructType(const std::string &fullName,
+                                       StructDeclKind declKind =
+                                           StructDeclKind::Native,
+                                       string appliedTemplateName = {},
+                                       std::vector<TypeClass *> appliedTypeArgs =
+                                           {}) {
+        return createOpaqueStructType(string(fullName), declKind,
+                                      std::move(appliedTemplateName),
+                                      std::move(appliedTypeArgs));
+    }
+
     PointerType *createPointerType(TypeClass *pointeeType) {
         auto pointerName = PointerType::buildName(pointeeType);
         if (auto *type = getType(pointerName)) {
@@ -657,6 +720,16 @@ public:
         auto *pointerType = new PointerType(pointeeType);
         addType(pointerName, pointerType);
         return pointerType;
+    }
+
+    AnyType *createAnyType() {
+        constexpr llvm::StringRef anyName("any");
+        if (auto *type = getType(anyName)) {
+            return dynamic_cast<AnyType *>(type);
+        }
+        auto *anyType = new AnyType();
+        addType(anyName, anyType);
+        return anyType;
     }
 
     IndexablePointerType *createIndexablePointerType(TypeClass *elementType) {
@@ -758,11 +831,24 @@ public:
             addType(type->full_name, type);
             return type;
         }
+        if (type->as<AnyType>()) {
+            if (auto *existing = getType(type->full_name)) {
+                return existing;
+            }
+            addType(type->full_name, type);
+            return type;
+        }
         if (auto *structType = type->as<StructType>()) {
             if (auto *existing = getType(type->full_name)) {
                 auto *existingStruct = existing->as<StructType>();
                 if (existingStruct) {
                     existingStruct->setDeclKind(structType->getDeclKind());
+                    if (!existingStruct->isAppliedTemplateInstance() &&
+                        structType->isAppliedTemplateInstance()) {
+                        existingStruct->setAppliedTemplateInfo(
+                            structType->getAppliedTemplateName(),
+                            structType->getAppliedTypeArgs());
+                    }
                     if (existingStruct->isOpaque() && !structType->isOpaque()) {
                         existingStruct->complete(
                             structType->getMembers(),
@@ -926,6 +1012,15 @@ public:
 
         if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
             return getType(param->type);
+        }
+
+        if (dynamic_cast<AnyTypeNode *>(node)) {
+            return createAnyType();
+        }
+
+        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+            auto baseName = describeTypeNode(applied, "<unknown type>");
+            return getType(llvm::StringRef(baseName));
         }
 
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {

@@ -338,6 +338,156 @@ def test_imported_trait_uses_imported_impl_for_static_dispatch(
     assert_not_contains(ir, "store i32 27", label="local import precedence ir")
 
 
+def test_imported_generic_applied_pointer_signatures_reach_pending_instantiation(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_applied_ptr/dep.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def take_box_ptr[T](value Box![T]*) Box![T]* {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_applied_ptr/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box![i32]* = null
+            var out dep.Box![i32]* = dep.take_box_ptr(box)
+            ret 0
+        }
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "generic function instantiation is not implemented yet for `dep.take_box_ptr`",
+        label="imported generic applied ptr diagnostic",
+    )
+
+
+def test_imported_generic_applied_pointer_signatures_ignore_local_same_name_shadowing(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_applied_ptr_shadow/dep.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def take_box_ptr[T](value Box![T]*) Box![T]* {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_applied_ptr_shadow/main.lo",
+        """
+        import dep
+
+        struct Box[U] {
+            value U
+        }
+
+        def main() i32 {
+            var box dep.Box![i32]* = null
+            var out dep.Box![i32]* = dep.take_box_ptr(box)
+            ret 0
+        }
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "generic function instantiation is not implemented yet for `dep.take_box_ptr`",
+        label="imported generic applied ptr shadow diagnostic",
+    )
+    assert_not_contains(
+        result.stderr,
+        "cannot infer generic type argument `T`",
+        label="imported generic applied ptr shadow diagnostic",
+    )
+
+
+def test_imported_generic_signatures_use_owner_module_context_for_secondary_qualified_types(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_owner_context/helper.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_import_owner_context/dep.lo",
+        """
+        import helper
+
+        struct Box[T] {
+            value T
+        }
+
+        def make_helper_ptr() helper.Box![i32]* {
+            ret null
+        }
+
+        def take_helper_ptr[T](value helper.Box![T]*) helper.Box![T]* {
+            ret value
+        }
+        """,
+    )
+    inferred_path = compiler.write_source(
+        "generic_import_owner_context/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var out = dep.take_helper_ptr(dep.make_helper_ptr())
+            ret 0
+        }
+        """,
+    )
+    inferred = compiler.emit_ir(inferred_path).expect_failed()
+    assert_contains(
+        inferred.stderr,
+        "generic function instantiation is not implemented yet for `dep.take_helper_ptr`",
+        label="imported generic owner context diagnostic",
+    )
+    assert_not_contains(
+        inferred.stderr,
+        "cannot infer generic type argument `T`",
+        label="imported generic owner context diagnostic",
+    )
+
+    explicit_path = compiler.write_source(
+        "generic_import_owner_context/main_explicit.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var out = dep.take_helper_ptr![i32](dep.make_helper_ptr())
+            ret 0
+        }
+        """,
+    )
+    explicit = compiler.emit_ir(explicit_path).expect_failed()
+    assert_contains(
+        explicit.stderr,
+        "generic function instantiation is not implemented yet for `dep.take_helper_ptr`",
+        label="imported generic owner context explicit diagnostic",
+    )
+
+
 def test_imported_trait_supports_local_impl_dynamic_dispatch(
     compiler: CompilerHarness,
 ) -> None:

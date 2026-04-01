@@ -243,6 +243,115 @@ def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -
         assert object_path.parent == expected_cache_bundle_dir
 
 
+def test_generic_v0_any_pointer_casts_lower_to_plain_ptr_storage(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_any_ptr_frontend.lo",
+        """
+        def main() usize {
+            var value i32 = 1
+            var typed i32* = &value
+            var erased any* = cast[any*](typed)
+            var readonly any const* = cast[any const*](typed)
+            ret sizeof[any*]() + sizeof[any const*]()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(ir, "define i64 @main()", label="generic any ptr ir")
+    assert_contains(ir, "alloca ptr, align 8", label="generic any ptr ir")
+    assert_contains(ir, "store ptr", label="generic any ptr ir")
+    assert_not_contains(ir, "%any", label="generic any ptr ir")
+
+
+def test_generic_v0_any_pointer_interface_decls_lower_cleanly(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_any_ptr_interface.lo",
+        """
+        struct Holder {
+            ptr any*
+            readonly any const*
+        }
+
+        global hold any* = null
+
+        def erase(ptr any*) any* {
+            ret ptr
+        }
+
+        def erase_ro(ptr any const*) any const* {
+            ret ptr
+        }
+
+        def main() any* {
+            var value i32 = 1
+            var typed i32* = &value
+            hold = cast[any*](typed)
+            var holder Holder = Holder(ptr = hold, readonly = cast[any const*](typed))
+            ret erase(holder.ptr)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(ir, "Holder = type { ptr, ptr }", label="generic any ptr interface ir")
+    assert_contains(ir, "@hold = global ptr null", label="generic any ptr interface ir")
+    assert_contains(ir, "define ptr @erase(ptr", label="generic any ptr interface ir")
+    assert_contains(ir, "define ptr @erase_ro(ptr", label="generic any ptr interface ir")
+    assert_contains(ir, "define ptr @main()", label="generic any ptr interface ir")
+    assert_not_contains(ir, "%any", label="generic any ptr interface ir")
+
+
+def test_generic_v0_templates_do_not_emit_runtime_symbols_before_instantiation(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_templates_no_runtime_symbols.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+
+        def id[T](value T) T {
+            ret value
+        }
+
+        def main() i32 {
+            ret 0
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(ir, "define i32 @main()", label="generic template ir")
+    assert_not_contains(ir, "define i32 @id(", label="generic template ir")
+    assert_not_contains(ir, "@Box.get", label="generic template ir")
+
+
+def test_generic_v0_applied_type_pointers_form_concrete_runtime_identities(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_applied_type_pointer_round4.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def main() Box![i32]* {
+            ret null
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(ir, "define ptr @main()", label="generic applied ptr ir")
+
+
 def test_trait_static_dispatch_lowers_to_direct_method_call(
     compiler: CompilerHarness,
 ) -> None:

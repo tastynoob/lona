@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tests.acceptance.language._syntax_helpers import _emit_ir, _emit_json, _expect_ir_failure
-from tests.harness import assert_contains, assert_not_contains, assert_regex
+from tests.harness import assert_contains, assert_regex
 from tests.harness.compiler import CompilerHarness
 
 

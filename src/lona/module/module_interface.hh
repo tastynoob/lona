@@ -18,6 +18,7 @@ class IndexablePointerType;
 class ConstType;
 class DynTraitType;
 class TupleType;
+class AnyType;
 class AstNode;
 
 class ModuleInterface {
@@ -30,11 +31,41 @@ public:
         Global,
     };
 
+    struct GenericParamDecl {
+        string localName;
+        string boundTraitName;
+    };
+
+    struct ImportedModuleDecl {
+        string localName;
+        string moduleKey;
+        string moduleName;
+        const ModuleInterface *interface = nullptr;
+    };
+
+    struct MethodTemplateDecl {
+        string localName;
+        AccessKind receiverAccess = AccessKind::GetOnly;
+        std::vector<string> paramNames;
+        std::vector<BindingKind> paramBindingKinds;
+        std::vector<TypeNode *> paramTypeNodes;
+        std::vector<string> paramTypeSpellings;
+        TypeNode *returnTypeNode = nullptr;
+        string returnTypeSpelling = "void";
+        std::vector<GenericParamDecl> typeParams;
+
+        bool isGeneric() const { return !typeParams.empty(); }
+    };
+
     struct TypeDecl {
         string localName;
         string exportedName;
         StructDeclKind declKind = StructDeclKind::Native;
         TypeClass *type = nullptr;
+        std::vector<GenericParamDecl> typeParams;
+        std::vector<MethodTemplateDecl> methodTemplates;
+
+        bool isGeneric() const { return !typeParams.empty(); }
     };
 
     struct TraitMethodDecl {
@@ -65,6 +96,9 @@ public:
         string selfTypeSpelling;
         string traitName;
         bool hasBody = false;
+        std::vector<GenericParamDecl> typeParams;
+
+        bool isGeneric() const { return !typeParams.empty(); }
     };
 
     struct FunctionDecl {
@@ -73,6 +107,14 @@ public:
         AbiKind abiKind = AbiKind::Native;
         FuncType *type = nullptr;
         std::vector<string> paramNames;
+        std::vector<BindingKind> paramBindingKinds;
+        std::vector<TypeNode *> paramTypeNodes;
+        std::vector<string> paramTypeSpellings;
+        TypeNode *returnTypeNode = nullptr;
+        string returnTypeSpelling;
+        std::vector<GenericParamDecl> typeParams;
+
+        bool isGeneric() const { return !typeParams.empty(); }
     };
 
     struct GlobalDecl {
@@ -109,6 +151,7 @@ private:
     std::vector<TraitImplDecl> traitImpls_;
     std::unordered_map<string, FunctionDecl> localFunctions_;
     std::unordered_map<string, GlobalDecl> localGlobals_;
+    std::unordered_map<string, ImportedModuleDecl> importedModules_;
 
     string exportedNameFor(const ::string &localName) const;
     string functionSymbolNameFor(const ::string &localName,
@@ -144,18 +187,39 @@ public:
     void clear();
     StructType *declareStructType(
         const ::string &localName,
-        StructDeclKind declKind = StructDeclKind::Native);
+        StructDeclKind declKind = StructDeclKind::Native,
+        std::vector<GenericParamDecl> typeParams = {});
     StructType *declareStructType(
         const std::string &localName,
-        StructDeclKind declKind = StructDeclKind::Native) {
-        return declareStructType(string(localName), declKind);
+        StructDeclKind declKind = StructDeclKind::Native,
+        std::vector<GenericParamDecl> typeParams = {}) {
+        return declareStructType(string(localName), declKind,
+                                 std::move(typeParams));
     }
     bool declareFunction(string localName, FuncType *type,
-                         std::vector<string> paramNames = {});
+                         std::vector<string> paramNames = {},
+                         std::vector<BindingKind> paramBindingKinds = {},
+                         std::vector<TypeNode *> paramTypeNodes = {},
+                         std::vector<string> paramTypeSpellings = {},
+                         TypeNode *returnTypeNode = nullptr,
+                         string returnTypeSpelling = "void",
+                         std::vector<GenericParamDecl> typeParams = {});
     bool declareFunction(std::string localName, FuncType *type,
-                         std::vector<string> paramNames = {}) {
+                         std::vector<string> paramNames = {},
+                         std::vector<BindingKind> paramBindingKinds = {},
+                         std::vector<TypeNode *> paramTypeNodes = {},
+                         std::vector<string> paramTypeSpellings = {},
+                         TypeNode *returnTypeNode = nullptr,
+                         string returnTypeSpelling = "void",
+                         std::vector<GenericParamDecl> typeParams = {}) {
         return declareFunction(string(std::move(localName)), type,
-                               std::move(paramNames));
+                               std::move(paramNames),
+                               std::move(paramBindingKinds),
+                               std::move(paramTypeNodes),
+                               std::move(paramTypeSpellings),
+                               returnTypeNode,
+                               std::move(returnTypeSpelling),
+                               std::move(typeParams));
     }
     bool declareGlobal(string localName, TypeClass *type,
                        bool isExtern = false);
@@ -177,11 +241,44 @@ public:
                                   std::move(methods));
     }
     bool declareTraitImpl(string selfTypeSpelling, string traitName,
-                          bool hasBody = false);
+                          bool hasBody = false,
+                          std::vector<GenericParamDecl> typeParams = {});
     bool declareTraitImpl(std::string selfTypeSpelling, std::string traitName,
-                          bool hasBody = false) {
+                          bool hasBody = false,
+                          std::vector<GenericParamDecl> typeParams = {}) {
         return declareTraitImpl(string(std::move(selfTypeSpelling)),
-                                string(std::move(traitName)), hasBody);
+                                string(std::move(traitName)), hasBody,
+                                std::move(typeParams));
+    }
+    bool declareStructMethodTemplate(string structLocalName,
+                                     MethodTemplateDecl method);
+    bool declareStructMethodTemplate(std::string structLocalName,
+                                     MethodTemplateDecl method) {
+        return declareStructMethodTemplate(string(std::move(structLocalName)),
+                                           std::move(method));
+    }
+    bool declareImportedModule(string localName, string moduleKey,
+                               string moduleName,
+                               const ModuleInterface *interface = nullptr);
+    bool declareImportedModule(std::string localName, std::string moduleKey,
+                               std::string moduleName,
+                               const ModuleInterface *interface = nullptr) {
+        return declareImportedModule(string(std::move(localName)),
+                                     string(std::move(moduleKey)),
+                                     string(std::move(moduleName)), interface);
+    }
+    AnyType *getOrCreateAnyType();
+    StructType *getOrCreateAppliedStructType(
+        const ::string &appliedName, StructDeclKind declKind,
+        string appliedTemplateName = {},
+        std::vector<TypeClass *> appliedTypeArgs = {});
+    StructType *getOrCreateAppliedStructType(
+        const std::string &appliedName, StructDeclKind declKind,
+        string appliedTemplateName = {},
+        std::vector<TypeClass *> appliedTypeArgs = {}) {
+        return getOrCreateAppliedStructType(
+            string(appliedName), declKind, std::move(appliedTemplateName),
+            std::move(appliedTypeArgs));
     }
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(
@@ -224,6 +321,15 @@ public:
     const GlobalDecl *findGlobal(const std::string &localName) const {
         return findGlobal(string(localName));
     }
+    const ImportedModuleDecl *findImportedModule(const ::string &localName) const;
+    const ImportedModuleDecl *findImportedModule(
+        const std::string &localName) const {
+        return findImportedModule(string(localName));
+    }
+    TypeClass *findDerivedType(const ::string &spelling) const;
+    TypeClass *findDerivedType(const std::string &spelling) const {
+        return findDerivedType(string(spelling));
+    }
     TopLevelLookup lookupTopLevelName(const ::string &localName) const;
     TopLevelLookup lookupTopLevelName(const std::string &localName) const {
         return lookupTopLevelName(string(localName));
@@ -242,6 +348,9 @@ public:
     }
     const std::unordered_map<string, GlobalDecl> &globals() const {
         return localGlobals_;
+    }
+    const std::unordered_map<string, ImportedModuleDecl> &importedModules() const {
+        return importedModules_;
     }
 };
 

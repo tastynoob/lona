@@ -61,11 +61,13 @@ ModuleInterface::clear() {
     traitImpls_.clear();
     localFunctions_.clear();
     localGlobals_.clear();
+    importedModules_.clear();
 }
 
 StructType *
 ModuleInterface::declareStructType(const ::string &localName,
-                                   StructDeclKind declKind) {
+                                   StructDeclKind declKind,
+                                   std::vector<GenericParamDecl> typeParams) {
     auto found = localTypes_.find(localName);
     if (found != localTypes_.end()) {
         auto *type =
@@ -74,6 +76,7 @@ ModuleInterface::declareStructType(const ::string &localName,
             type->setDeclKind(declKind);
             found->second.declKind = declKind;
         }
+        found->second.typeParams = std::move(typeParams);
         return type;
     }
 
@@ -82,8 +85,8 @@ ModuleInterface::declareStructType(const ::string &localName,
     auto *typePtr = type.get();
     ownedTypes_.push_back(std::move(type));
     derivedTypes_[exportedName] = typePtr;
-    localTypes_.emplace(localName,
-                        TypeDecl{localName, exportedName, declKind, typePtr});
+    localTypes_.emplace(localName, TypeDecl{localName, exportedName, declKind,
+                                            typePtr, std::move(typeParams)});
     return typePtr->as<StructType>();
 }
 
@@ -110,23 +113,61 @@ ModuleInterface::defineTraitMethods(string localName,
 
 bool
 ModuleInterface::declareTraitImpl(string selfTypeSpelling, string traitName,
-                                  bool hasBody) {
-    traitImpls_.push_back(
-        TraitImplDecl{std::move(selfTypeSpelling), std::move(traitName),
-                      hasBody});
+                                  bool hasBody,
+                                  std::vector<GenericParamDecl> typeParams) {
+    traitImpls_.push_back(TraitImplDecl{std::move(selfTypeSpelling),
+                                        std::move(traitName), hasBody,
+                                        std::move(typeParams)});
     return true;
 }
 
 bool
 ModuleInterface::declareFunction(string localName, FuncType *type,
-                                 std::vector<string> paramNames) {
+                                 std::vector<string> paramNames,
+                                 std::vector<BindingKind> paramBindingKinds,
+                                 std::vector<TypeNode *> paramTypeNodes,
+                                 std::vector<string> paramTypeSpellings,
+                                 TypeNode *returnTypeNode,
+                                 string returnTypeSpelling,
+                                 std::vector<GenericParamDecl> typeParams) {
     auto abiKind = type ? type->getAbiKind() : AbiKind::Native;
     return localFunctions_
         .emplace(
             localName,
             FunctionDecl{localName, functionSymbolNameFor(localName, abiKind),
-                         abiKind, type, std::move(paramNames)})
+                         abiKind, type, std::move(paramNames),
+                         std::move(paramBindingKinds),
+                         std::move(paramTypeNodes),
+                         std::move(paramTypeSpellings), returnTypeNode,
+                         std::move(returnTypeSpelling),
+                         std::move(typeParams)})
         .second;
+}
+
+bool
+ModuleInterface::declareStructMethodTemplate(string structLocalName,
+                                             MethodTemplateDecl method) {
+    auto found = localTypes_.find(structLocalName);
+    if (found == localTypes_.end()) {
+        return false;
+    }
+    found->second.methodTemplates.push_back(std::move(method));
+    return true;
+}
+
+bool
+ModuleInterface::declareImportedModule(string localName, string moduleKey,
+                                       string moduleName,
+                                       const ModuleInterface *interface) {
+    ImportedModuleDecl imported{localName, std::move(moduleKey),
+                                std::move(moduleName), interface};
+    auto found = importedModules_.find(localName);
+    if (found != importedModules_.end()) {
+        found->second = std::move(imported);
+        return false;
+    }
+    importedModules_.emplace(std::move(localName), std::move(imported));
+    return true;
 }
 
 bool
@@ -137,6 +178,49 @@ ModuleInterface::declareGlobal(string localName, TypeClass *type,
                  GlobalDecl{localName, globalSymbolNameFor(localName, isExtern),
                             isExtern, type})
         .second;
+}
+
+AnyType *
+ModuleInterface::getOrCreateAnyType() {
+    constexpr auto kAnyTypeName = "any";
+    auto found = derivedTypes_.find(kAnyTypeName);
+    if (found != derivedTypes_.end()) {
+        return found->second->as<AnyType>();
+    }
+
+    auto type = std::make_unique<AnyType>();
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[kAnyTypeName] = typePtr;
+    return typePtr->as<AnyType>();
+}
+
+StructType *
+ModuleInterface::getOrCreateAppliedStructType(const ::string &appliedName,
+                                              StructDeclKind declKind,
+                                              string appliedTemplateName,
+                                              std::vector<TypeClass *> appliedTypeArgs) {
+    auto found = derivedTypes_.find(appliedName);
+    if (found != derivedTypes_.end()) {
+        auto *structType = found->second->as<StructType>();
+        if (structType) {
+            structType->setDeclKind(declKind);
+            if (!appliedTemplateName.empty()) {
+                structType->setAppliedTemplateInfo(
+                    std::move(appliedTemplateName),
+                    std::move(appliedTypeArgs));
+            }
+        }
+        return structType;
+    }
+
+    auto type = std::make_unique<StructType>(
+        appliedName, declKind, std::move(appliedTemplateName),
+        std::move(appliedTypeArgs));
+    auto *typePtr = type.get();
+    ownedTypes_.push_back(std::move(type));
+    derivedTypes_[appliedName] = typePtr;
+    return typePtr->as<StructType>();
 }
 
 PointerType *
@@ -251,6 +335,15 @@ ModuleInterface::getOrCreateTupleType(
     return typePtr->as<TupleType>();
 }
 
+const ModuleInterface::ImportedModuleDecl *
+ModuleInterface::findImportedModule(const ::string &localName) const {
+    auto found = importedModules_.find(localName);
+    if (found == importedModules_.end()) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
 FuncType *
 ModuleInterface::getOrCreateFunctionType(
     const std::vector<TypeClass *> &argTypes, TypeClass *retType,
@@ -336,6 +429,12 @@ ModuleInterface::findGlobal(const ::string &localName) const {
         return nullptr;
     }
     return &found->second;
+}
+
+TypeClass *
+ModuleInterface::findDerivedType(const ::string &spelling) const {
+    auto found = derivedTypes_.find(spelling);
+    return found == derivedTypes_.end() ? nullptr : found->second;
 }
 
 ModuleInterface::TopLevelLookup

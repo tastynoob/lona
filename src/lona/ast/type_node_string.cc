@@ -9,12 +9,27 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
     if (node == nullptr) {
         return std::string(nullDescription);
     }
+    if (dynamic_cast<const AnyTypeNode *>(node)) {
+        return "any";
+    }
     if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
         std::string name;
         if (param->bindingKind == BindingKind::Ref) {
             name += "ref ";
         }
         name += describeTypeNode(param->type, nullDescription);
+        return name;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        auto name = describeTypeNode(applied->base, nullDescription);
+        name += "![";
+        for (size_t i = 0; i < applied->args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += describeTypeNode(applied->args[i], nullDescription);
+        }
+        name += "]";
         return name;
     }
     if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {

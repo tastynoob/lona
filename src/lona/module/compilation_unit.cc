@@ -1,5 +1,6 @@
 #include "compilation_unit.hh"
 #include "lona/ast/tag_apply.hh"
+#include "lona/ast/type_node_string.hh"
 #include "lona/ast/type_node_tools.hh"
 #include "lona/err/err.hh"
 #include "lona/type/type.hh"
@@ -13,6 +14,24 @@
 namespace lona {
 
 namespace compilation_unit_impl {
+
+std::uint64_t
+combineHash(std::uint64_t seed, std::uint64_t value);
+
+void
+hashText(std::uint64_t &seed, std::string_view text);
+
+void
+hashTypeParams(std::uint64_t &seed, const std::vector<AstToken *> *typeParams) {
+    if (!typeParams) {
+        seed = combineHash(seed, 0);
+        return;
+    }
+    seed = combineHash(seed, typeParams->size());
+    for (auto *param : *typeParams) {
+        hashText(seed, param ? toStdString(param->text) : "<null>");
+    }
+}
 
 std::string
 deriveModuleName(const std::string &path) {
@@ -194,13 +213,15 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         return;
     }
     if (auto *importNode = dynamic_cast<AstImport *>(node)) {
-        (void)importNode;
+        hashText(seed, "import");
+        hashText(seed, importNode->path);
         return;
     }
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
         hashText(seed, "struct");
         hashText(seed, toStdString(structDecl->name));
         hashText(seed, structDeclKindKeyword(structDecl->declKind));
+        hashTypeParams(seed, structDecl->typeParams);
         if (structDecl->body) {
             hashInterfaceList(seed, structDecl->body);
         } else {
@@ -220,6 +241,7 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
     }
     if (auto *traitImplDecl = dynamic_cast<AstTraitImplDecl *>(node)) {
         hashText(seed, "trait-impl");
+        hashTypeParams(seed, traitImplDecl->typeParams);
         hashTypeNode(seed, traitImplDecl->selfType);
         hashText(seed, describeDotLikeSyntax(traitImplDecl->trait));
         hashText(seed, traitImplDecl->hasBody() ? "impl-body:present"
@@ -231,6 +253,7 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         hashText(seed, toStdString(funcDecl->name));
         hashText(seed, abiKindKeyword(funcDecl->abiKind));
         hashText(seed, accessKindKeyword(funcDecl->receiverAccess));
+        hashTypeParams(seed, funcDecl->typeParams);
         if (funcDecl->args) {
             seed = combineHash(seed, funcDecl->args->size());
             for (auto *arg : *funcDecl->args) {
@@ -278,6 +301,19 @@ hashTypeNode(std::uint64_t &seed, const TypeNode *node) {
         hashText(seed, "func-param");
         hashText(seed, bindingKindKeyword(param->bindingKind));
         hashTypeNode(seed, param->type);
+        return;
+    }
+    if (dynamic_cast<const AnyTypeNode *>(node)) {
+        hashText(seed, "any");
+        return;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        hashText(seed, "applied");
+        hashTypeNode(seed, applied->base);
+        seed = combineHash(seed, applied->args.size());
+        for (auto *arg : applied->args) {
+            hashTypeNode(seed, arg);
+        }
         return;
     }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
@@ -340,6 +376,42 @@ computeInterfaceHash(AstNode *root) {
     return seed;
 }
 
+std::string
+genericTemplateHint(const std::string &rawName) {
+    return "Write `" + rawName +
+           "![...]` with explicit type arguments, or keep the template name "
+           "inside another applied type like `" + rawName + "![T]`.";
+}
+
+[[noreturn]] void
+errorBareGenericTemplateType(const location &loc, const std::string &rawName) {
+    error(loc,
+          "generic type template `" + rawName +
+              "` requires explicit `![...]` type arguments",
+          genericTemplateHint(rawName));
+}
+
+const ModuleInterface::TypeDecl *
+resolveVisibleTypeDecl(const CompilationUnit &unit, BaseTypeNode *base) {
+    if (!base) {
+        return nullptr;
+    }
+    auto rawName = baseTypeName(base);
+    std::string moduleName;
+    std::string memberName;
+    if (!splitBaseTypeName(base, moduleName, memberName)) {
+        auto lookup = unit.lookupTopLevelName(rawName);
+        return lookup.isType() ? lookup.typeDecl : nullptr;
+    }
+
+    const auto *imported = unit.findImportedModule(moduleName);
+    if (!imported || !imported->interface) {
+        return nullptr;
+    }
+    auto lookup = unit.lookupTopLevelName(*imported, memberName);
+    return lookup.isType() ? lookup.typeDecl : nullptr;
+}
+
 TypeClass *
 resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
                 TypeNode *node, bool validateLayout = true) {
@@ -356,6 +428,58 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
     }
 
     TypeClass *resolved = nullptr;
+
+    if (dynamic_cast<AnyTypeNode *>(node)) {
+        resolved = typeTable->createAnyType();
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
+    }
+
+    if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+        auto appliedName = describeTypeNode(applied, "<unknown type>");
+        if (auto *existing = typeTable->getType(llvm::StringRef(appliedName))) {
+            unit.cacheResolvedType(node, existing);
+            return existing;
+        }
+        auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
+        const auto *typeDecl = resolveVisibleTypeDecl(unit, base);
+        if (!typeDecl) {
+            unit.cacheResolvedType(node, nullptr);
+            return nullptr;
+        }
+        if (!typeDecl->isGeneric()) {
+            error(applied->loc,
+                  "type `" + appliedName +
+                      "` applies `![...]` arguments to a non-generic type",
+                  "Remove the `![...]` arguments, or make the base type generic "
+                  "before specializing it.");
+        }
+        if (applied->args.size() != typeDecl->typeParams.size()) {
+            error(applied->loc,
+                  "generic type argument count mismatch for `" +
+                      toStdString(typeDecl->exportedName) + "`: expected " +
+                      std::to_string(typeDecl->typeParams.size()) + ", got " +
+                      std::to_string(applied->args.size()),
+                  "Match the number of `![` `]` type arguments to the generic "
+                  "type parameter list.");
+        }
+        std::vector<TypeClass *> argTypes;
+        argTypes.reserve(applied->args.size());
+        for (auto *arg : applied->args) {
+            auto *argType = resolveTypeNode(typeTable, unit, arg, false);
+            if (!argType) {
+                error(arg ? arg->loc : applied->loc,
+                      "unknown type argument for `" + appliedName + "`: " +
+                          describeTypeNode(arg, "void"));
+            }
+            argTypes.push_back(argType);
+        }
+        resolved = typeTable->createOpaqueStructType(
+            appliedName, typeDecl->declKind, typeDecl->exportedName,
+            std::move(argTypes));
+        unit.cacheResolvedType(node, resolved);
+        return resolved;
+    }
 
     if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
         auto *baseType =
@@ -375,6 +499,9 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
         if (!splitBaseTypeName(base, moduleName, memberName)) {
             auto lookup = unit.lookupTopLevelName(rawName);
             if (lookup.isType()) {
+                if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
+                    errorBareGenericTemplateType(base->loc, rawName);
+                }
                 auto *type = typeTable->getType(lookup.resolvedName);
                 unit.cacheResolvedType(node, type);
                 return type;
@@ -389,6 +516,10 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
             if (!lookup.isType()) {
                 unit.cacheResolvedType(node, nullptr);
                 return nullptr;
+            }
+            if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
+                errorBareGenericTemplateType(base->loc,
+                                             moduleName + "." + memberName);
             }
         }
         resolved = typeTable->getType(llvm::StringRef(rawName));

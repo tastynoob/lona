@@ -28,9 +28,9 @@ __pycache__/
 /hooks
 /objects
 /refs
-/.plan
 /lona_cache
 /.pytest_cache
+/.codex
 
 
 tmp*

@@ -95,6 +95,7 @@ resolveTypeNode(TypeTable *typeMgr, const CompilationUnit *unit,
     if (!typeMgr) {
         return nullptr;
     }
+    validateTypeNodeLayout(node);
     if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
         auto rawStorage = baseTypeName(base);
         auto rawName = llvm::StringRef(rawStorage);

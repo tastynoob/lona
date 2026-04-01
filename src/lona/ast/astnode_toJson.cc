@@ -3,6 +3,35 @@
 
 namespace lona {
 
+namespace {
+
+void
+appendTypeParamNames(Json &root, const std::vector<AstToken *> *typeParams) {
+    if (!typeParams) {
+        return;
+    }
+    root["typeParams"] = Json::array();
+    for (auto *param : *typeParams) {
+        if (!param) {
+            continue;
+        }
+        root["typeParams"].push_back(param->text.tochara());
+    }
+}
+
+void
+appendTypeArgSpellings(Json &root, const std::vector<TypeNode *> *typeArgs) {
+    if (!typeArgs) {
+        return;
+    }
+    root["typeArgs"] = Json::array();
+    for (auto *typeArg : *typeArgs) {
+        root["typeArgs"].push_back(describeTypeNode(typeArg));
+    }
+}
+
+}  // namespace
+
 std::string
 escapeAstByteStringForJson(const string &value) {
     static constexpr char kHexDigits[] = "0123456789ABCDEF";
@@ -157,8 +186,31 @@ AstField::toJson(Json &root) {
 
 void
 AstFuncRef::toJson(Json &root) {
+    auto appendFuncRefTypeArgs = [&](const AstNode *node) {
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node)) {
+            appendTypeArgSpellings(root, typeApply->typeArgs);
+        }
+    };
+
     root["type"] = "FuncRef";
-    root["name"] = this->name.tochara();
+    root["value"] = Json::object();
+    if (this->value) {
+        this->value->toJson(root["value"]);
+    }
+    appendFuncRefTypeArgs(this->value);
+    if (auto *field = dynamic_cast<const AstField *>(this->value)) {
+        root["name"] = field->name.tochara();
+    } else if (auto *dotLike = dynamic_cast<const AstDotLike *>(this->value)) {
+        root["name"] = describeDotLikeSyntax(dotLike).c_str();
+    } else if (auto *typeApply =
+                   dynamic_cast<const AstTypeApply *>(this->value)) {
+        if (auto *field = dynamic_cast<const AstField *>(typeApply->value)) {
+            root["name"] = field->name.tochara();
+        } else if (auto *dotLike =
+                       dynamic_cast<const AstDotLike *>(typeApply->value)) {
+            root["name"] = describeDotLikeSyntax(dotLike).c_str();
+        }
+    }
     root["args"] = Json::array();
     if (argTypes) {
         for (auto *argType : *argTypes) {
@@ -256,6 +308,7 @@ AstStructDecl::toJson(Json &root) {
     root["type"] = "StructDecl";
     root["name"] = this->name.tochara();
     root["declKind"] = structDeclKindKeyword(this->declKind);
+    appendTypeParamNames(root, this->typeParams);
     if (this->body) {
         root["body"] = Json::object();
         this->body->toJson(root["body"]);
@@ -279,6 +332,7 @@ AstTraitDecl::toJson(Json &root) {
 void
 AstTraitImplDecl::toJson(Json &root) {
     root["type"] = "TraitImplDecl";
+    appendTypeParamNames(root, this->typeParams);
     root["selfType"] = describeTypeNode(this->selfType);
     root["trait"] = Json::object();
     if (this->trait) {
@@ -360,6 +414,7 @@ AstFuncDecl::toJson(Json &root) {
     root["name"] = this->name.tochara();
     root["abiKind"] = abiKindKeyword(this->abiKind);
     root["receiverAccess"] = accessKindKeyword(this->receiverAccess);
+    appendTypeParamNames(root, this->typeParams);
     // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {
         root["args"] = Json::array();
@@ -464,6 +519,16 @@ AstFieldCall::toJson(Json &root) {
     } else {
         root["args"] = "none";
     }
+}
+
+void
+AstTypeApply::toJson(Json &root) {
+    root["type"] = "TypeApply";
+    root["value"] = Json::object();
+    if (this->value) {
+        this->value->toJson(root["value"]);
+    }
+    appendTypeArgSpellings(root, this->typeArgs);
 }
 
 void

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/ast/astnode.hh"
+#include "lona/module/module_interface.hh"
 #include "lona/sema/entity.hh"
 #include <memory>
 #include <string>
@@ -58,7 +59,9 @@ public:
         Invalid,
         LocalBinding,
         GlobalValue,
+        GenericFunction,
         Type,
+        GenericType,
         Trait,
         Module,
     };
@@ -66,6 +69,9 @@ public:
 private:
     Kind kind_ = Kind::Invalid;
     const ResolvedLocalBinding *localBinding_ = nullptr;
+    const ModuleInterface::FunctionDecl *functionDecl_ = nullptr;
+    const ModuleInterface::TypeDecl *typeDecl_ = nullptr;
+    const ModuleInterface *ownerInterface_ = nullptr;
     string resolvedName_;
 
 public:
@@ -85,10 +91,32 @@ public:
         return ref;
     }
 
+    static ResolvedEntityRef genericFunction(
+        string name, const ModuleInterface::FunctionDecl *functionDecl,
+        const ModuleInterface *ownerInterface = nullptr) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::GenericFunction;
+        ref.resolvedName_ = std::move(name);
+        ref.functionDecl_ = functionDecl;
+        ref.ownerInterface_ = ownerInterface;
+        return ref;
+    }
+
     static ResolvedEntityRef type(string name) {
         ResolvedEntityRef ref;
         ref.kind_ = Kind::Type;
         ref.resolvedName_ = std::move(name);
+        return ref;
+    }
+
+    static ResolvedEntityRef genericType(string name,
+                                         const ModuleInterface::TypeDecl *typeDecl,
+                                         const ModuleInterface *ownerInterface = nullptr) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::GenericType;
+        ref.resolvedName_ = std::move(name);
+        ref.typeDecl_ = typeDecl;
+        ref.ownerInterface_ = ownerInterface;
         return ref;
     }
 
@@ -109,6 +137,11 @@ public:
     Kind kind() const { return kind_; }
     bool valid() const { return kind_ != Kind::Invalid; }
     const ResolvedLocalBinding *localBinding() const { return localBinding_; }
+    const ModuleInterface::FunctionDecl *functionDecl() const {
+        return functionDecl_;
+    }
+    const ModuleInterface::TypeDecl *typeDecl() const { return typeDecl_; }
+    const ModuleInterface *ownerInterface() const { return ownerInterface_; }
     const string &resolvedName() const { return resolvedName_; }
 };
 
@@ -121,6 +154,8 @@ class ResolvedFunction {
     bool topLevelEntry_ = false;
     bool languageEntry_ = false;
     bool guaranteedReturn_ = false;
+    bool templateValidationOnly_ = false;
+    std::vector<string> genericTypeParams_;
 
     std::vector<const ResolvedLocalBinding *> params_;
     const ResolvedLocalBinding *selfBinding_ = nullptr;
@@ -134,7 +169,9 @@ public:
     ResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
                      string functionName, string methodParentTypeName,
                      const location &loc, bool topLevelEntry,
-                     bool languageEntry, bool guaranteedReturn)
+                     bool languageEntry, bool guaranteedReturn,
+                     bool templateValidationOnly = false,
+                     std::vector<string> genericTypeParams = {})
         : decl_(decl),
           body_(body),
           functionName_(std::move(functionName)),
@@ -142,7 +179,9 @@ public:
           loc_(loc),
           topLevelEntry_(topLevelEntry),
           languageEntry_(languageEntry),
-          guaranteedReturn_(guaranteedReturn) {}
+          guaranteedReturn_(guaranteedReturn),
+          templateValidationOnly_(templateValidationOnly),
+          genericTypeParams_(std::move(genericTypeParams)) {}
 
     const AstFuncDecl *decl() const { return decl_; }
     const AstNode *body() const { return body_; }
@@ -154,6 +193,10 @@ public:
     bool isTopLevelEntry() const { return topLevelEntry_; }
     bool isLanguageEntry() const { return languageEntry_; }
     bool guaranteedReturn() const { return guaranteedReturn_; }
+    bool isTemplateValidationOnly() const { return templateValidationOnly_; }
+    const std::vector<string> &genericTypeParams() const {
+        return genericTypeParams_;
+    }
 
     void addParam(const ResolvedLocalBinding *binding) {
         params_.push_back(binding);
@@ -203,7 +246,10 @@ public:
                                      const AstNode *body, string functionName,
                                      string methodParentTypeName,
                                      const location &loc, bool topLevelEntry,
-                                     bool languageEntry, bool guaranteedReturn);
+                                     bool languageEntry,
+                                     bool guaranteedReturn,
+                                     bool templateValidationOnly = false,
+                                     std::vector<string> genericTypeParams = {});
 
     const std::vector<std::unique_ptr<ResolvedFunction>> &functions() const {
         return functions_;

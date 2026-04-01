@@ -18,6 +18,9 @@ public:
 
     std::unique_ptr<HIRModule> analyze(const ResolvedModule &resolvedModule) {
         for (const auto &resolvedFunction : resolvedModule.functions()) {
+            if (resolvedFunction->isTemplateValidationOnly()) {
+                continue;
+            }
             module->addFunction(analyzeResolvedFunction(
                 global, module.get(), unit, *resolvedFunction));
         }

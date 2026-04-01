@@ -17,6 +17,13 @@ bool
 isReservedInitialListTypeNode(TypeNode *node);
 [[noreturn]] void
 errorReservedInitialListType(const location &loc);
+[[noreturn]] void
+errorPointerOnlyAnyType(const location &loc, const TypeNode *node);
+TypeNode *
+typeNodeFromBracketItem(AstNode *node);
+TypeNode *
+createBracketSuffixTypeNode(TypeNode *base, std::vector<AstNode *> *items,
+                            const location &loc = location());
 void
 validateTypeNodeLayout(const TypeNode *node);
 

@@ -334,6 +334,11 @@ BaseType::buildLLVMType(TypeTable &types) {
 }
 
 llvm::Type *
+AnyType::buildLLVMType(TypeTable &types) {
+    return llvm::Type::getInt8Ty(types.getContext());
+}
+
+llvm::Type *
 ConstType::buildLLVMType(TypeTable &types) {
     return baseType ? types.getLLVMType(baseType) : nullptr;
 }

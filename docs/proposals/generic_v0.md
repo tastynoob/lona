@@ -45,7 +45,7 @@
 
 最后推荐的组合是：
 
-- 表面语法更接近 Go：`Name[T]`
+- 表面语法使用带显式 sigil 的 generic apply：`Name![T]`
 - 语义模型更接近 Rust：typed generic + trait bound + monomorphization
 - 明确不采用 C++ 那种“文本级模板替换 + 晚期报错”的主模型
 
@@ -92,7 +92,7 @@ Rust 给出的方向最接近 `lona` 需要的 v0：
 Go 泛型的优点是：
 
 - 用户表面语法比较收敛
-- `Name[T]` 这类写法直接、清楚
+- 方括号承载类型实参这件事本身直接、清楚
 - constraint 写法也更偏接口能力，而不是模板元编程
 
 它不适合作为 `lona` 的主实现模板，因为：
@@ -100,13 +100,13 @@ Go 泛型的优点是：
 - Go 的实现策略不以“所有静态路径都极致零成本”为首要目标
 - Go interface / constraint 的整体系统和 `lona` 当前 trait v0 并不等价
 
-但它很适合给 `lona` 的泛型表面语法提供参考。
+但它很适合给 `lona` 的泛型参数列表和实参列表提供参考。
 
 ### 2.4 推荐组合
 
 因此更适合 `lona` 的 v0 组合是：
 
-- 语法：借 Go 的 `Name[T]`
+- 语法：声明处沿用 `[T]`，使用处采用 `Name![T]`
 - 语义：借 Rust 的 typed generic + trait bound
 - 代码生成：默认走 Rust 风格 monomorphization
 - 明确排除 C++ 模板那套文本替换与偏特化模型
@@ -177,11 +177,13 @@ Go 泛型的优点是：
 
 这也是为什么泛型 v0 更适合优先考虑：
 
-- `Name[T]`
+- 声明处继续用 `[T]`
+- 使用处改成 `Name![T]`
 
 而不是：
 
 - `Name<T>`
+- `Name[T]` 这种和数组后缀共享 `[]` 的 generic apply
 
 ## 4. v0 的核心模型
 
@@ -299,7 +301,7 @@ generic v0 的 typed 源码层仍然应该使用：
 
 - `T`
 - `U`
-- `Box[T]`
+- `Box![T]`
 - `T: Hash`
 
 而不是让用户在正常 generic body 里改用 `any` 编程。
@@ -344,9 +346,14 @@ def id(value any) any
 
 ## 5. 建议语法
 
-### 5.1 泛型参数列表
+### 5.1 泛型参数声明与应用
 
-建议统一使用方括号：
+建议把“声明”和“应用”拆开：
+
+- 声明处继续使用方括号
+- 使用处统一写成 `Name![...]`
+
+声明示例：
 
 ```lona
 struct Box[T] {
@@ -360,24 +367,30 @@ def id[T](value T) T {
 
 理由：
 
-- 与 `cast[T](expr)` / `sizeof[T]()` 一致，都把 `[]` 用作“类型参数入口”
-- 避开当前 `<...>` 在 tuple / 函数取指针上的既有用途
-- 比 `foo<T>` 更不容易和现有表达式语法冲突
+- 声明处的 `[T]` 不会和数组后缀形成二义性
+- 使用处的 `![...]` 能在 parser 阶段和 `T[N]` / `expr[i]` 明确分家
+- 继续避开当前 `<...>` 在 tuple / 函数取指针上的既有用途
+- 未来若引入 const generic，也可以自然预留为 `Name![T; N]`
+
+这里的 `!` 取舍是 v0 的 parser-first 决策：
+
+- 当前优先级是先消除 generic apply、数组和索引之间的语法歧义
+- 未来如果 `lona` 想提供更平滑的表面糖，可以在不破坏语义模型的前提下再讨论
 
 ### 5.2 泛型类型实参
 
 类型位置建议写作：
 
 ```lona
-var a Box[i32]
-var b Pair[i32, bool]
-var c Result[Point, Error]
+var a Box![i32]
+var b Pair![i32, bool]
+var c Result![Point, Error]
 ```
 
 构造也沿用同一写法：
 
 ```lona
-var box = Box[i32](value = 1)
+var box = Box![i32](value = 1)
 ```
 
 ### 5.3 泛型函数调用
@@ -393,15 +406,26 @@ var a = id(1)
 2. 必要时显式写类型参数：
 
 ```lona
-var b = id[i32](1)
+var b = id![i32](1)
 ```
 
 但这条显式函数类型参数路径要有一个边界：
 
-- 只对 `dot-like name` 直接开放，例如 `id[i32](...)`、`pkg.id[i32](...)`
-- 不把它扩展成“任意表达式后都能接 `[T]`”
+- 只对 `dot-like name` 直接开放，例如 `id![i32](...)`、`pkg.id![i32](...)`
+- 不把它扩展成“任意表达式后都能接 `![T]`”
 
 否则会很容易和索引表达式混起来。
+
+另外这里要区分两件事：
+
+- `id![i32]&<>` 这种写法表示“先选定 concrete type args，再取得该具体实例函数的指针”
+- 但 v0 不引入“泛型函数指针类型”这个概念
+
+也就是说：
+
+- 允许存在“指向 `id![i32]` 这种具体实例函数”的普通函数指针值
+- 不允许存在某种仍然带 `T`、还没选定实例的 first-class generic function value
+- 因此也不需要单独设计类似 `![T](:)` 这种 generic function pointer type 语法
 
 ### 5.4 泛型约束
 
@@ -416,7 +440,7 @@ def hash_one[T: Hash](value T) i32 {
 多个参数：
 
 ```lona
-def pair_eq[A: Eq, B: Eq](left Pair[A, B], right Pair[A, B]) bool {
+def pair_eq[A: Eq, B: Eq](left Pair![A, B], right Pair![A, B]) bool {
     ret Eq.eq(left.first, right.first) && Eq.eq(left.second, right.second)
 }
 ```
@@ -447,12 +471,12 @@ struct Box[T: Hash] {
     }
 }
 
-impl[T: Hash] Box[T]: Hash
+impl[T: Hash] Box![T]: Hash
 ```
 
 但这里有个必须收紧的点：
 
-- 语法层允许 `impl[Params] Type[Args]: Trait`
+- 语法层允许 `impl[Params] Type![Args]: Trait`
 - 语义层仍然保持和 trait v0 一样的“header-only impl”
 - 不在 generic v0 中顺便引入 `impl { ... }` body
 
@@ -463,7 +487,7 @@ impl[T: Hash] Box[T]: Hash
 - `trait Iterator[T]`
 - `struct Array[T, N]`
 - `def foo[T = i32](...)`
-- `impl[T] Foo[T] { ... }` 中新增 generic method body 规则
+- `impl[T] Foo![T] { ... }` 中新增 generic method body 规则
 - method 自己再带独立的泛型参数，例如 `def map[U](...)`
 
 其中最后一条不是理论上不行，而是 v0 为了收 scope 建议暂缓。
@@ -685,8 +709,8 @@ struct Box[T] {
 
 实例化后：
 
-- `Box[i32]` 是一个具体 struct layout
-- `Box[Point]` 是另一个具体 struct layout
+- `Box![i32]` 是一个具体 struct layout
+- `Box![Point]` 是另一个具体 struct layout
 
 它们不是同一个 runtime type。
 
@@ -702,10 +726,16 @@ def id[T](value T) T {
 
 实例化后可以近似理解成：
 
-- `id[i32]`
-- `id[Point]`
+- `id![i32]`
+- `id![Point]`
 
 各自有自己的 concrete function symbol。
+
+因此函数取指针也只发生在实例化之后：
+
+- `id![i32]&<>` 指向的是 `id![i32]` 对应的 concrete function symbol
+- 它的类型就是普通的 `(i32: i32)` 函数指针
+- 不存在额外的“generic function pointer” runtime kind
 
 ### 7.4 trait bound 仍然走静态路径
 
@@ -870,9 +900,9 @@ generic v0 不应该试图把所有“无法静态实例化的情况”自动转
   - `Trait.method(...)`
   - `Trait dyn`
 - generic v0 提供：
-  - `struct Foo[T]`
-  - `def foo[T: Trait](...)`
-  - `impl[T: Trait] Foo[T]: OtherTrait`
+- `struct Foo[T]`
+- `def foo[T: Trait](...)`
+- `impl[T: Trait] Foo![T]: OtherTrait`
 
 这就足以覆盖很大一类零成本抽象场景。
 
@@ -904,8 +934,8 @@ trait Iterator[T] {
 
 - `struct Foo[T]`
 - `def foo[T](...)`
-- `Foo[i32]`
-- `foo[i32](...)`
+- `Foo![i32]`
+- `foo![i32](...)`
 - 最基本的 type argument 检查
 
 ### 10.2 Phase 2：trait bound 与 generic impl
@@ -914,7 +944,7 @@ trait Iterator[T] {
 
 - `[T: Hash]`
 - `[T: Hash + Eq]`
-- `impl[T: Hash] Box[T]: Hash`
+- `impl[T: Hash] Box![T]: Hash`
 - generic body 内的 trait-qualified static call
 
 ### 10.3 Phase 3：实例化缓存与跨模块模板导出
@@ -931,7 +961,7 @@ trait Iterator[T] {
 
 如果只选一条最稳的路，我建议：
 
-1. 表面语法用 `Name[T]`，不要用 `Name<T>`。
+1. 声明处继续用 `[T]`，使用处统一用 `Name![T]`，不要用 `Name<T>`。
 2. v0 只做类型参数，不做 const generic / 值参数。
 3. v0 默认使用 monomorphization，不做 runtime dictionary 作为主路径。
 4. 泛型约束直接复用 trait v0，不另造一套 constraint 语言。
@@ -941,7 +971,7 @@ trait Iterator[T] {
 
 这套组合最符合 `lona` 当前形态：
 
-- 语法能和现有 `cast[T]` / `sizeof[T]` / postfix type 风格协调
+- 语法能把 generic apply 和数组后缀在 parser 阶段明确分开，同时继续保留现有 postfix type 风格
 - 语义能直接接上 trait v0
 - 性能模型保持静态零成本
 - 不会在第一版就掉进 C++ 模板式复杂度
