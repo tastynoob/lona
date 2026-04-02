@@ -429,6 +429,22 @@ var h Hash dyn = cast[Hash dyn](p)
 
 这样规则最清晰，也最容易复用现有 method type。
 
+这里还要明确一条命名与歧义约束：
+
+- v0 不依赖“trait 身份”去区分同名方法。
+- `impl Type: Trait` 只声明满足性，不提供 trait 专属 impl body。
+- 因此 trait 满足性检查本质上是在匹配现有 inherent method。
+
+这意味着：
+
+- 如果两个 trait 的方法同名且同签名，当前实现可以允许它们共同复用同一个 concrete method。
+- 如果两个 trait 的方法同名但签名不同，v0 不会像 Rust 那样靠 trait-specific impl body 或额外 disambiguation 机制把它们分开；由于当前也不支持重载，这类写法不应作为 v0 目标能力。
+
+因此建议的 API 风格是：
+
+- trait 方法名在用户层面显式区分，例如 `hashA` / `hashB`。
+- 不把“同名方法再靠 trait 名 disambiguate”当作 trait v0 的设计方向。
+
 ### 7.2 coherence 与 orphan rule
 
 必须有 coherence，不然 import graph 一大就会出现同一 `(Trait, Type)` 多重实现。

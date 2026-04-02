@@ -229,6 +229,38 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_trait_v0_static_getters_accept_const_self_pointers(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_static_const_getter.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def main() i32 {
+            const point = Point(value = 41)
+            var ptr Point const* = &point
+            ret Hash.hash(&point) + Hash.hash(ptr) - 84
+        }
+        """,
+    )
+    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="trait static const getter ir")
+    assert_contains(ir, "define i32 @main()", label="trait static const getter ir")
+
+
 def test_trait_v0_allows_same_module_struct_types_in_trait_signatures(
     compiler: CompilerHarness,
 ) -> None:
@@ -298,6 +330,81 @@ def test_trait_v0_qualified_calls_bind_named_args_from_trait_signatures(
         """,
     )
     assert_regex(ir, r"call i32 @.*Point\.add\(ptr [^,]+, i32 1\)", label="trait named args ir")
+
+
+def test_trait_v0_supports_multiple_traits_with_same_method_name(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_same_method_name_multi_impl.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        trait Metric {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+        impl Point: Metric
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var h Hash dyn = cast[Hash dyn](&point)
+            var m Metric dyn = cast[Metric dyn](&point)
+            ret Hash.hash(&point) + Metric.hash(&point) + h.hash() + m.hash() - 168
+        }
+        """,
+    )
+    assert_contains(ir, "@__lona_trait_witness__", label="trait same method name ir")
+    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="trait same method name ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait same method name ir",
+    )
+
+    _expect_ir_failure(
+        compiler,
+        "trait_same_method_name_different_signatures_bad.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        trait Metric {
+            def hash(step i32) i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+        impl Point: Metric
+
+        def main() i32 {
+            ret 0
+        }
+        """,
+        [
+            "parameter count mismatch for `hash`",
+        ],
+    )
 
 
 def test_trait_v0_allows_local_trait_dyn_fields_before_trait_declaration(
@@ -826,6 +933,173 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
         [
             "read-only trait objects use `Trait const dyn`, not `Trait dyn const`",
             "Write `Hash const dyn` instead of `Hash dyn const`.",
+        ],
+    )
+
+    _expect_ir_failure(
+        compiler,
+        "trait_dyn_const_source_into_writable_return_bad.lo",
+        """
+        trait CounterLike {
+            def read() i32
+        }
+
+        struct Counter {
+            value i32
+
+            def read() i32 {
+                ret self.value
+            }
+        }
+
+        impl Counter: CounterLike
+
+        def freeze() CounterLike dyn {
+            const counter = Counter(value = 41)
+            ret cast[CounterLike dyn](&counter)
+        }
+
+        def main() i32 {
+            ret freeze().read()
+        }
+        """,
+        [
+            "writable `trait_dyn_const_source_into_writable_return_bad.CounterLike dyn` cannot receive a read-only trait object",
+            "borrowed from a const receiver",
+        ],
+    )
+
+
+def test_trait_v0_explicit_readonly_dyn_casts_work_in_params_returns_and_fields(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_explicit_readonly_dyn.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Holder {
+            view Hash const dyn
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def freeze(value Hash const dyn) Hash const dyn {
+            ret value
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var view Hash const dyn = cast[Hash const dyn](&point)
+            var holder = Holder(view = view)
+            ret freeze(holder.view).hash()
+        }
+        """,
+    )
+    assert_regex(ir, r"%.*Holder = type \{ \{ ptr, ptr \} \}", label="trait explicit readonly dyn ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait explicit readonly dyn ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait explicit readonly dyn ir",
+    )
+
+
+def test_trait_v0_readonly_trait_object_pointers_support_getters_and_reject_setters(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_readonly_dyn_pointer_getter.lo",
+        """
+        trait CounterLike {
+            def read() i32
+            set def bump(step i32) i32
+        }
+
+        struct Counter {
+            value i32
+
+            def read() i32 {
+                ret self.value
+            }
+
+            set def bump(step i32) i32 {
+                self.value = self.value + step
+                ret self.value
+            }
+        }
+
+        impl Counter: CounterLike
+
+        def invoke(ptr CounterLike const dyn*) i32 {
+            ret ptr.read()
+        }
+
+        def main() i32 {
+            const frozen = Counter(value = 41)
+            var view CounterLike const dyn = cast[CounterLike dyn](&frozen)
+            var ptr CounterLike const dyn* = &view
+            ret invoke(ptr)
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait readonly dyn ptr getter ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait readonly dyn ptr getter ir",
+    )
+
+    _expect_ir_failure(
+        compiler,
+        "trait_readonly_dyn_pointer_setter_bad.lo",
+        """
+        trait CounterLike {
+            def read() i32
+            set def bump(step i32) i32
+        }
+
+        struct Counter {
+            value i32
+
+            def read() i32 {
+                ret self.value
+            }
+
+            set def bump(step i32) i32 {
+                self.value = self.value + step
+                ret self.value
+            }
+        }
+
+        impl Counter: CounterLike
+
+        def invoke(ptr CounterLike const dyn*) i32 {
+            ret ptr.bump(1)
+        }
+
+        def main() i32 {
+            const frozen = Counter(value = 41)
+            var view CounterLike const dyn = cast[CounterLike dyn](&frozen)
+            var ptr CounterLike const dyn* = &view
+            ret invoke(ptr)
+        }
+        """,
+        [
+            "set trait method `bump` requires a writable receiver",
+            "Read-only trait objects can only call get-only methods",
         ],
     )
 

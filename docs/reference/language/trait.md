@@ -172,7 +172,28 @@ trait CounterLike {
 - `Trait.method(value, ...)` 少了显式 self pointer
 - `set def` 被调用在只读的 `Trait const dyn` 或 `&const_value` 上
 
-## 8. 实现边界
+## 8. 方法命名与歧义
+
+trait v0 当前不依赖“trait 身份”去区分同名方法。
+
+当前实现模型是：
+
+- `impl Type: Trait` 只做满足性声明，不提供独立的 impl body。
+- trait 方法满足性是去匹配现有 inherent method。
+- 普通 `obj.method(...)` 仍然优先只看 inherent method，不做 trait-based disambiguation。
+
+因此推荐风格是：
+
+- trait 方法名在用户层面保持显式区分，例如 `hashA`、`hashB`，而不是依赖不同 trait 都叫 `hash`。
+- 即使两个 trait 的同名方法在当前版本里因为签名完全一致而可以共用同一个 concrete method，这也不应作为推荐 API 风格。
+
+当前边界：
+
+- 同名且同签名的方法，可能被多个 trait 共同复用。
+- 同名但不同签名的方法，不会因为 trait 名不同而自动分流；由于当前不支持重载，这类写法应视为不受支持。
+- 想稳定表达“调用哪个 trait 的方法”，继续使用显式限定调用，例如 `HashA.hashA(&value)`。
+
+## 9. 实现边界
 
 trait v0 当前不包含：
 

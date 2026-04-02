@@ -650,6 +650,52 @@ def test_wrapper_trait_impl_on_imported_self_type_carries_methods_downstream(
     )
 
 
+def test_imported_trait_readonly_dyn_signatures_work_across_module_boundaries(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_dyn_import_readonly_signature/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        def forward(value Hash const dyn) Hash const dyn {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_dyn_import_readonly_signature/main.lo",
+        """
+        import dep
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: dep.Hash
+
+        def main() i32 {
+            const point = Point(value = 41)
+            var view dep.Hash const dyn = dep.forward(cast[dep.Hash dyn](&point))
+            ret view.hash()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@__lona_trait_witness__", label="imported readonly dyn signature ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="imported readonly dyn signature ir",
+    )
+
+
 def test_import_supports_nested_module_paths_from_include_root(
     compiler: CompilerHarness,
 ) -> None:
