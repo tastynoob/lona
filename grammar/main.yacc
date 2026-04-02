@@ -853,14 +853,14 @@ opt_newlines
     ;
 
 type_apply_expr
-    : postfix_expr '!' '[' opt_newlines type_name_seq opt_newlines ']' {
-        $$ = new AstTypeApply($1, $5, @$);
+    : postfix_expr '[' opt_newlines type_name_seq opt_newlines ']' {
+        $$ = new AstTypeApply($1, $4, @$);
     }
-    | postfix_expr '[' opt_newlines type_name_seq opt_newlines ']' {
+    | postfix_expr '!' '[' opt_newlines type_name_seq opt_newlines ']' {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
-            "generic apply uses `![...]`, not `[...]`",
-            "Write `name![T](...)` or `Type![T]` in generic v0.");
+            "expression-side generic apply uses `[...]`, not `![...]`",
+            "Write `name[T](...)`, `name[T]&<>`, or `Type[T](...)` in expression contexts. Reserve `Type![T]` for handwritten type strings.");
     }
     ;
 

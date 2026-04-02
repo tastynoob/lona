@@ -732,35 +732,35 @@ class FunctionAnalyzer {
               "generic function `" + functionName +
                   "` cannot be used as a runtime value before instantiation",
               "Call it directly, for example `" + functionName +
-                  "![T](...)`, or wait until monomorphization support lands.");
+                  "[T](...)`, or wait until monomorphization support lands.");
     }
 
     [[noreturn]] void diagnoseGenericTypeApplyTarget(const location &loc) {
         error(loc,
-              "explicit type arguments currently apply to top-level generic "
-              "functions only",
-              "Use `name![T](...)` with a generic top-level function. "
-              "Generic methods, constructors, and value-level specialization "
-              "are not implemented in generic v0 yet.");
+              "explicit type arguments in expression contexts currently apply "
+              "to top-level generic functions and generic type constructors only",
+              "Use `name[T](...)` with a generic top-level function. "
+              "Generic methods and other value-level specialization forms are "
+              "not implemented in generic v0 yet.");
     }
 
     [[noreturn]] void diagnoseGenericTypeValueUse(const std::string &typeName,
                                                   const location &loc) {
         error(loc,
               "generic type template `" + typeName +
-                  "` cannot be used as a runtime type without `![...]` arguments",
-              "Write `" + typeName +
-                  "![T]` with explicit type arguments before using it in "
-                  "runtime contexts.");
+                  "` cannot be used as a runtime value directly",
+              "Construct it with `" + typeName +
+                  "[T](...)` once generic constructors land, or write `" +
+                  typeName + "![T]` in handwritten type strings.");
     }
 
     [[noreturn]] void diagnoseGenericTypeCall(const std::string &typeName,
                                               const location &loc) {
         error(loc,
               "generic type template `" + typeName +
-                  "` cannot be constructed without `![...]` arguments",
+                  "` cannot be constructed without explicit type arguments",
               "Write `" + typeName +
-                  "![T](...)` once concrete generic constructor support lands. "
+                  "[T](...)` once concrete generic constructor support lands. "
                   "Bare template names do not denote runtime constructible "
                   "types.");
     }
@@ -1961,6 +1961,11 @@ class FunctionAnalyzer {
                 diagnoseGenericFunctionValueUse(
                     describeGenericCallable(typeApply->value), typeApply->loc);
             }
+            if (auto *binding = resolvedEntityBinding(typeApply->value);
+                binding && binding->kind() == ResolvedEntityRef::Kind::GenericType) {
+                diagnoseGenericTypeValueUse(
+                    toStdString(binding->resolvedName()), typeApply->loc);
+            }
             diagnoseGenericTypeApplyTarget(typeApply->loc);
         }
         if (auto *castExpr = node->as<AstCastExpr>()) {
@@ -2673,7 +2678,7 @@ class FunctionAnalyzer {
                       "cannot infer a single concrete type for `" + rawName +
                           "` in `" + functionName + "`",
                       "Pass explicit type arguments like `" + functionName +
-                          "![T](...)` when inference would need to choose "
+                          "[T](...)` when inference would need to choose "
                           "between different concrete argument types.");
             }
             return;
@@ -2835,7 +2840,7 @@ class FunctionAnalyzer {
                           functionName + "`: expected " +
                           std::to_string(functionDecl.typeParams.size()) +
                           ", got " + std::to_string(explicitTypeArgs->size()),
-                    "Match the number of `![` `]` type arguments to the "
+                    "Match the number of `[` `]` type arguments to the "
                       "generic parameter list.");
             }
             for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
@@ -2873,7 +2878,7 @@ class FunctionAnalyzer {
                                   functionDecl.typeParams[i].localName) +
                               "` for `" + functionName + "`",
                           "Pass explicit type arguments like `" + functionName +
-                              "![T](...)`.");
+                              "[T](...)`.");
                 }
             }
         }
@@ -3301,7 +3306,7 @@ class FunctionAnalyzer {
                           functionName + "`: expected " +
                           std::to_string(functionDecl->typeParams.size()) +
                           ", got " + std::to_string(explicitTypeArgs->size()),
-                      "Match the number of `![` `]` type arguments to the "
+                      "Match the number of `[` `]` type arguments to the "
                       "generic parameter list.");
             }
 
@@ -3830,6 +3835,11 @@ class FunctionAnalyzer {
                     node, binding->functionDecl(), typeApplyNode->typeArgs,
                     describeGenericCallable(typeApplyNode->value),
                     binding->ownerInterface());
+            }
+            if (auto *binding = resolvedEntityBinding(typeApplyNode->value);
+                binding && binding->kind() == ResolvedEntityRef::Kind::GenericType) {
+                diagnoseGenericTypeCall(toStdString(binding->resolvedName()),
+                                        typeApplyNode->loc);
             }
             diagnoseGenericTypeApplyTarget(typeApplyNode->loc);
         }

@@ -475,7 +475,7 @@ def test_imported_generic_signatures_use_owner_module_context_for_secondary_qual
         import dep
 
         def main() i32 {
-            var out = dep.take_helper_ptr![i32](dep.make_helper_ptr())
+            var out = dep.take_helper_ptr[i32](dep.make_helper_ptr())
             ret 0
         }
         """,

@@ -14,7 +14,7 @@
 当前仓库里已经落地的 generic v0 主要覆盖：
 
 - `struct Box[T]` / `def id[T](...)` / `impl[T] Box![T]: Trait` 的语法与 AST
-- `Name![T]` / `func![T](...)` / `func![T]&<>` 的 surface 解析
+- 类型字符串里的 `Name![T]`，以及表达式侧的 `func[T](...)` / `func[T]&<>` 解析
 - `AppliedTypeNode` / `AnyTypeNode` 的类型节点与接口哈希
 - generic template 的接口收集、owner-context 类型解析与 body 校验
 - generic call 的类型实参数量检查、保守推断和签名替换
@@ -59,7 +59,8 @@ generic v0 相关的 AST / type-node 入口主要在：
 其中：
 
 - 声明处仍然使用 `[T]`
-- 使用处使用 `Name![T]`
+- 手写类型字符串使用 `Name![T]`
+- 表达式侧 generic apply 使用 `name[T]`
 - 表达式侧的 generic call / function ref 也先落成 `AstTypeApply`
 
 类型层新增了两个专用 type node：
@@ -82,17 +83,18 @@ generic v0 相关的 AST / type-node 入口主要在：
 
 这里有两个当前实现边界值得明确：
 
-1. `![...]` 只表示 generic apply，不和数组后缀共用 `[]`
+1. 类型字符串里的 `![...]` 只表示 type-side generic apply，不和数组后缀共用 `[]`
 2. bare `any` 不是值类型；只有 pointer / indexable-pointer 位置允许使用
 
-旧的方括号 generic apply：
+旧的错误写法现在分成两类：
 
-- `Box[i32]`
-- `id[i32](1)`
+- 类型字符串里写 `Box[i32]`
+- 表达式侧写 `id![i32](1)`
 
-当前在 expression / type 两侧都会被定向诊断为：
+当前会分别给出定向诊断：
 
-- generic apply uses `![...]`, not `[...]`
+- type-side: `generic apply uses ![...]`, not `[...]`
+- expr-side: `expression-side generic apply uses [...]`, not `![...]`
 
 而不是再误落到数组维度分支。
 
@@ -315,9 +317,9 @@ generic function call 当前主要在：
 
 当前已经落地的 generic call 语义包括：
 
-- 显式 `func![T](...)`
+- 显式 `func[T](...)`
 - 省略 type args 时的保守参数驱动推断
-- `func![T]&<>` 这种“先特化、再取具体函数地址”的前端路径
+- `func[T]&<>` 这种“先特化、再取具体函数地址”的前端路径
 
 这里有三步关键处理。
 
@@ -325,7 +327,7 @@ generic function call 当前主要在：
 
 `resolveGenericCallTypeArgs(...)` 会：
 
-- 做 `![...]` 个数检查
+- 做表达式侧 `[...]` 个数检查
 - 若无显式 type args，则按参数模式推断
 
 当前推断不是字符串替换，而是递归走 type pattern：

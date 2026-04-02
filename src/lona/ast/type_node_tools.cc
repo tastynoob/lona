@@ -211,7 +211,7 @@ errorUnsupportedTypeNodeUnsizedArray(const location &loc,
 [[noreturn]] void
 errorLegacyTypeNodeGenericApplySyntax(const location &loc) {
     error(loc, "generic apply uses `![...]`, not `[...]`",
-          "Write `name![T](...)` or `Type![T]` in generic v0.");
+          "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.");
 }
 
 [[noreturn]] void

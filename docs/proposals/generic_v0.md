@@ -45,7 +45,9 @@
 
 最后推荐的组合是：
 
-- 表面语法使用带显式 sigil 的 generic apply：`Name![T]`
+- 声明处继续使用 `[T]`
+- 手写类型字符串里的 generic apply 使用 `Name![T]`
+- 表达式侧 generic apply 使用 `name[T]`
 - 语义模型更接近 Rust：typed generic + trait bound + monomorphization
 - 明确不采用 C++ 那种“文本级模板替换 + 晚期报错”的主模型
 
@@ -106,7 +108,7 @@ Go 泛型的优点是：
 
 因此更适合 `lona` 的 v0 组合是：
 
-- 语法：声明处沿用 `[T]`，使用处采用 `Name![T]`
+- 语法：声明处沿用 `[T]`，类型字符串里采用 `Name![T]`，表达式侧采用 `name[T]`
 - 语义：借 Rust 的 typed generic + trait bound
 - 代码生成：默认走 Rust 风格 monomorphization
 - 明确排除 C++ 模板那套文本替换与偏特化模型
@@ -178,7 +180,8 @@ Go 泛型的优点是：
 这也是为什么泛型 v0 更适合优先考虑：
 
 - 声明处继续用 `[T]`
-- 使用处改成 `Name![T]`
+- 手写类型字符串改成 `Name![T]`
+- 表达式侧继续用 `name[T]`
 
 而不是：
 
@@ -351,7 +354,8 @@ def id(value any) any
 建议把“声明”和“应用”拆开：
 
 - 声明处继续使用方括号
-- 使用处统一写成 `Name![...]`
+- 手写类型字符串写成 `Name![...]`
+- 表达式侧 generic apply 写成 `name[...]`
 
 声明示例：
 
@@ -368,9 +372,10 @@ def id[T](value T) T {
 理由：
 
 - 声明处的 `[T]` 不会和数组后缀形成二义性
-- 使用处的 `![...]` 能在 parser 阶段和 `T[N]` / `expr[i]` 明确分家
+- 类型字符串里的 `![...]` 能在 parser 阶段和 `T[N]` 明确分家
+- 表达式侧继续用 `name[T]`，不会和现有数组访问冲突，因为数组/索引表达式本来就走 `()`
 - 继续避开当前 `<...>` 在 tuple / 函数取指针上的既有用途
-- 未来若引入 const generic，也可以自然预留为 `Name![T; N]`
+- 未来若引入 const generic，也可以自然预留为类型字符串里的 `Name![T; N]`
 
 这里的 `!` 取舍是 v0 的 parser-first 决策：
 
@@ -387,10 +392,10 @@ var b Pair![i32, bool]
 var c Result![Point, Error]
 ```
 
-构造也沿用同一写法：
+构造表达式不使用 `!`，而是直接沿用函数式实例化调用：
 
 ```lona
-var box = Box![i32](value = 1)
+var box = Box[i32](value = 1)
 ```
 
 ### 5.3 泛型函数调用
@@ -406,24 +411,24 @@ var a = id(1)
 2. 必要时显式写类型参数：
 
 ```lona
-var b = id![i32](1)
+var b = id[i32](1)
 ```
 
 但这条显式函数类型参数路径要有一个边界：
 
-- 只对 `dot-like name` 直接开放，例如 `id![i32](...)`、`pkg.id![i32](...)`
-- 不把它扩展成“任意表达式后都能接 `![T]`”
+- 只对 `dot-like name` 直接开放，例如 `id[i32](...)`、`pkg.id[i32](...)`
+- 不把它扩展成“任意表达式后都能接 `[T]`”
 
 否则会很容易和索引表达式混起来。
 
 另外这里要区分两件事：
 
-- `id![i32]&<>` 这种写法表示“先选定 concrete type args，再取得该具体实例函数的指针”
+- `id[i32]&<>` 这种写法表示“先选定 concrete type args，再取得该具体实例函数的指针”
 - 但 v0 不引入“泛型函数指针类型”这个概念
 
 也就是说：
 
-- 允许存在“指向 `id![i32]` 这种具体实例函数”的普通函数指针值
+- 允许存在“指向 `id[i32]` 这种具体实例函数”的普通函数指针值
 - 不允许存在某种仍然带 `T`、还没选定实例的 first-class generic function value
 - 因此也不需要单独设计类似 `![T](:)` 这种 generic function pointer type 语法
 
@@ -726,14 +731,14 @@ def id[T](value T) T {
 
 实例化后可以近似理解成：
 
-- `id![i32]`
-- `id![Point]`
+- `id[i32]`
+- `id[Point]`
 
 各自有自己的 concrete function symbol。
 
 因此函数取指针也只发生在实例化之后：
 
-- `id![i32]&<>` 指向的是 `id![i32]` 对应的 concrete function symbol
+- `id[i32]&<>` 指向的是 `id[i32]` 对应的 concrete function symbol
 - 它的类型就是普通的 `(i32: i32)` 函数指针
 - 不存在额外的“generic function pointer” runtime kind
 
@@ -935,7 +940,7 @@ trait Iterator[T] {
 - `struct Foo[T]`
 - `def foo[T](...)`
 - `Foo![i32]`
-- `foo![i32](...)`
+- `foo[i32](...)`
 - 最基本的 type argument 检查
 
 ### 10.2 Phase 2：trait bound 与 generic impl
@@ -961,7 +966,7 @@ trait Iterator[T] {
 
 如果只选一条最稳的路，我建议：
 
-1. 声明处继续用 `[T]`，使用处统一用 `Name![T]`，不要用 `Name<T>`。
+1. 声明处继续用 `[T]`；手写类型字符串用 `Name![T]`；表达式侧用 `name[T]`；不要用 `Name<T>`。
 2. v0 只做类型参数，不做 const generic / 值参数。
 3. v0 默认使用 monomorphization，不做 runtime dictionary 作为主路径。
 4. 泛型约束直接复用 trait v0，不另造一套 constraint 语言。

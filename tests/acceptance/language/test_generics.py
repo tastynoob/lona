@@ -42,8 +42,8 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
             var typed i32* = &value
             var erased any* = cast[any*](typed)
             var readonly any const* = cast[any const*](typed)
-            id![i32](1)
-            var cb (i32: i32) = id![i32]&<>
+            id[i32](1)
+            var cb (i32: i32) = id[i32]&<>
         }
         """,
     )
@@ -219,7 +219,7 @@ def test_generic_v0_explicit_type_args_enter_semantic_call_path(
         }
 
         def main() i32 {
-            ret id![i32](1)
+            ret id[i32](1)
         }
         """,
         [
@@ -241,7 +241,7 @@ def test_generic_v0_specialized_function_refs_use_concrete_signature_path(
         }
 
         def main() i32 {
-            var cb (i32: i32) = id![i32]&<>
+            var cb (i32: i32) = id[i32]&<>
             ret cb(1)
         }
         """,
@@ -264,12 +264,12 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
             }
 
             def main() i32 {
-                ret id![i32, bool](1)
+                ret id[i32, bool](1)
             }
             """,
             [
                 "generic type argument count mismatch for `id`: expected 1, got 2",
-                "Match the number of `![` `]` type arguments to the generic parameter list.",
+                "Match the number of `[` `]` type arguments to the generic parameter list.",
             ],
         ),
         (
@@ -285,7 +285,7 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
             """,
             [
                 "cannot infer generic type argument `T` for `choose`",
-                "Pass explicit type arguments like `choose![T](...)`.",
+                "Pass explicit type arguments like `choose[T](...)`.",
             ],
         ),
         (
@@ -487,19 +487,19 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
             ],
         ),
         (
-            "generic_old_square_apply_bad.lo",
+            "generic_old_bang_apply_bad.lo",
             """
             def id[T](value T) T {
                 ret value
             }
 
             def main() i32 {
-                ret id[i32](1)
+                ret id![i32](1)
             }
             """,
             [
-                "generic apply uses `![...]`, not `[...]`",
-                "Write `name![T](...)` or `Type![T]` in generic v0.",
+                "expression-side generic apply uses `[...]`, not `![...]`",
+                "Write `name[T](...)`, `name[T]&<>`, or `Type[T](...)` in expression contexts. Reserve `Type![T]` for handwritten type strings.",
             ],
         ),
         (
@@ -516,7 +516,7 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
             """,
             [
                 "generic apply uses `![...]`, not `[...]`",
-                "Write `name![T](...)` or `Type![T]` in generic v0.",
+                "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.",
             ],
         ),
         (
@@ -533,7 +533,7 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
             """,
             [
                 "generic apply uses `![...]`, not `[...]`",
-                "Write `name![T](...)` or `Type![T]` in generic v0.",
+                "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.",
             ],
         ),
         (

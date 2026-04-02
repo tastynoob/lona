@@ -101,16 +101,16 @@ def map_lookup_or_zero(map Assoc![i32, i32] const dyn, key i32) i32 {
 ## 期望的用法
 
 ```lona
-var vec = Vec![i32]()
+var vec = Vec[i32]()
 vec.push(1)
 vec.push(2)
 vec.push(3)
 
-var list = List![i32]()
+var list = List[i32]()
 list.append(4)
 list.append(5)
 
-var map = Map![i32, i32]()
+var map = Map[i32, i32]()
 map.put(1, 10)
 map.put(2, 20)
 
