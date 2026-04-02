@@ -1,0 +1,344 @@
+// Container + trait sample: a vector, list, and map share read-only container
+// traits, while their iterators share mutable `next()`-style iterator traits.
+
+trait SizedCollection {
+    def len() i32
+}
+
+trait IntAggregate {
+    def total() i32
+}
+
+trait IntIter {
+    def done() bool
+    set def next() i32
+}
+
+trait EntryIter {
+    def done() bool
+    set def next() Entry
+}
+
+struct Entry {
+    set key i32
+    set value i32
+}
+
+struct IntVector {
+    set length i32
+    set values i32[8]
+
+    set def push(value i32) {
+        self.values(self.length) = value
+        self.length = self.length + 1
+    }
+
+    def get(index i32) i32 {
+        ret self.values(index)
+    }
+
+    def len() i32 {
+        ret self.length
+    }
+
+    def total() i32 {
+        var index i32 = 0
+        var out i32 = 0
+        for index < self.length {
+            out = out + self.values(index)
+            index = index + 1
+        }
+        ret out
+    }
+
+    def start_iter() VectorIter {
+        ret VectorIter(source = self, index = 0)
+    }
+}
+
+struct VectorIter {
+    source IntVector const*
+    set index i32
+
+    def done() bool {
+        ret self.index >= (*self.source).length
+    }
+
+    set def next() i32 {
+        var out = (*self.source).values(self.index)
+        self.index = self.index + 1
+        ret out
+    }
+}
+
+impl IntVector: SizedCollection
+impl IntVector: IntAggregate
+impl VectorIter: IntIter
+
+struct ListNode {
+    set value i32
+    set next i32
+}
+
+struct IntList {
+    set nodes ListNode[8]
+    set head i32
+    set tail i32
+    set used i32
+    set length i32
+
+    set def append(value i32) {
+        var idx = self.used
+        self.used = self.used + 1
+        self.length = self.length + 1
+        self.nodes(idx).value = value
+        self.nodes(idx).next = -1
+
+        if self.head == -1 {
+            self.head = idx
+            self.tail = idx
+            ret
+        }
+
+        self.nodes(self.tail).next = idx
+        self.tail = idx
+    }
+
+    def len() i32 {
+        ret self.length
+    }
+
+    def total() i32 {
+        var cur = self.head
+        var out i32 = 0
+        for cur != -1 {
+            out = out + self.nodes(cur).value
+            cur = self.nodes(cur).next
+        }
+        ret out
+    }
+
+    def start_iter() ListIter {
+        ret ListIter(source = self, current = self.head)
+    }
+}
+
+struct ListIter {
+    source IntList const*
+    set current i32
+
+    def done() bool {
+        ret self.current == -1
+    }
+
+    set def next() i32 {
+        var out = (*self.source).nodes(self.current).value
+        self.current = (*self.source).nodes(self.current).next
+        ret out
+    }
+}
+
+impl IntList: SizedCollection
+impl IntList: IntAggregate
+impl ListIter: IntIter
+
+struct IntMap {
+    set keys i32[8]
+    set values i32[8]
+    set length i32
+
+    set def put(key i32, value i32) {
+        var index i32 = 0
+        for index < self.length {
+            if self.keys(index) == key {
+                self.values(index) = value
+                ret
+            }
+            index = index + 1
+        }
+
+        self.keys(self.length) = key
+        self.values(self.length) = value
+        self.length = self.length + 1
+    }
+
+    def get_or(key i32, fallback i32) i32 {
+        var index i32 = 0
+        for index < self.length {
+            if self.keys(index) == key {
+                ret self.values(index)
+            }
+            index = index + 1
+        }
+        ret fallback
+    }
+
+    def len() i32 {
+        ret self.length
+    }
+
+    def total() i32 {
+        var index i32 = 0
+        var out i32 = 0
+        for index < self.length {
+            out = out + self.values(index)
+            index = index + 1
+        }
+        ret out
+    }
+
+    def start_iter() MapIter {
+        ret MapIter(source = self, index = 0)
+    }
+}
+
+struct MapIter {
+    source IntMap const*
+    set index i32
+
+    def done() bool {
+        ret self.index >= (*self.source).length
+    }
+
+    set def next() Entry {
+        var out Entry
+        out.key = (*self.source).keys(self.index)
+        out.value = (*self.source).values(self.index)
+        self.index = self.index + 1
+        ret out
+    }
+}
+
+impl IntMap: SizedCollection
+impl IntMap: IntAggregate
+impl MapIter: EntryIter
+
+def make_vector() IntVector {
+    var out IntVector
+    out.length = 0
+    ret out
+}
+
+def make_list() IntList {
+    var out IntList
+    out.head = -1
+    out.tail = -1
+    out.used = 0
+    out.length = 0
+    ret out
+}
+
+def make_map() IntMap {
+    var out IntMap
+    out.length = 0
+    ret out
+}
+
+def describe_size(view SizedCollection dyn) i32 {
+    ret view.len()
+}
+
+def describe_total(view IntAggregate dyn) i32 {
+    ret view.total()
+}
+
+def describe_total_readonly(view IntAggregate const dyn) i32 {
+    ret view.total()
+}
+
+def sum_int_iter(view IntIter dyn) i32 {
+    var out i32 = 0
+    for view.done() == false {
+        out = out + view.next()
+    }
+    ret out
+}
+
+def sum_entry_values(view EntryIter dyn) i32 {
+    var out i32 = 0
+    for view.done() == false {
+        out = out + view.next().value
+    }
+    ret out
+}
+
+def run() i32 {
+    var vector = make_vector()
+    vector.push(3)
+    vector.push(5)
+    vector.push(8)
+
+    var list = make_list()
+    list.append(4)
+    list.append(7)
+    list.append(9)
+
+    var map = make_map()
+    map.put(1, 10)
+    map.put(2, 20)
+    map.put(1, 15)
+    map.put(3, 5)
+
+    if SizedCollection.len(&vector) != 3 {
+        ret 1
+    }
+
+    if IntAggregate.total(&list) != 20 {
+        ret 2
+    }
+
+    if IntAggregate.total(&map) != 40 {
+        ret 3
+    }
+
+    if vector.get(2) != 8 {
+        ret 4
+    }
+
+    if map.get_or(2, 0) != 20 {
+        ret 5
+    }
+
+    if map.get_or(9, 77) != 77 {
+        ret 6
+    }
+
+    var vector_size SizedCollection dyn = cast[SizedCollection dyn](&vector)
+    var list_total IntAggregate dyn = cast[IntAggregate dyn](&list)
+    const frozen_map = map
+    var readonly_map_total IntAggregate const dyn = cast[IntAggregate dyn](&frozen_map)
+
+    if describe_size(vector_size) != 3 {
+        ret 7
+    }
+
+    if describe_total(list_total) != 20 {
+        ret 8
+    }
+
+    if describe_total_readonly(readonly_map_total) != 40 {
+        ret 9
+    }
+
+    var vector_iter = vector.start_iter()
+    var vector_iter_view IntIter dyn = cast[IntIter dyn](&vector_iter)
+    if sum_int_iter(vector_iter_view) != 16 {
+        ret 10
+    }
+
+    var list_iter = list.start_iter()
+    var list_iter_view IntIter dyn = cast[IntIter dyn](&list_iter)
+    if sum_int_iter(list_iter_view) != 20 {
+        ret 11
+    }
+
+    var map_iter = map.start_iter()
+    var map_iter_view EntryIter dyn = cast[EntryIter dyn](&map_iter)
+    if sum_entry_values(map_iter_view) != 40 {
+        ret 12
+    }
+
+    ret vector.total() + list.total() + map.total()
+}
+
+ret run()
