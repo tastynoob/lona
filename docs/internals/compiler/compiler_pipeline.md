@@ -27,6 +27,15 @@
 
 这些 stage 只负责“单个模块”的 lowering 和 codegen。
 
+generic v0 当前在 pipeline 里的位置需要单独说明：
+
+- generic template declaration 会参与接口收集
+- generic template body 会参与 resolve 阶段的模板校验
+- 但未实例化 template 当前不会进入 HIR / LLVM lowering
+
+generic 的内部数据模型与这条“先校验、暂不实例化”的边界见
+[generic_v0.md](generic_v0.md)。
+
 ## 模块调度
 
 - `WorkspaceLoader` 先构建 import tree

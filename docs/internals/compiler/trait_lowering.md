@@ -9,6 +9,13 @@
 这里也不会重复讲用户侧语法规则；语法和语言层语义请看
 `docs/reference/language/trait.md`。
 
+generic v0 当前已经有单独的内部文档：
+
+- `docs/internals/compiler/generic_v0.md`
+
+因此本文只讨论 trait v0 自己的 lowering；generic template、applied type
+和当前未实现的 monomorphization 不在这里展开。
+
 ## 1. 范围
 
 trait v0 当前只覆盖：
