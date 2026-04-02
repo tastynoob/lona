@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -73,6 +74,39 @@ getOrCreateModuleEntry(GlobalScope *global, TypeTable *typeMgr,
     return entry;
 }
 
+struct GenericRuntimeState {
+    std::unordered_set<std::string> inProgressFunctionSymbols;
+    std::unordered_set<std::string> emittedFunctionSymbols;
+};
+
+GenericRuntimeState &
+genericRuntimeStateFor(HIRModule *module) {
+    static std::unordered_map<HIRModule *, GenericRuntimeState> states;
+    return states[module];
+}
+
+class GenericFunctionEmissionGuard {
+    GenericRuntimeState &state_;
+    std::string symbolName_;
+    bool completed_ = false;
+
+public:
+    GenericFunctionEmissionGuard(GenericRuntimeState &state,
+                                 std::string symbolName)
+        : state_(state), symbolName_(std::move(symbolName)) {
+        state_.inProgressFunctionSymbols.insert(symbolName_);
+    }
+
+    ~GenericFunctionEmissionGuard() {
+        state_.inProgressFunctionSymbols.erase(symbolName_);
+        if (completed_) {
+            state_.emittedFunctionSymbols.insert(symbolName_);
+        }
+    }
+
+    void markCompleted() { completed_ = true; }
+};
+
 }  // namespace
 
 class FunctionAnalyzer {
@@ -98,14 +132,31 @@ class FunctionAnalyzer {
                               hint);
     }
 
+    std::string currentFunctionDisplayName() const {
+        if (resolved.decl()) {
+            return toStdString(resolved.decl()->name);
+        }
+        if (resolved.hasDeclaredFunction()) {
+            return toStdString(resolved.functionName());
+        }
+        return "<function>";
+    }
+
     TypeClass *requireType(TypeNode *node, const location &loc,
                            const std::string &context) {
         validateTypeNodeLayout(node);
         if (isReservedInitialListTypeNode(node)) {
             errorReservedInitialListType(node->loc);
         }
-        auto *type =
-            unit ? unit->resolveType(typeMgr, node) : typeMgr->getType(node);
+        TypeClass *type = nullptr;
+        if (!resolved.concreteGenericTypes().empty()) {
+            type = substituteGenericSignatureType(
+                node, resolved.concreteGenericTypes(), loc,
+                currentFunctionDisplayName(), nullptr);
+        } else {
+            type = unit ? unit->resolveType(typeMgr, node)
+                        : typeMgr->getType(node);
+        }
         if (!type) {
             error(loc, context);
         }
@@ -222,6 +273,178 @@ class FunctionAnalyzer {
                 "Rebuild declarations before reusing this resolved module.");
         }
         return type;
+    }
+
+    bool isLocalGenericTemplateOwner(
+        const ModuleInterface::FunctionDecl *functionDecl,
+        const ModuleInterface *ownerInterface) const {
+        if (!functionDecl || !unit) {
+            return false;
+        }
+        if (ownerInterface && unit->interface() &&
+            ownerInterface != unit->interface()) {
+            return false;
+        }
+        auto lookup = unit->lookupTopLevelName(functionDecl->localName);
+        return lookup.isFunction() && lookup.functionDecl == functionDecl;
+    }
+
+    const AstFuncDecl *findLocalGenericFunctionDecl(
+        const ModuleInterface::FunctionDecl &functionDecl) const {
+        if (!unit) {
+            return nullptr;
+        }
+        auto *root = unit->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!funcDecl || !funcDecl->hasTypeParams()) {
+                continue;
+            }
+            if (toStdString(funcDecl->name) ==
+                toStdString(functionDecl.localName)) {
+                return funcDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    std::string buildLocalGenericFunctionInstanceSymbolName(
+        const ModuleInterface::FunctionDecl &functionDecl,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc) {
+        auto baseName = !toStdString(functionDecl.symbolName).empty()
+                            ? toStdString(functionDecl.symbolName)
+                            : toStdString(functionDecl.localName);
+        std::string symbolName = baseName + "__inst";
+        for (const auto &param : functionDecl.typeParams) {
+            auto paramName = toStdString(param.localName);
+            auto found = genericArgs.find(paramName);
+            if (found == genericArgs.end() || !found->second) {
+                internalError(
+                    loc,
+                    "generic function instance is missing a concrete type for `" +
+                        paramName + "`",
+                    "This looks like a generic argument selection bug.");
+            }
+            symbolName += "__" +
+                          mangleModuleEntryComponent(found->second->full_name);
+        }
+        return symbolName;
+    }
+
+    Function *declareLocalGenericFunctionInstance(
+        const ModuleInterface::FunctionDecl &functionDecl,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const std::string &symbolName, const location &loc) {
+        if (auto *existing = global->getObj(string(symbolName))) {
+            auto *func = existing->as<Function>();
+            if (!func) {
+                internalError(
+                    loc,
+                    "generic function instance symbol `" + symbolName +
+                        "` collides with a non-function global",
+                    "This looks like a symbol declaration bug.");
+            }
+            return func;
+        }
+
+        std::vector<TypeClass *> argTypes;
+        argTypes.reserve(functionDecl.paramTypeNodes.size());
+        for (auto *paramTypeNode : functionDecl.paramTypeNodes) {
+            argTypes.push_back(substituteGenericSignatureType(
+                paramTypeNode, genericArgs, loc,
+                toStdString(functionDecl.localName), nullptr));
+        }
+        auto *retType = substituteGenericSignatureType(
+            functionDecl.returnTypeNode, genericArgs, loc,
+            toStdString(functionDecl.localName), nullptr);
+        auto *funcType = typeMgr->getOrCreateFunctionType(
+            argTypes, retType, functionDecl.paramBindingKinds,
+            functionDecl.abiKind);
+        if (!funcType) {
+            internalError(
+                loc,
+                "failed to build concrete function type for `" + symbolName +
+                    "`",
+                "This looks like a generic instantiation bug.");
+        }
+
+        auto *llvmFunc = llvm::Function::Create(
+            getFunctionAbiLLVMType(*typeMgr, funcType, false),
+            llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
+            global->module);
+        annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        auto *func =
+            new Function(llvmFunc, funcType, functionDecl.paramNames, false);
+        global->addObj(string(symbolName), func);
+        return func;
+    }
+
+    HIRFunc *findOwnerModuleFunction(const std::string &symbolName) const {
+        if (!ownerModule) {
+            return nullptr;
+        }
+        for (auto *func : ownerModule->getFunctions()) {
+            auto *llvmFunc = func ? func->getLLVMFunction() : nullptr;
+            if (llvmFunc && llvmFunc->getName() == llvm::StringRef(symbolName)) {
+                return func;
+            }
+        }
+        return nullptr;
+    }
+
+    Function *instantiateLocalGenericFunction(
+        const ModuleInterface::FunctionDecl &functionDecl,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc) {
+        auto *templateDecl = findLocalGenericFunctionDecl(functionDecl);
+        if (!templateDecl) {
+            internalError(
+                loc,
+                "same-module generic function `" +
+                    toStdString(functionDecl.localName) +
+                    "` is missing its template AST",
+                "This looks like a generic template registration bug.");
+        }
+
+        auto symbolName =
+            buildLocalGenericFunctionInstanceSymbolName(functionDecl,
+                                                       genericArgs, loc);
+        auto *func = declareLocalGenericFunctionInstance(functionDecl,
+                                                         genericArgs,
+                                                         symbolName, loc);
+
+        auto &runtimeState = genericRuntimeStateFor(ownerModule);
+        if (runtimeState.emittedFunctionSymbols.count(symbolName) != 0 ||
+            runtimeState.inProgressFunctionSymbols.count(symbolName) != 0 ||
+            findOwnerModuleFunction(symbolName)) {
+            return func;
+        }
+
+        GenericFunctionEmissionGuard guard(runtimeState, symbolName);
+        auto resolvedModule = resolveGenericFunctionInstance(
+            global, unit, templateDecl, symbolName, genericArgs);
+        if (!resolvedModule || resolvedModule->functions().size() != 1) {
+            internalError(
+                loc,
+                "generic function instance `" + symbolName +
+                    "` did not resolve to exactly one function body",
+                "This looks like a generic resolve bug.");
+        }
+
+        auto *hirInstance = analyzeResolvedFunction(global, ownerModule, unit,
+                                                    *resolvedModule->functions().front());
+        if (!findOwnerModuleFunction(symbolName)) {
+            ownerModule->addFunction(hirInstance);
+        }
+        guard.markCompleted();
+        return func;
     }
 
     StructType *currentMethodParentType() {
@@ -2910,6 +3133,15 @@ class FunctionAnalyzer {
             *functionDecl, normalizedArgs, explicitTypeArgs, node->loc,
             functionName, ownerInterface);
 
+        if (isLocalGenericTemplateOwner(functionDecl, ownerInterface)) {
+            auto *func =
+                instantiateLocalGenericFunction(*functionDecl, genericArgs,
+                                                node->loc);
+            return lowerResolvedCall(makeHIR<HIRValue>(func, node->loc),
+                                     std::move(normalizedArgs), node->loc,
+                                     true);
+        }
+
         std::vector<FormalCallArg> typedFormals;
         typedFormals.reserve(functionDecl->paramTypeNodes.size());
         for (std::size_t i = 0; i < functionDecl->paramTypeNodes.size();
@@ -3370,6 +3602,26 @@ class FunctionAnalyzer {
                               expectedDescription + ", got " +
                               actualDescription);
                 }
+            }
+
+            if (isLocalGenericTemplateOwner(functionDecl,
+                                            binding->ownerInterface())) {
+                auto *func = instantiateLocalGenericFunction(
+                    *functionDecl, genericArgs, node->loc);
+                auto *funcType =
+                    func->getType() ? func->getType()->as<FuncType>() : nullptr;
+                if (!funcType) {
+                    internalError(
+                        node->loc,
+                        "instantiated generic function reference `" +
+                            functionName + "` is missing its concrete type",
+                        "This looks like a generic instantiation bug.");
+                }
+                auto *pointerType = typeMgr->createPointerType(funcType);
+                auto *value =
+                    pointerType->newObj(Object::REG_VAL | Object::READONLY);
+                value->bindllvmValue(func->getllvmValue());
+                return makeHIR<HIRValue>(value, node->loc);
             }
 
             diagnoseGenericInstantiationPending(functionName, node->loc);

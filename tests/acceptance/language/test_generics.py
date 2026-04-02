@@ -210,7 +210,7 @@ def test_generic_v0_template_bodies_accept_local_uses_of_visible_type_params(
 def test_generic_v0_explicit_type_args_enter_semantic_call_path(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_explicit_type_args_round3.lo",
         """
@@ -222,17 +222,23 @@ def test_generic_v0_explicit_type_args_enter_semantic_call_path(
             ret id[i32](1)
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `id`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "@generic_explicit_type_args_round3.id__inst__i32",
+        label="generic explicit instantiation ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_explicit_type_args_round3.id__inst__i32(i32 1)",
+        label="generic explicit instantiation ir",
     )
 
 
 def test_generic_v0_specialized_function_refs_use_concrete_signature_path(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_specialized_func_ref_round8.lo",
         """
@@ -245,10 +251,16 @@ def test_generic_v0_specialized_function_refs_use_concrete_signature_path(
             ret cb(1)
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `id`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "store ptr @generic_specialized_func_ref_round8.id__inst__i32",
+        label="generic function ref ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %2(i32 1)",
+        label="generic function ref ir",
     )
 
 
@@ -289,19 +301,20 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
             ],
         ),
         (
-            "generic_direct_inference_round3.lo",
+            "generic_template_runtime_value_bad_round11.lo",
             """
             def id[T](value T) T {
                 ret value
             }
 
             def main() i32 {
-                ret id(1)
+                var f = id
+                ret 0
             }
             """,
             [
-                "generic function instantiation is not implemented yet for `id`",
-                "Monomorphization lands in later generic v0 tasks",
+                "generic function `id` cannot be used as a runtime value before instantiation",
+                "Call it directly, for example `id[T](...)`, or wait until monomorphization support lands.",
             ],
         ),
     ]
@@ -309,10 +322,38 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_generic_v0_direct_inference_emits_concrete_instance(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_direct_inference_round3.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+
+        def main() i32 {
+            ret id(1)
+        }
+        """,
+    )
+    assert_contains(
+        ir,
+        "@generic_direct_inference_round3.id__inst__i32",
+        label="generic direct inference ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_direct_inference_round3.id__inst__i32(i32 1)",
+        label="generic direct inference ir",
+    )
+
+
 def test_generic_v0_recursively_substitutes_pointer_signatures_before_pending_instantiation(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_pointer_substitution_round4.lo",
         """
@@ -327,17 +368,18 @@ def test_generic_v0_recursively_substitutes_pointer_signatures_before_pending_in
             ret *out
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `passthrough_ptr`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "define ptr @generic_pointer_substitution_round4.passthrough_ptr__inst__i32",
+        label="generic pointer substitution ir",
     )
 
 
 def test_generic_v0_allows_box_t_pointer_signatures_before_pending_instantiation(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_box_t_pointer_signature_round5.lo",
         """
@@ -355,17 +397,18 @@ def test_generic_v0_allows_box_t_pointer_signatures_before_pending_instantiation
             ret 0
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `take_box_ptr`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "define ptr @generic_box_t_pointer_signature_round5.take_box_ptr__inst__i32",
+        label="generic applied pointer ir",
     )
 
 
 def test_generic_v0_infers_applied_type_args_through_pair_pointer_patterns(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_pair_t_bool_pointer_signature_round5.lo",
         """
@@ -384,17 +427,18 @@ def test_generic_v0_infers_applied_type_args_through_pair_pointer_patterns(
             ret 0
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `take_pair_ptr`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "define ptr @generic_pair_t_bool_pointer_signature_round5.take_pair_ptr__inst__i32",
+        label="generic pair pointer ir",
     )
 
 
 def test_generic_v0_infers_applied_type_args_through_tuple_patterns(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_tuple_applied_signature_round10.lo",
         """
@@ -413,17 +457,18 @@ def test_generic_v0_infers_applied_type_args_through_tuple_patterns(
             ret 0
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `take_tuple`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "define ptr @generic_tuple_applied_signature_round10.take_tuple__inst__i32",
+        label="generic tuple pointer ir",
     )
 
 
 def test_generic_v0_infers_applied_type_args_through_const_pointer_patterns(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
         "generic_const_applied_signature_round10.lo",
         """
@@ -441,10 +486,11 @@ def test_generic_v0_infers_applied_type_args_through_const_pointer_patterns(
             ret 0
         }
         """,
-        [
-            "generic function instantiation is not implemented yet for `borrow_const`",
-            "Monomorphization lands in later generic v0 tasks",
-        ],
+    )
+    assert_contains(
+        ir,
+        "define ptr @generic_const_applied_signature_round10.borrow_const__inst__i32",
+        label="generic const pointer ir",
     )
 
 

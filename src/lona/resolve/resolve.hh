@@ -3,6 +3,7 @@
 #include "lona/ast/astnode.hh"
 #include "lona/module/module_interface.hh"
 #include "lona/sema/entity.hh"
+#include "lona/type/type.hh"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -156,6 +157,7 @@ class ResolvedFunction {
     bool guaranteedReturn_ = false;
     bool templateValidationOnly_ = false;
     std::vector<string> genericTypeParams_;
+    std::unordered_map<std::string, TypeClass *> concreteGenericTypes_;
 
     std::vector<const ResolvedLocalBinding *> params_;
     const ResolvedLocalBinding *selfBinding_ = nullptr;
@@ -171,7 +173,9 @@ public:
                      const location &loc, bool topLevelEntry,
                      bool languageEntry, bool guaranteedReturn,
                      bool templateValidationOnly = false,
-                     std::vector<string> genericTypeParams = {})
+                     std::vector<string> genericTypeParams = {},
+                     std::unordered_map<std::string, TypeClass *>
+                         concreteGenericTypes = {})
         : decl_(decl),
           body_(body),
           functionName_(std::move(functionName)),
@@ -181,7 +185,8 @@ public:
           languageEntry_(languageEntry),
           guaranteedReturn_(guaranteedReturn),
           templateValidationOnly_(templateValidationOnly),
-          genericTypeParams_(std::move(genericTypeParams)) {}
+          genericTypeParams_(std::move(genericTypeParams)),
+          concreteGenericTypes_(std::move(concreteGenericTypes)) {}
 
     const AstFuncDecl *decl() const { return decl_; }
     const AstNode *body() const { return body_; }
@@ -196,6 +201,17 @@ public:
     bool isTemplateValidationOnly() const { return templateValidationOnly_; }
     const std::vector<string> &genericTypeParams() const {
         return genericTypeParams_;
+    }
+    const std::unordered_map<std::string, TypeClass *> &
+    concreteGenericTypes() const {
+        return concreteGenericTypes_;
+    }
+    TypeClass *concreteGenericType(const std::string &name) const {
+        if (auto found = concreteGenericTypes_.find(name);
+            found != concreteGenericTypes_.end()) {
+            return found->second;
+        }
+        return nullptr;
     }
 
     void addParam(const ResolvedLocalBinding *binding) {
@@ -249,7 +265,9 @@ public:
                                      bool languageEntry,
                                      bool guaranteedReturn,
                                      bool templateValidationOnly = false,
-                                     std::vector<string> genericTypeParams = {});
+                                     std::vector<string> genericTypeParams = {},
+                                     std::unordered_map<std::string, TypeClass *>
+                                         concreteGenericTypes = {});
 
     const std::vector<std::unique_ptr<ResolvedFunction>> &functions() const {
         return functions_;
@@ -259,5 +277,11 @@ public:
 std::unique_ptr<ResolvedModule>
 resolveModule(GlobalScope *global, AstNode *root,
               const CompilationUnit *unit = nullptr, bool rootModule = false);
+
+std::unique_ptr<ResolvedModule>
+resolveGenericFunctionInstance(
+    GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
+    string resolvedFunctionName,
+    std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
 
 }  // namespace lona

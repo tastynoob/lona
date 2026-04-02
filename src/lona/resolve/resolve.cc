@@ -638,12 +638,14 @@ class ModuleResolver {
         string methodParentTypeName, const location &loc, bool topLevelEntry,
         bool languageEntry, bool guaranteedReturn,
         bool templateValidationOnly = false,
-        std::vector<string> genericTypeParams = {}) {
+        std::vector<string> genericTypeParams = {},
+        std::unordered_map<std::string, TypeClass *> concreteGenericTypes = {}) {
         auto *resolved = module_->createFunction(
             decl, body, std::move(functionName),
             std::move(methodParentTypeName), loc, topLevelEntry, languageEntry,
             guaranteedReturn, templateValidationOnly,
-            std::move(genericTypeParams));
+            std::move(genericTypeParams),
+            std::move(concreteGenericTypes));
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
                 ResolvedLocalBinding::Kind::Self, BindingKind::Value, "self",
@@ -840,11 +842,14 @@ ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
                                const location &loc, bool topLevelEntry,
                                bool languageEntry, bool guaranteedReturn,
                                bool templateValidationOnly,
-                               std::vector<string> genericTypeParams) {
+                               std::vector<string> genericTypeParams,
+                               std::unordered_map<std::string, TypeClass *>
+                                   concreteGenericTypes) {
     functions_.push_back(std::make_unique<ResolvedFunction>(
         decl, body, std::move(functionName), std::move(methodParentTypeName),
         loc, topLevelEntry, languageEntry, guaranteedReturn,
-        templateValidationOnly, std::move(genericTypeParams)));
+        templateValidationOnly, std::move(genericTypeParams),
+        std::move(concreteGenericTypes)));
     return functions_.back().get();
 }
 
@@ -870,6 +875,54 @@ std::unique_ptr<ResolvedModule>
 resolveModule(GlobalScope *global, AstNode *root, const CompilationUnit *unit,
               bool rootModule) {
     return resolve_impl::ModuleResolver(global, unit, rootModule).resolve(root);
+}
+
+std::unique_ptr<ResolvedModule>
+resolveGenericFunctionInstance(
+    GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
+    string resolvedFunctionName,
+    std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
+    if (!global || !decl) {
+        return nullptr;
+    }
+
+    auto *typeMgr = global->types();
+    assert(typeMgr);
+
+    std::vector<string> genericTypeParams;
+    if (decl->typeParams) {
+        genericTypeParams.reserve(decl->typeParams->size());
+        for (auto *token : *decl->typeParams) {
+            if (token) {
+                genericTypeParams.push_back(token->text);
+            }
+        }
+    }
+
+    auto module = std::make_unique<ResolvedModule>();
+    auto *resolved = module->createFunction(
+        decl, decl->body, std::move(resolvedFunctionName), string(), decl->loc,
+        false, false, decl->body && decl->body->hasTerminator(), false,
+        std::move(genericTypeParams),
+        std::move(concreteGenericTypes));
+
+    if (decl->args) {
+        for (auto *arg : *decl->args) {
+            auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+            if (!varDecl) {
+                error(decl->loc, "invalid function argument declaration",
+                      "Each function parameter must be declared as a typed "
+                      "variable.");
+            }
+            resolved->addParam(module->createLocalBinding(
+                ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
+                toStdString(varDecl->field), varDecl, varDecl->loc));
+        }
+    }
+
+    resolve_impl::FunctionResolver(global, typeMgr, unit, *module, *resolved)
+        .resolve();
+    return module;
 }
 
 }  // namespace lona

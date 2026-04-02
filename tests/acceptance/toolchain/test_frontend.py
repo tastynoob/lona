@@ -352,6 +352,71 @@ def test_generic_v0_applied_type_pointers_form_concrete_runtime_identities(
     assert_contains(ir, "define ptr @main()", label="generic applied ptr ir")
 
 
+def test_generic_v0_same_module_calls_emit_concrete_runtime_symbols(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_same_module_runtime_symbols_round0.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+
+        def main() i32 {
+            var left i32 = id[i32](1)
+            var right i32 = id(2)
+            ret left + right
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        "define i32 @generic_same_module_runtime_symbols_round0.id__inst__i32",
+        label="generic same-module ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_same_module_runtime_symbols_round0.id__inst__i32(i32 1)",
+        label="generic same-module ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_same_module_runtime_symbols_round0.id__inst__i32(i32 2)",
+        label="generic same-module ir",
+    )
+    assert_not_contains(
+        ir,
+        "generic function instantiation is not implemented yet",
+        label="generic same-module ir",
+    )
+
+
+def test_generic_v0_specialized_function_refs_lower_to_concrete_symbols(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_specialized_function_ref_round0.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+
+        def main() i32 {
+            var cb (i32: i32) = id[i32]&<>
+            ret cb(3)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        "store ptr @generic_specialized_function_ref_round0.id__inst__i32",
+        label="generic function ref ir",
+    )
+    assert_contains(ir, "call i32 %2(i32 3)", label="generic function ref ir")
+
+
 def test_trait_static_dispatch_lowers_to_direct_method_call(
     compiler: CompilerHarness,
 ) -> None:
