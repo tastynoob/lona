@@ -283,9 +283,11 @@ public:
     PointerType *getOrCreatePointerType(TypeClass *pointeeType);
     IndexablePointerType *getOrCreateIndexablePointerType(
         TypeClass *elementType);
-    DynTraitType *getOrCreateDynTraitType(const ::string &traitName);
-    DynTraitType *getOrCreateDynTraitType(const std::string &traitName) {
-        return getOrCreateDynTraitType(string(traitName));
+    DynTraitType *getOrCreateDynTraitType(const ::string &traitName,
+                                          bool readOnlyDataPtr = false);
+    DynTraitType *getOrCreateDynTraitType(const std::string &traitName,
+                                          bool readOnlyDataPtr = false) {
+        return getOrCreateDynTraitType(string(traitName), readOnlyDataPtr);
     }
     ConstType *getOrCreateConstType(TypeClass *baseType);
     ArrayType *getOrCreateArrayType(TypeClass *elementType,

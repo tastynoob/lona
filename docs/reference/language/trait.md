@@ -4,7 +4,7 @@
 
 - `trait` 顶层声明
 - `impl Type: Trait` header
-- `Trait.method(value, ...)` 静态限定调用
+- `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 静态限定调用
 - `Trait dyn` 显式、非 owning 的动态 trait object
 - `cast[Trait dyn](&value)` 借用式构造
 
@@ -63,17 +63,21 @@ impl Point: Hash
 
 ```lona
 var point = Point(value = 41)
-ret Hash.hash(point)
+ret Hash.hash(&point)
 ```
 
 这条路径是显式静态分派。
 
 规则：
 
-- 必须显式写成 `Trait.method(value, ...)`。
-- imported trait 也一样，例如 `dep.Hash.hash(point)`。
+- 必须显式写成 `Trait.method(&value, ...)`，或者在已经有 `Type*` 时写 `Trait.method(ptr, ...)`。
+- imported trait 也一样，例如 `dep.Hash.hash(&point)`。
+- 第一个源码实参就是显式 receiver；编译器会把它当成 hidden self pointer。
+- 这条路径暂时不接受临时值 receiver，例如 `Trait.method(&Point(...), ...)`。
 - 编译器会先验证 receiver 的 concrete type 是否有 visible impl。
 - 通过后会直接绑定到 concrete inherent method，不经过 witness table。
+- getter 需要 `Self const*`；setter 需要 `Self*`。
+- 因此 `Trait.bump(&const_value, ...)` 会被拒绝。
 
 当前不做的事：
 
@@ -96,6 +100,7 @@ ret h.hash()
 - `Trait dyn` 是非 owning 的借用型 trait object。
 - 它不会改变原始对象布局；`Point(value = 41)` 仍然只是 `Point`。
 - 只有显式写出 `cast[Hash dyn](...)` 时，才会构造 trait object。
+- 如果借用源是只读的，构造结果会自动变成只读 trait object，也就是 `Hash const dyn`。
 
 ## 5. trait object 构造
 
@@ -111,6 +116,7 @@ var h Hash dyn = cast[Hash dyn](&point)
 - 源表达式必须写成显式借用 `&value`。
 - 被借用的值必须可寻址，例如变量、字段、解引用指针或数组元素。
 - source type 必须有 visible impl。
+- 如果 `&value` 的 pointee 是 `const`，结果会自动保留为 `Trait const dyn`；不要求额外写 `cast[Hash const dyn](...)`。
 
 例如 imported trait 也可以这样写：
 
@@ -128,25 +134,31 @@ ret h.hash()
 - 从临时值直接构造 trait object
 - owning trait object
 
-## 6. dyn compatibility
+## 6. dyn receiver 可变性
 
-不是所有 trait 都能构造 `Trait dyn`。
+`Trait dyn` 现在不再按“整个 trait 是否 dyn-compatible”一刀切，而是按“当前方法 + 当前 receiver”的组合检查。
 
-当前 v0 约束是：
+规则：
 
-- `Trait dyn` 只支持 get-only methods。
-- 只要 trait 中出现 `set def`，这个 trait 就不能用于 `Trait dyn` 构造或动态调用。
-- 这种 trait 仍然可以继续走静态 `Trait.method(value, ...)` 路径。
+- getter-style 方法可以在 `Trait dyn` 和 `Trait const dyn` 上调用。
+- `set def` 只可以在可写的 `Trait dyn` 上调用。
+- `cast[Trait dyn](&value)` 只表示“构造 trait object”；结果是可写还是只读，由借用源的 pointee constness 决定。
+- 因此 mixed getter/setter trait 也可以构造 dyn object。
 
 例如：
 
 ```lona
 trait CounterLike {
+    def read() i32
     set def bump(step i32) i32
 }
 ```
 
-`CounterLike dyn` 当前会被拒绝。
+此时：
+
+- `cast[CounterLike dyn](&counter)` 可以调用 `read()` 和 `bump(...)`
+- `cast[CounterLike dyn](&const_counter)` 会得到 `CounterLike const dyn`
+- `CounterLike const dyn` 只能调用 `read()`，不能调用 `bump(...)`
 
 ## 7. 常见诊断
 
@@ -157,7 +169,8 @@ trait CounterLike {
 - `impl Type: Trait { ... }` body 尚未支持
 - `cast[Trait dyn](&temporary)` 的源值不可寻址
 - concrete type 没有实现目标 trait
-- 目标 trait 不是 dyn-compatible
+- `Trait.method(value, ...)` 少了显式 self pointer
+- `set def` 被调用在只读的 `Trait const dyn` 或 `&const_value` 上
 
 ## 8. 实现边界
 

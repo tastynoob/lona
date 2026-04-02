@@ -121,6 +121,7 @@ var imported dep.Hash dyn
 说明：
 
 - `dyn` 是类型后缀，因此写作 `Hash dyn`、`dep.Hash dyn`。
+- 只读 trait object 写作 `Hash const dyn`，这里的 `const` 约束的是被擦除 receiver 的只读视图，而不是额外的顶层值 `const`。
 - 当前 `dyn` 只接受 trait 名，不接受普通结构体类型。
 - `Trait dyn` 表示一个显式、非 owning 的 trait object。
 - 它不会自动从 `Point` 之类的 concrete value 推导出来；必须显式构造。

@@ -24,6 +24,8 @@ typeNodeFromBracketItem(AstNode *node);
 TypeNode *
 createBracketSuffixTypeNode(TypeNode *base, std::vector<AstNode *> *items,
                             const location &loc = location());
+const BaseTypeNode *
+getDynTraitBaseNode(const DynTypeNode *node, bool *readOnlyDataPtr = nullptr);
 void
 validateTypeNodeLayout(const TypeNode *node);
 

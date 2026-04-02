@@ -9,7 +9,7 @@
 - [data_model_suite.lo](data_model_suite.lo): 结构体、字段、方法、构造函数、普通指针读写和 `null` 空指针。
 - [function_pointer_suite.lo](function_pointer_suite.lo): `(Args: Ret)` 函数指针、显式函数取指针、已初始化的函数指针存储和间接调用。
 - [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`sizeof(expr)` / `sizeof[T]()`、`usize`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
-- [trait_composition_suite.lo](trait_composition_suite.lo): `trait`、`impl Type: Trait`、`Trait.method(...)`、`Trait dyn`，以及嵌入式组合带来的 promoted 字段/方法访问。
+- [trait_composition_suite.lo](trait_composition_suite.lo): `trait`、`impl Type: Trait`、显式 self pointer 版 `Trait.method(&value, ...)`、`Trait dyn`，以及嵌入式组合带来的 promoted 字段/方法访问。
 
 ## Modules
 

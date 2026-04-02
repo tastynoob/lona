@@ -8,7 +8,7 @@
   - 表示可写动态 trait object
   - 可以调用 `def`
   - 也可以调用 `set def`
-- `const Hash dyn`
+- `Hash const dyn`
   - 表示只读动态 trait object
   - 只能调用 `def`
   - 不能调用 `set def`
@@ -17,10 +17,22 @@
 
 - `trait`
 - `impl Type: Trait`
-- `Trait.method(value, ...)`
 - `cast[Trait dyn](&value)`
 
 的基本形态。
+
+但这版计划**会**重新定义静态 trait 调用的 receiver 书写方式。
+当前已 shipped 的 trait v0 仍然是：
+
+- `Trait.method(value, ...)`
+
+而这份下一版计划改为：
+
+- `Trait.method(&value, ...)`
+- `Trait.method(ptr, ...)`
+
+也就是说，静态 trait 调用在源码层显式传入的第一个实参，就是方法的
+`self` pointer。
 
 其中 `cast[Trait dyn](&value)` 只表达“构造 trait object”这件事；
 如果借用源是 `const`，那么结果会自动继承为只读 trait object。
@@ -61,6 +73,23 @@
 
 而不扩大到 owning trait object、泛型 trait 或 default method。
 
+这里要额外明确一条 static / dyn 都共享的 receiver 规则：
+
+- `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 的第一个源码实参
+  就是显式 receiver pointer
+- getter 需要 `Self const*`
+- setter 需要 `Self*`
+- `const` concrete object 不能通过静态限定调用绕过 setter 对 writable
+  `self` 的要求
+- 显式 receiver path 暂时不允许临时值；必须传入可稳定形成 receiver
+  pointer 的 source
+
+也就是说，这版计划不是只给 dyn path 加 mutability 约束，而是把
+trait method receiver access 统一收口成：
+
+- getter 可接受只读或可写 receiver
+- setter 只能接受可写 receiver
+
 ## Acceptance Criteria
 
 Following TDD philosophy, each criterion includes positive and negative tests for deterministic verification.
@@ -68,40 +97,45 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
 - AC-1: `Trait dyn` 的可写性语义与 `const` 规则打通，trait object 的只读/可写差异在类型层可见。
   - Positive Tests (expected to PASS):
     - 从非 `const` concrete object 构造 `Hash dyn` 成功。
-    - 从非 `const` concrete object 构造 `const Hash dyn` 成功。
+    - 从非 `const` concrete object 构造 `Hash const dyn` 成功。
     - `cast[Hash dyn](&const_value)` 可以成功，且结果自动继承为只读 trait object。
     - `Hash dyn` 可以作为局部变量、参数、返回值和指针目标类型稳定工作。
   - Negative Tests (expected to FAIL):
     - `var h Hash dyn = cast[Hash dyn](&const_value)` 会因为试图接收成可写 trait object 而被拒绝。
     - 任何路径都不能通过 `cast[Hash dyn](...)` 偷偷去掉 source 的 `const` 资格。
-    - 不能通过赋值或隐式转换把 `const Hash dyn` 升格成 `Hash dyn`。
+    - 不能通过赋值或隐式转换把 `Hash const dyn` 升格成 `Hash dyn`。
 
 - AC-2: 带 `set def` 的 trait 可以构造动态 trait object，但 setter 调用只对可写 dyn receiver 放行。
   - Positive Tests (expected to PASS):
-    - `trait CounterLike { def read() i32; set def bump(step i32) i32 }` 可以用于构造 `Hash dyn` / `const Hash dyn` 风格的 trait object。
-    - `const CounterLike dyn` 可以成功调用 `read()`。
+    - `trait CounterLike { def read() i32; set def bump(step i32) i32 }` 可以用于构造 `Hash dyn` / `Hash const dyn` 风格的 trait object。
+    - `CounterLike const dyn` 可以成功调用 `read()`。
     - `CounterLike dyn` 可以成功调用 `read()` 和 `bump(...)`。
     - `set def make_view() CounterLike dyn { ret cast[CounterLike dyn](&self) }` 这类 writable self forwarding 能通过并运行。
   - Negative Tests (expected to FAIL):
-    - `const CounterLike dyn` 调用 `bump(...)` 会报 targeted diagnostic。
-    - `const CounterLike dyn*` 通过 implicit deref 调用 `bump(...)` 也会被拒绝。
+    - `CounterLike const dyn` 调用 `bump(...)` 会报 targeted diagnostic。
+    - `CounterLike const dyn*` 通过 implicit deref 调用 `bump(...)` 也会被拒绝。
     - 仍然不允许通过临时值或非可寻址 source 构造可写 trait object。
     - `cast[CounterLike dyn](&const_value)` 虽然能成功构造 trait object，但不能借此绕过 setter 对 writable `data_ptr` 的要求。
 
 - AC-3: 动态调用解析从“整个 trait 是否 dyn-compatible”改为“当前方法是否满足 receiver mutability 约束”，且不影响静态路径。
   - Positive Tests (expected to PASS):
-    - `Trait.method(value, ...)` 继续支持 `set def`，不经过 witness table。
-    - `h.read()` 在 `Hash dyn` 和 `const Hash dyn` 上都能成功解析。
+    - `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 继续支持 `set def`，不经过 witness table。
+    - `Trait.bump(&counter, 1)` 在 `counter` 可写时继续成功。
+    - `Trait.bump(ptr, 1)` 在 `ptr` 是 `Counter*` 时继续成功。
+    - `Trait.read(&const_counter)` 在 `const` receiver 上继续成功。
+    - `h.read()` 在 `Hash dyn` 和 `Hash const dyn` 上都能成功解析。
     - `h.bump()` 只会在 `Hash dyn` 上解析为合法 trait-object call。
     - imported trait 和 imported impl 也遵守同样的 getter/setter 动态调用规则。
   - Negative Tests (expected to FAIL):
     - 不能再因为 trait 中出现单个 `set def` 就整体拒绝 `Trait dyn` 构造。
+    - `Trait.bump(&const_counter, 1)` 必须报 targeted diagnostic，而不是继续静默接受 `const` receiver。
+    - `Trait.read(&Point(...))` / `Trait.bump(&Point(...), 1)` 这类显式 receiver 临时值在这版计划中仍然拒绝。
     - 普通 `obj.method(...)` lookup 不会因为这一版计划而自动注入 trait method。
     - setter 调用失败时，诊断应指出“receiver 是只读 trait object”，而不是继续报旧的“trait is not dyn-compatible”总括错误。
 
 - AC-4: LLVM lowering 能正确表达可写/只读 dyn receiver，并保持 ABI 正确性与对象布局稳定。
   - Positive Tests (expected to PASS):
-    - `const Hash dyn` 和 `Hash dyn` 继续使用同一类 `{data_ptr, witness_ptr}` 运行时形状。
+    - `Hash const dyn` 和 `Hash dyn` 继续使用同一类 `{data_ptr, witness_ptr}` 运行时形状。
     - witness slot 调用能区分 getter slot 与 setter slot 的 receiver constness。
     - setter 动态调用在 native ABI 下对隐式 `self`、`sret` 和间接返回的组合保持正确。
     - ordinary struct layout 保持不变，不向用户 struct 注入 vptr 或额外 mutability tag。
@@ -114,7 +148,7 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
   - Positive Tests (expected to PASS):
     - 带 `set def` 的 trait 方法签名变化会继续进入 `interfaceHash` 并触发 importer 失效。
     - getter/setter receiver access 变化会触发相关 dyn call importer 重新编译。
-    - language reference 和 internals 文档明确区分 `Hash dyn` 与 `const Hash dyn` 的调用边界。
+    - language reference 和 internals 文档明确区分 `Hash dyn` 与 `Hash const dyn` 的调用边界。
     - acceptance/module/frontend/incremental/smoke 至少各有一条与 mutable dyn 相关的正反例。
   - Negative Tests (expected to FAIL):
     - 不能把 setter dyn call 的行为只写在实现里而不更新文档。
@@ -126,7 +160,7 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
 
 这版计划允许做到：
 
-- `Hash dyn` / `const Hash dyn` 的 receiver mutability 分流
+- `Hash dyn` / `Hash const dyn` 的 receiver mutability 分流
 - mixed getter/setter trait 的动态构造与动态调用
 - pointer-backed source、`self`、embedded field 等 writable source 的 mutable dyn 构造
 - imported trait / imported impl 的 mutable dyn 分发
@@ -145,9 +179,9 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
 
 最小可接受实现是：
 
-- 语义层支持 `Hash dyn` 与 `const Hash dyn`
+- 语义层支持 `Hash dyn` 与 `Hash const dyn`
 - mixed getter/setter trait 不再整体拒绝 dyn
-- `const Hash dyn` 只允许 getter
+- `Hash const dyn` 只允许 getter
 - `Hash dyn` 允许 getter + setter
 - 动态 lowering 保持当前 `{data_ptr, witness_ptr}` 模型
 
@@ -165,9 +199,10 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
 - Can use: 单一 witness table 加调用点 constness 检查。
 - Can use: adapter thunk，只要它是 ABI 正确性的内部实现细节。
 - Can use: 针对 getter/setter 分别推导 slot function type。
+- Can use: 静态 trait 调用在源码层显式写 receiver pointer，例如 `Trait.read(&value)` 或 `Trait.read(ptr)`。
 - Cannot use: 新的用户层关键字，例如 `mut dyn` 或 `readonly dyn`。
 - Cannot use: 修改普通 struct 的内存布局。
-- Cannot use: 把 `Trait.method(value, ...)` 改成动态路径。
+- Cannot use: 把静态 `Trait.method(...)` 调用改成动态路径。
 - Cannot use: 用“整个 trait 再分成 readonly/mutable 两个 trait 名”规避 receiver mutability 设计。
 
 ## Related Paths
@@ -190,7 +225,7 @@ Following TDD philosophy, each criterion includes positive and negative tests fo
 
 1. Milestone 1: 语义规则改造
    - Phase A: 把 dyn-compatible 从 trait 级别规则改成 method-level receiver mutability 规则
-   - Phase B: 明确 `Hash dyn` / `const Hash dyn` 的 cast、赋值和调用边界
+   - Phase B: 明确 `Hash dyn` / `Hash const dyn` 的 cast、赋值和调用边界
 
 2. Milestone 2: 分析阶段与 HIR
    - Phase A: `cast[Trait dyn](&value)` 在 mutable / const source 上产出正确类型
@@ -219,22 +254,29 @@ Each task must include exactly one routing tag:
 | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
 |---------|-------------|-----------|----------------------------|------------|
 | task1 | 重新定义 dyn-compatible 语义：允许 mixed getter/setter trait 构造 dyn，并把限制下沉到 receiver mutability 与 method access | AC-1, AC-2 | coding | - |
-| task2 | 扩展 cast / type-check / assignment 规则，使 `Hash dyn` 与 `const Hash dyn` 的 const 传播稳定工作 | AC-1 | coding | task1 |
+| task2 | 扩展 cast / type-check / assignment 规则，使 `Hash dyn` 与 `Hash const dyn` 的 const 传播稳定工作 | AC-1 | coding | task1 |
 | task3 | 改造 trait object call 分析，让 getter/setter 调用按 dyn receiver 的 constness 进行 targeted 诊断与合法化 | AC-2, AC-3 | coding | task2 |
 | task4 | 重新审查并实现 setter dyn dispatch 的 slot function type / ABI 路径，必要时引入 adapter thunk | AC-4 | analyze | task3 |
 | task5 | 在 LLVM lowering 中落地 getter/setter 动态调用，保持 witness table 与对象布局边界稳定 | AC-4 | coding | task4 |
 | task6 | 补 acceptance/module/frontend/incremental/smoke 回归，覆盖 mutable dyn 构造、getter/setter 调用、imported impl 和缓存失效 | AC-5 | coding | task5 |
-| task7 | 更新 language reference 与 internals 文档，明确 `Hash dyn` / `const Hash dyn` 的行为差异 | AC-5 | coding | task6 |
+| task7 | 更新 language reference 与 internals 文档，明确 `Hash dyn` / `Hash const dyn` 的行为差异 | AC-5 | coding | task6 |
 
 ## Feasibility Hints
 
 - 最稳的语义模型不是新增一种“mutable trait object 结构体”，而是继续复用现有 `const` 规则：
   - `Hash dyn`
-  - `const Hash dyn`
-- `cast[Hash dyn](&value)` 应保留 source 的 `const` 资格；不要再额外要求用户写 `cast[const Hash dyn](...)`。
+  - `Hash const dyn`
+- `cast[Hash dyn](&value)` 应保留 source 的 `const` 资格；不要再额外要求用户写 `cast[Hash const dyn](...)`。
+- 静态 trait 调用如果保留为显式 receiver path，则建议把源码层规则直接收成：
+  - getter: `Trait.read(&value)` 或 `Trait.read(ptr)`
+  - setter: `Trait.bump(&value, ...)` 或 `Trait.bump(ptr, ...)`
+  - 不要再用 `Trait.method(value, ...)` 这种“源码传值、内部传指针”的折中表述。
 - `data_ptr` 在类型擦除后仍然要保留 pointee constness：
   - writable source -> `any*`
   - const source -> `any const*`
+- 静态 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 路径也要复用同样的 receiver mutability 语义：
+  - getter 可吃 `const` 或 writable receiver
+  - setter 必须拿到非 `const` self pointer
 - setter 是否可调用，优先根据擦除后 `data_ptr` 的可写性判断，而不是根据 `witness_ptr` 单独携带一份 mutability tag。
 - witness table 优先继续保持一份 `(Trait, Type)` 一张表。
 - getter/setter 的差异优先通过：

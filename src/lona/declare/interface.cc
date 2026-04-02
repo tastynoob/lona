@@ -447,7 +447,8 @@ class InterfaceCollector {
                             : nullptr;
         }
         if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-            auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+            bool readOnlyDataPtr = false;
+            auto *base = getDynTraitBaseNode(dynType, &readOnlyDataPtr);
             if (!base) {
                 return nullptr;
             }
@@ -461,7 +462,7 @@ class InterfaceCollector {
                     return nullptr;
                 }
                 return interface_->getOrCreateDynTraitType(
-                    lookup.traitDecl->exportedName);
+                    lookup.traitDecl->exportedName, readOnlyDataPtr);
             }
 
             const auto *imported = unit_.findImportedModule(moduleName);
@@ -473,7 +474,7 @@ class InterfaceCollector {
                 return nullptr;
             }
             return interface_->getOrCreateDynTraitType(
-                lookup.traitDecl->exportedName);
+                lookup.traitDecl->exportedName, readOnlyDataPtr);
         }
         if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
             auto rawName = baseTypeName(base);

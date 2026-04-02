@@ -528,7 +528,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
     }
 
     if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-        auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+        bool readOnlyDataPtr = false;
+        auto *base = getDynTraitBaseNode(dynType, &readOnlyDataPtr);
         if (!base) {
             unit.cacheResolvedType(node, nullptr);
             return nullptr;
@@ -553,7 +554,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
             unit.cacheResolvedType(node, nullptr);
             return nullptr;
         }
-        resolved = typeTable->createDynTraitType(lookup.resolvedName);
+        resolved =
+            typeTable->createDynTraitType(lookup.resolvedName, readOnlyDataPtr);
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }

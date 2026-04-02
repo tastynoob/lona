@@ -275,6 +275,53 @@ def test_system_trait_dyn_dispatch_runtime_with_indirect_result_aggregate(
     compiler.run_executable(exe).expect_exit_code(42)
 
 
+def test_system_trait_dyn_mutability_runtime(compiler: CompilerHarness) -> None:
+    program = compiler.write_source(
+        "system/trait_dyn_mutability.lo",
+        """
+        trait CounterLike {
+            def read() i32
+            set def bump(step i32) i32
+        }
+
+        struct Counter {
+            value i32
+
+            def read() i32 {
+                ret self.value
+            }
+
+            set def bump(step i32) i32 {
+                self.value = self.value + step
+                ret self.value
+            }
+        }
+
+        impl Counter: CounterLike
+
+        def read_value(view CounterLike const dyn) i32 {
+            ret view.read()
+        }
+
+        var counter = Counter(value = 40)
+        var writable CounterLike dyn = cast[CounterLike dyn](&counter)
+        const frozen = Counter(value = 7)
+        const readonly CounterLike const dyn = cast[CounterLike dyn](&frozen)
+        if writable.bump(2) != 42 {
+            ret 1
+        }
+        ret read_value(readonly) + counter.read()
+        """,
+    )
+
+    build_result, exe = compiler.build_system_executable(
+        program,
+        output_name="trait_dyn_mutability",
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(49)
+
+
 def test_system_smoke_c_abi_interop_and_examples(compiler: CompilerHarness, repo_root: Path) -> None:
     cc_bin = _detect_cc()
 

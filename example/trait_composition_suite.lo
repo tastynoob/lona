@@ -112,15 +112,15 @@ def run() i32 {
         ret 1
     }
 
-    if Metric.score(worker.RollingCounter) != 6 {
+    if Metric.score(&worker.RollingCounter) != 6 {
         ret 2
     }
 
-    if Weighted.weight(worker.Identity, bias = 3) != 107 {
+    if Weighted.weight(&worker.Identity, bias = 3) != 107 {
         ret 3
     }
 
-    if Weighted.weight(worker, bias = 2) != 173 {
+    if Weighted.weight(&worker, bias = 2) != 173 {
         ret 4
     }
 

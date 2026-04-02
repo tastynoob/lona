@@ -249,7 +249,9 @@ isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
     }
     if (auto *targetDyn = targetType->as<DynTraitType>()) {
         auto *sourceDyn = sourceType->as<DynTraitType>();
-        return sourceDyn && targetDyn->traitName() == sourceDyn->traitName();
+        return sourceDyn && targetDyn->traitName() == sourceDyn->traitName() &&
+               (!sourceDyn->hasReadOnlyDataPtr() ||
+                targetDyn->hasReadOnlyDataPtr());
     }
     return targetType == sourceType;
 }

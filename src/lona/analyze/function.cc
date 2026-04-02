@@ -293,6 +293,13 @@ class FunctionAnalyzer {
         return getRawPointerPointeeType(funcType->getArgTypes().front());
     }
 
+    bool isReadOnlyTraitReceiverType(TypeClass *type) {
+        if (auto *dynType = asUnqualified<DynTraitType>(type)) {
+            return dynType->hasReadOnlyDataPtr();
+        }
+        return isConstQualifiedType(type);
+    }
+
     void requireMethodReceiverCompatible(HIRSelector *selector,
                                          FuncType *funcType,
                                          const location &loc) {
@@ -921,27 +928,20 @@ class FunctionAnalyzer {
         return nullptr;
     }
 
-    [[noreturn]] void errorTraitNotDynCompatible(
-        const ModuleInterface::TraitDecl &traitDecl,
-        const ModuleInterface::TraitMethodDecl &method, const location &loc) {
-        error(loc,
-              "trait `" + toStdString(traitDecl.exportedName) +
-                  "` is not dyn-compatible in trait v0",
-              "Method `" + toStdString(method.localName) +
-                  "` uses `set` receiver access. Dynamic trait objects "
-                  "currently support get-only methods only; keep this trait "
-                  "on the static `Trait.method(value, ...)` path.");
-    }
-
-    const ModuleInterface::TraitDecl *requireDynCompatibleTrait(
-        TypeClass *dynType, const location &loc, const std::string &context) {
-        auto *traitDecl = requireVisibleDynTraitDecl(dynType, loc, context);
-        for (const auto &method : traitDecl->methods) {
-            if (method.receiverAccess != AccessKind::GetOnly) {
-                errorTraitNotDynCompatible(*traitDecl, method, loc);
-            }
+    void requireTraitMethodWritableReceiver(
+        const ModuleInterface::TraitMethodDecl &traitMethod,
+        TypeClass *receiverType, const location &loc,
+        const std::string &hint) {
+        if (traitMethod.receiverAccess == AccessKind::GetOnly ||
+            !isReadOnlyTraitReceiverType(receiverType)) {
+            return;
         }
-        return traitDecl;
+
+        error(loc,
+              "set trait method `" + toStdString(traitMethod.localName) +
+                  "` requires a writable receiver, got " +
+                  describeResolvedType(receiverType),
+              hint);
     }
 
     TypeClass *resolveTraitMethodTypeBySpelling(const string &typeName,
@@ -1259,7 +1259,7 @@ class FunctionAnalyzer {
                   "`Trait dyn`.");
         }
 
-        auto *traitDecl = requireDynCompatibleTrait(
+        auto *traitDecl = requireVisibleDynTraitDecl(
             targetType, node->loc, "trait object construction");
         auto *borrowedSource = source;
         auto *selfType = asUnqualified<StructType>(borrowedSource->getType());
@@ -1300,20 +1300,12 @@ class FunctionAnalyzer {
                       describeResolvedType(targetType) + "`.");
         }
 
-        TypeClass *sourceDynType =
-            isConstQualifiedType(borrowedSource->getType())
-                ? typeMgr->createConstType(dynType)
-                : static_cast<TypeClass *>(dynType);
-        if (!isConstQualificationConvertible(targetType, sourceDynType)) {
-            error(node->loc,
-                  "trait object construction cannot drop const from the "
-                  "borrowed source",
-                  "Cast to `" +
-                      describeResolvedType(typeMgr->createConstType(dynType)) +
-                      "` instead, or borrow a writable value.");
-        }
+        TypeClass *resultDynType = typeMgr->createDynTraitType(
+            dynType->traitName(),
+            dynType->hasReadOnlyDataPtr() ||
+                isConstQualifiedType(borrowedSource->getType()));
 
-        return makeHIR<HIRTraitObjectCast>(borrowedSource, targetType,
+        return makeHIR<HIRTraitObjectCast>(borrowedSource, resultDynType,
                                            node->loc);
     }
 
@@ -3072,7 +3064,8 @@ class FunctionAnalyzer {
             error(node->loc,
                   "trait-qualified call requires the receiver as its first "
                   "argument",
-                  "Write calls like `Trait.method(value, ...)`.");
+                  "Write calls like `Trait.method(&value, ...)`, or pass an "
+                  "existing `Type*` receiver pointer.");
         }
 
         const auto *traitDecl = requireVisibleTraitDecl(
@@ -3095,27 +3088,51 @@ class FunctionAnalyzer {
         if (receiverSpec.name.has_value()) {
             error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
                   "trait-qualified receiver must be passed positionally",
-                  "Write `Trait.method(value, ...)`, not a named receiver "
+                  "Write `Trait.method(&value, ...)`, not a named receiver "
                   "argument.");
         }
         if (receiverSpec.bindingKind == BindingKind::Ref) {
             error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
                   "trait-qualified receiver cannot be passed with `ref`",
                   "Reference binding rules apply to the trait method's "
-                  "declared parameters, not to the implicit receiver.");
+                  "declared parameters, not to the explicit self pointer.");
         }
 
-        auto *receiver = requireNonCallExpr(receiverSpec.value);
-        auto lookupAttempt = lookupMemberWithImplicitDeref(
-            receiver, fieldName, receiverSpec.loc,
-            !isExplicitDerefSyntax(receiverSpec.value));
-        auto *receiverStructType = lookupAttempt.lookup.owner.structType;
+        auto *receiverPointer = requireNonCallExpr(receiverSpec.value);
+        auto *receiverPointerType =
+            asUnqualified<PointerType>(receiverPointer->getType());
+        if (!receiverPointerType) {
+            error(receiverSpec.loc,
+                  "trait-qualified receiver must be passed as an explicit "
+                  "self pointer",
+                  "Write `Trait.method(&value, ...)` for values, or "
+                  "`Trait.method(ptr, ...)` when you already have a "
+                  "concrete `Type*`.");
+        }
+        auto *receiverStructType = asUnqualified<StructType>(
+            receiverPointerType->getPointeeType());
         if (!receiverStructType) {
             error(receiverSpec.loc,
-                  "trait-qualified call expects a struct receiver for trait `" +
+                  "trait-qualified call expects a concrete struct self pointer "
+                  "for trait `" +
                       toStdString(traitBinding->resolvedName()) + "`",
-                  "Pass a concrete struct value that implements the trait.");
+                  "Pass `&value` or a concrete `Type*` that implements the "
+                  "trait.");
         }
+        requireTraitMethodWritableReceiver(
+            *traitMethod, receiverPointerType->getPointeeType(),
+            receiverSpec.loc,
+            "Static trait setter calls require a writable self pointer. Borrow "
+            "a writable value with `&value`, or pass a writable `Type*`.");
+        auto *receiver = implicitDeref(receiverPointer, receiverSpec.loc);
+        if (!receiver) {
+            internalError(receiverSpec.loc,
+                          "trait-qualified call failed to dereference its "
+                          "explicit self pointer",
+                          "This looks like a trait-qualified receiver "
+                          "lowering bug.");
+        }
+        auto lookup = lookupMember(receiver, fieldName, receiverSpec.loc);
 
         auto visibleImpls = unit->findVisibleTraitImpls(
             traitBinding->resolvedName(),
@@ -3130,7 +3147,7 @@ class FunctionAnalyzer {
                       "` in a visible module.");
         }
 
-        if (lookupAttempt.lookup.result.kind != LookupResultKind::Method) {
+        if (lookup.result.kind != LookupResultKind::Method) {
             error(receiverSpec.loc,
                   "trait-qualified call expected method `" + fieldName +
                       "` on `" + describeResolvedType(receiverStructType) + "`",
@@ -3139,7 +3156,7 @@ class FunctionAnalyzer {
         }
 
         auto *callee = materializeMemberExpr(
-            lookupAttempt.parent, fieldName, lookupAttempt.lookup,
+            receiver, fieldName, lookup,
             calleeSyntax ? calleeSyntax->loc : node->loc, true);
         if (!callee) {
             internalError(node->loc,
@@ -3195,7 +3212,7 @@ class FunctionAnalyzer {
                           "This looks like a trait-object call bug.");
         }
 
-        auto *traitDecl = requireDynCompatibleTrait(
+        auto *traitDecl = requireVisibleDynTraitDecl(
             receiver->getType(), calleeSyntax->loc, "trait object call");
         const auto methodName = toStdString(calleeSyntax->field->text);
         std::size_t slotIndex = 0;
@@ -3209,6 +3226,11 @@ class FunctionAnalyzer {
                   "Check the trait method name, or update the trait "
                   "declaration.");
         }
+        requireTraitMethodWritableReceiver(
+            *traitMethod, receiver->getType(), calleeSyntax->loc,
+            "Read-only trait objects can only call get-only methods. "
+            "Construct the trait object from a writable source before calling "
+            "this setter.");
 
         std::vector<FormalCallArg> formals;
         formals.reserve(traitMethod->paramTypeSpellings.size());
@@ -3624,9 +3646,15 @@ class FunctionAnalyzer {
                               "qualifiers from the referenced storage.");
                     }
                 } else {
-                    init = coerceNumericExpr(init, type, node->loc, false);
-                    init = coercePointerExpr(init, type, node->loc);
-                    requireCompatibleTypes(node->loc, type, init->getType(),
+                    auto *initExpectedType =
+                        node->isReadOnlyBinding()
+                            ? static_cast<TypeClass *>(typeMgr->createConstType(type))
+                            : type;
+                    init = coerceNumericExpr(init, initExpectedType, node->loc,
+                                             false);
+                    init = coercePointerExpr(init, initExpectedType, node->loc);
+                    requireCompatibleTypes(node->loc, initExpectedType,
+                                           init->getType(),
                                            "initializer type mismatch for `" +
                                                toStdString(node->getName()) +
                                                "`");
@@ -3755,7 +3783,7 @@ class FunctionAnalyzer {
                   "direct call callees",
                   "Write `" + toStdString(traitBinding->resolvedName()) +
                       "." + toStdString(node->field->text) +
-                      "(value, ...)`.");
+                      "(&value, ...)`.");
         }
         if (auto *resolvedDotLike = analyzeResolvedDotLike(node)) {
             return resolvedDotLike;
@@ -3763,7 +3791,7 @@ class FunctionAnalyzer {
 
         auto *parent = requireExpr(node->parent);
         if (auto *dynTraitType = asUnqualified<DynTraitType>(parent->getType())) {
-            auto *traitDecl = requireDynCompatibleTrait(
+            auto *traitDecl = requireVisibleDynTraitDecl(
                 dynTraitType, node->loc, "trait object member lookup");
             auto fieldName = toStdString(node->field->text);
             if (traitDecl->findMethod(fieldName)) {

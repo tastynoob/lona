@@ -3,6 +3,7 @@
 #include "../ast/array_dim.hh"
 #include "../ast/astnode.hh"
 #include "../ast/type_node_string.hh"
+#include "../ast/type_node_tools.hh"
 #include "../sym/object.hh"
 #include "../visitor.hh"
 #include <algorithm>
@@ -133,16 +134,22 @@ public:
 
 class DynTraitType : public TypeClass {
     string traitName_;
+    bool readOnlyDataPtr_ = false;
 
 public:
-    static string buildName(const ::string &traitName) {
-        return traitName + " dyn";
+    static string buildName(const ::string &traitName,
+                            bool readOnlyDataPtr = false) {
+        return readOnlyDataPtr ? traitName + " const dyn"
+                               : traitName + " dyn";
     }
 
-    explicit DynTraitType(string traitName)
-        : TypeClass(buildName(traitName)), traitName_(std::move(traitName)) {}
+    explicit DynTraitType(string traitName, bool readOnlyDataPtr = false)
+        : TypeClass(buildName(traitName, readOnlyDataPtr)),
+          traitName_(std::move(traitName)),
+          readOnlyDataPtr_(readOnlyDataPtr) {}
 
     const string &traitName() const { return traitName_; }
+    bool hasReadOnlyDataPtr() const { return readOnlyDataPtr_; }
     llvm::Type *buildLLVMType(TypeTable &types) override;
 };
 
@@ -742,18 +749,20 @@ public:
         return indexableType;
     }
 
-    DynTraitType *createDynTraitType(const ::string &traitName) {
-        auto typeName = DynTraitType::buildName(traitName);
+    DynTraitType *createDynTraitType(const ::string &traitName,
+                                     bool readOnlyDataPtr = false) {
+        auto typeName = DynTraitType::buildName(traitName, readOnlyDataPtr);
         if (auto *type = getType(typeName)) {
             return type->as<DynTraitType>();
         }
-        auto *dynType = new DynTraitType(traitName);
+        auto *dynType = new DynTraitType(traitName, readOnlyDataPtr);
         addType(typeName, dynType);
         return dynType;
     }
 
-    DynTraitType *createDynTraitType(const std::string &traitName) {
-        return createDynTraitType(string(traitName));
+    DynTraitType *createDynTraitType(const std::string &traitName,
+                                     bool readOnlyDataPtr = false) {
+        return createDynTraitType(string(traitName), readOnlyDataPtr);
     }
 
     ConstType *createConstType(TypeClass *baseType) {
@@ -1059,7 +1068,8 @@ public:
         }
 
         if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-            auto *base = dynamic_cast<BaseTypeNode *>(dynType->base);
+            bool readOnlyDataPtr = false;
+            auto *base = getDynTraitBaseNode(dynType, &readOnlyDataPtr);
             if (!base) {
                 return nullptr;
             }
@@ -1069,7 +1079,7 @@ public:
             if (rawName.empty() || getType(llvm::StringRef(rawName))) {
                 return nullptr;
             }
-            return createDynTraitType(rawName);
+            return createDynTraitType(rawName, readOnlyDataPtr);
         }
 
         if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
@@ -1169,6 +1179,12 @@ isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
     return dstType && srcType &&
            isConstQualificationConvertible(
                dstType, materializeValueType(nullptr, srcType));
+}
+
+inline DynTraitType *
+getReadOnlyDynTraitType(TypeClass *type) {
+    auto *dynType = asUnqualified<DynTraitType>(type);
+    return dynType && dynType->hasReadOnlyDataPtr() ? dynType : nullptr;
 }
 
 }  // namespace lona

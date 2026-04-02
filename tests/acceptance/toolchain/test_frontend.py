@@ -374,7 +374,8 @@ def test_trait_static_dispatch_lowers_to_direct_method_call(
 
         def main() i32 {
             var point = Point(value = 41)
-            ret Hash.hash(point)
+            var ptr Point* = &point
+            ret Hash.hash(ptr)
         }
         """,
     )

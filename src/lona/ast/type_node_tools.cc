@@ -215,6 +215,12 @@ errorLegacyTypeNodeGenericApplySyntax(const location &loc) {
 }
 
 [[noreturn]] void
+errorLegacyDynConstTypeSyntax(const location &loc) {
+    error(loc, "read-only trait objects use `Trait const dyn`, not `Trait dyn const`",
+          "Write `Hash const dyn` instead of `Hash dyn const`.");
+}
+
+[[noreturn]] void
 errorLegacyTypeNodeIndexablePointerSyntax(const location &loc,
                                           const TypeNode *node) {
     error(loc,
@@ -248,6 +254,9 @@ validateTypeNodeLayoutImpl(const TypeNode *node, bool allowDirectAny) {
         return;
     }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        if (dynamic_cast<const DynTypeNode *>(qualified->base)) {
+            errorLegacyDynConstTypeSyntax(node->loc);
+        }
         validateTypeNodeLayoutImpl(qualified->base, allowDirectAny);
         return;
     }
@@ -299,6 +308,25 @@ validateTypeNodeLayoutImpl(const TypeNode *node, bool allowDirectAny) {
         validateTypeNodeLayoutImpl(func->ret, false);
         return;
     }
+}
+
+const BaseTypeNode *
+getDynTraitBaseNode(const DynTypeNode *node, bool *readOnlyDataPtr) {
+    if (readOnlyDataPtr) {
+        *readOnlyDataPtr = false;
+    }
+    if (!node || !node->base) {
+        return nullptr;
+    }
+
+    auto *base = node->base;
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(base)) {
+        if (readOnlyDataPtr) {
+            *readOnlyDataPtr = true;
+        }
+        base = qualified->base;
+    }
+    return dynamic_cast<const BaseTypeNode *>(base);
 }
 
 void

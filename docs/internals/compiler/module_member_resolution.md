@@ -44,7 +44,7 @@
    - `HIRValue(Function)`
    - `HIRValue(某个已解析的全局对象)`
    - `HIRValue(TypeObject)`
-   - trait namespace binding，只在 `Trait.method(...)` 这类限定调用里继续消费
+   - trait namespace binding，只在 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 这类限定调用里继续消费
 
 只有下面两类情况才会真正生成 `HIRSelector`：
 
@@ -198,7 +198,7 @@
 2. `analysis` 不再通过模块命名空间去查询 `module.xxx`。
 3. `lookupMember(...)` 不再承担 imported 模块成员访问的主解析职责。
 4. HIR 主路径不再依赖 `HIRValue(ModuleObject)` 来解释模块成员 selector 或 bare module。
-5. 现有 `module(...)`、`module.func(...)`、`module.Type(...)`、`module.Trait.method(...)` 的诊断与调用行为不回退。
+5. 现有 `module(...)`、`module.func(...)`、`module.Type(...)`、`module.Trait.method(&value, ...)` 的诊断与调用行为不回退。
 
 ## 9. 当前实现状态备注
 

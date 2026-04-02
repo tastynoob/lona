@@ -489,6 +489,23 @@ void
 requireCompatibleInitializerTypes(const location &loc, TypeClass *expectedType,
                                   TypeClass *actualType,
                                   const std::string &context) {
+    if (auto *expectedDyn = asUnqualified<DynTraitType>(expectedType)) {
+        if (auto *actualReadOnlyDyn = getReadOnlyDynTraitType(actualType)) {
+            if (!expectedDyn->hasReadOnlyDataPtr() &&
+                actualReadOnlyDyn->traitName() == expectedDyn->traitName()) {
+                initializer_semantics_impl::raiseError(
+                    loc,
+                    context + ": writable `" +
+                        describeResolvedType(expectedDyn) +
+                        "` cannot receive a read-only trait object",
+                    "This trait object was borrowed from a const receiver. "
+                    "Borrow a writable value before constructing `" +
+                        describeResolvedType(expectedDyn) +
+                        "`, or make the destination accept a read-only trait "
+                        "object instead.");
+            }
+        }
+    }
     if (expectedType && actualType &&
         isByteCopyCompatible(expectedType, actualType)) {
         return;

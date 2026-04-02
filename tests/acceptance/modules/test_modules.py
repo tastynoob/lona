@@ -288,7 +288,7 @@ def test_imported_trait_supports_local_impl_static_dispatch(
 
         def main() i32 {
             var point = Point(value = 41)
-            ret dep.Hash.hash(point)
+            ret dep.Hash.hash(&point)
         }
         """,
     )
@@ -329,7 +329,7 @@ def test_imported_trait_uses_imported_impl_for_static_dispatch(
 
         def main() i32 {
             var point = dep.make()
-            ret dep.Hash.hash(point)
+            ret dep.Hash.hash(&point)
         }
         """,
     )
@@ -628,7 +628,7 @@ def test_wrapper_trait_impl_on_imported_self_type_carries_methods_downstream(
         def main() i32 {
             var point = dep.make()
             var h dep.Hash dyn = cast[dep.Hash dyn](&point)
-            ret dep.Hash.hash(point) + h.hash() - 42
+            ret dep.Hash.hash(&point) + h.hash() - 42
         }
         """,
     )
