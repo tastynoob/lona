@@ -8,6 +8,7 @@
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
 #include "parser.hh"
+#include <algorithm>
 #include <cassert>
 #include <memory>
 #include <string>
@@ -182,6 +183,30 @@ class FunctionResolver {
         return nullptr;
     }
 
+    const TypeNode *stripDecoratedTypeNode(const TypeNode *node) const {
+        while (node) {
+            if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+                node = param->type;
+                continue;
+            }
+            if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+                node = qualified->base;
+                continue;
+            }
+            break;
+        }
+        return node;
+    }
+
+    const TypeNode *peelPointerTypeNode(const TypeNode *node,
+                                        int depth) const {
+        auto *current = node;
+        for (int i = 0; current && i < depth; ++i) {
+            current = pointeeTypeNode(current);
+        }
+        return current;
+    }
+
     const TypeNode *projectionOwnerTypeNode(const AstNode *expr) const {
         if (!expr) {
             return nullptr;
@@ -205,6 +230,19 @@ class FunctionResolver {
             return pointeeTypeNode(inner);
         }
         return nullptr;
+    }
+
+    bool sameVisibleTypeBase(const BaseTypeNode *lhs,
+                             const BaseTypeNode *rhs) const {
+        if (!lhs || !rhs) {
+            return false;
+        }
+        if (auto *lhsDecl = resolveVisibleTypeDecl(lhs)) {
+            if (auto *rhsDecl = resolveVisibleTypeDecl(rhs)) {
+                return lhsDecl == rhsDecl;
+            }
+        }
+        return baseTypeName(lhs) == baseTypeName(rhs);
     }
 
     GenericCapabilityInfo classifyGenericTypeNode(
@@ -297,6 +335,39 @@ class FunctionResolver {
         return classifyGenericTypeNode(fieldDecl->typeNode, substs);
     }
 
+    const TypeNode *projectedFieldTypeNode(const TypeNode *ownerTypeNode,
+                                           llvm::StringRef fieldName) const {
+        if (!unit_ || !ownerTypeNode) {
+            return nullptr;
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(ownerTypeNode)) {
+            return projectedFieldTypeNode(param->type, fieldName);
+        }
+        if (auto *qualified = dynamic_cast<const ConstTypeNode *>(ownerTypeNode)) {
+            return projectedFieldTypeNode(qualified->base, fieldName);
+        }
+
+        const BaseTypeNode *base = nullptr;
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        if (auto *applied = dynamic_cast<const AppliedTypeNode *>(ownerTypeNode)) {
+            base = dynamic_cast<const BaseTypeNode *>(applied->base);
+            typeDecl = resolveVisibleTypeDecl(base);
+        } else if (auto *baseNode =
+                       dynamic_cast<const BaseTypeNode *>(ownerTypeNode)) {
+            base = baseNode;
+            typeDecl = resolveVisibleTypeDecl(baseNode);
+        }
+
+        if (!base || !typeDecl) {
+            return nullptr;
+        }
+        auto *ownerUnit = unit_->ownerUnitForTypeDecl(typeDecl);
+        auto *structDecl =
+            findStructDeclInUnit(ownerUnit, toStringRef(typeDecl->localName));
+        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        return fieldDecl ? fieldDecl->typeNode : nullptr;
+    }
+
     GenericCapabilityInfo selfFieldGenericInfo(llvm::StringRef fieldName) const {
         if (!resolved_.isMethod() || !resolved_.decl()) {
             return noGenericCapability();
@@ -314,6 +385,15 @@ class FunctionResolver {
         return classifyGenericTypeNode(fieldDecl->typeNode, identity);
     }
 
+    const TypeNode *selfFieldTypeNode(llvm::StringRef fieldName) const {
+        if (!resolved_.isMethod() || !resolved_.decl()) {
+            return nullptr;
+        }
+        auto *structDecl = findEnclosingStructDecl(resolved_.decl());
+        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        return fieldDecl ? fieldDecl->typeNode : nullptr;
+    }
+
     GenericCapabilityInfo bindingGenericInfo(
         const ResolvedLocalBinding *binding) const {
         if (!binding) {
@@ -324,6 +404,246 @@ class FunctionResolver {
             return found->second;
         }
         return classifyGenericTypeNode(bindingDeclaredTypeNode(binding));
+    }
+
+    const TypeNode *exprVisibleTypeNode(const AstNode *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            auto *binding = resolved_.field(field);
+            if (!binding ||
+                binding->kind() != ResolvedEntityRef::Kind::LocalBinding) {
+                return nullptr;
+            }
+            return bindingDeclaredTypeNode(binding->localBinding());
+        }
+        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
+            return exprVisibleTypeNode(refExpr->expr);
+        }
+        if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
+            if (unary->op != '*') {
+                return nullptr;
+            }
+            return pointeeTypeNode(exprVisibleTypeNode(unary->expr));
+        }
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
+                                             dotLike->field->text.size());
+            if (auto *parentField = dynamic_cast<const AstField *>(dotLike->parent)) {
+                if (auto *binding = resolved_.field(parentField);
+                    binding &&
+                    binding->kind() == ResolvedEntityRef::Kind::LocalBinding &&
+                    binding->localBinding() == resolved_.selfBinding()) {
+                    return selfFieldTypeNode(fieldName);
+                }
+            }
+            auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
+            return projectedFieldTypeNode(ownerTypeNode, fieldName);
+        }
+        return nullptr;
+    }
+
+    const AstNode *callArgValue(const AstNode *node) const {
+        if (auto *namedArg = dynamic_cast<const AstNamedCallArg *>(node)) {
+            return namedArg->value;
+        }
+        return node;
+    }
+
+    const AstNode *callTargetNode(const AstFieldCall *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->value;
+        }
+        return node->value;
+    }
+
+    std::vector<TypeNode *> *callExplicitTypeArgs(const AstFieldCall *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->typeArgs;
+        }
+        return nullptr;
+    }
+
+    const ResolvedEntityRef *resolvedCallTarget(const AstFieldCall *node) const {
+        return resolvedExpr(callTargetNode(node));
+    }
+
+    void recordGenericCapabilitySubst(
+        std::unordered_map<std::string, GenericCapabilityInfo> &substs,
+        llvm::StringRef paramName, GenericCapabilityInfo info) const {
+        if (!info.valid()) {
+            return;
+        }
+        auto key = toStdString(paramName);
+        auto found = substs.find(key);
+        if (found == substs.end() || !found->second.valid()) {
+            substs[key] = std::move(info);
+        }
+    }
+
+    void inferGenericCapabilitySubsts(
+        const TypeNode *pattern, const TypeNode *actualTypeNode,
+        GenericCapabilityInfo actualInfo,
+        std::unordered_map<std::string, GenericCapabilityInfo> &substs) const {
+        if (!pattern) {
+            return;
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(pattern)) {
+            inferGenericCapabilitySubsts(param->type, actualTypeNode, actualInfo,
+                                         substs);
+            return;
+        }
+        if (auto *qualified = dynamic_cast<const ConstTypeNode *>(pattern)) {
+            inferGenericCapabilitySubsts(qualified->base, actualTypeNode,
+                                         actualInfo, substs);
+            return;
+        }
+        if (auto *base = dynamic_cast<const BaseTypeNode *>(pattern)) {
+            auto rawName = baseTypeName(base);
+            std::string moduleName;
+            std::string memberName;
+            if (!splitBaseTypeName(base, moduleName, memberName) &&
+                hasGenericTypeParam(rawName)) {
+                auto info = actualInfo;
+                if (!info.valid() && actualTypeNode) {
+                    info = classifyGenericTypeNode(actualTypeNode);
+                }
+                recordGenericCapabilitySubst(substs, rawName, info);
+            }
+            return;
+        }
+        if (auto *pointer = dynamic_cast<const PointerTypeNode *>(pattern)) {
+            auto nextInfo = actualInfo;
+            if (nextInfo.valid()) {
+                if (nextInfo.pointerDepth >= static_cast<int>(pointer->dim)) {
+                    nextInfo.pointerDepth -= static_cast<int>(pointer->dim);
+                } else {
+                    nextInfo = noGenericCapability();
+                }
+            }
+            inferGenericCapabilitySubsts(pointer->base,
+                                         peelPointerTypeNode(actualTypeNode,
+                                                             pointer->dim),
+                                         nextInfo, substs);
+            return;
+        }
+        if (auto *indexable =
+                dynamic_cast<const IndexablePointerTypeNode *>(pattern)) {
+            auto nextInfo = actualInfo;
+            if (nextInfo.valid()) {
+                if (nextInfo.pointerDepth > 0) {
+                    --nextInfo.pointerDepth;
+                } else {
+                    nextInfo = noGenericCapability();
+                }
+            }
+            inferGenericCapabilitySubsts(indexable->base,
+                                         peelPointerTypeNode(actualTypeNode, 1),
+                                         nextInfo, substs);
+            return;
+        }
+        if (auto *array = dynamic_cast<const ArrayTypeNode *>(pattern)) {
+            const auto *actualArray =
+                dynamic_cast<const ArrayTypeNode *>(stripDecoratedTypeNode(
+                    actualTypeNode));
+            inferGenericCapabilitySubsts(
+                array->base, actualArray ? actualArray->base : nullptr,
+                noGenericCapability(), substs);
+            return;
+        }
+        if (auto *tuple = dynamic_cast<const TupleTypeNode *>(pattern)) {
+            const auto *actualTuple =
+                dynamic_cast<const TupleTypeNode *>(stripDecoratedTypeNode(
+                    actualTypeNode));
+            if (!actualTuple || actualTuple->items.size() != tuple->items.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < tuple->items.size(); ++i) {
+                inferGenericCapabilitySubsts(tuple->items[i],
+                                             actualTuple->items[i],
+                                             noGenericCapability(), substs);
+            }
+            return;
+        }
+        if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(pattern)) {
+            const auto *actualFunc =
+                dynamic_cast<const FuncPtrTypeNode *>(stripDecoratedTypeNode(
+                    actualTypeNode));
+            if (!actualFunc || actualFunc->args.size() != func->args.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < func->args.size(); ++i) {
+                inferGenericCapabilitySubsts(func->args[i], actualFunc->args[i],
+                                             noGenericCapability(), substs);
+            }
+            inferGenericCapabilitySubsts(func->ret, actualFunc->ret,
+                                         noGenericCapability(), substs);
+            return;
+        }
+        if (auto *applied = dynamic_cast<const AppliedTypeNode *>(pattern)) {
+            const auto *actualApplied =
+                dynamic_cast<const AppliedTypeNode *>(stripDecoratedTypeNode(
+                    actualTypeNode));
+            auto *patternBase =
+                dynamic_cast<const BaseTypeNode *>(applied->base);
+            auto *actualBase = actualApplied
+                                   ? dynamic_cast<const BaseTypeNode *>(
+                                         actualApplied->base)
+                                   : nullptr;
+            if (!actualApplied || !sameVisibleTypeBase(patternBase, actualBase) ||
+                actualApplied->args.size() != applied->args.size()) {
+                return;
+            }
+            for (std::size_t i = 0; i < applied->args.size(); ++i) {
+                inferGenericCapabilitySubsts(applied->args[i],
+                                             actualApplied->args[i],
+                                             noGenericCapability(), substs);
+            }
+        }
+    }
+
+    GenericCapabilityInfo inferGenericCallResultInfo(
+        const AstFieldCall *node) const {
+        auto *binding = resolvedCallTarget(node);
+        if (!binding ||
+            binding->kind() != ResolvedEntityRef::Kind::GenericFunction) {
+            return noGenericCapability();
+        }
+        auto *functionDecl = binding->functionDecl();
+        if (!functionDecl || !functionDecl->returnTypeNode) {
+            return noGenericCapability();
+        }
+
+        std::unordered_map<std::string, GenericCapabilityInfo> substs;
+        auto *explicitTypeArgs = callExplicitTypeArgs(node);
+        if (explicitTypeArgs) {
+            const auto count =
+                std::min(explicitTypeArgs->size(), functionDecl->typeParams.size());
+            for (std::size_t i = 0; i < count; ++i) {
+                recordGenericCapabilitySubst(
+                    substs, toStringRef(functionDecl->typeParams[i].localName),
+                    classifyGenericTypeNode(explicitTypeArgs->at(i)));
+            }
+        }
+
+        const auto argCount = node->args ? node->args->size() : 0;
+        const auto paramCount =
+            std::min(argCount, functionDecl->paramTypeNodes.size());
+        for (std::size_t i = 0; i < paramCount; ++i) {
+            auto *argExpr = callArgValue(node->args->at(i));
+            inferGenericCapabilitySubsts(functionDecl->paramTypeNodes[i],
+                                         exprVisibleTypeNode(argExpr),
+                                         inferGenericExprInfo(argExpr), substs);
+        }
+
+        return classifyGenericTypeNode(functionDecl->returnTypeNode, substs);
     }
 
     GenericCapabilityInfo inferGenericExprInfo(const AstNode *node) const {
@@ -379,6 +699,9 @@ class FunctionResolver {
             }
             auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
             return projectedFieldGenericInfo(ownerTypeNode, fieldName);
+        }
+        if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
+            return inferGenericCallResultInfo(call);
         }
         return noGenericCapability();
     }

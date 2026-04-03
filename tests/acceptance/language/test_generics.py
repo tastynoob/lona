@@ -309,6 +309,88 @@ def test_generic_v0_template_bodies_reject_unconstrained_capability_assumptions(
         _expect_ir_failure(compiler, name, source, needles)
 
 
+def test_generic_v0_template_bodies_reject_unconstrained_helper_alias_escapes(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "generic_unconstrained_helper_alias_method_bad_round8.lo",
+            """
+            def id[T](value T) T {
+                ret value
+            }
+
+            def bad[T](obj T) i32 {
+                var alias = id(obj)
+                ret alias.hash()
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not provide member `hash`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+        (
+            "generic_unconstrained_helper_alias_applied_bad_round8.lo",
+            """
+            struct Box[T] {
+                value T
+            }
+
+            def head[T](box Box![T]) T {
+                ret box.value
+            }
+
+            def bad[T](box Box![T]) i32 {
+                var alias = head(box)
+                ret alias.hash()
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not provide member `hash`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
+
+
+def test_generic_v0_concrete_helper_aliases_still_allow_member_access(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_concrete_helper_alias_round8.lo",
+        """
+        struct Point {
+            def hash() i32 {
+                ret 7
+            }
+        }
+
+        def id[T](value T) T {
+            ret value
+        }
+
+        def main() i32 {
+            var alias = id(Point())
+            ret alias.hash()
+        }
+        """,
+    )
+    assert_contains(
+        ir,
+        "@generic_concrete_helper_alias_round8.Point.hash",
+        label="generic concrete helper alias ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_concrete_helper_alias_round8.Point.hash(",
+        label="generic concrete helper alias ir",
+    )
+
+
 def test_generic_v0_explicit_type_args_enter_semantic_call_path(
     compiler: CompilerHarness,
 ) -> None:

@@ -509,6 +509,55 @@ def test_imported_generic_function_refs_instantiate_one_concrete_symbol(
     assert len(re.findall(r"^define i32 @dep\.id__inst__i32\(i32 ", ir, re.M)) == 1
 
 
+def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_alias_escape/dep.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def id[T](value T) T {
+            ret value
+        }
+
+        def head[T](box Box![T]) T {
+            ret box.value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_alias_escape/main.lo",
+        """
+        import dep
+
+        def bad_value[T](obj T) i32 {
+            var alias = dep.id(obj)
+            ret alias.hash()
+        }
+
+        def bad_box[T](box dep.Box![T]) i32 {
+            var alias = dep.head(box)
+            ret alias.hash()
+        }
+        """,
+    )
+
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "unconstrained generic parameter `T` does not provide member `hash`",
+        label="imported helper alias diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+        label="imported helper alias hint",
+    )
+
+
 def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     compiler: CompilerHarness,
 ) -> None:
