@@ -32,6 +32,8 @@ class TargetMachine;
 
 namespace lona {
 
+class CompilationUnit;
+
 std::string
 normalizeTargetTriple(const std::string &triple);
 bool
@@ -169,6 +171,7 @@ private:
     StructDeclKind declKind = StructDeclKind::Native;
     string appliedTemplateName;
     std::vector<TypeClass *> appliedTypeArgs;
+    const CompilationUnit *appliedTemplateOwnerUnit = nullptr;
 
 public:
     StructType(llvm::StringMap<ValueTy> &&members, string full_name,
@@ -200,10 +203,15 @@ public:
     const std::vector<TypeClass *> &getAppliedTypeArgs() const {
         return appliedTypeArgs;
     }
+    const CompilationUnit *getAppliedTemplateOwnerUnit() const {
+        return appliedTemplateOwnerUnit;
+    }
     void setAppliedTemplateInfo(string templateName,
-                                std::vector<TypeClass *> typeArgs) {
+                                std::vector<TypeClass *> typeArgs,
+                                const CompilationUnit *templateOwnerUnit = nullptr) {
         appliedTemplateName = std::move(templateName);
         appliedTypeArgs = std::move(typeArgs);
+        appliedTemplateOwnerUnit = templateOwnerUnit;
     }
 
     void complete(const llvm::StringMap<ValueTy> &newMembers,
@@ -688,7 +696,9 @@ public:
                                            StructDeclKind::Native,
                                        string appliedTemplateName = {},
                                        std::vector<TypeClass *> appliedTypeArgs =
-                                           {}) {
+                                           {},
+                                       const CompilationUnit *templateOwnerUnit =
+                                           nullptr) {
         if (auto *type = getType(fullName)) {
             auto *structType = type->as<StructType>();
             if (structType) {
@@ -696,7 +706,9 @@ public:
                 if (!appliedTemplateName.empty()) {
                     structType->setAppliedTemplateInfo(
                         std::move(appliedTemplateName),
-                        std::move(appliedTypeArgs));
+                        std::move(appliedTypeArgs),
+                        templateOwnerUnit ? templateOwnerUnit
+                                          : structType->getAppliedTemplateOwnerUnit());
                 }
             }
             return structType;
@@ -704,6 +716,11 @@ public:
         auto *structType = new StructType(fullName, declKind,
                                           std::move(appliedTemplateName),
                                           std::move(appliedTypeArgs));
+        if (templateOwnerUnit && structType->isAppliedTemplateInstance()) {
+            structType->setAppliedTemplateInfo(
+                structType->getAppliedTemplateName(),
+                structType->getAppliedTypeArgs(), templateOwnerUnit);
+        }
         addType(fullName, structType);
         return structType;
     }
@@ -713,10 +730,13 @@ public:
                                            StructDeclKind::Native,
                                        string appliedTemplateName = {},
                                        std::vector<TypeClass *> appliedTypeArgs =
-                                           {}) {
+                                           {},
+                                       const CompilationUnit *templateOwnerUnit =
+                                           nullptr) {
         return createOpaqueStructType(string(fullName), declKind,
                                       std::move(appliedTemplateName),
-                                      std::move(appliedTypeArgs));
+                                      std::move(appliedTypeArgs),
+                                      templateOwnerUnit);
     }
 
     PointerType *createPointerType(TypeClass *pointeeType) {
@@ -892,7 +912,8 @@ public:
                     structType->isAppliedTemplateInstance()) {
                     targetStruct->setAppliedTemplateInfo(
                         structType->getAppliedTemplateName(),
-                        structType->getAppliedTypeArgs());
+                        structType->getAppliedTypeArgs(),
+                        structType->getAppliedTemplateOwnerUnit());
                 }
                 if (!structType->isOpaque()) {
                     targetStruct->complete(internedMembers, internedMemberAccess,

@@ -639,12 +639,13 @@ class ModuleResolver {
         bool languageEntry, bool guaranteedReturn,
         bool templateValidationOnly = false,
         std::vector<string> genericTypeParams = {},
+        const ModuleInterface *genericOwnerInterface = nullptr,
         std::unordered_map<std::string, TypeClass *> concreteGenericTypes = {}) {
         auto *resolved = module_->createFunction(
             decl, body, std::move(functionName),
             std::move(methodParentTypeName), loc, topLevelEntry, languageEntry,
             guaranteedReturn, templateValidationOnly,
-            std::move(genericTypeParams),
+            std::move(genericTypeParams), genericOwnerInterface,
             std::move(concreteGenericTypes));
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
@@ -843,12 +844,14 @@ ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
                                bool languageEntry, bool guaranteedReturn,
                                bool templateValidationOnly,
                                std::vector<string> genericTypeParams,
+                               const ModuleInterface *genericOwnerInterface,
                                std::unordered_map<std::string, TypeClass *>
                                    concreteGenericTypes) {
     functions_.push_back(std::make_unique<ResolvedFunction>(
         decl, body, std::move(functionName), std::move(methodParentTypeName),
         loc, topLevelEntry, languageEntry, guaranteedReturn,
         templateValidationOnly, std::move(genericTypeParams),
+        genericOwnerInterface,
         std::move(concreteGenericTypes)));
     return functions_.back().get();
 }
@@ -881,6 +884,7 @@ std::unique_ptr<ResolvedModule>
 resolveGenericFunctionInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
     string resolvedFunctionName,
+    const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
     if (!global || !decl) {
         return nullptr;
@@ -903,7 +907,7 @@ resolveGenericFunctionInstance(
     auto *resolved = module->createFunction(
         decl, decl->body, std::move(resolvedFunctionName), string(), decl->loc,
         false, false, decl->body && decl->body->hasTerminator(), false,
-        std::move(genericTypeParams),
+        std::move(genericTypeParams), genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     if (decl->args) {
@@ -929,6 +933,7 @@ std::unique_ptr<ResolvedModule>
 resolveGenericMethodInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
     string methodParentTypeName, std::vector<string> genericTypeParams,
+    const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
     if (!global || !decl || methodParentTypeName.empty()) {
         return nullptr;
@@ -941,7 +946,7 @@ resolveGenericMethodInstance(
     auto *resolved = module->createFunction(
         decl, decl->body, string(decl->name), std::move(methodParentTypeName),
         decl->loc, false, false, decl->body && decl->body->hasTerminator(),
-        false, std::move(genericTypeParams),
+        false, std::move(genericTypeParams), genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     auto *declStructType =

@@ -441,6 +441,87 @@ def test_generic_v0_specialized_function_refs_lower_to_concrete_symbols(
     assert_contains(ir, "call i32 %2(i32 3)", label="generic function ref ir")
 
 
+def test_generic_v0_imported_calls_and_refs_emit_concrete_runtime_symbols(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_imported_runtime_symbols/dep.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_imported_runtime_symbols/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var cb (i32: i32) = dep.id[i32]&<>
+            var left i32 = dep.id[i32](1)
+            var right i32 = cb(2)
+            ret left + right
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        "define i32 @dep.id__inst__i32",
+        label="generic imported function ir",
+    )
+    assert_contains(
+        ir,
+        "store ptr @dep.id__inst__i32",
+        label="generic imported function ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @dep.id__inst__i32(i32 1)",
+        label="generic imported function ir",
+    )
+
+
+def test_generic_v0_imported_applied_structs_emit_concrete_layout_and_methods(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_imported_struct_runtime/dep.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_imported_struct_runtime/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box![i32] = dep.Box[i32](value = 5)
+            ret box.get()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        '%"dep.Box![i32]" = type { i32 }',
+        label="generic imported struct ir",
+    )
+    assert_contains(
+        ir,
+        "@dep_2eBox_21_5bi32_5d.get",
+        label="generic imported struct ir",
+    )
+
+
 def test_trait_static_dispatch_lowers_to_direct_method_call(
     compiler: CompilerHarness,
 ) -> None:

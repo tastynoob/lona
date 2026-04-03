@@ -38,6 +38,7 @@ public:
         string moduleKey;
         string moduleName;
         const ModuleInterface *interface = nullptr;
+        const CompilationUnit *unit = nullptr;
     };
 
     struct TopLevelLookup {
@@ -129,6 +130,8 @@ public:
     const std::unordered_map<string, ImportedModule> &importedModules() const {
         return importedModules_;
     }
+    const ImportedModule *findImportedModuleByInterface(
+        const ModuleInterface *interface) const;
     bool importsModule(const ::string &alias) const;
     bool importsModule(const std::string &alias) const {
         return importsModule(string(alias));
@@ -198,6 +201,15 @@ public:
     void clearResolvedTypes();
     TypeClass *resolveType(TypeTable *typeTable, TypeNode *node) const;
     bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const;
+    const CompilationUnit *ownerUnitForTypeDecl(
+        const ModuleInterface::TypeDecl *typeDecl) const;
+    const CompilationUnit *contextUnitForInterface(
+        const ModuleInterface *ownerInterface) const;
+    std::uint64_t visibleImportInterfaceHash() const;
+    StructType *materializeAppliedStructType(
+        TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
+        std::vector<TypeClass *> appliedTypeArgs,
+        const CompilationUnit &contextUnit) const;
     StructType *materializeLocalAppliedStructType(
         TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
         std::vector<TypeClass *> appliedTypeArgs) const;

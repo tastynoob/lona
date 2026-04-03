@@ -157,6 +157,7 @@ class ResolvedFunction {
     bool guaranteedReturn_ = false;
     bool templateValidationOnly_ = false;
     std::vector<string> genericTypeParams_;
+    const ModuleInterface *genericOwnerInterface_ = nullptr;
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes_;
 
     std::vector<const ResolvedLocalBinding *> params_;
@@ -174,6 +175,7 @@ public:
                      bool languageEntry, bool guaranteedReturn,
                      bool templateValidationOnly = false,
                      std::vector<string> genericTypeParams = {},
+                     const ModuleInterface *genericOwnerInterface = nullptr,
                      std::unordered_map<std::string, TypeClass *>
                          concreteGenericTypes = {})
         : decl_(decl),
@@ -186,6 +188,7 @@ public:
           guaranteedReturn_(guaranteedReturn),
           templateValidationOnly_(templateValidationOnly),
           genericTypeParams_(std::move(genericTypeParams)),
+          genericOwnerInterface_(genericOwnerInterface),
           concreteGenericTypes_(std::move(concreteGenericTypes)) {}
 
     const AstFuncDecl *decl() const { return decl_; }
@@ -201,6 +204,9 @@ public:
     bool isTemplateValidationOnly() const { return templateValidationOnly_; }
     const std::vector<string> &genericTypeParams() const {
         return genericTypeParams_;
+    }
+    const ModuleInterface *genericOwnerInterface() const {
+        return genericOwnerInterface_;
     }
     const std::unordered_map<std::string, TypeClass *> &
     concreteGenericTypes() const {
@@ -266,6 +272,7 @@ public:
                                      bool guaranteedReturn,
                                      bool templateValidationOnly = false,
                                      std::vector<string> genericTypeParams = {},
+                                     const ModuleInterface *genericOwnerInterface = nullptr,
                                      std::unordered_map<std::string, TypeClass *>
                                          concreteGenericTypes = {});
 
@@ -282,12 +289,14 @@ std::unique_ptr<ResolvedModule>
 resolveGenericFunctionInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
     string resolvedFunctionName,
+    const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
 
 std::unique_ptr<ResolvedModule>
 resolveGenericMethodInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
     string methodParentTypeName, std::vector<string> genericTypeParams,
+    const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
 
 }  // namespace lona

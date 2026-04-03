@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from tests.harness import assert_contains, assert_not_contains, assert_regex
 from tests.harness.compiler import CompilerHarness
@@ -338,7 +339,7 @@ def test_imported_trait_uses_imported_impl_for_static_dispatch(
     assert_not_contains(ir, "store i32 27", label="local import precedence ir")
 
 
-def test_imported_generic_applied_pointer_signatures_reach_pending_instantiation(
+def test_imported_generic_applied_pointer_signatures_instantiate_concrete_symbol(
     compiler: CompilerHarness,
 ) -> None:
     compiler.write_source(
@@ -365,12 +366,13 @@ def test_imported_generic_applied_pointer_signatures_reach_pending_instantiation
         }
         """,
     )
-    result = compiler.emit_ir(main_path).expect_failed()
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_contains(
-        result.stderr,
-        "generic function instantiation is not implemented yet for `dep.take_box_ptr`",
-        label="imported generic applied ptr diagnostic",
+        ir,
+        "@dep.take_box_ptr__inst__i32",
+        label="imported generic applied ptr ir",
     )
+    assert len(re.findall(r"^define ptr @dep\.take_box_ptr__inst__i32\(ptr ", ir, re.M)) == 1
 
 
 def test_imported_generic_applied_pointer_signatures_ignore_local_same_name_shadowing(
@@ -404,17 +406,13 @@ def test_imported_generic_applied_pointer_signatures_ignore_local_same_name_shad
         }
         """,
     )
-    result = compiler.emit_ir(main_path).expect_failed()
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_contains(
-        result.stderr,
-        "generic function instantiation is not implemented yet for `dep.take_box_ptr`",
-        label="imported generic applied ptr shadow diagnostic",
+        ir,
+        "@dep.take_box_ptr__inst__i32",
+        label="imported generic applied ptr shadow ir",
     )
-    assert_not_contains(
-        result.stderr,
-        "cannot infer generic type argument `T`",
-        label="imported generic applied ptr shadow diagnostic",
-    )
+    assert len(re.findall(r"^define ptr @dep\.take_box_ptr__inst__i32\(ptr ", ir, re.M)) == 1
 
 
 def test_imported_generic_signatures_use_owner_module_context_for_secondary_qualified_types(
@@ -457,16 +455,11 @@ def test_imported_generic_signatures_use_owner_module_context_for_secondary_qual
         }
         """,
     )
-    inferred = compiler.emit_ir(inferred_path).expect_failed()
+    inferred_ir = compiler.emit_ir(inferred_path).expect_ok().stdout
     assert_contains(
-        inferred.stderr,
-        "generic function instantiation is not implemented yet for `dep.take_helper_ptr`",
-        label="imported generic owner context diagnostic",
-    )
-    assert_not_contains(
-        inferred.stderr,
-        "cannot infer generic type argument `T`",
-        label="imported generic owner context diagnostic",
+        inferred_ir,
+        "@dep.take_helper_ptr__inst__i32",
+        label="imported generic owner context ir",
     )
 
     explicit_path = compiler.write_source(
@@ -480,11 +473,79 @@ def test_imported_generic_signatures_use_owner_module_context_for_secondary_qual
         }
         """,
     )
-    explicit = compiler.emit_ir(explicit_path).expect_failed()
+    explicit_ir = compiler.emit_ir(explicit_path).expect_ok().stdout
     assert_contains(
-        explicit.stderr,
-        "generic function instantiation is not implemented yet for `dep.take_helper_ptr`",
-        label="imported generic owner context explicit diagnostic",
+        explicit_ir,
+        "@dep.take_helper_ptr__inst__i32",
+        label="imported generic owner context explicit ir",
+    )
+    assert len(re.findall(r"^define ptr @dep\.take_helper_ptr__inst__i32\(ptr ", explicit_ir, re.M)) == 1
+
+
+def test_imported_generic_function_refs_instantiate_one_concrete_symbol(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_function_ref/dep.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_function_ref/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var cb (i32: i32) = dep.id[i32]&<>
+            ret cb(dep.id[i32](1))
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@dep.id__inst__i32", label="imported generic ref ir")
+    assert len(re.findall(r"^define i32 @dep\.id__inst__i32\(i32 ", ir, re.M)) == 1
+
+
+def test_imported_generic_structs_materialize_by_value_layout_and_methods(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_struct_runtime/dep.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_struct_runtime/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box![i32] = dep.Box[i32](value = 7)
+            var copy dep.Box![i32] = box
+            ret copy.get()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        '%"dep.Box![i32]" = type { i32 }',
+        label="imported generic struct runtime ir",
+    )
+    assert_contains(
+        ir,
+        "@dep_2eBox_21_5bi32_5d.get",
+        label="imported generic struct runtime ir",
     )
 
 
