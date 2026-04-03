@@ -133,7 +133,7 @@ class FunctionResolver {
     }
 
     const AstVarDecl *findStructFieldDecl(const AstStructDecl *structDecl,
-                                          llvm::StringRef fieldName) const {
+                                         llvm::StringRef fieldName) const {
         auto *body = dynamic_cast<AstStatList *>(structDecl ? structDecl->body
                                                             : nullptr);
         if (!body) {
@@ -147,6 +147,28 @@ class FunctionResolver {
             if (llvm::StringRef(fieldDecl->field.tochara(),
                                 fieldDecl->field.size()) == fieldName) {
                 return fieldDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const AstFuncDecl *findStructMethodDecl(const AstStructDecl *structDecl,
+                                            llvm::StringRef methodName) const {
+        if (!structDecl) {
+            return nullptr;
+        }
+        auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!funcDecl) {
+                continue;
+            }
+            if (llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()) ==
+                methodName) {
+                return funcDecl;
             }
         }
         return nullptr;
@@ -333,6 +355,68 @@ class FunctionResolver {
             return noGenericCapability();
         }
         return classifyGenericTypeNode(fieldDecl->typeNode, substs);
+    }
+
+    const TypeNode *methodOwnerTypeNode(const TypeNode *ownerTypeNode) const {
+        if (!ownerTypeNode) {
+            return nullptr;
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(ownerTypeNode)) {
+            return methodOwnerTypeNode(param->type);
+        }
+        if (auto *qualified = dynamic_cast<const ConstTypeNode *>(ownerTypeNode)) {
+            return methodOwnerTypeNode(qualified->base);
+        }
+        if (auto *pointer = dynamic_cast<const PointerTypeNode *>(ownerTypeNode)) {
+            return stripDecoratedTypeNode(pointer->base);
+        }
+        if (auto *indexable =
+                dynamic_cast<const IndexablePointerTypeNode *>(ownerTypeNode)) {
+            return stripDecoratedTypeNode(indexable->base);
+        }
+        return ownerTypeNode;
+    }
+
+    const AstFuncDecl *resolveVisibleMethodDecl(
+        const TypeNode *ownerTypeNode, llvm::StringRef methodName,
+        std::unordered_map<std::string, GenericCapabilityInfo> *substs =
+            nullptr) const {
+        if (!unit_ || !ownerTypeNode) {
+            return nullptr;
+        }
+        ownerTypeNode = methodOwnerTypeNode(ownerTypeNode);
+        if (!ownerTypeNode) {
+            return nullptr;
+        }
+
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        if (auto *applied = dynamic_cast<const AppliedTypeNode *>(ownerTypeNode)) {
+            auto *base = dynamic_cast<const BaseTypeNode *>(applied->base);
+            typeDecl = resolveVisibleTypeDecl(base);
+            if (!typeDecl) {
+                return nullptr;
+            }
+            if (substs) {
+                const auto count =
+                    std::min(typeDecl->typeParams.size(), applied->args.size());
+                for (std::size_t i = 0; i < count; ++i) {
+                    substs->emplace(
+                        toStdString(typeDecl->typeParams[i].localName),
+                        classifyGenericTypeNode(applied->args[i]));
+                }
+            }
+        } else if (auto *baseNode =
+                       dynamic_cast<const BaseTypeNode *>(ownerTypeNode)) {
+            typeDecl = resolveVisibleTypeDecl(baseNode);
+        }
+
+        if (!typeDecl) {
+            return nullptr;
+        }
+        auto *ownerUnit = unit_->ownerUnitForTypeDecl(typeDecl);
+        auto *structDecl =
+            findStructDeclInUnit(ownerUnit, toStringRef(typeDecl->localName));
+        return findStructMethodDecl(structDecl, methodName);
     }
 
     const TypeNode *projectedFieldTypeNode(const TypeNode *ownerTypeNode,
@@ -612,38 +696,53 @@ class FunctionResolver {
     GenericCapabilityInfo inferGenericCallResultInfo(
         const AstFieldCall *node) const {
         auto *binding = resolvedCallTarget(node);
-        if (!binding ||
-            binding->kind() != ResolvedEntityRef::Kind::GenericFunction) {
-            return noGenericCapability();
-        }
-        auto *functionDecl = binding->functionDecl();
-        if (!functionDecl || !functionDecl->returnTypeNode) {
-            return noGenericCapability();
-        }
-
-        std::unordered_map<std::string, GenericCapabilityInfo> substs;
-        auto *explicitTypeArgs = callExplicitTypeArgs(node);
-        if (explicitTypeArgs) {
-            const auto count =
-                std::min(explicitTypeArgs->size(), functionDecl->typeParams.size());
-            for (std::size_t i = 0; i < count; ++i) {
-                recordGenericCapabilitySubst(
-                    substs, toStringRef(functionDecl->typeParams[i].localName),
-                    classifyGenericTypeNode(explicitTypeArgs->at(i)));
+        if (binding &&
+            binding->kind() == ResolvedEntityRef::Kind::GenericFunction) {
+            auto *functionDecl = binding->functionDecl();
+            if (!functionDecl || !functionDecl->returnTypeNode) {
+                return noGenericCapability();
             }
+
+            std::unordered_map<std::string, GenericCapabilityInfo> substs;
+            auto *explicitTypeArgs = callExplicitTypeArgs(node);
+            if (explicitTypeArgs) {
+                const auto count = std::min(explicitTypeArgs->size(),
+                                            functionDecl->typeParams.size());
+                for (std::size_t i = 0; i < count; ++i) {
+                    recordGenericCapabilitySubst(
+                        substs,
+                        toStringRef(functionDecl->typeParams[i].localName),
+                        classifyGenericTypeNode(explicitTypeArgs->at(i)));
+                }
+            }
+
+            const auto argCount = node->args ? node->args->size() : 0;
+            const auto paramCount =
+                std::min(argCount, functionDecl->paramTypeNodes.size());
+            for (std::size_t i = 0; i < paramCount; ++i) {
+                auto *argExpr = callArgValue(node->args->at(i));
+                inferGenericCapabilitySubsts(functionDecl->paramTypeNodes[i],
+                                             exprVisibleTypeNode(argExpr),
+                                             inferGenericExprInfo(argExpr),
+                                             substs);
+            }
+
+            return classifyGenericTypeNode(functionDecl->returnTypeNode, substs);
         }
 
-        const auto argCount = node->args ? node->args->size() : 0;
-        const auto paramCount =
-            std::min(argCount, functionDecl->paramTypeNodes.size());
-        for (std::size_t i = 0; i < paramCount; ++i) {
-            auto *argExpr = callArgValue(node->args->at(i));
-            inferGenericCapabilitySubsts(functionDecl->paramTypeNodes[i],
-                                         exprVisibleTypeNode(argExpr),
-                                         inferGenericExprInfo(argExpr), substs);
+        auto *callee = dynamic_cast<const AstDotLike *>(callTargetNode(node));
+        if (!callee) {
+            return noGenericCapability();
         }
-
-        return classifyGenericTypeNode(functionDecl->returnTypeNode, substs);
+        std::unordered_map<std::string, GenericCapabilityInfo> substs;
+        auto fieldName = llvm::StringRef(callee->field->text.tochara(),
+                                         callee->field->text.size());
+        auto *methodDecl = resolveVisibleMethodDecl(
+            projectionOwnerTypeNode(callee->parent), fieldName, &substs);
+        if (!methodDecl || !methodDecl->returnTypeNode) {
+            return noGenericCapability();
+        }
+        return classifyGenericTypeNode(methodDecl->returnTypeNode, substs);
     }
 
     GenericCapabilityInfo inferGenericExprInfo(const AstNode *node) const {

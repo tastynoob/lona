@@ -517,6 +517,10 @@ def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
         """
         struct Box[T] {
             value T
+
+            def get() T {
+                ret self.value
+            }
         }
 
         def id[T](value T) T {
@@ -542,6 +546,7 @@ def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
             var alias = dep.head(box)
             ret alias.hash()
         }
+
         """,
     )
 
@@ -555,6 +560,46 @@ def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
         result.stderr,
         "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
         label="imported helper alias hint",
+    )
+
+
+def test_imported_generic_method_results_do_not_hide_unconstrained_template_use(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_method_alias_escape/dep.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_method_alias_escape/main.lo",
+        """
+        import dep
+
+        def bad_method[T](box dep.Box![T]) i32 {
+            var alias = box.get()
+            ret alias.hash()
+        }
+        """,
+    )
+
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "unconstrained generic parameter `T` does not provide member `hash`",
+        label="imported method alias diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+        label="imported method alias hint",
     )
 
 

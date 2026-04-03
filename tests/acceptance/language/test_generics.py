@@ -351,6 +351,27 @@ def test_generic_v0_template_bodies_reject_unconstrained_helper_alias_escapes(
                 "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
             ],
         ),
+        (
+            "generic_unconstrained_method_alias_applied_bad_round9.lo",
+            """
+            struct Box[T] {
+                value T
+
+                def get() T {
+                    ret self.value
+                }
+            }
+
+            def bad[T](box Box![T]) i32 {
+                var alias = box.get()
+                ret alias.hash()
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not provide member `hash`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
     ]
     for name, source, needles in failures:
         _expect_ir_failure(compiler, name, source, needles)
@@ -388,6 +409,46 @@ def test_generic_v0_concrete_helper_aliases_still_allow_member_access(
         ir,
         "call i32 @generic_concrete_helper_alias_round8.Point.hash(",
         label="generic concrete helper alias ir",
+    )
+
+
+def test_generic_v0_concrete_method_aliases_still_allow_member_access(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_concrete_method_alias_round9.lo",
+        """
+        struct Point {
+            def hash() i32 {
+                ret 7
+            }
+        }
+
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+
+        def main() i32 {
+            var box = Box[Point](value = Point())
+            var alias = box.get()
+            ret alias.hash()
+        }
+        """,
+    )
+    assert_contains(
+        ir,
+        "@generic_concrete_method_alias_round9.Point.hash",
+        label="generic concrete method alias ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_concrete_method_alias_round9.Point.hash(",
+        label="generic concrete method alias ir",
     )
 
 
