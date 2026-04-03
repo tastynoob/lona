@@ -83,12 +83,12 @@ def test_generic_v0_frontend_rejects_type_args_on_non_generic_box(
     )
 
 
-def test_generic_v0_frontend_rejects_by_value_storage_of_opaque_applied_type(
+def test_generic_v0_same_module_applied_structs_support_by_value_storage(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
-        "generic_box_by_value_storage_round4.lo",
+        "generic_box_by_value_storage_round3.lo",
         """
         struct Box[T] {
             value T
@@ -98,10 +98,49 @@ def test_generic_v0_frontend_rejects_by_value_storage_of_opaque_applied_type(
             var box Box![i32]
         }
         """,
-        [
-            "opaque struct `Box![i32]` cannot be used by value in variable `box`",
-            "Use `Box![i32]*` instead. Opaque structs are only supported behind pointers.",
-        ],
+    )
+    assert_contains(ir, "define void @show()", label="generic box by value ir")
+
+
+def test_generic_v0_same_module_applied_structs_support_ctor_field_param_return_and_method(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_box_runtime_round3.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+
+        struct Holder {
+            box Box![i32]
+        }
+
+        def make_box() Box![i32] {
+            ret Box[i32](value = 41)
+        }
+
+        def take_box(box Box![i32]) i32 {
+            ret box.get()
+        }
+
+        def main() i32 {
+            var box Box![i32] = make_box()
+            var holder Holder = Holder(box = box)
+            ret take_box(holder.box) + 1
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="generic box runtime ir")
+    assert_contains(
+        ir,
+        "define",
+        label="generic box runtime ir",
     )
 
 

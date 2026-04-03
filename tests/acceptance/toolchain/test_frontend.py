@@ -352,6 +352,30 @@ def test_generic_v0_applied_type_pointers_form_concrete_runtime_identities(
     assert_contains(ir, "define ptr @main()", label="generic applied ptr ir")
 
 
+def test_generic_v0_same_module_applied_structs_emit_concrete_runtime_layout_and_methods(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "generic_applied_type_runtime_round3.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+
+        def main() i32 {
+            var box Box![i32] = Box[i32](value = 5)
+            ret box.get()
+        }
+        """,
+    )
+    ir = compiler.emit_ir(input_path).expect_ok().stdout
+    assert_contains(ir, "define i32 @main()", label="generic applied value ir")
+
+
 def test_generic_v0_same_module_calls_emit_concrete_runtime_symbols(
     compiler: CompilerHarness,
 ) -> None:

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lona {
 
@@ -77,6 +78,7 @@ private:
     std::unordered_map<string, string> localFunctionBindings_;
     std::unordered_map<string, string> localGlobalBindings_;
     mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
+    mutable std::unordered_set<std::string> materializingAppliedStructs_;
     mutable bool hashesReady_ = false;
     mutable std::uint64_t interfaceHash_ = 0;
     mutable std::uint64_t implementationHash_ = 0;
@@ -195,6 +197,10 @@ public:
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();
     TypeClass *resolveType(TypeTable *typeTable, TypeNode *node) const;
+    bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const;
+    StructType *materializeLocalAppliedStructType(
+        TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
+        std::vector<TypeClass *> appliedTypeArgs) const;
 };
 
 }  // namespace lona

@@ -848,46 +848,88 @@ public:
             return type;
         }
         if (auto *structType = type->as<StructType>()) {
-            if (auto *existing = getType(type->full_name)) {
-                auto *existingStruct = existing->as<StructType>();
-                if (existingStruct) {
-                    existingStruct->setDeclKind(structType->getDeclKind());
-                    if (!existingStruct->isAppliedTemplateInstance() &&
-                        structType->isAppliedTemplateInstance()) {
-                        existingStruct->setAppliedTemplateInfo(
-                            structType->getAppliedTemplateName(),
-                            structType->getAppliedTypeArgs());
+            auto internStructContents =
+                [&](StructType *targetStruct) -> StructType * {
+                llvm::StringMap<StructType::ValueTy> internedMembers;
+                llvm::StringMap<AccessKind> internedMemberAccess;
+                llvm::StringSet<> internedEmbeddedMembers;
+                bool reusedOriginalMembers = true;
+                for (const auto &member : structType->getMembers()) {
+                    auto *internedMemberType = internType(member.second.first);
+                    if (!internedMemberType) {
+                        return nullptr;
                     }
-                    if (existingStruct->isOpaque() && !structType->isOpaque()) {
-                        existingStruct->complete(
-                            structType->getMembers(),
-                            structType->getMemberAccesses(),
-                            structType->getEmbeddedMembers());
-                    }
-                    for (const auto &method : structType->getMethodTypes()) {
-                        if (!existingStruct->getMethodType(method.first())) {
-                            std::vector<string> paramNames;
-                            if (const auto *storedParamNames =
-                                    structType->getMethodParamNames(
-                                        method.first())) {
-                                paramNames = *storedParamNames;
-                            }
-                            existingStruct->addMethodType(
-                                method.first(), method.second,
-                                std::move(paramNames));
-                        }
+                    reusedOriginalMembers =
+                        reusedOriginalMembers &&
+                        internedMemberType == member.second.first;
+                    internedMembers[member.first()] = {
+                        internedMemberType, member.second.second};
+                    internedMemberAccess[member.first()] =
+                        structType->getMemberAccess(member.first());
+                    if (structType->isEmbeddedMember(member.first())) {
+                        internedEmbeddedMembers.insert(member.first());
                     }
                 }
-                return existing;
+
+                llvm::StringMap<FuncType *> internedMethodTypes;
+                llvm::StringMap<std::vector<string>> internedMethodParamNames;
+                for (const auto &method : structType->getMethodTypes()) {
+                    auto *internedMethod = internType(method.second);
+                    auto *funcType = internedMethod ? internedMethod->as<FuncType>()
+                                                   : nullptr;
+                    if (!funcType) {
+                        return nullptr;
+                    }
+                    internedMethodTypes[method.first()] = funcType;
+                    if (const auto *paramNames =
+                            structType->getMethodParamNames(method.first())) {
+                        internedMethodParamNames[method.first()] = *paramNames;
+                    }
+                }
+
+                targetStruct->setDeclKind(structType->getDeclKind());
+                if (!targetStruct->isAppliedTemplateInstance() &&
+                    structType->isAppliedTemplateInstance()) {
+                    targetStruct->setAppliedTemplateInfo(
+                        structType->getAppliedTemplateName(),
+                        structType->getAppliedTypeArgs());
+                }
+                if (!structType->isOpaque()) {
+                    targetStruct->complete(internedMembers, internedMemberAccess,
+                                           internedEmbeddedMembers);
+                }
+                for (const auto &method : internedMethodTypes) {
+                    if (!targetStruct->getMethodType(method.first()) ||
+                        targetStruct->getMethodType(method.first()) !=
+                            method.second) {
+                        std::vector<string> paramNames;
+                        auto foundParamNames =
+                            internedMethodParamNames.find(method.first());
+                        if (foundParamNames != internedMethodParamNames.end()) {
+                            paramNames = foundParamNames->second;
+                        }
+                        targetStruct->addMethodType(method.first(),
+                                                    method.second,
+                                                    std::move(paramNames));
+                    }
+                }
+                return targetStruct;
+            };
+
+            if (auto *existing = getType(type->full_name)) {
+                if (existing == type) {
+                    return existing;
+                }
+                auto *existingStruct = existing->as<StructType>();
+                if (!existingStruct) {
+                    return existing;
+                }
+                return internStructContents(existingStruct);
             }
+
             addType(type->full_name, type);
-            for (const auto &member : structType->getMembers()) {
-                internType(member.second.first);
-            }
-            for (const auto &method : structType->getMethodTypes()) {
-                internType(method.second);
-            }
-            return type;
+            return internStructContents(structType);
+
         }
         if (auto *qualified = type->as<ConstType>()) {
             auto *baseType = internType(qualified->getBaseType());

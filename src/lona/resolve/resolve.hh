@@ -284,4 +284,10 @@ resolveGenericFunctionInstance(
     string resolvedFunctionName,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
 
+std::unique_ptr<ResolvedModule>
+resolveGenericMethodInstance(
+    GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
+    string methodParentTypeName, std::vector<string> genericTypeParams,
+    std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
+
 }  // namespace lona

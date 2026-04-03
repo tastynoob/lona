@@ -90,6 +90,7 @@ class InterfaceCollector {
     std::vector<AstTraitImplDecl *> traitImplDecls_;
     std::vector<AstFuncDecl *> funcDecls_;
     std::vector<AstGlobalDecl *> globalDecls_;
+    std::unordered_set<std::string> materializingAppliedStructs_;
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
@@ -221,16 +222,361 @@ class InterfaceCollector {
         return lookup.isType() ? lookup.typeDecl : nullptr;
     }
 
+    bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const {
+        return typeDecl &&
+               interface_->findType(toStdString(typeDecl->localName)) ==
+                   typeDecl;
+    }
+
+    AstStructDecl *findLocalStructDecl(const ModuleInterface::TypeDecl &typeDecl) {
+        for (auto *structDecl : structDecls_) {
+            if (structDecl &&
+                toStdString(structDecl->name) ==
+                    toStdString(typeDecl.localName)) {
+                return structDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const ModuleInterface::TypeDecl *
+    findOwnedTypeDeclByTemplateName(llvm::StringRef templateName) const {
+        if (templateName.empty()) {
+            return nullptr;
+        }
+        for (const auto &entry : interface_->types()) {
+            if (toStringRef(entry.second.localName) == templateName ||
+                toStringRef(entry.second.exportedName) == templateName) {
+                return &entry.second;
+            }
+        }
+        return nullptr;
+    }
+
+    static std::string buildAppliedTypeName(const std::string &baseName,
+                                            const std::vector<TypeClass *> &args) {
+        std::string name = baseName.empty() ? std::string("<type>") : baseName;
+        name += "![";
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            name += args[i] ? describeResolvedType(args[i]) : "<unknown type>";
+        }
+        name += "]";
+        return name;
+    }
+
+    TypeClass *substituteAppliedStructTemplateType(
+        TypeNode *node,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const std::string &context) {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+            return substituteAppliedStructTemplateType(param->type, genericArgs,
+                                                       loc, context);
+        }
+        if (dynamic_cast<AnyTypeNode *>(node)) {
+            return interface_->getOrCreateAnyType();
+        }
+        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+            auto rawName = baseTypeName(base);
+            if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
+                return found->second;
+            }
+            return resolveType(node, false);
+        }
+        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+            auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
+            const auto *typeDecl = resolveVisibleTypeDecl(base);
+            if (!typeDecl) {
+                return resolveType(node, false);
+            }
+            if (!typeDecl->isGeneric()) {
+                error(applied->loc,
+                      "type `" + describeTypeNode(applied, "<unknown type>") +
+                          "` applies `![...]` arguments to a non-generic type",
+                      "Remove the `![...]` arguments, or make the base type "
+                      "generic before specializing it.");
+            }
+            if (applied->args.size() != typeDecl->typeParams.size()) {
+                error(applied->loc,
+                      "generic type argument count mismatch for `" +
+                          toStdString(typeDecl->exportedName) + "`: expected " +
+                          std::to_string(typeDecl->typeParams.size()) +
+                          ", got " + std::to_string(applied->args.size()),
+                      "Match the number of `![` `]` type arguments to the "
+                      "generic type parameter list.");
+            }
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(applied->args.size());
+            for (auto *arg : applied->args) {
+                auto *argType = substituteAppliedStructTemplateType(
+                    arg, genericArgs, arg ? arg->loc : loc, context);
+                if (!argType) {
+                    error(arg ? arg->loc : loc,
+                          "unknown type argument for `" +
+                              describeTypeNode(applied, "<unknown type>") +
+                              "`: " + describeTypeNode(arg, "void"));
+                }
+                argTypes.push_back(argType);
+            }
+            if (ownsTypeDecl(typeDecl)) {
+                return materializeLocalAppliedStructType(*typeDecl,
+                                                         std::move(argTypes));
+            }
+            auto appliedName = buildAppliedTypeName(baseTypeName(base), argTypes);
+            return interface_->getOrCreateAppliedStructType(
+                appliedName, typeDecl->declKind, typeDecl->exportedName,
+                std::move(argTypes));
+        }
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+            auto *baseType = substituteAppliedStructTemplateType(
+                qualified->base, genericArgs, loc, context);
+            return baseType ? interface_->getOrCreateConstType(baseType)
+                            : nullptr;
+        }
+        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+            return resolveType(dynType, false);
+        }
+        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+            auto *baseType = substituteAppliedStructTemplateType(
+                pointer->base, genericArgs, loc, context);
+            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
+                baseType = interface_->getOrCreatePointerType(baseType);
+            }
+            return baseType;
+        }
+        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+            auto *elementType = substituteAppliedStructTemplateType(
+                indexable->base, genericArgs, loc, context);
+            return elementType ? interface_->getOrCreateIndexablePointerType(
+                                     elementType)
+                               : nullptr;
+        }
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+            auto *elementType = substituteAppliedStructTemplateType(
+                array->base, genericArgs, loc, context);
+            return elementType ? interface_->getOrCreateArrayType(
+                                     elementType, array->dim)
+                               : nullptr;
+        }
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->items.size());
+            for (auto *item : tuple->items) {
+                itemTypes.push_back(substituteAppliedStructTemplateType(
+                    item, genericArgs, item ? item->loc : loc, context));
+            }
+            return interface_->getOrCreateTupleType(itemTypes);
+        }
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
+            std::vector<TypeClass *> argTypes;
+            std::vector<BindingKind> argBindingKinds;
+            argTypes.reserve(func->args.size());
+            argBindingKinds.reserve(func->args.size());
+            for (auto *arg : func->args) {
+                argBindingKinds.push_back(funcParamBindingKind(arg));
+                argTypes.push_back(substituteAppliedStructTemplateType(
+                    unwrapFuncParamType(arg), genericArgs,
+                    arg ? arg->loc : loc, context));
+            }
+            auto *retType = substituteAppliedStructTemplateType(
+                func->ret, genericArgs, loc, context);
+            return interface_->getOrCreatePointerType(
+                interface_->getOrCreateFunctionType(argTypes, retType,
+                                                    std::move(argBindingKinds)));
+        }
+        return resolveType(node, false);
+    }
+
+    StructType *materializeLocalAppliedStructType(
+        const ModuleInterface::TypeDecl &typeDecl,
+        std::vector<TypeClass *> appliedTypeArgs) {
+        auto appliedName =
+            buildAppliedTypeName(toStdString(typeDecl.localName), appliedTypeArgs);
+        auto *structType = interface_->getOrCreateAppliedStructType(
+            appliedName, typeDecl.declKind, typeDecl.exportedName,
+            appliedTypeArgs);
+        if (!structType) {
+            return nullptr;
+        }
+
+        auto [_, inserted] = materializingAppliedStructs_.insert(appliedName);
+        if (!inserted) {
+            return structType;
+        }
+        struct Guard {
+            std::unordered_set<std::string> &active;
+            std::string name;
+            ~Guard() { active.erase(name); }
+        } guard{materializingAppliedStructs_, appliedName};
+
+        if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "generic struct `" + toStdString(typeDecl.localName) +
+                    "` interface instance is missing concrete type arguments",
+                "This looks like an applied-struct interface bug.");
+        }
+
+        std::unordered_map<std::string, TypeClass *> genericArgs;
+        genericArgs.reserve(typeDecl.typeParams.size());
+        for (std::size_t i = 0; i < typeDecl.typeParams.size(); ++i) {
+            genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
+                                appliedTypeArgs[i]);
+        }
+
+        if (structType->isOpaque()) {
+            auto *structDecl = findLocalStructDecl(typeDecl);
+            if (!structDecl) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Internal,
+                    "same-module generic struct `" +
+                        toStdString(typeDecl.localName) +
+                        "` is missing its template AST",
+                    "This looks like a generic template registration bug.");
+            }
+
+            auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+            llvm::StringMap<StructType::ValueTy> members;
+            llvm::StringMap<AccessKind> memberAccess;
+            llvm::StringSet<> embeddedMembers;
+            std::unordered_map<std::string, location> seenMembers;
+            int index = 0;
+
+            if (body) {
+                for (auto *stmt : body->getBody()) {
+                    auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
+                    if (!varDecl) {
+                        continue;
+                    }
+                    auto *fieldType = substituteAppliedStructTemplateType(
+                        varDecl->typeNode, genericArgs, varDecl->loc,
+                        "struct field `" + describeStructFieldSyntax(varDecl) +
+                            "`");
+                    if (!fieldType) {
+                        error(varDecl->loc,
+                              "unknown struct field type for `" +
+                                  describeStructFieldSyntax(varDecl) + "`: " +
+                                  describeTypeNode(varDecl->typeNode, "void"));
+                    }
+                    rejectBareFunctionType(
+                        fieldType, varDecl->typeNode,
+                        "unsupported bare function struct field type for `" +
+                            describeStructFieldSyntax(varDecl) + "`",
+                        varDecl->loc);
+                    validateStructFieldType(structDecl, varDecl, fieldType);
+                    validateEmbeddedStructField(structDecl, varDecl, fieldType);
+                    insertStructMember(structDecl, varDecl, fieldType, members,
+                                       memberAccess, embeddedMembers,
+                                       seenMembers, index);
+                }
+            }
+
+            structType->complete(members, memberAccess, embeddedMembers);
+        }
+
+        for (const auto &method : typeDecl.methodTemplates) {
+            if (structType->getMethodType(toStringRef(method.localName))) {
+                continue;
+            }
+            std::vector<TypeClass *> argTypes;
+            auto *selfPointee = interfaceMethodReceiverPointeeType(
+                interface_, structType, method.receiverAccess);
+            argTypes.push_back(interface_->getOrCreatePointerType(selfPointee));
+            for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
+                auto *paramType = substituteAppliedStructTemplateType(
+                    method.paramTypeNodes[i], genericArgs,
+                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                             : location(),
+                    "method parameter");
+                rejectBareFunctionType(
+                    paramType, method.paramTypeNodes[i],
+                    "unsupported bare function parameter type in `" +
+                        toStdString(typeDecl.localName) + "." +
+                        toStdString(method.localName) + "`",
+                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                             : location());
+                rejectOpaqueStructByValue(
+                    paramType, method.paramTypeNodes[i],
+                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                             : location(),
+                    "parameter `" +
+                        (i < method.paramNames.size()
+                             ? toStdString(method.paramNames[i])
+                             : std::string("<param>")) +
+                        "` in method `" + toStdString(typeDecl.localName) +
+                        "." + toStdString(method.localName) + "`");
+                argTypes.push_back(paramType);
+            }
+            TypeClass *retType = nullptr;
+            if (method.returnTypeNode) {
+                retType = substituteAppliedStructTemplateType(
+                    method.returnTypeNode, genericArgs,
+                    method.returnTypeNode->loc, "method return type");
+                rejectBareFunctionType(
+                    retType, method.returnTypeNode,
+                    "unsupported bare function return type for `" +
+                        toStdString(typeDecl.localName) + "." +
+                        toStdString(method.localName) + "`",
+                    method.returnTypeNode->loc);
+                rejectOpaqueStructByValue(
+                    retType, method.returnTypeNode, method.returnTypeNode->loc,
+                    "return type of method `" +
+                        toStdString(typeDecl.localName) + "." +
+                        toStdString(method.localName) + "`");
+            }
+            auto *funcType = interface_->getOrCreateFunctionType(
+                argTypes, retType, method.paramBindingKinds);
+            structType->addMethodType(toStringRef(method.localName), funcType,
+                                      method.paramNames);
+        }
+
+        return structType;
+    }
+
+    TypeClass *materializeOpaqueLocalAppliedStructIfNeeded(TypeClass *type) {
+        if (!type) {
+            return nullptr;
+        }
+
+        auto *qualified = type->as<ConstType>();
+        auto *structType = asUnqualified<StructType>(type);
+        if (!structType || !structType->isOpaque() ||
+            !structType->isAppliedTemplateInstance()) {
+            return type;
+        }
+
+        const auto *typeDecl = findOwnedTypeDeclByTemplateName(
+            toStringRef(structType->getAppliedTemplateName()));
+        if (!typeDecl || !typeDecl->isGeneric() || !ownsTypeDecl(typeDecl)) {
+            return type;
+        }
+
+        auto *materialized = materializeLocalAppliedStructType(
+            *typeDecl, structType->getAppliedTypeArgs());
+        if (!qualified) {
+            return materialized;
+        }
+        return materialized ? interface_->getOrCreateConstType(materialized)
+                            : nullptr;
+    }
+
     TypeClass *resolveAppliedType(AppliedTypeNode *applied) {
         auto *base = dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
         auto appliedName = describeTypeNode(applied, "<unknown type>");
         if (!base) {
-            return interface_->findDerivedType(appliedName);
+            return materializeOpaqueLocalAppliedStructIfNeeded(
+                interface_->findDerivedType(appliedName));
         }
 
         const auto *typeDecl = resolveVisibleTypeDecl(base);
         if (!typeDecl) {
-            return interface_->findDerivedType(appliedName);
+            return materializeOpaqueLocalAppliedStructIfNeeded(
+                interface_->findDerivedType(appliedName));
         }
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
@@ -259,9 +605,15 @@ class InterfaceCollector {
             }
             argTypes.push_back(argType);
         }
-        return interface_->getOrCreateAppliedStructType(
+        if (ownsTypeDecl(typeDecl)) {
+            return materializeOpaqueLocalAppliedStructIfNeeded(
+                materializeLocalAppliedStructType(*typeDecl,
+                                                 std::move(argTypes)));
+        }
+        return materializeOpaqueLocalAppliedStructIfNeeded(
+            interface_->getOrCreateAppliedStructType(
             appliedName, typeDecl->declKind, typeDecl->exportedName,
-            std::move(argTypes));
+            std::move(argTypes)));
     }
 
     void validateAppliedTypeNode(

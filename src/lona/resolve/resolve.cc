@@ -925,4 +925,55 @@ resolveGenericFunctionInstance(
     return module;
 }
 
+std::unique_ptr<ResolvedModule>
+resolveGenericMethodInstance(
+    GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
+    string methodParentTypeName, std::vector<string> genericTypeParams,
+    std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
+    if (!global || !decl || methodParentTypeName.empty()) {
+        return nullptr;
+    }
+
+    auto *typeMgr = global->types();
+    assert(typeMgr);
+
+    auto module = std::make_unique<ResolvedModule>();
+    auto *resolved = module->createFunction(
+        decl, decl->body, string(decl->name), std::move(methodParentTypeName),
+        decl->loc, false, false, decl->body && decl->body->hasTerminator(),
+        false, std::move(genericTypeParams),
+        std::move(concreteGenericTypes));
+
+    auto *declStructType =
+        typeMgr->getType(resolved->methodParentTypeName())->as<StructType>();
+    if (!declStructType) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "generic method instance is missing its concrete parent type",
+            "This looks like a generic method instantiation bug.");
+    }
+
+    resolved->setSelfBinding(module->createLocalBinding(
+        ResolvedLocalBinding::Kind::Self, BindingKind::Value, "self", decl,
+        decl->loc));
+
+    if (decl->args) {
+        for (auto *arg : *decl->args) {
+            auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
+            if (!varDecl) {
+                error(decl->loc, "invalid function argument declaration",
+                      "Each function parameter must be declared as a typed "
+                      "variable.");
+            }
+            resolved->addParam(module->createLocalBinding(
+                ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
+                toStdString(varDecl->field), varDecl, varDecl->loc));
+        }
+    }
+
+    resolve_impl::FunctionResolver(global, typeMgr, unit, *module, *resolved)
+        .resolve();
+    return module;
+}
+
 }  // namespace lona

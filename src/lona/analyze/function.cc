@@ -289,6 +289,19 @@ class FunctionAnalyzer {
         return lookup.isFunction() && lookup.functionDecl == functionDecl;
     }
 
+    bool isLocalGenericTemplateOwner(
+        const ModuleInterface::TypeDecl *typeDecl,
+        const ModuleInterface *ownerInterface) const {
+        if (!typeDecl || !unit) {
+            return false;
+        }
+        if (ownerInterface && unit->interface() &&
+            ownerInterface != unit->interface()) {
+            return false;
+        }
+        return unit->ownsTypeDecl(typeDecl);
+    }
+
     const AstFuncDecl *findLocalGenericFunctionDecl(
         const ModuleInterface::FunctionDecl &functionDecl) const {
         if (!unit) {
@@ -312,6 +325,156 @@ class FunctionAnalyzer {
             }
         }
         return nullptr;
+    }
+
+    const AstStructDecl *findLocalGenericStructDecl(
+        const ModuleInterface::TypeDecl &typeDecl) const {
+        if (!unit) {
+            return nullptr;
+        }
+        auto *root = unit->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+            if (!structDecl || !structDecl->hasTypeParams()) {
+                continue;
+            }
+            if (toStdString(structDecl->name) == toStdString(typeDecl.localName)) {
+                return structDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const AstFuncDecl *findLocalStructMethodDecl(const AstStructDecl *structDecl,
+                                                 llvm::StringRef methodName) const {
+        auto *body = dynamic_cast<AstStatList *>(structDecl ? structDecl->body
+                                                            : nullptr);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!funcDecl) {
+                continue;
+            }
+            if (llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()) ==
+                methodName) {
+                return funcDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const ModuleInterface::TypeDecl *findLocalAppliedTemplateDecl(
+        StructType *structType) const {
+        if (!unit || !unit->interface() || !structType ||
+            !structType->isAppliedTemplateInstance()) {
+            return nullptr;
+        }
+        for (const auto &entry : unit->interface()->types()) {
+            if (entry.second.exportedName == structType->getAppliedTemplateName()) {
+                return &entry.second;
+            }
+        }
+        return nullptr;
+    }
+
+    StructType *instantiateLocalGenericStructType(
+        const ModuleInterface::TypeDecl &typeDecl,
+        const std::vector<TypeClass *> &genericArgs, const location &loc) {
+        if (!unit) {
+            return nullptr;
+        }
+        auto *structType =
+            unit->materializeLocalAppliedStructType(typeMgr, typeDecl,
+                                                    std::vector<TypeClass *>(
+                                                        genericArgs));
+        if (!structType) {
+            internalError(
+                loc,
+                "same-module generic struct `" +
+                    toStdString(typeDecl.localName) +
+                    "` did not materialize a concrete runtime type",
+                "This looks like a generic struct instantiation bug.");
+        }
+        return structType;
+    }
+
+    std::unordered_map<std::string, TypeClass *> buildAppliedStructGenericArgs(
+        const ModuleInterface::TypeDecl &typeDecl, StructType *structType,
+        const location &loc) {
+        if (!structType) {
+            return {};
+        }
+        const auto &appliedTypeArgs = structType->getAppliedTypeArgs();
+        if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {
+            internalError(
+                loc,
+                "generic struct instance `" +
+                    describeResolvedType(structType) +
+                    "` is missing concrete type arguments for its template",
+                "This looks like a generic struct instantiation bug.");
+        }
+        std::unordered_map<std::string, TypeClass *> genericArgs;
+        genericArgs.reserve(typeDecl.typeParams.size());
+        for (std::size_t i = 0; i < typeDecl.typeParams.size(); ++i) {
+            genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
+                                appliedTypeArgs[i]);
+        }
+        return genericArgs;
+    }
+
+    std::string buildLocalGenericStructMethodInstanceSymbolName(
+        StructType *structType, llvm::StringRef methodName, const location &loc) {
+        if (!structType) {
+            internalError(loc,
+                          "generic struct method is missing its concrete self "
+                          "type",
+                          "This looks like a method instantiation bug.");
+        }
+        return mangleModuleEntryComponent(structType->full_name) + "." +
+               methodName.str();
+    }
+
+    Function *declareLocalGenericStructMethodInstance(
+        StructType *structType, llvm::StringRef methodName,
+        const location &loc) {
+        if (auto *existing = typeMgr->getMethodFunction(structType, methodName)) {
+            return existing;
+        }
+        auto *funcType = structType->getMethodType(methodName);
+        if (!funcType) {
+            internalError(
+                loc,
+                "generic struct method `" + methodName.str() +
+                    "` is missing its concrete signature on `" +
+                    describeResolvedType(structType) + "`",
+                "Materialize the concrete struct before lowering method "
+                "calls.");
+        }
+        std::vector<string> paramNames;
+        if (const auto *storedParamNames =
+                structType->getMethodParamNames(methodName)) {
+            paramNames = *storedParamNames;
+        }
+        auto symbolName =
+            buildLocalGenericStructMethodInstanceSymbolName(structType,
+                                                            methodName, loc);
+        auto *llvmFunc = llvm::Function::Create(
+            getFunctionAbiLLVMType(*typeMgr, funcType, true),
+            llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
+            global->module);
+        annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        auto *func =
+            new Function(llvmFunc, funcType, std::move(paramNames), true);
+        typeMgr->bindMethodFunction(structType, methodName, func);
+        return func;
     }
 
     std::string buildLocalGenericFunctionInstanceSymbolName(
@@ -440,6 +603,67 @@ class FunctionAnalyzer {
 
         auto *hirInstance = analyzeResolvedFunction(global, ownerModule, unit,
                                                     *resolvedModule->functions().front());
+        if (!findOwnerModuleFunction(symbolName)) {
+            ownerModule->addFunction(hirInstance);
+        }
+        guard.markCompleted();
+        return func;
+    }
+
+    Function *instantiateLocalGenericStructMethod(StructType *structType,
+                                                  llvm::StringRef methodName,
+                                                  const location &loc) {
+        auto *typeDecl = findLocalAppliedTemplateDecl(structType);
+        if (!typeDecl) {
+            return typeMgr->getMethodFunction(structType, methodName);
+        }
+
+        auto *templateDecl = findLocalGenericStructDecl(*typeDecl);
+        auto *methodDecl = findLocalStructMethodDecl(templateDecl, methodName);
+        if (!templateDecl || !methodDecl) {
+            internalError(
+                loc,
+                "same-module generic struct method `" + methodName.str() +
+                    "` is missing its template AST",
+                "This looks like a generic struct method registration bug.");
+        }
+
+        auto *func =
+            declareLocalGenericStructMethodInstance(structType, methodName, loc);
+        auto symbolName = func->getllvmValue()
+                              ? func->getllvmValue()->getName().str()
+                              : buildLocalGenericStructMethodInstanceSymbolName(
+                                    structType, methodName, loc);
+
+        auto &runtimeState = genericRuntimeStateFor(ownerModule);
+        if (runtimeState.emittedFunctionSymbols.count(symbolName) != 0 ||
+            runtimeState.inProgressFunctionSymbols.count(symbolName) != 0 ||
+            findOwnerModuleFunction(symbolName)) {
+            return func;
+        }
+
+        GenericFunctionEmissionGuard guard(runtimeState, symbolName);
+        auto genericArgs =
+            buildAppliedStructGenericArgs(*typeDecl, structType, loc);
+        std::vector<string> genericTypeParams;
+        genericTypeParams.reserve(typeDecl->typeParams.size());
+        for (const auto &param : typeDecl->typeParams) {
+            genericTypeParams.push_back(toStdString(param.localName));
+        }
+
+        auto resolvedModule = resolveGenericMethodInstance(
+            global, unit, methodDecl, toStdString(structType->full_name),
+            std::move(genericTypeParams), std::move(genericArgs));
+        if (!resolvedModule || resolvedModule->functions().size() != 1) {
+            internalError(
+                loc,
+                "generic struct method instance `" + symbolName +
+                    "` did not resolve to exactly one function body",
+                "This looks like a generic method resolve bug.");
+        }
+
+        auto *hirInstance = analyzeResolvedFunction(
+            global, ownerModule, unit, *resolvedModule->functions().front());
         if (!findOwnerModuleFunction(symbolName)) {
             ownerModule->addFunction(hirInstance);
         }
@@ -998,6 +1222,16 @@ class FunctionAnalyzer {
               "tasks.");
     }
 
+    [[noreturn]] void diagnoseGenericTypeInstantiationPending(
+        const std::string &typeName, const location &loc) {
+        error(loc,
+              "generic type instantiation is not implemented yet for `" +
+                  typeName + "`",
+              "This round only closes same-module concrete generic struct "
+              "instances. Imported generic type instantiation lands in later "
+              "runtime tasks.");
+    }
+
     const ResolvedEntityRef *resolvedEntityBinding(const AstNode *node) const {
         if (auto *field = dynamic_cast<const AstField *>(node)) {
             return resolved.field(field);
@@ -1285,11 +1519,15 @@ class FunctionAnalyzer {
                 internalError(loc,
                               "selector call parent must be a struct value");
             }
-            auto *methodFunc = typeMgr->getMethodFunction(
-                structType, toStringRef(selector->getFieldName()));
+            auto methodName = toStringRef(selector->getFieldName());
+            auto *methodFunc = typeMgr->getMethodFunction(structType, methodName);
+            if (!methodFunc && structType->isAppliedTemplateInstance()) {
+                methodFunc =
+                    instantiateLocalGenericStructMethod(structType, methodName,
+                                                       loc);
+            }
             auto *funcType = methodFunc ? methodFunc->getType()->as<FuncType>()
-                                        : structType->getMethodType(toStringRef(
-                                              selector->getFieldName()));
+                                        : structType->getMethodType(methodName);
             if (!funcType) {
                 internalError(loc, "unknown struct method");
             }
@@ -1299,8 +1537,7 @@ class FunctionAnalyzer {
             resolution.paramNames =
                 methodFunc && !methodFunc->paramNames().empty()
                     ? &methodFunc->paramNames()
-                    : structType->getMethodParamNames(
-                          toStringRef(selector->getFieldName()));
+                    : structType->getMethodParamNames(methodName);
             resolution.argOffset = getMethodCallArgOffset(selector, funcType);
             if (auto *retType = funcType->getRetType()) {
                 resolution.resultEntity = EntityRef::typedValue(retType);
@@ -2794,6 +3031,11 @@ class FunctionAnalyzer {
                 argTypes.push_back(substituteGenericSignatureType(
                     arg, genericArgs, loc, functionName, ownerInterface));
             }
+            if (unit &&
+                isLocalGenericTemplateOwner(typeDecl, ownerInterface)) {
+                return instantiateLocalGenericStructType(*typeDecl, argTypes,
+                                                         loc);
+            }
             return typeMgr->createOpaqueStructType(
                 buildAppliedTypeName(
                     appliedTypeDisplayName(base, typeDecl, ownerInterface),
@@ -3161,6 +3403,53 @@ class FunctionAnalyzer {
                            {node->loc, CallBindingTargetKind::FunctionCall,
                             nullptr, !functionDecl->paramNames.empty()});
         diagnoseGenericInstantiationPending(functionName, node->loc);
+    }
+
+    HIRExpr *analyzeGenericTypeCall(
+        AstFieldCall *node, const ModuleInterface::TypeDecl *typeDecl,
+        std::vector<TypeNode *> *explicitTypeArgs, const std::string &typeName,
+        const ModuleInterface *ownerInterface) {
+        if (!typeDecl || !typeDecl->isGeneric()) {
+            internalError(node ? node->loc : location(),
+                          "generic type call lowering is missing its template "
+                          "signature",
+                          "Run interface collection before analyzing "
+                          "generic type constructors.");
+        }
+        if (!explicitTypeArgs || explicitTypeArgs->empty()) {
+            diagnoseGenericTypeCall(typeName, node->loc);
+        }
+        if (explicitTypeArgs->size() != typeDecl->typeParams.size()) {
+            error(node->loc,
+                  "generic type argument count mismatch for `" + typeName +
+                      "`: expected " +
+                      std::to_string(typeDecl->typeParams.size()) + ", got " +
+                      std::to_string(explicitTypeArgs->size()),
+                  "Match the number of `[` `]` type arguments to the generic "
+                  "parameter list.");
+        }
+
+        std::vector<TypeClass *> genericArgs;
+        genericArgs.reserve(explicitTypeArgs->size());
+        for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
+            auto *type = requireType(
+                explicitTypeArgs->at(i), explicitTypeArgs->at(i)->loc,
+                "unknown generic type argument at index " +
+                    std::to_string(i) + " for `" + typeName + "`");
+            genericArgs.push_back(type);
+        }
+
+        if (isLocalGenericTemplateOwner(typeDecl, ownerInterface)) {
+            auto *structType =
+                instantiateLocalGenericStructType(*typeDecl, genericArgs,
+                                                  node->loc);
+            auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+            return lowerResolvedCall(
+                makeHIR<HIRValue>(new TypeObject(structType), node->loc),
+                std::move(normalizedArgs), node->loc, true);
+        }
+
+        diagnoseGenericTypeInstantiationPending(typeName, node->loc);
     }
 
     HIRExpr *lowerResolvedCall(HIRExpr *callee, CallArgList normalizedArgs,
@@ -4090,8 +4379,10 @@ class FunctionAnalyzer {
             }
             if (auto *binding = resolvedEntityBinding(typeApplyNode->value);
                 binding && binding->kind() == ResolvedEntityRef::Kind::GenericType) {
-                diagnoseGenericTypeCall(toStdString(binding->resolvedName()),
-                                        typeApplyNode->loc);
+                return analyzeGenericTypeCall(
+                    node, binding->typeDecl(), typeApplyNode->typeArgs,
+                    toStdString(binding->resolvedName()),
+                    binding->ownerInterface());
             }
             diagnoseGenericTypeApplyTarget(typeApplyNode->loc);
         }

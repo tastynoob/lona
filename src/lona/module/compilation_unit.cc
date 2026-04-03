@@ -2,7 +2,9 @@
 #include "lona/ast/tag_apply.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/type_node_tools.hh"
+#include "lona/declare/support.hh"
 #include "lona/err/err.hh"
+#include "lona/sema/initializer.hh"
 #include "lona/type/type.hh"
 #include <cassert>
 #include <cstddef>
@@ -14,6 +16,10 @@
 namespace lona {
 
 namespace compilation_unit_impl {
+
+TypeClass *
+resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
+                TypeNode *node, bool validateLayout);
 
 std::uint64_t
 combineHash(std::uint64_t seed, std::uint64_t value);
@@ -391,6 +397,21 @@ errorBareGenericTemplateType(const location &loc, const std::string &rawName) {
           genericTemplateHint(rawName));
 }
 
+std::string
+buildAppliedTypeName(const std::string &baseName,
+                     const std::vector<TypeClass *> &args) {
+    std::string name = baseName.empty() ? std::string("<type>") : baseName;
+    name += "![";
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i != 0) {
+            name += ", ";
+        }
+        name += args[i] ? describeResolvedType(args[i]) : "<unknown type>";
+    }
+    name += "]";
+    return name;
+}
+
 const ModuleInterface::TypeDecl *
 resolveVisibleTypeDecl(const CompilationUnit &unit, BaseTypeNode *base) {
     if (!base) {
@@ -410,6 +431,154 @@ resolveVisibleTypeDecl(const CompilationUnit &unit, BaseTypeNode *base) {
     }
     auto lookup = unit.lookupTopLevelName(*imported, memberName);
     return lookup.isType() ? lookup.typeDecl : nullptr;
+}
+
+AstStructDecl *
+findLocalStructDecl(const CompilationUnit &unit, llvm::StringRef localName) {
+    auto *root = unit.syntaxTree();
+    auto *program = dynamic_cast<AstProgram *>(root);
+    auto *body = dynamic_cast<AstStatList *>(program ? program->body : root);
+    if (!body) {
+        return nullptr;
+    }
+    for (auto *stmt : body->getBody()) {
+        auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+        if (!structDecl) {
+            continue;
+        }
+        if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
+            localName) {
+            return structDecl;
+        }
+    }
+    return nullptr;
+}
+
+TypeClass *
+substituteAppliedStructTemplateType(
+    TypeTable *typeTable, const CompilationUnit &unit, TypeNode *node,
+    const std::unordered_map<std::string, TypeClass *> &genericArgs,
+    const location &loc, const std::string &context) {
+    if (!typeTable || !node) {
+        return nullptr;
+    }
+
+    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+        return substituteAppliedStructTemplateType(typeTable, unit, param->type,
+                                                   genericArgs, loc, context);
+    }
+    if (dynamic_cast<AnyTypeNode *>(node)) {
+        return typeTable->createAnyType();
+    }
+    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+        auto rawName = baseTypeName(base);
+        if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
+            return found->second;
+        }
+        return resolveTypeNode(typeTable, unit, node, false);
+    }
+    if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+        auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
+        auto *typeDecl = resolveVisibleTypeDecl(unit, base);
+        if (!typeDecl) {
+            return resolveTypeNode(typeTable, unit, node, false);
+        }
+        if (!typeDecl->isGeneric()) {
+            error(applied->loc,
+                  "type `" + describeTypeNode(applied, "<unknown type>") +
+                      "` applies `![...]` arguments to a non-generic type",
+                  "Remove the `![...]` arguments, or make the base type generic "
+                  "before specializing it.");
+        }
+        if (applied->args.size() != typeDecl->typeParams.size()) {
+            error(applied->loc,
+                  "generic type argument count mismatch for `" +
+                      toStdString(typeDecl->exportedName) + "`: expected " +
+                      std::to_string(typeDecl->typeParams.size()) + ", got " +
+                      std::to_string(applied->args.size()),
+                  "Match the number of `![` `]` type arguments to the generic "
+                  "type parameter list.");
+        }
+        std::vector<TypeClass *> argTypes;
+        argTypes.reserve(applied->args.size());
+        for (auto *arg : applied->args) {
+            auto *argType = substituteAppliedStructTemplateType(
+                typeTable, unit, arg, genericArgs, arg ? arg->loc : loc,
+                context);
+            if (!argType) {
+                error(arg ? arg->loc : loc,
+                      "unknown type argument for `" +
+                          describeTypeNode(applied, "<unknown type>") + "`: " +
+                          describeTypeNode(arg, "void"));
+            }
+            argTypes.push_back(argType);
+        }
+        if (unit.ownsTypeDecl(typeDecl)) {
+            return unit.materializeLocalAppliedStructType(typeTable, *typeDecl,
+                                                          std::move(argTypes));
+        }
+        auto appliedName = buildAppliedTypeName(baseTypeName(base), argTypes);
+        return typeTable->createOpaqueStructType(
+            appliedName, typeDecl->declKind, typeDecl->exportedName,
+            std::move(argTypes));
+    }
+    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+        auto *baseType = substituteAppliedStructTemplateType(
+            typeTable, unit, qualified->base, genericArgs, loc, context);
+        return baseType ? typeTable->createConstType(baseType) : nullptr;
+    }
+    if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+        return resolveTypeNode(typeTable, unit, dynType, false);
+    }
+    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+        auto *baseType = substituteAppliedStructTemplateType(
+            typeTable, unit, pointer->base, genericArgs, loc, context);
+        for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
+            baseType = typeTable->createPointerType(baseType);
+        }
+        return baseType;
+    }
+    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+        auto *baseType = substituteAppliedStructTemplateType(
+            typeTable, unit, indexable->base, genericArgs, loc, context);
+        return baseType ? typeTable->createIndexablePointerType(baseType)
+                        : nullptr;
+    }
+    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+        auto *baseType = substituteAppliedStructTemplateType(
+            typeTable, unit, array->base, genericArgs, loc, context);
+        return baseType ? typeTable->createArrayType(baseType, array->dim)
+                        : nullptr;
+    }
+    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+        std::vector<TypeClass *> itemTypes;
+        itemTypes.reserve(tuple->items.size());
+        for (auto *item : tuple->items) {
+            itemTypes.push_back(substituteAppliedStructTemplateType(
+                typeTable, unit, item, genericArgs, item ? item->loc : loc,
+                context));
+        }
+        return typeTable->getOrCreateTupleType(itemTypes);
+    }
+    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
+        std::vector<TypeClass *> argTypes;
+        std::vector<BindingKind> argBindingKinds;
+        argTypes.reserve(func->args.size());
+        argBindingKinds.reserve(func->args.size());
+        for (auto *arg : func->args) {
+            argBindingKinds.push_back(funcParamBindingKind(arg));
+            argTypes.push_back(substituteAppliedStructTemplateType(
+                typeTable, unit, unwrapFuncParamType(arg), genericArgs,
+                arg ? arg->loc : loc, context));
+        }
+        auto *retType = substituteAppliedStructTemplateType(
+            typeTable, unit, func->ret, genericArgs, loc, context);
+        auto *funcType = typeTable->getOrCreateFunctionType(
+            argTypes, retType, std::move(argBindingKinds));
+        return funcType ? typeTable->createPointerType(funcType) : nullptr;
+    }
+
+    return resolveTypeNode(typeTable, unit, node, false);
 }
 
 TypeClass *
@@ -437,10 +606,6 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
 
     if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
         auto appliedName = describeTypeNode(applied, "<unknown type>");
-        if (auto *existing = typeTable->getType(llvm::StringRef(appliedName))) {
-            unit.cacheResolvedType(node, existing);
-            return existing;
-        }
         auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
         const auto *typeDecl = resolveVisibleTypeDecl(unit, base);
         if (!typeDecl) {
@@ -474,9 +639,14 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
             }
             argTypes.push_back(argType);
         }
-        resolved = typeTable->createOpaqueStructType(
-            appliedName, typeDecl->declKind, typeDecl->exportedName,
-            std::move(argTypes));
+        if (unit.ownsTypeDecl(typeDecl)) {
+            resolved = unit.materializeLocalAppliedStructType(
+                typeTable, *typeDecl, std::move(argTypes));
+        } else {
+            resolved = typeTable->createOpaqueStructType(
+                appliedName, typeDecl->declKind, typeDecl->exportedName,
+                std::move(argTypes));
+        }
         unit.cacheResolvedType(node, resolved);
         return resolved;
     }
@@ -937,6 +1107,7 @@ CompilationUnit::invalidateCaches() {
     hashesReady_ = false;
     interfaceHash_ = 0;
     implementationHash_ = 0;
+    materializingAppliedStructs_.clear();
 }
 
 void
@@ -1034,11 +1205,203 @@ CompilationUnit::cacheResolvedType(TypeNode *node, TypeClass *type) const {
 void
 CompilationUnit::clearResolvedTypes() {
     resolvedTypes_.clear();
+    materializingAppliedStructs_.clear();
 }
 
 TypeClass *
 CompilationUnit::resolveType(TypeTable *typeTable, TypeNode *node) const {
     return compilation_unit_impl::resolveTypeNode(typeTable, *this, node);
+}
+
+bool
+CompilationUnit::ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const {
+    if (!typeDecl || !moduleInterface_) {
+        return false;
+    }
+    return moduleInterface_->findType(toStdString(typeDecl->localName)) ==
+           typeDecl;
+}
+
+StructType *
+CompilationUnit::materializeLocalAppliedStructType(
+    TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
+    std::vector<TypeClass *> appliedTypeArgs) const {
+    if (!typeTable) {
+        return nullptr;
+    }
+    if (!ownsTypeDecl(&typeDecl)) {
+        return nullptr;
+    }
+
+    auto appliedName = compilation_unit_impl::buildAppliedTypeName(
+        toStdString(typeDecl.localName), appliedTypeArgs);
+    auto *structType = typeTable->createOpaqueStructType(
+        string(appliedName), typeDecl.declKind, typeDecl.exportedName,
+        appliedTypeArgs);
+    if (!structType) {
+        return nullptr;
+    }
+
+    auto [_, inserted] = materializingAppliedStructs_.insert(appliedName);
+    if (!inserted) {
+        return structType;
+    }
+    struct Guard {
+        std::unordered_set<std::string> &active;
+        std::string name;
+        ~Guard() { active.erase(name); }
+    } guard{materializingAppliedStructs_, appliedName};
+
+    std::unordered_map<std::string, TypeClass *> genericArgs;
+    if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Internal,
+            "generic struct `" + toStdString(typeDecl.localName) +
+                "` instance is missing concrete type arguments",
+            "This looks like an applied-struct instantiation bug.");
+    }
+    genericArgs.reserve(typeDecl.typeParams.size());
+    for (std::size_t i = 0; i < typeDecl.typeParams.size(); ++i) {
+        genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
+                            appliedTypeArgs[i]);
+    }
+
+    if (structType->isOpaque()) {
+        auto *structDecl = compilation_unit_impl::findLocalStructDecl(
+            *this, toStringRef(typeDecl.localName));
+        if (!structDecl) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "same-module generic struct `" +
+                    toStdString(typeDecl.localName) +
+                    "` is missing its template AST",
+                "This looks like a generic template registration bug.");
+        }
+
+        auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+        llvm::StringMap<StructType::ValueTy> members;
+        llvm::StringMap<AccessKind> memberAccess;
+        llvm::StringSet<> embeddedMembers;
+        std::unordered_map<std::string, location> seenMembers;
+        int nextMemberIndex = 0;
+
+        if (body) {
+            for (auto *stmt : body->getBody()) {
+                auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt);
+                if (!fieldDecl) {
+                    continue;
+                }
+                auto *fieldType =
+                    compilation_unit_impl::substituteAppliedStructTemplateType(
+                        typeTable, *this, fieldDecl->typeNode, genericArgs,
+                        fieldDecl->loc,
+                        "struct field `" +
+                            declarationsupport_impl::describeStructFieldSyntax(
+                                fieldDecl) +
+                            "`");
+                if (!fieldType) {
+                    error(fieldDecl->loc,
+                          "unknown struct field type for `" +
+                              declarationsupport_impl::describeStructFieldSyntax(
+                                  fieldDecl) +
+                              "`: " +
+                              describeTypeNode(fieldDecl->typeNode, "void"));
+                }
+                declarationsupport_impl::rejectBareFunctionType(
+                    fieldType, fieldDecl->typeNode,
+                    "unsupported bare function struct field type for `" +
+                        declarationsupport_impl::describeStructFieldSyntax(
+                            fieldDecl) +
+                        "`",
+                    fieldDecl->loc);
+                declarationsupport_impl::validateStructFieldType(
+                    structDecl, fieldDecl, fieldType);
+                declarationsupport_impl::validateEmbeddedStructField(
+                    structDecl, fieldDecl, fieldType);
+                declarationsupport_impl::insertStructMember(
+                    structDecl, fieldDecl, fieldType, members, memberAccess,
+                    embeddedMembers, seenMembers, nextMemberIndex);
+            }
+        }
+
+        structType->complete(members, memberAccess, embeddedMembers);
+    }
+
+    for (const auto &method : typeDecl.methodTemplates) {
+        if (structType->getMethodType(toStringRef(method.localName))) {
+            continue;
+        }
+
+        std::vector<TypeClass *> argTypes;
+        argTypes.reserve(method.paramTypeNodes.size() + 1);
+        auto *selfPointee = declarationsupport_impl::methodReceiverPointeeType(
+            typeTable, structType, method.receiverAccess);
+        argTypes.push_back(typeTable->createPointerType(selfPointee));
+        for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
+            auto *paramType =
+                compilation_unit_impl::substituteAppliedStructTemplateType(
+                    typeTable, *this, method.paramTypeNodes[i], genericArgs,
+                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                             : location(),
+                    "parameter `" +
+                        (i < method.paramNames.size()
+                             ? toStdString(method.paramNames[i])
+                             : std::string("<param>")) +
+                        "` in method `" + toStdString(typeDecl.localName) +
+                        "." + toStdString(method.localName) + "`");
+            if (!paramType) {
+                error(method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                               : location(),
+                      "unknown method parameter type in `" +
+                          toStdString(typeDecl.localName) + "." +
+                          toStdString(method.localName) + "`");
+            }
+            declarationsupport_impl::rejectBareFunctionType(
+                paramType, method.paramTypeNodes[i],
+                "unsupported bare function parameter type in `" +
+                    toStdString(typeDecl.localName) + "." +
+                    toStdString(method.localName) + "`",
+                method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                         : location());
+            declarationsupport_impl::rejectOpaqueStructByValue(
+                paramType, method.paramTypeNodes[i],
+                method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
+                                         : location(),
+                "parameter `" +
+                    (i < method.paramNames.size()
+                         ? toStdString(method.paramNames[i])
+                         : std::string("<param>")) +
+                    "` in method `" + toStdString(typeDecl.localName) + "." +
+                    toStdString(method.localName) + "`");
+            argTypes.push_back(paramType);
+        }
+
+        TypeClass *retType = nullptr;
+        if (method.returnTypeNode) {
+            retType = compilation_unit_impl::substituteAppliedStructTemplateType(
+                typeTable, *this, method.returnTypeNode, genericArgs,
+                method.returnTypeNode->loc,
+                "return type of method `" + toStdString(typeDecl.localName) +
+                    "." + toStdString(method.localName) + "`");
+            declarationsupport_impl::rejectBareFunctionType(
+                retType, method.returnTypeNode,
+                "unsupported bare function return type for method `" +
+                    toStdString(typeDecl.localName) + "." +
+                    toStdString(method.localName) + "`",
+                method.returnTypeNode->loc);
+            declarationsupport_impl::rejectOpaqueStructByValue(
+                retType, method.returnTypeNode, method.returnTypeNode->loc,
+                "return type of method `" + toStdString(typeDecl.localName) +
+                    "." + toStdString(method.localName) + "`");
+        }
+
+        auto *funcType = typeTable->getOrCreateFunctionType(
+            argTypes, retType, method.paramBindingKinds, AbiKind::Native);
+        structType->addMethodType(toStringRef(method.localName), funcType,
+                                  method.paramNames);
+    }
+
+    return structType;
 }
 
 }  // namespace lona
