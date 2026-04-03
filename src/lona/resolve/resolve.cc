@@ -7,6 +7,7 @@
 #include "lona/sym/object.hh"
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
+#include "parser.hh"
 #include <cassert>
 #include <memory>
 #include <string>
@@ -55,6 +56,15 @@ class FunctionResolver {
     ResolvedModule &module_;
     ResolvedFunction &resolved_;
     std::unordered_map<string, const ResolvedLocalBinding *> locals_;
+    struct GenericCapabilityInfo {
+        string paramName;
+        int pointerDepth = -1;
+
+        bool valid() const { return pointerDepth >= 0 && !paramName.empty(); }
+        bool isDirectValue() const { return valid() && pointerDepth == 0; }
+    };
+    std::unordered_map<const ResolvedLocalBinding *, GenericCapabilityInfo>
+        bindingGenericInfo_;
 
     bool hasGenericTypeParam(llvm::StringRef name) const {
         for (const auto &paramName : resolved_.genericTypeParams()) {
@@ -63,6 +73,377 @@ class FunctionResolver {
             }
         }
         return false;
+    }
+
+    GenericCapabilityInfo noGenericCapability() const { return {}; }
+
+    const AstStructDecl *findStructDeclInUnit(const CompilationUnit *searchUnit,
+                                              llvm::StringRef localName) const {
+        if (!searchUnit) {
+            return nullptr;
+        }
+        auto *root = searchUnit->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+            if (!structDecl) {
+                continue;
+            }
+            if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
+                localName) {
+                return structDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const AstStructDecl *findEnclosingStructDecl(const AstFuncDecl *decl) const {
+        if (!unit_ || !decl) {
+            return nullptr;
+        }
+        auto *root = unit_->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+            if (!structDecl) {
+                continue;
+            }
+            auto *structBody = dynamic_cast<AstStatList *>(structDecl->body);
+            if (!structBody) {
+                continue;
+            }
+            for (auto *member : structBody->getBody()) {
+                if (member == decl) {
+                    return structDecl;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    const AstVarDecl *findStructFieldDecl(const AstStructDecl *structDecl,
+                                          llvm::StringRef fieldName) const {
+        auto *body = dynamic_cast<AstStatList *>(structDecl ? structDecl->body
+                                                            : nullptr);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt);
+            if (!fieldDecl) {
+                continue;
+            }
+            if (llvm::StringRef(fieldDecl->field.tochara(),
+                                fieldDecl->field.size()) == fieldName) {
+                return fieldDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const TypeNode *bindingDeclaredTypeNode(
+        const ResolvedLocalBinding *binding) const {
+        if (!binding) {
+            return nullptr;
+        }
+        if (auto *paramDecl = binding->parameterDecl()) {
+            return paramDecl->typeNode;
+        }
+        if (auto *varDecl = binding->variableDecl()) {
+            return varDecl->getTypeNode();
+        }
+        return nullptr;
+    }
+
+    const TypeNode *pointeeTypeNode(const TypeNode *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+            return pointeeTypeNode(param->type);
+        }
+        if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+            return pointer->base;
+        }
+        if (auto *indexable =
+                dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+            return indexable->base;
+        }
+        return nullptr;
+    }
+
+    const TypeNode *projectionOwnerTypeNode(const AstNode *expr) const {
+        if (!expr) {
+            return nullptr;
+        }
+        if (auto *field = dynamic_cast<const AstField *>(expr)) {
+            if (auto *binding = resolved_.field(field)) {
+                if (binding->kind() == ResolvedEntityRef::Kind::LocalBinding) {
+                    return bindingDeclaredTypeNode(binding->localBinding());
+                }
+            }
+            return nullptr;
+        }
+        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(expr)) {
+            return projectionOwnerTypeNode(refExpr->expr);
+        }
+        if (auto *unary = dynamic_cast<const AstUnaryOper *>(expr)) {
+            if (unary->op != '*') {
+                return nullptr;
+            }
+            auto *inner = projectionOwnerTypeNode(unary->expr);
+            return pointeeTypeNode(inner);
+        }
+        return nullptr;
+    }
+
+    GenericCapabilityInfo classifyGenericTypeNode(
+        const TypeNode *node,
+        const std::unordered_map<std::string, GenericCapabilityInfo> &substs =
+            {}) const {
+        if (!node) {
+            return noGenericCapability();
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+            return classifyGenericTypeNode(param->type, substs);
+        }
+        if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+            return classifyGenericTypeNode(qualified->base, substs);
+        }
+        if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+            auto rawName = baseTypeName(base);
+            if (auto found = substs.find(rawName); found != substs.end()) {
+                return found->second;
+            }
+            std::string moduleName;
+            std::string memberName;
+            if (!splitBaseTypeName(base, moduleName, memberName) &&
+                hasGenericTypeParam(rawName)) {
+                return {rawName, 0};
+            }
+            return noGenericCapability();
+        }
+        if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+            auto info = classifyGenericTypeNode(pointer->base, substs);
+            if (info.valid()) {
+                info.pointerDepth += static_cast<int>(pointer->dim);
+            }
+            return info;
+        }
+        if (auto *indexable =
+                dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+            auto info = classifyGenericTypeNode(indexable->base, substs);
+            if (info.valid()) {
+                ++info.pointerDepth;
+            }
+            return info;
+        }
+        return noGenericCapability();
+    }
+
+    GenericCapabilityInfo projectedFieldGenericInfo(
+        const TypeNode *ownerTypeNode, llvm::StringRef fieldName) const {
+        if (!unit_ || !ownerTypeNode) {
+            return noGenericCapability();
+        }
+        if (auto *param = dynamic_cast<const FuncParamTypeNode *>(ownerTypeNode)) {
+            return projectedFieldGenericInfo(param->type, fieldName);
+        }
+        if (auto *qualified = dynamic_cast<const ConstTypeNode *>(ownerTypeNode)) {
+            return projectedFieldGenericInfo(qualified->base, fieldName);
+        }
+
+        const BaseTypeNode *base = nullptr;
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        std::unordered_map<std::string, GenericCapabilityInfo> substs;
+        if (auto *applied = dynamic_cast<const AppliedTypeNode *>(ownerTypeNode)) {
+            base = dynamic_cast<const BaseTypeNode *>(applied->base);
+            typeDecl = resolveVisibleTypeDecl(base);
+            if (!typeDecl) {
+                return noGenericCapability();
+            }
+            const auto count = std::min(typeDecl->typeParams.size(),
+                                        applied->args.size());
+            for (std::size_t i = 0; i < count; ++i) {
+                substs.emplace(toStdString(typeDecl->typeParams[i].localName),
+                               classifyGenericTypeNode(applied->args[i]));
+            }
+        } else if (auto *baseNode =
+                       dynamic_cast<const BaseTypeNode *>(ownerTypeNode)) {
+            base = baseNode;
+            typeDecl = resolveVisibleTypeDecl(baseNode);
+        }
+
+        if (!base || !typeDecl) {
+            return noGenericCapability();
+        }
+        auto *ownerUnit = unit_->ownerUnitForTypeDecl(typeDecl);
+        auto *structDecl =
+            findStructDeclInUnit(ownerUnit, toStringRef(typeDecl->localName));
+        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        if (!fieldDecl) {
+            return noGenericCapability();
+        }
+        return classifyGenericTypeNode(fieldDecl->typeNode, substs);
+    }
+
+    GenericCapabilityInfo selfFieldGenericInfo(llvm::StringRef fieldName) const {
+        if (!resolved_.isMethod() || !resolved_.decl()) {
+            return noGenericCapability();
+        }
+        auto *structDecl = findEnclosingStructDecl(resolved_.decl());
+        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        if (!fieldDecl) {
+            return noGenericCapability();
+        }
+        std::unordered_map<std::string, GenericCapabilityInfo> identity;
+        for (const auto &paramName : resolved_.genericTypeParams()) {
+            auto key = toStdString(paramName);
+            identity.emplace(key, GenericCapabilityInfo{key, 0});
+        }
+        return classifyGenericTypeNode(fieldDecl->typeNode, identity);
+    }
+
+    GenericCapabilityInfo bindingGenericInfo(
+        const ResolvedLocalBinding *binding) const {
+        if (!binding) {
+            return noGenericCapability();
+        }
+        if (auto found = bindingGenericInfo_.find(binding);
+            found != bindingGenericInfo_.end()) {
+            return found->second;
+        }
+        return classifyGenericTypeNode(bindingDeclaredTypeNode(binding));
+    }
+
+    GenericCapabilityInfo inferGenericExprInfo(const AstNode *node) const {
+        if (!node) {
+            return noGenericCapability();
+        }
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            auto *binding = resolved_.field(field);
+            if (!binding ||
+                binding->kind() != ResolvedEntityRef::Kind::LocalBinding) {
+                return noGenericCapability();
+            }
+            return bindingGenericInfo(binding->localBinding());
+        }
+        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
+            return inferGenericExprInfo(refExpr->expr);
+        }
+        if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
+            auto info = inferGenericExprInfo(unary->expr);
+            if (!info.valid()) {
+                return info;
+            }
+            if (unary->op == '&') {
+                ++info.pointerDepth;
+                return info;
+            }
+            if (unary->op == '*') {
+                if (info.pointerDepth > 0) {
+                    --info.pointerDepth;
+                    return info;
+                }
+                return noGenericCapability();
+            }
+            return noGenericCapability();
+        }
+        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+            if (auto *binding = resolved_.dotLike(dotLike);
+                binding && binding->valid()) {
+                return noGenericCapability();
+            }
+            auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
+                                             dotLike->field->text.size());
+            if (auto *parentField = dynamic_cast<const AstField *>(dotLike->parent)) {
+                if (auto *binding = resolved_.field(parentField);
+                    binding &&
+                    binding->kind() == ResolvedEntityRef::Kind::LocalBinding &&
+                    binding->localBinding() == resolved_.selfBinding()) {
+                    auto info = selfFieldGenericInfo(fieldName);
+                    if (info.valid()) {
+                        return info;
+                    }
+                }
+            }
+            auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
+            return projectedFieldGenericInfo(ownerTypeNode, fieldName);
+        }
+        return noGenericCapability();
+    }
+
+    void rememberBindingGenericInfo(const ResolvedLocalBinding *binding,
+                                    const TypeNode *declType,
+                                    const AstNode *initExpr = nullptr) {
+        if (!binding) {
+            return;
+        }
+        auto info = classifyGenericTypeNode(declType);
+        if (!info.valid() && initExpr) {
+            info = inferGenericExprInfo(initExpr);
+        }
+        if (info.valid()) {
+            bindingGenericInfo_[binding] = std::move(info);
+        }
+    }
+
+    std::string genericCapabilityHint() const {
+        return "Unconstrained generic parameters only allow type-level uses "
+               "such as `sizeof[T]()`, `T*`, `T const*`, or `Box![T]`. "
+               "Member access and operators require a future bound or a "
+               "concrete type.";
+    }
+
+    [[noreturn]] void errorUnconstrainedGenericMemberUse(
+        const location &loc, const GenericCapabilityInfo &info,
+        llvm::StringRef memberName) const {
+        error(loc,
+              "unconstrained generic parameter `" + toStdString(info.paramName) +
+                  "` does not provide member `" + memberName.str() + "`",
+              genericCapabilityHint());
+    }
+
+    std::string describeOperator(token_type op) const {
+        switch (op) {
+            case Parser::token::LOGIC_EQUAL:
+                return "==";
+            case Parser::token::LOGIC_NOT_EQUAL:
+                return "!=";
+            case Parser::token::LOGIC_LE:
+                return "<=";
+            case Parser::token::LOGIC_GE:
+                return ">=";
+            case Parser::token::LOGIC_AND:
+                return "&&";
+            case Parser::token::LOGIC_OR:
+                return "||";
+            case Parser::token::SHIFT_LEFT:
+                return "<<";
+            case Parser::token::SHIFT_RIGHT:
+                return ">>";
+            default:
+                return toStdString(symbolToStr(op));
+        }
+    }
+
+    [[noreturn]] void errorUnconstrainedGenericOperatorUse(
+        const location &loc, const GenericCapabilityInfo &info,
+        token_type op) const {
+        error(loc,
+              "unconstrained generic parameter `" + toStdString(info.paramName) +
+                  "` does not support operator `" + describeOperator(op) + "`",
+              genericCapabilityHint());
     }
 
     const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
@@ -361,6 +742,10 @@ class FunctionResolver {
                     toStdString(varDef->getName()) + "`",
                 "Rename one of the variables or reuse the existing binding.");
             resolved_.bindVariable(varDef, binding);
+            rememberBindingGenericInfo(binding, varDef->getTypeNode(),
+                                       varDef->withInitVal()
+                                           ? varDef->getInitVal()
+                                           : nullptr);
             return;
         }
         if (auto *ret = dynamic_cast<const AstRet *>(node)) {
@@ -511,10 +896,27 @@ class FunctionResolver {
         if (auto *bin = dynamic_cast<const AstBinOper *>(node)) {
             resolveExpr(bin->left);
             resolveExpr(bin->right);
+            auto leftInfo = inferGenericExprInfo(bin->left);
+            if (leftInfo.isDirectValue()) {
+                errorUnconstrainedGenericOperatorUse(bin->loc, leftInfo,
+                                                     bin->op);
+            }
+            auto rightInfo = inferGenericExprInfo(bin->right);
+            if (rightInfo.isDirectValue()) {
+                errorUnconstrainedGenericOperatorUse(bin->loc, rightInfo,
+                                                     bin->op);
+            }
             return;
         }
         if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
             resolveExpr(unary->expr);
+            if (unary->op != '&' && unary->op != '*') {
+                auto info = inferGenericExprInfo(unary->expr);
+                if (info.isDirectValue()) {
+                    errorUnconstrainedGenericOperatorUse(unary->loc, info,
+                                                         unary->op);
+                }
+            }
             return;
         }
         if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
@@ -556,6 +958,13 @@ class FunctionResolver {
         if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
             resolveExpr(dotLike->parent);
             resolveDotLike(dotLike);
+            auto info = inferGenericExprInfo(dotLike->parent);
+            if (info.isDirectValue()) {
+                errorUnconstrainedGenericMemberUse(
+                    dotLike->loc, info,
+                    llvm::StringRef(dotLike->field->text.tochara(),
+                                    dotLike->field->text.size()));
+            }
             return;
         }
         if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
@@ -619,6 +1028,7 @@ public:
                 "duplicate function parameter `" +
                     toStdString(binding->name()) + "`",
                 "Rename one of the parameters so each binding is unique.");
+            rememberBindingGenericInfo(binding, bindingDeclaredTypeNode(binding));
         }
 
         resolveStmt(resolved_.body());

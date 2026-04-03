@@ -236,6 +236,10 @@ def test_generic_v0_template_bodies_accept_local_uses_of_visible_type_params(
             ret local
         }
 
+        def size_of_item[T]() usize {
+            ret sizeof[T]()
+        }
+
         def main() i32 {
             ret 0
         }
@@ -244,6 +248,65 @@ def test_generic_v0_template_bodies_accept_local_uses_of_visible_type_params(
     assert_contains(ir, "define i32 @main()", label="generic template body ir")
     assert_not_contains(ir, "@keep_ptr(", label="generic template body ir")
     assert_not_contains(ir, "@Box.keep", label="generic template body ir")
+    assert_not_contains(ir, "@size_of_item(", label="generic template body ir")
+
+
+def test_generic_v0_template_bodies_reject_unconstrained_capability_assumptions(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "generic_unconstrained_method_capability_bad_round7.lo",
+            """
+            def bad[T](obj T) i32 {
+                ret obj.hash()
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not provide member `hash`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+        (
+            "generic_unconstrained_field_capability_bad_round7.lo",
+            """
+            def bad[T](obj T) i32 {
+                ret obj.value
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not provide member `value`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+        (
+            "generic_unconstrained_equality_capability_bad_round7.lo",
+            """
+            def bad[T](left T, right T) bool {
+                ret left == right
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not support operator `==`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+        (
+            "generic_unconstrained_operator_capability_bad_round7.lo",
+            """
+            def bad[T](left T, right T) T {
+                var local = left
+                ret local + right
+            }
+            """,
+            [
+                "unconstrained generic parameter `T` does not support operator `+`",
+                "Unconstrained generic parameters only allow type-level uses such as `sizeof[T]()`",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
 
 
 def test_generic_v0_explicit_type_args_enter_semantic_call_path(
@@ -353,7 +416,7 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
             """,
             [
                 "generic function `id` cannot be used as a runtime value before instantiation",
-                "Call it directly, for example `id[T](...)`, or wait until monomorphization support lands.",
+                "Call it directly, for example `id[T](...)`, or instantiate it first with `id[T]&<>` if you need a function pointer.",
             ],
         ),
     ]

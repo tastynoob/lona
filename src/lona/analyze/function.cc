@@ -1329,7 +1329,8 @@ class FunctionAnalyzer {
               "generic function `" + functionName +
                   "` cannot be used as a runtime value before instantiation",
               "Call it directly, for example `" + functionName +
-                  "[T](...)`, or wait until monomorphization support lands.");
+                  "[T](...)`, or instantiate it first with `" + functionName +
+                  "[T]&<>` if you need a function pointer.");
     }
 
     [[noreturn]] void diagnoseGenericTypeApplyTarget(const location &loc) {
@@ -1347,7 +1348,7 @@ class FunctionAnalyzer {
               "generic type template `" + typeName +
                   "` cannot be used as a runtime value directly",
               "Construct it with `" + typeName +
-                  "[T](...)` once generic constructors land, or write `" +
+                  "[T](...)`, or write `" +
                   typeName + "![T]` in handwritten type strings.");
     }
 
@@ -1357,29 +1358,25 @@ class FunctionAnalyzer {
               "generic type template `" + typeName +
                   "` cannot be constructed without explicit type arguments",
               "Write `" + typeName +
-                  "[T](...)` once concrete generic constructor support lands. "
+                  "[T](...)` with explicit type arguments. "
                   "Bare template names do not denote runtime constructible "
                   "types.");
     }
 
     [[noreturn]] void diagnoseGenericInstantiationPending(
         const std::string &functionName, const location &loc) {
-        error(loc,
-              "generic function instantiation is not implemented yet for `" +
-                  functionName + "`",
-              "This round wires generic signatures, scopes, and call "
-              "diagnostics only. Monomorphization lands in later generic v0 "
-              "tasks.");
+        internalError(loc,
+                      "generic function `" + functionName +
+                          "` is missing its instantiation owner context",
+                      "This looks like a generic runtime instantiation bug.");
     }
 
     [[noreturn]] void diagnoseGenericTypeInstantiationPending(
         const std::string &typeName, const location &loc) {
-        error(loc,
-              "generic type instantiation is not implemented yet for `" +
-                  typeName + "`",
-              "This round only closes same-module concrete generic struct "
-              "instances. Imported generic type instantiation lands in later "
-              "runtime tasks.");
+        internalError(loc,
+                      "generic type `" + typeName +
+                          "` is missing its instantiation owner context",
+                      "This looks like a generic runtime instantiation bug.");
     }
 
     const ResolvedEntityRef *resolvedEntityBinding(const AstNode *node) const {
