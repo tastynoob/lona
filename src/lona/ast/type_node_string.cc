@@ -22,7 +22,7 @@ describeTypeNode(const TypeNode *node, std::string_view nullDescription) {
     }
     if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
         auto name = describeTypeNode(applied->base, nullDescription);
-        name += "![";
+        name += "[";
         for (size_t i = 0; i < applied->args.size(); ++i) {
             if (i != 0) {
                 name += ", ";

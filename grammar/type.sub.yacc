@@ -27,14 +27,14 @@ single_type
     | dot_like_name '<' opt_newlines type_name_seq opt_newlines '>' {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
-            "generic apply uses `![...]`, not `<>`",
-            "Write `Name![T]` instead of `Name<T>` in generic v0.");
+            "generic apply uses `[...]`, not `<>`",
+            "Write `Name[T]` instead of `Name<T>` in type strings.");
     }
     | TYPE '<' opt_newlines type_name_seq opt_newlines '>' {
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
-            "generic apply uses `![...]`, not `<>`",
-            "Write `Name![T]` instead of `Name<T>` in generic v0.");
+            "generic apply uses `[...]`, not `<>`",
+            "Write `Name[T]` instead of `Name<T>` in type strings.");
     }
     ;
 
@@ -58,17 +58,13 @@ type_primary
 
 postfix_type
     : type_primary { $$ = $1; }
-    | postfix_type '!' '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
-        $$ = new AppliedTypeNode($1, *$5, @$);
-        delete $5;
-    }
     | postfix_type '*' %prec type_suffix { $$ = new PointerTypeNode($1, 1, @$); }
     | postfix_type '[' opt_newlines '*' opt_newlines ']' %prec type_suffix {
         $$ = new IndexablePointerTypeNode($1, @$);
     }
     | postfix_type '[' opt_newlines ']' %prec type_suffix { $$ = new ArrayTypeNode($1, {}, @$); }
     | postfix_type '[' opt_newlines type_bracket_item_seq opt_newlines ']' %prec type_suffix {
-        $$ = new ArrayTypeNode($1, *$4, @$);
+        $$ = createBracketSuffixTypeNode($1, $4, @$);
         delete $4;
     }
     | postfix_type '[' opt_newlines ',' opt_newlines expr_seq opt_newlines ']' %prec type_suffix {

@@ -36,8 +36,8 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
         }
 
         def show() {
-            var typed_box Box![i32]
-            var typed_pair Pair![i32, bool]
+            var typed_box Box[i32]
+            var typed_pair Pair[i32, bool]
             var value i32 = 1
             var typed i32* = &value
             var erased any* = cast[any*](typed)
@@ -54,8 +54,8 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
         '"type": "TypeApply"',
         '"type": "FuncRef"',
         '"typeArgs": [',
-        '"declaredType": "Box![i32]"',
-        '"declaredType": "Pair![i32, bool]"',
+        '"declaredType": "Box[i32]"',
+        '"declaredType": "Pair[i32, bool]"',
         '"declaredType": "any*"',
         '"declaredType": "any const*"',
     ]:
@@ -74,12 +74,12 @@ def test_generic_v0_frontend_rejects_type_args_on_non_generic_box(
         }
 
         def show() {
-            var box Box![i32]
+            var box Box[i32]
         }
         """,
         [
-            "type `Box![i32]` applies `![...]` arguments to a non-generic type",
-            "Remove the `![...]` arguments, or make the base type generic before specializing it.",
+            "type `Box[i32]` applies `[...]` arguments to a non-generic type",
+            "Remove the `[...]` arguments, or make the base type generic before specializing it.",
         ],
     )
 
@@ -96,7 +96,7 @@ def test_generic_v0_same_module_applied_structs_support_by_value_storage(
         }
 
         def show() {
-            var box Box![i32]
+            var box Box[i32]
         }
         """,
     )
@@ -119,19 +119,19 @@ def test_generic_v0_same_module_applied_structs_support_ctor_field_param_return_
         }
 
         struct Holder {
-            box Box![i32]
+            box Box[i32]
         }
 
-        def make_box() Box![i32] {
+        def make_box() Box[i32] {
             ret Box[i32](value = 41)
         }
 
-        def take_box(box Box![i32]) i32 {
+        def take_box(box Box[i32]) i32 {
             ret box.get()
         }
 
         def main() i32 {
-            var box Box![i32] = make_box()
+            var box Box[i32] = make_box()
             var holder Holder = Holder(box = box)
             ret take_box(holder.box) + 1
         }
@@ -338,11 +338,11 @@ def test_generic_v0_template_bodies_reject_unconstrained_helper_alias_escapes(
                 value T
             }
 
-            def head[T](box Box![T]) T {
+            def head[T](box Box[T]) T {
                 ret box.value
             }
 
-            def bad[T](box Box![T]) i32 {
+            def bad[T](box Box[T]) i32 {
                 var alias = head(box)
                 ret alias.hash()
             }
@@ -363,7 +363,7 @@ def test_generic_v0_template_bodies_reject_unconstrained_helper_alias_escapes(
                 }
             }
 
-            def bad[T](box Box![T]) i32 {
+            def bad[T](box Box[T]) i32 {
                 var alias = box.get()
                 ret alias.hash()
             }
@@ -633,13 +633,13 @@ def test_generic_v0_allows_box_t_pointer_signatures_before_pending_instantiation
             value T
         }
 
-        def take_box_ptr[T](value Box![T]*) Box![T]* {
+        def take_box_ptr[T](value Box[T]*) Box[T]* {
             ret value
         }
 
         def main() i32 {
-            var box Box![i32]* = null
-            var out Box![i32]* = take_box_ptr(box)
+            var box Box[i32]* = null
+            var out Box[i32]* = take_box_ptr(box)
             ret 0
         }
         """,
@@ -663,13 +663,13 @@ def test_generic_v0_infers_applied_type_args_through_pair_pointer_patterns(
             right B
         }
 
-        def take_pair_ptr[T](value Pair![T, bool]*) Pair![T, bool]* {
+        def take_pair_ptr[T](value Pair[T, bool]*) Pair[T, bool]* {
             ret value
         }
 
         def main() i32 {
-            var pair Pair![i32, bool]* = null
-            var out Pair![i32, bool]* = take_pair_ptr(pair)
+            var pair Pair[i32, bool]* = null
+            var out Pair[i32, bool]* = take_pair_ptr(pair)
             ret 0
         }
         """,
@@ -693,13 +693,13 @@ def test_generic_v0_infers_applied_type_args_through_tuple_patterns(
             right B
         }
 
-        def take_tuple[T](value <Pair![T, bool]*, i32>) Pair![T, bool]* {
+        def take_tuple[T](value <Pair[T, bool]*, i32>) Pair[T, bool]* {
             ret value._1
         }
 
         def main() i32 {
-            var pair Pair![i32, bool]* = null
-            var out Pair![i32, bool]* = take_tuple((pair, 1))
+            var pair Pair[i32, bool]* = null
+            var out Pair[i32, bool]* = take_tuple((pair, 1))
             ret 0
         }
         """,
@@ -722,13 +722,13 @@ def test_generic_v0_infers_applied_type_args_through_const_pointer_patterns(
             value T
         }
 
-        def borrow_const[T](value Box![T] const*) Box![T] const* {
+        def borrow_const[T](value Box[T] const*) Box[T] const* {
             ret value
         }
 
         def main() i32 {
-            var ptr Box![i32] const* = null
-            var out Box![i32] const* = borrow_const(ptr)
+            var ptr Box[i32] const* = null
+            var out Box[i32] const* = borrow_const(ptr)
             ret 0
         }
         """,
@@ -757,8 +757,8 @@ def test_generic_v0_rejects_bare_generic_templates_in_runtime_type_positions(
         }
         """,
         [
-            "generic type template `Box` requires explicit `![...]` type arguments",
-            "Write `Box![...]` with explicit type arguments",
+            "generic type template `Box` requires explicit `[...]` type arguments",
+            "Write `Box[...]` with explicit type arguments",
         ],
     )
 
@@ -774,58 +774,8 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
             }
             """,
             [
-                "generic apply uses `![...]`, not `<>`",
-                "Write `Name![T]` instead of `Name<T>` in generic v0.",
-            ],
-        ),
-        (
-            "generic_old_bang_apply_bad.lo",
-            """
-            def id[T](value T) T {
-                ret value
-            }
-
-            def main() i32 {
-                ret id![i32](1)
-            }
-            """,
-            [
-                "expression-side generic apply uses `[...]`, not `![...]`",
-                "Write `name[T](...)`, `name[T]&<>`, or `Type[T](...)` in expression contexts. Reserve `Type![T]` for handwritten type strings.",
-            ],
-        ),
-        (
-            "generic_old_square_type_apply_bad.lo",
-            """
-            struct Box[T] {
-                value T
-            }
-
-            def main() i32 {
-                var box Box[i32]
-                ret 0
-            }
-            """,
-            [
-                "generic apply uses `![...]`, not `[...]`",
-                "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.",
-            ],
-        ),
-        (
-            "generic_old_square_nested_type_apply_bad.lo",
-            """
-            struct Box[T] {
-                value T
-            }
-
-            def main() i32 {
-                var pair <Box[i32]*, i32>
-                ret 0
-            }
-            """,
-            [
-                "generic apply uses `![...]`, not `[...]`",
-                "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.",
+                "generic apply uses `[...]`, not `<>`",
+                "Write `Name[T]` instead of `Name<T>` in type strings.",
             ],
         ),
         (
@@ -898,7 +848,7 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
             }
 
             def main() i32 {
-                var box Box![any]* = null
+                var box Box[any]* = null
                 ret 0
             }
             """,
@@ -1066,46 +1016,20 @@ def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_
         impl[T Hash] Box[T]: Hash
 
         def main() i32 {
-            var box Box![Point] = Box[Point](value = Point(value = 7))
+            var box Box[Point] = Box[Point](value = Point(value = 7))
             ret Hash.hash(&box)
         }
         """,
     )
     assert_regex(
         ir,
-        r"define i32 @Box_21_5b.*Point.*_5d\.hash\(ptr ",
+        r"define i32 @Box_5b.*Point.*_5d\.hash\(ptr ",
         label="generic trait impl static call ir",
     )
     assert_regex(
         ir,
-        r"call i32 @Box_21_5b.*Point.*_5d\.hash\(ptr ",
+        r"call i32 @Box_5b.*Point.*_5d\.hash\(ptr ",
         label="generic trait impl static call ir",
-    )
-
-
-def test_generic_v0_rejects_legacy_impl_header_type_apply_syntax(
-    compiler: CompilerHarness,
-) -> None:
-    _expect_ir_failure(
-        compiler,
-        "generic_trait_impl_legacy_header_bad_round12.lo",
-        """
-        trait Hash {
-            def hash() i32
-        }
-
-        struct Box[T] {
-            def hash() i32 {
-                ret 1
-            }
-        }
-
-        impl[T Hash] Box![T]: Hash
-        """,
-        [
-            "trait impl headers use `Type[T]`, not `Type![T]`",
-            "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers. Keep `Type![T]` for handwritten type strings elsewhere.",
-        ],
     )
 
 

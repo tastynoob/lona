@@ -349,7 +349,7 @@ def test_imported_generic_applied_pointer_signatures_instantiate_concrete_symbol
             value T
         }
 
-        def take_box_ptr[T](value Box![T]*) Box![T]* {
+        def take_box_ptr[T](value Box[T]*) Box[T]* {
             ret value
         }
         """,
@@ -360,8 +360,8 @@ def test_imported_generic_applied_pointer_signatures_instantiate_concrete_symbol
         import dep
 
         def main() i32 {
-            var box dep.Box![i32]* = null
-            var out dep.Box![i32]* = dep.take_box_ptr(box)
+            var box dep.Box[i32]* = null
+            var out dep.Box[i32]* = dep.take_box_ptr(box)
             ret 0
         }
         """,
@@ -385,7 +385,7 @@ def test_imported_generic_applied_pointer_signatures_ignore_local_same_name_shad
             value T
         }
 
-        def take_box_ptr[T](value Box![T]*) Box![T]* {
+        def take_box_ptr[T](value Box[T]*) Box[T]* {
             ret value
         }
         """,
@@ -400,8 +400,8 @@ def test_imported_generic_applied_pointer_signatures_ignore_local_same_name_shad
         }
 
         def main() i32 {
-            var box dep.Box![i32]* = null
-            var out dep.Box![i32]* = dep.take_box_ptr(box)
+            var box dep.Box[i32]* = null
+            var out dep.Box[i32]* = dep.take_box_ptr(box)
             ret 0
         }
         """,
@@ -435,11 +435,11 @@ def test_imported_generic_signatures_use_owner_module_context_for_secondary_qual
             value T
         }
 
-        def make_helper_ptr() helper.Box![i32]* {
+        def make_helper_ptr() helper.Box[i32]* {
             ret null
         }
 
-        def take_helper_ptr[T](value helper.Box![T]*) helper.Box![T]* {
+        def take_helper_ptr[T](value helper.Box[T]*) helper.Box[T]* {
             ret value
         }
         """,
@@ -527,7 +527,7 @@ def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
             ret value
         }
 
-        def head[T](box Box![T]) T {
+        def head[T](box Box[T]) T {
             ret box.value
         }
         """,
@@ -542,7 +542,7 @@ def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(
             ret alias.hash()
         }
 
-        def bad_box[T](box dep.Box![T]) i32 {
+        def bad_box[T](box dep.Box[T]) i32 {
             var alias = dep.head(box)
             ret alias.hash()
         }
@@ -583,7 +583,7 @@ def test_imported_generic_method_results_do_not_hide_unconstrained_template_use(
         """
         import dep
 
-        def bad_method[T](box dep.Box![T]) i32 {
+        def bad_method[T](box dep.Box[T]) i32 {
             var alias = box.get()
             ret alias.hash()
         }
@@ -685,7 +685,7 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
 
         impl[T Hash] Box[T]: Hash
 
-        def make() Box![Point] {
+        def make() Box[Point] {
             ret Box[Point](value = Point(value = 41))
         }
         """,
@@ -696,7 +696,7 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
         import dep
 
         def main() i32 {
-            var box dep.Box![dep.Point] =
+            var box dep.Box[dep.Point] =
                 dep.Box[dep.Point](value = dep.Point(value = 41))
             ret dep.Hash.hash(&box)
         }
@@ -705,12 +705,12 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
     ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_regex(
         ir,
-        r"define i32 @dep_2eBox_21_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
+        r"define i32 @dep_2eBox_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
         label="imported generic trait impl header ir",
     )
     assert_regex(
         ir,
-        r"call i32 @dep_2eBox_21_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
+        r"call i32 @dep_2eBox_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
         label="imported generic trait impl header ir",
     )
 
@@ -736,8 +736,8 @@ def test_imported_generic_structs_materialize_by_value_layout_and_methods(
         import dep
 
         def main() i32 {
-            var box dep.Box![i32] = dep.Box[i32](value = 7)
-            var copy dep.Box![i32] = box
+            var box dep.Box[i32] = dep.Box[i32](value = 7)
+            var copy dep.Box[i32] = box
             ret copy.get()
         }
         """,
@@ -745,12 +745,12 @@ def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_contains(
         ir,
-        '%"dep.Box![i32]" = type { i32 }',
+        '%"dep.Box[i32]" = type { i32 }',
         label="imported generic struct runtime ir",
     )
     assert_contains(
         ir,
-        "@dep_2eBox_21_5bi32_5d.get",
+        "@dep_2eBox_5bi32_5d.get",
         label="imported generic struct runtime ir",
     )
 

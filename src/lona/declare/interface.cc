@@ -173,9 +173,9 @@ class InterfaceCollector {
 
     static std::string genericTemplateHint(const std::string &rawName) {
         return "Write `" + rawName +
-               "![...]` with explicit type arguments, or use the template "
+               "[...]` with explicit type arguments, or use the template "
                "name only inside another applied type like `" + rawName +
-               "![T]`.";
+               "[T]`.";
     }
 
     static BaseTypeNode *rootSelfTypeBase(TypeNode *node) {
@@ -198,7 +198,7 @@ class InterfaceCollector {
                         : string(describeTypeNode(base, "<unknown type>"));
         }
         if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
-            string text = qualifySelfTypeSpelling(applied->base, decl) + "![";
+            string text = qualifySelfTypeSpelling(applied->base, decl) + "[";
             for (std::size_t i = 0; i < applied->args.size(); ++i) {
                 if (i != 0) {
                     text += ", ";
@@ -215,7 +215,7 @@ class InterfaceCollector {
                                                    const std::string &rawName) {
         error(loc,
               "generic type template `" + rawName +
-                  "` requires explicit `![...]` type arguments",
+                  "` requires explicit `[...]` type arguments",
               genericTemplateHint(rawName));
     }
 
@@ -274,7 +274,7 @@ class InterfaceCollector {
     static std::string buildAppliedTypeName(const std::string &baseName,
                                             const std::vector<TypeClass *> &args) {
         std::string name = baseName.empty() ? std::string("<type>") : baseName;
-        name += "![";
+        name += "[";
         for (std::size_t i = 0; i < args.size(); ++i) {
             if (i != 0) {
                 name += ", ";
@@ -315,8 +315,8 @@ class InterfaceCollector {
             if (!typeDecl->isGeneric()) {
                 error(applied->loc,
                       "type `" + describeTypeNode(applied, "<unknown type>") +
-                          "` applies `![...]` arguments to a non-generic type",
-                      "Remove the `![...]` arguments, or make the base type "
+                          "` applies `[...]` arguments to a non-generic type",
+                      "Remove the `[...]` arguments, or make the base type "
                       "generic before specializing it.");
             }
             if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -325,7 +325,7 @@ class InterfaceCollector {
                           toStdString(typeDecl->exportedName) + "`: expected " +
                           std::to_string(typeDecl->typeParams.size()) +
                           ", got " + std::to_string(applied->args.size()),
-                      "Match the number of `![` `]` type arguments to the "
+                      "Match the number of `[` `]` type arguments to the "
                       "generic type parameter list.");
             }
             std::vector<TypeClass *> argTypes;
@@ -599,8 +599,8 @@ class InterfaceCollector {
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
                   "type `" + appliedName +
-                      "` applies `![...]` arguments to a non-generic type",
-                  "Remove the `![...]` arguments, or make the base type generic "
+                      "` applies `[...]` arguments to a non-generic type",
+                  "Remove the `[...]` arguments, or make the base type generic "
                   "before specializing it.");
         }
         if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -609,7 +609,7 @@ class InterfaceCollector {
                       toStdString(typeDecl->exportedName) + "`: expected " +
                       std::to_string(typeDecl->typeParams.size()) + ", got " +
                       std::to_string(applied->args.size()),
-                  "Match the number of `![` `]` type arguments to the generic "
+                  "Match the number of `[` `]` type arguments to the generic "
                   "type parameter list.");
         }
         std::vector<TypeClass *> argTypes;
@@ -654,8 +654,8 @@ class InterfaceCollector {
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
                   "type `" + appliedName +
-                      "` applies `![...]` arguments to a non-generic type",
-                  "Remove the `![...]` arguments, or make the base type generic "
+                      "` applies `[...]` arguments to a non-generic type",
+                  "Remove the `[...]` arguments, or make the base type generic "
                   "before specializing it.");
         }
         if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -664,7 +664,7 @@ class InterfaceCollector {
                       toStdString(typeDecl->exportedName) + "`: expected " +
                       std::to_string(typeDecl->typeParams.size()) + ", got " +
                       std::to_string(applied->args.size()),
-                  "Match the number of `![` `]` type arguments to the generic "
+                  "Match the number of `[` `]` type arguments to the generic "
                   "type parameter list.");
         }
         for (auto *arg : applied->args) {

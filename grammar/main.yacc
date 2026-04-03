@@ -123,7 +123,7 @@
 %type <generic_param> generic_param
 %type <generic_param_seq> generic_param_seq opt_type_params
 %type <node> tag_stat type_bracket_item
-%type <typeNode> impl_self_type impl_self_type_atom legacy_impl_self_type
+%type <typeNode> impl_self_type impl_self_type_atom
 
 %start pragram
 
@@ -506,12 +506,6 @@ impl_decl
     | IMPL opt_type_params impl_self_type ':' opt_newlines dot_like_name stat_compound {
         $$ = new AstTraitImplDecl($3, $6, $7, $2, @$);
     }
-    | IMPL opt_type_params legacy_impl_self_type ':' opt_newlines dot_like_name NEWLINE {
-        $$ = nullptr;
-    }
-    | IMPL opt_type_params legacy_impl_self_type ':' opt_newlines dot_like_name stat_compound {
-        $$ = nullptr;
-    }
     ;
 
 /* var define */
@@ -883,12 +877,6 @@ type_apply_expr
     : postfix_expr '[' opt_newlines type_name_seq opt_newlines ']' {
         $$ = new AstTypeApply($1, $4, @$);
     }
-    | postfix_expr '!' '[' opt_newlines type_name_seq opt_newlines ']' {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "expression-side generic apply uses `[...]`, not `![...]`",
-            "Write `name[T](...)`, `name[T]&<>`, or `Type[T](...)` in expression contexts. Reserve `Type![T]` for handwritten type strings.");
-    }
     ;
 
 call_like
@@ -925,15 +913,6 @@ impl_self_type
     | impl_self_type '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
         $$ = new AppliedTypeNode($1, *$4, @$);
         delete $4;
-    }
-    ;
-
-legacy_impl_self_type
-    : impl_self_type '!' '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "trait impl headers use `Type[T]`, not `Type![T]`",
-            "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers. Keep `Type![T]` for handwritten type strings elsewhere.");
     }
     ;
 

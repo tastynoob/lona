@@ -42,23 +42,6 @@ isNamedTypeConstructorBase(const TypeNode *node) {
                llvm::StringRef(rawName.c_str(), rawName.size()));
 }
 
-bool
-isLegacyGenericApplyArraySuffix(const ArrayTypeNode *array) {
-    if (!array || !isNamedTypeConstructorBase(array->base) ||
-        array->dim.empty()) {
-        return false;
-    }
-
-    for (auto *dimension : array->dim) {
-        if (!dynamic_cast<AstField *>(dimension) &&
-            !dynamic_cast<AstDotLike *>(dimension) &&
-            !dynamic_cast<AstTypeApply *>(dimension)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 }  // namespace
 
 std::string
@@ -142,6 +125,9 @@ typeNodeFromBracketItem(AstNode *node) {
         return nullptr;
     }
     if (auto *field = dynamic_cast<AstField *>(node)) {
+        if (field->name == string("any")) {
+            return new AnyTypeNode(node->loc);
+        }
         return new BaseTypeNode(node, field->loc);
     }
     if (dynamic_cast<AstDotLike *>(node)) {
@@ -206,12 +192,6 @@ errorUnsupportedTypeNodeUnsizedArray(const location &loc,
           "Use fixed explicit dimensions like `i32[2]`. If you want inferred "
           "array dimensions, write `var a = {1, 2}`. If you need an indexable "
           "pointer, write `T[*]`.");
-}
-
-[[noreturn]] void
-errorLegacyTypeNodeGenericApplySyntax(const location &loc) {
-    error(loc, "generic apply uses `![...]`, not `[...]`",
-          "Write `Type![T]` in handwritten type strings. Expression-side calls and constructors use `name[T](...)`.");
 }
 
 [[noreturn]] void
@@ -280,9 +260,6 @@ validateTypeNodeLayoutImpl(const TypeNode *node, bool allowDirectAny) {
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
         validateTypeNodeLayoutImpl(array->base, false);
-        if (isLegacyGenericApplyArraySuffix(array)) {
-            errorLegacyTypeNodeGenericApplySyntax(array->loc);
-        }
         if (hasUnsizedArrayDimensions(array->dim)) {
             errorUnsupportedTypeNodeUnsizedArray(array->loc, array);
         }

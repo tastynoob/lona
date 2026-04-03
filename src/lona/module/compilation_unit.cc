@@ -395,15 +395,15 @@ computeInterfaceHash(AstNode *root) {
 std::string
 genericTemplateHint(const std::string &rawName) {
     return "Write `" + rawName +
-           "![...]` with explicit type arguments, or keep the template name "
-           "inside another applied type like `" + rawName + "![T]`.";
+           "[...]` with explicit type arguments, or keep the template name "
+           "inside another applied type like `" + rawName + "[T]`.";
 }
 
 [[noreturn]] void
 errorBareGenericTemplateType(const location &loc, const std::string &rawName) {
     error(loc,
           "generic type template `" + rawName +
-              "` requires explicit `![...]` type arguments",
+              "` requires explicit `[...]` type arguments",
           genericTemplateHint(rawName));
 }
 
@@ -411,7 +411,7 @@ std::string
 buildAppliedTypeName(const std::string &baseName,
                      const std::vector<TypeClass *> &args) {
     std::string name = baseName.empty() ? std::string("<type>") : baseName;
-    name += "![";
+    name += "[";
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (i != 0) {
             name += ", ";
@@ -609,7 +609,7 @@ canonicalTypePatternSpelling(
         std::string text =
             canonicalTypePatternSpelling(ownerUnit, applied->base,
                                          genericBindings) +
-            "![";
+            "[";
         for (std::size_t i = 0; i < applied->args.size(); ++i) {
             if (i != 0) {
                 text += ", ";
@@ -995,8 +995,8 @@ substituteAppliedStructTemplateType(
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
                   "type `" + describeTypeNode(applied, "<unknown type>") +
-                      "` applies `![...]` arguments to a non-generic type",
-                  "Remove the `![...]` arguments, or make the base type generic "
+                      "` applies `[...]` arguments to a non-generic type",
+                  "Remove the `[...]` arguments, or make the base type generic "
                   "before specializing it.");
         }
         if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -1005,7 +1005,7 @@ substituteAppliedStructTemplateType(
                       toStdString(typeDecl->exportedName) + "`: expected " +
                       std::to_string(typeDecl->typeParams.size()) + ", got " +
                       std::to_string(applied->args.size()),
-                  "Match the number of `![` `]` type arguments to the generic "
+                  "Match the number of `[` `]` type arguments to the generic "
                   "type parameter list.");
         }
         std::vector<TypeClass *> argTypes;
@@ -1130,8 +1130,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
                   "type `" + appliedName +
-                      "` applies `![...]` arguments to a non-generic type",
-                  "Remove the `![...]` arguments, or make the base type generic "
+                      "` applies `[...]` arguments to a non-generic type",
+                  "Remove the `[...]` arguments, or make the base type generic "
                   "before specializing it.");
         }
         if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -1140,7 +1140,7 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
                       toStdString(typeDecl->exportedName) + "`: expected " +
                       std::to_string(typeDecl->typeParams.size()) + ", got " +
                       std::to_string(applied->args.size()),
-                  "Match the number of `![` `]` type arguments to the generic "
+                  "Match the number of `[` `]` type arguments to the generic "
                   "type parameter list.");
         }
         std::vector<TypeClass *> argTypes;

@@ -343,7 +343,7 @@ def test_generic_v0_applied_type_pointers_form_concrete_runtime_identities(
             value T
         }
 
-        def main() Box![i32]* {
+        def main() Box[i32]* {
             ret null
         }
         """,
@@ -367,7 +367,7 @@ def test_generic_v0_same_module_applied_structs_emit_concrete_runtime_layout_and
         }
 
         def main() i32 {
-            var box Box![i32] = Box[i32](value = 5)
+            var box Box[i32] = Box[i32](value = 5)
             ret box.get()
         }
         """,
@@ -504,7 +504,7 @@ def test_generic_v0_imported_applied_structs_emit_concrete_layout_and_methods(
         import dep
 
         def main() i32 {
-            var box dep.Box![i32] = dep.Box[i32](value = 5)
+            var box dep.Box[i32] = dep.Box[i32](value = 5)
             ret box.get()
         }
         """,
@@ -512,12 +512,12 @@ def test_generic_v0_imported_applied_structs_emit_concrete_layout_and_methods(
     ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_contains(
         ir,
-        '%"dep.Box![i32]" = type { i32 }',
+        '%"dep.Box[i32]" = type { i32 }',
         label="generic imported struct ir",
     )
     assert_contains(
         ir,
-        "@dep_2eBox_21_5bi32_5d.get",
+        "@dep_2eBox_5bi32_5d.get",
         label="generic imported struct ir",
     )
 
@@ -825,7 +825,7 @@ def test_object_bundle_invalidates_imported_generic_struct_methods_when_owner_bo
         import dep
 
         def main() i32 {
-            var box dep.Box![i32] = dep.Box[i32](value = 7)
+            var box dep.Box[i32] = dep.Box[i32](value = 7)
             ret box.get()
         }
         """,

@@ -845,7 +845,7 @@ class FunctionResolver {
                    ".method(&value)`. Ordinary member access and operators on `T` stay unavailable even with a bound.";
         }
         return "Unconstrained generic parameters only allow type-level uses "
-               "such as `sizeof[T]()`, `T*`, `T const*`, or `Box![T]`. "
+               "such as `sizeof[T]()`, `T*`, `T const*`, or `Box[T]`. "
                "Member access and operators require a future bound or a "
                "concrete type.";
     }
@@ -987,8 +987,8 @@ class FunctionResolver {
             if (!typeDecl->isGeneric()) {
                 error(applied->loc,
                       "type `" + appliedName +
-                          "` applies `![...]` arguments to a non-generic type",
-                      "Remove the `![...]` arguments, or make the base type "
+                          "` applies `[...]` arguments to a non-generic type",
+                      "Remove the `[...]` arguments, or make the base type "
                       "generic before specializing it.");
             }
             if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -998,7 +998,7 @@ class FunctionResolver {
                           std::to_string(typeDecl->typeParams.size()) +
                           ", got " +
                           std::to_string(applied->args.size()),
-                      "Match the number of `![` `]` type arguments to the "
+                      "Match the number of `[` `]` type arguments to the "
                       "generic type parameter list.");
             }
             for (auto *arg : applied->args) {

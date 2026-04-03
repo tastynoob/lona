@@ -1350,7 +1350,7 @@ class FunctionAnalyzer {
                   "` cannot be used as a runtime value directly",
               "Construct it with `" + typeName +
                   "[T](...)`, or write `" +
-                  typeName + "![T]` in handwritten type strings.");
+                  typeName + "[T]` in type positions.");
     }
 
     [[noreturn]] void diagnoseGenericTypeCall(const std::string &typeName,
@@ -3071,7 +3071,7 @@ class FunctionAnalyzer {
                                      const std::vector<TypeClass *> &args) {
         std::string name = baseName.empty() ? std::string("<type>")
                                             : baseName;
-        name += "![";
+        name += "[";
         for (std::size_t i = 0; i < args.size(); ++i) {
             if (i != 0) {
                 name += ", ";
@@ -3194,7 +3194,7 @@ class FunctionAnalyzer {
             if (!typeDecl->isGeneric()) {
                 error(loc,
                       "generic function `" + functionName +
-                          "` applies `![...]` arguments to non-generic type `" +
+                          "` applies `[...]` arguments to non-generic type `" +
                           toStdString(typeDecl->exportedName) + "`");
             }
             if (applied->args.size() != typeDecl->typeParams.size()) {
@@ -3203,7 +3203,7 @@ class FunctionAnalyzer {
                           toStdString(typeDecl->exportedName) + "`: expected " +
                           std::to_string(typeDecl->typeParams.size()) +
                           ", got " + std::to_string(applied->args.size()),
-                      "Match the number of `![` `]` type arguments to the "
+                      "Match the number of `[` `]` type arguments to the "
                       "generic type parameter list.");
             }
             std::vector<TypeClass *> argTypes;
