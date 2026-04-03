@@ -731,6 +731,154 @@ def test_object_bundle_no_cache_forces_full_recompile(
     assert_contains(second.stderr, "reused-module-objects: 0", label="no-cache stats")
 
 
+def test_object_bundle_invalidates_imported_generic_function_instances_when_owner_body_changes(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "bundle_import_generic_function/dep.lo",
+        """
+        def size_of_value[T](value T) usize {
+            ret sizeof[T]()
+        }
+
+        def make() i32 {
+            ret 7
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "bundle_import_generic_function/main.lo",
+        """
+        import dep
+
+        def main() usize {
+            ret dep.size_of_value(dep.make())
+        }
+        """,
+    )
+    cache_dir = compiler.output_path("import-generic-function-cache")
+
+    first, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-function.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 2", label="generic function body change first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="generic function body change first stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-objects: 0",
+        label="generic function body change first stats",
+    )
+
+    compiler.write_source(
+        "bundle_import_generic_function/dep.lo",
+        """
+        def size_of_value[T](value T) usize {
+            ret sizeof[T]() + 1
+        }
+
+        def make() i32 {
+            ret 7
+        }
+        """,
+    )
+
+    second, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-function.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 2", label="generic function body change second stats")
+    assert_contains(second.stderr, "reused-modules: 0", label="generic function body change second stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-objects: 0",
+        label="generic function body change second stats",
+    )
+
+
+def test_object_bundle_invalidates_imported_generic_struct_methods_when_owner_body_changes(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "bundle_import_generic_struct_method/dep.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "bundle_import_generic_struct_method/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box![i32] = dep.Box[i32](value = 7)
+            ret box.get()
+        }
+        """,
+    )
+    cache_dir = compiler.output_path("import-generic-struct-method-cache")
+
+    first, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-struct-method.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 2", label="generic struct method body change first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="generic struct method body change first stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-objects: 0",
+        label="generic struct method body change first stats",
+    )
+
+    compiler.write_source(
+        "bundle_import_generic_struct_method/dep.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                var copy T = self.value
+                ret copy
+            }
+        }
+        """,
+    )
+
+    second, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-struct-method.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 2", label="generic struct method body change second stats")
+    assert_contains(second.stderr, "reused-modules: 0", label="generic struct method body change second stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-objects: 0",
+        label="generic struct method body change second stats",
+    )
+
+
 def test_object_bundle_rejects_lto_mode(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "bundle_lto_entry.lo",

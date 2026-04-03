@@ -6,6 +6,7 @@
 #include "lona/sema/hir.hh"
 #include "lona/util/time.hh"
 #include "lona/visitor.hh"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -38,6 +39,8 @@
 
 namespace lona {
 namespace workspace_builder_impl {
+
+using Json = nlohmann::json;
 
 llvm::OptimizationLevel
 getOptimizationLevel(int optLevel) {
@@ -406,6 +409,249 @@ readBinaryFileIfPresent(const std::filesystem::path &path) {
     return bytes;
 }
 
+const char *
+entryRoleKeyword(ModuleEntryRole entryRole) {
+    return entryRole == ModuleEntryRole::Root ? "root" : "dependency";
+}
+
+ModuleEntryRole
+parseEntryRole(const std::string &text) {
+    if (text == "root") {
+        return ModuleEntryRole::Root;
+    }
+    if (text == "dependency") {
+        return ModuleEntryRole::Dependency;
+    }
+    throw DiagnosticError(DiagnosticError::Category::Driver,
+                          "cached module metadata has an unknown entry role `" +
+                              text + "`",
+                          "Clear the object bundle cache and rebuild.");
+}
+
+const char *
+genericInstanceKindKeyword(GenericInstanceKind kind) {
+    switch (kind) {
+        case GenericInstanceKind::Function:
+            return "function";
+        case GenericInstanceKind::Struct:
+            return "struct";
+        case GenericInstanceKind::Method:
+            return "method";
+    }
+    return "function";
+}
+
+GenericInstanceKind
+parseGenericInstanceKind(const std::string &text) {
+    if (text == "function") {
+        return GenericInstanceKind::Function;
+    }
+    if (text == "struct") {
+        return GenericInstanceKind::Struct;
+    }
+    if (text == "method") {
+        return GenericInstanceKind::Method;
+    }
+    throw DiagnosticError(
+        DiagnosticError::Category::Driver,
+        "cached generic instance metadata has an unknown kind `" + text + "`",
+        "Clear the object bundle cache and rebuild.");
+}
+
+Json
+encodeGenericInstanceRecord(const GenericInstanceArtifactRecord &record) {
+    Json root = Json::object();
+    root["requester_module_key"] = toStdString(record.key.requesterModuleKey);
+    root["owner_module_key"] = toStdString(record.key.ownerModuleKey);
+    root["kind"] = genericInstanceKindKeyword(record.key.kind);
+    root["template_name"] = toStdString(record.key.templateName);
+    root["method_name"] = toStdString(record.key.methodName);
+    root["concrete_type_args"] = Json::array();
+    for (const auto &arg : record.key.concreteTypeArgs) {
+        root["concrete_type_args"].push_back(toStdString(arg));
+    }
+    root["owner_interface_hash"] = record.revision.ownerInterfaceHash;
+    root["owner_implementation_hash"] = record.revision.ownerImplementationHash;
+    root["owner_visible_import_hash"] =
+        record.revision.ownerVisibleImportHash;
+    root["bound_visible_state_hash"] = record.revision.boundVisibleStateHash;
+    root["emitted_symbol_names"] = Json::array();
+    for (const auto &symbol : record.emittedSymbolNames) {
+        root["emitted_symbol_names"].push_back(toStdString(symbol));
+    }
+    return root;
+}
+
+GenericInstanceArtifactRecord
+decodeGenericInstanceRecord(const Json &root) {
+    GenericInstanceArtifactRecord record;
+    record.key.requesterModuleKey =
+        string(root.at("requester_module_key").get<std::string>());
+    record.key.ownerModuleKey =
+        string(root.at("owner_module_key").get<std::string>());
+    record.key.kind = parseGenericInstanceKind(root.at("kind").get<std::string>());
+    record.key.templateName =
+        string(root.at("template_name").get<std::string>());
+    record.key.methodName = string(root.value("method_name", std::string()));
+    for (const auto &arg : root.at("concrete_type_args")) {
+        record.key.concreteTypeArgs.push_back(string(arg.get<std::string>()));
+    }
+    record.revision.ownerInterfaceHash =
+        root.at("owner_interface_hash").get<std::uint64_t>();
+    record.revision.ownerImplementationHash =
+        root.at("owner_implementation_hash").get<std::uint64_t>();
+    record.revision.ownerVisibleImportHash =
+        root.at("owner_visible_import_hash").get<std::uint64_t>();
+    record.revision.boundVisibleStateHash =
+        root.value("bound_visible_state_hash", static_cast<std::uint64_t>(0));
+    for (const auto &symbol : root.at("emitted_symbol_names")) {
+        record.emittedSymbolNames.push_back(string(symbol.get<std::string>()));
+    }
+    return record;
+}
+
+Json
+encodeArtifactMetadata(const ModuleArtifact &artifact) {
+    Json root = Json::object();
+    root["format"] = "lona-object-bundle-metadata-v0";
+    root["path"] = toStdString(artifact.path());
+    root["module_key"] = toStdString(artifact.moduleKey());
+    root["module_name"] = toStdString(artifact.moduleName());
+    root["source_hash"] = artifact.sourceHash();
+    root["interface_hash"] = artifact.interfaceHash();
+    root["implementation_hash"] = artifact.implementationHash();
+    root["target_triple"] = toStdString(artifact.targetTriple());
+    root["opt_level"] = artifact.optLevel();
+    root["debug_info"] = artifact.debugInfo();
+    root["entry_role"] = entryRoleKeyword(artifact.entryRole());
+    root["contains_native_abi"] = artifact.containsNativeAbi();
+    root["dependency_interface_hashes"] = Json::object();
+    for (const auto &[dependencyKey, dependencyHash] :
+         artifact.dependencyInterfaceHashes()) {
+        root["dependency_interface_hashes"][toStdString(dependencyKey)] =
+            dependencyHash;
+    }
+    root["generic_instance_records"] = Json::array();
+    for (const auto &record : artifact.genericInstanceRecords()) {
+        root["generic_instance_records"].push_back(
+            encodeGenericInstanceRecord(record));
+    }
+    return root;
+}
+
+ModuleArtifact
+decodeArtifactMetadata(const Json &root) {
+    if (root.value("format", std::string()) !=
+        "lona-object-bundle-metadata-v0") {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "cached object bundle metadata has an unsupported format",
+            "Clear the object bundle cache and rebuild.");
+    }
+
+    ModuleArtifact artifact(
+        root.at("path").get<std::string>(), root.at("module_key").get<std::string>(),
+        root.at("module_name").get<std::string>(),
+        root.at("source_hash").get<std::uint64_t>(),
+        root.at("interface_hash").get<std::uint64_t>(),
+        root.at("implementation_hash").get<std::uint64_t>());
+
+    std::unordered_map<string, std::uint64_t> dependencyHashes;
+    for (auto it = root.at("dependency_interface_hashes").begin();
+         it != root.at("dependency_interface_hashes").end(); ++it) {
+        dependencyHashes.emplace(string(it.key()), it.value().get<std::uint64_t>());
+    }
+    artifact.setDependencyInterfaceHashes(std::move(dependencyHashes));
+    artifact.setCompileProfile(root.at("target_triple").get<std::string>(),
+                               root.at("opt_level").get<int>(),
+                               root.at("debug_info").get<bool>(),
+                               parseEntryRole(root.at("entry_role").get<std::string>()));
+    artifact.setContainsNativeAbi(root.value("contains_native_abi", false));
+
+    std::vector<GenericInstanceArtifactRecord> genericRecords;
+    if (auto found = root.find("generic_instance_records");
+        found != root.end() && found->is_array()) {
+        genericRecords.reserve(found->size());
+        for (const auto &item : *found) {
+            genericRecords.push_back(decodeGenericInstanceRecord(item));
+        }
+    }
+    artifact.setGenericInstanceRecords(std::move(genericRecords));
+    return artifact;
+}
+
+std::optional<ModuleArtifact>
+readArtifactMetadataIfPresent(const std::filesystem::path &path) {
+    std::ifstream in(path);
+    if (!in) {
+        return std::nullopt;
+    }
+    Json root;
+    try {
+        in >> root;
+    } catch (const std::exception &err) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't parse cached object metadata `" + path.string() + "`.",
+            err.what());
+    }
+    return decodeArtifactMetadata(root);
+}
+
+void
+writeArtifactMetadata(const std::filesystem::path &path,
+                      const ModuleArtifact &artifact) {
+    std::ofstream out(path);
+    if (!out) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write cached object metadata `" + path.string() + "`.",
+            "Check that the cache directory is writable.");
+    }
+    out << encodeArtifactMetadata(artifact).dump(2) << '\n';
+    if (!out) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't finish writing cached object metadata `" +
+                path.string() + "`.",
+            "Check that the cache directory is writable.");
+    }
+}
+
+const CompilationUnit *
+findUnitByModuleKey(const ModuleGraph &moduleGraph, const string &moduleKey) {
+    for (const auto &path : moduleGraph.loadOrder()) {
+        const auto *unit = moduleGraph.find(path);
+        if (unit && unit->moduleKey() == moduleKey) {
+            return unit;
+        }
+    }
+    return nullptr;
+}
+
+bool
+matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
+                              const CompilationUnit &requesterUnit,
+                              const ModuleArtifact &artifact) {
+    for (const auto &record : artifact.genericInstanceRecords()) {
+        if (record.key.requesterModuleKey != requesterUnit.moduleKey()) {
+            return false;
+        }
+        const auto *ownerUnit =
+            findUnitByModuleKey(moduleGraph, record.key.ownerModuleKey);
+        if (!ownerUnit) {
+            return false;
+        }
+        const GenericTemplateRevision currentRevision{
+            ownerUnit->interfaceHash(), ownerUnit->implementationHash(),
+            ownerUnit->visibleImportInterfaceHash(), 0};
+        if (!(record.revision == currentRevision)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void
 appendHIRFunctions(HIRModule &target, const HIRModule &source) {
     for (auto *func : source.getFunctions()) {
@@ -445,8 +691,11 @@ using workspace_builder_impl::moduleUsesNativeAbi;
 using workspace_builder_impl::optimizeModule;
 using workspace_builder_impl::parseArtifactBitcodeModule;
 using workspace_builder_impl::readBinaryFileIfPresent;
+using workspace_builder_impl::readArtifactMetadataIfPresent;
 using workspace_builder_impl::verifyCompiledModule;
+using workspace_builder_impl::writeArtifactMetadata;
 using workspace_builder_impl::writeBinaryFile;
+using workspace_builder_impl::matchesGenericInstanceRecords;
 
 ModuleEntryRole
 WorkspaceBuilder::artifactEntryRoleFor(const CompilationUnit &unit,
@@ -642,8 +891,12 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
         artifact.entryRole() != entryRole) {
         return false;
     }
-    return artifact.dependencyInterfaceHashes() ==
-           collectDependencyInterfaceHashes(unit);
+    if (artifact.dependencyInterfaceHashes() !=
+        collectDependencyInterfaceHashes(unit)) {
+        return false;
+    }
+    return matchesGenericInstanceRecords(workspace_.moduleGraph(), unit,
+                                         artifact);
 }
 
 ModuleArtifact *
@@ -765,18 +1018,27 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 createArtifact(*queuedUnit, options, rootUnit);
             if (!options.noCache && objectCacheDir != nullptr &&
                 requireObjects && !requireBitcode) {
+                auto metadataPath = std::filesystem::path(
+                    bundleObjectPath(artifact, *objectCacheDir).string() +
+                    ".meta.json");
                 auto cacheRestoreStart = Clock::now();
-                auto cachedObject = readBinaryFileIfPresent(
-                    bundleObjectPath(artifact, *objectCacheDir));
+                auto cachedMetadata =
+                    readArtifactMetadataIfPresent(metadataPath);
                 stats.cacheRestoreMs +=
                     elapsedMillis(cacheRestoreStart, Clock::now());
-                if (cachedObject.has_value()) {
-                    artifact.setObjectCode(std::move(*cachedObject));
-                    workspace_.storeArtifact(std::move(artifact));
-                    queuedUnit->markCompiled();
-                    ++stats.reusedModules;
-                    ++stats.reusedModuleObjects;
-                    return 0;
+                if (cachedMetadata.has_value() &&
+                    matchesArtifact(*queuedUnit, *cachedMetadata, options,
+                                    artifact.entryRole())) {
+                    auto cachedObject = readBinaryFileIfPresent(
+                        bundleObjectPath(artifact, *objectCacheDir));
+                    if (cachedObject.has_value()) {
+                        cachedMetadata->setObjectCode(std::move(*cachedObject));
+                        workspace_.storeArtifact(std::move(*cachedMetadata));
+                        queuedUnit->markCompiled();
+                        ++stats.reusedModules;
+                        ++stats.reusedModuleObjects;
+                        return 0;
+                    }
                 }
             }
             int moduleExitCode =
@@ -807,6 +1069,7 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit,
         unit.markCompiled();
         artifact.setContainsNativeAbi(
             moduleUsesNativeAbi(context.build.module));
+        artifact.setGenericInstanceRecords(unit.recordedGenericInstances());
         if (emitBitcode) {
             auto emitStart = Clock::now();
             artifact.setBitcode(emitBitcodeData(context.build.module));
@@ -1124,6 +1387,8 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
 
         fs::path objectPath = bundleObjectPath(*artifact, bundleDir);
         writeBinaryFile(objectPath, artifact->objectCode());
+        writeArtifactMetadata(
+            fs::path(objectPath.string() + ".meta.json"), *artifact);
         out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
     }
     accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));

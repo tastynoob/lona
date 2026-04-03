@@ -6,6 +6,7 @@
 #include "lona/err/err.hh"
 #include "lona/sema/initializer.hh"
 #include "lona/type/type.hh"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <filesystem>
@@ -480,6 +481,30 @@ computeVisibleImportInterfaceHash(const CompilationUnit &unit) {
                                                   : 0));
     }
     return seed;
+}
+
+std::vector<string>
+buildConcreteTypeArgNames(const std::vector<TypeClass *> &appliedTypeArgs) {
+    std::vector<string> names;
+    names.reserve(appliedTypeArgs.size());
+    for (auto *arg : appliedTypeArgs) {
+        names.push_back(arg ? arg->full_name : string("<null>"));
+    }
+    return names;
+}
+
+GenericInstanceKey
+buildStructInstanceKey(const CompilationUnit &requesterUnit,
+                       const CompilationUnit &ownerUnit,
+                       const ModuleInterface::TypeDecl &typeDecl,
+                       const std::vector<TypeClass *> &appliedTypeArgs) {
+    GenericInstanceKey key;
+    key.requesterModuleKey = requesterUnit.moduleKey();
+    key.ownerModuleKey = ownerUnit.moduleKey();
+    key.kind = GenericInstanceKind::Struct;
+    key.templateName = typeDecl.exportedName;
+    key.concreteTypeArgs = buildConcreteTypeArgNames(appliedTypeArgs);
+    return key;
 }
 
 AstStructDecl *
@@ -1180,6 +1205,7 @@ CompilationUnit::invalidateCaches() {
     interfaceHash_ = 0;
     implementationHash_ = 0;
     materializingAppliedStructs_.clear();
+    recordedGenericInstances_.clear();
 }
 
 void
@@ -1282,6 +1308,26 @@ void
 CompilationUnit::clearResolvedTypes() {
     resolvedTypes_.clear();
     materializingAppliedStructs_.clear();
+    recordedGenericInstances_.clear();
+}
+
+void
+CompilationUnit::recordGenericInstance(GenericInstanceArtifactRecord record) const {
+    for (auto &existing : recordedGenericInstances_) {
+        if (!(existing.key == record.key)) {
+            continue;
+        }
+        existing.revision = record.revision;
+        for (const auto &symbol : record.emittedSymbolNames) {
+            auto found = std::find(existing.emittedSymbolNames.begin(),
+                                   existing.emittedSymbolNames.end(), symbol);
+            if (found == existing.emittedSymbolNames.end()) {
+                existing.emittedSymbolNames.push_back(symbol);
+            }
+        }
+        return;
+    }
+    recordedGenericInstances_.push_back(std::move(record));
 }
 
 TypeClass *
@@ -1364,15 +1410,22 @@ CompilationUnit::materializeAppliedStructType(
         return nullptr;
     }
 
-    auto [_, inserted] = materializingAppliedStructs_.insert(appliedName);
+    auto instanceKey = compilation_unit_impl::buildStructInstanceKey(
+        *this, *templateOwnerUnit, typeDecl, appliedTypeArgs);
+    auto revision = GenericTemplateRevision{
+        templateOwnerUnit->interfaceHash(), templateOwnerUnit->implementationHash(),
+        templateOwnerUnit->visibleImportInterfaceHash(), 0};
+    recordGenericInstance({instanceKey, revision, {}});
+
+    auto [_, inserted] = materializingAppliedStructs_.insert(instanceKey);
     if (!inserted) {
         return structType;
     }
     struct Guard {
-        std::unordered_set<std::string> &active;
-        std::string name;
-        ~Guard() { active.erase(name); }
-    } guard{materializingAppliedStructs_, appliedName};
+        std::unordered_set<GenericInstanceKey, GenericInstanceKeyHash> &active;
+        GenericInstanceKey key;
+        ~Guard() { active.erase(key); }
+    } guard{materializingAppliedStructs_, std::move(instanceKey)};
 
     std::unordered_map<std::string, TypeClass *> genericArgs;
     if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {

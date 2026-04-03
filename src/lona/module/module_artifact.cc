@@ -44,4 +44,10 @@ ModuleArtifact::setContainsNativeAbi(bool containsNativeAbi) {
     containsNativeAbi_ = containsNativeAbi;
 }
 
+void
+ModuleArtifact::setGenericInstanceRecords(
+    std::vector<GenericInstanceArtifactRecord> genericInstanceRecords) {
+    genericInstanceRecords_ = std::move(genericInstanceRecords);
+}
+
 }  // namespace lona

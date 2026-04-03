@@ -1,5 +1,6 @@
 #pragma once
 
+#include "generic_instance.hh"
 #include "lona/ast/astnode.hh"
 #include "lona/source/source_manager.hh"
 #include "module_interface.hh"
@@ -79,7 +80,10 @@ private:
     std::unordered_map<string, string> localFunctionBindings_;
     std::unordered_map<string, string> localGlobalBindings_;
     mutable std::unordered_map<const TypeNode *, TypeClass *> resolvedTypes_;
-    mutable std::unordered_set<std::string> materializingAppliedStructs_;
+    mutable std::unordered_set<GenericInstanceKey, GenericInstanceKeyHash>
+        materializingAppliedStructs_;
+    mutable std::vector<GenericInstanceArtifactRecord>
+        recordedGenericInstances_;
     mutable bool hashesReady_ = false;
     mutable std::uint64_t interfaceHash_ = 0;
     mutable std::uint64_t implementationHash_ = 0;
@@ -199,6 +203,11 @@ public:
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();
+    void recordGenericInstance(GenericInstanceArtifactRecord record) const;
+    const std::vector<GenericInstanceArtifactRecord> &recordedGenericInstances()
+        const {
+        return recordedGenericInstances_;
+    }
     TypeClass *resolveType(TypeTable *typeTable, TypeNode *node) const;
     bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const;
     const CompilationUnit *ownerUnitForTypeDecl(

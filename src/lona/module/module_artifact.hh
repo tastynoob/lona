@@ -1,5 +1,6 @@
 #pragma once
 
+#include "generic_instance.hh"
 #include "lona/util/string.hh"
 #include <cstdint>
 #include <unordered_map>
@@ -31,6 +32,7 @@ private:
     ByteBuffer bitcode_;
     ByteBuffer objectCode_;
     bool containsNativeAbi_ = false;
+    std::vector<GenericInstanceArtifactRecord> genericInstanceRecords_;
 
 public:
     ModuleArtifact() = default;
@@ -64,6 +66,10 @@ public:
     const ByteBuffer &objectCode() const { return objectCode_; }
     bool hasObjectCode() const { return !objectCode_.empty(); }
     bool containsNativeAbi() const { return containsNativeAbi_; }
+    const std::vector<GenericInstanceArtifactRecord> &genericInstanceRecords()
+        const {
+        return genericInstanceRecords_;
+    }
 
     void setDependencyInterfaceHashes(
         std::unordered_map<string, std::uint64_t> dependencyInterfaceHashes);
@@ -77,6 +83,8 @@ public:
     void setBitcode(ByteBuffer bitcode);
     void setObjectCode(ByteBuffer objectCode);
     void setContainsNativeAbi(bool containsNativeAbi);
+    void setGenericInstanceRecords(
+        std::vector<GenericInstanceArtifactRecord> genericInstanceRecords);
 };
 
 }  // namespace lona

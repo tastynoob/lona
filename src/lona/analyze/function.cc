@@ -75,8 +75,10 @@ getOrCreateModuleEntry(GlobalScope *global, TypeTable *typeMgr,
 }
 
 struct GenericRuntimeState {
-    std::unordered_set<std::string> inProgressFunctionSymbols;
-    std::unordered_set<std::string> emittedFunctionSymbols;
+    std::unordered_set<GenericInstanceKey, GenericInstanceKeyHash>
+        inProgressInstances;
+    std::unordered_set<GenericInstanceKey, GenericInstanceKeyHash>
+        emittedInstances;
 };
 
 GenericRuntimeState &
@@ -87,20 +89,20 @@ genericRuntimeStateFor(HIRModule *module) {
 
 class GenericFunctionEmissionGuard {
     GenericRuntimeState &state_;
-    std::string symbolName_;
+    GenericInstanceKey instanceKey_;
     bool completed_ = false;
 
 public:
     GenericFunctionEmissionGuard(GenericRuntimeState &state,
-                                 std::string symbolName)
-        : state_(state), symbolName_(std::move(symbolName)) {
-        state_.inProgressFunctionSymbols.insert(symbolName_);
+                                 GenericInstanceKey instanceKey)
+        : state_(state), instanceKey_(std::move(instanceKey)) {
+        state_.inProgressInstances.insert(instanceKey_);
     }
 
     ~GenericFunctionEmissionGuard() {
-        state_.inProgressFunctionSymbols.erase(symbolName_);
+        state_.inProgressInstances.erase(instanceKey_);
         if (completed_) {
-            state_.emittedFunctionSymbols.insert(symbolName_);
+            state_.emittedInstances.insert(instanceKey_);
         }
     }
 
@@ -453,6 +455,110 @@ class FunctionAnalyzer {
         return genericArgs;
     }
 
+    std::vector<string> buildConcreteTypeArgNames(
+        const std::vector<TypeClass *> &typeArgs, const location &loc,
+        const std::string &context) {
+        std::vector<string> names;
+        names.reserve(typeArgs.size());
+        for (std::size_t i = 0; i < typeArgs.size(); ++i) {
+            if (!typeArgs[i]) {
+                internalError(
+                    loc,
+                    context + " is missing a concrete type argument at index " +
+                        std::to_string(i),
+                    "This looks like a generic instantiation bug.");
+            }
+            names.push_back(typeArgs[i]->full_name);
+        }
+        return names;
+    }
+
+    std::vector<string> buildConcreteTypeArgNames(
+        const std::vector<ModuleInterface::GenericParamDecl> &typeParams,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const std::string &context) {
+        std::vector<string> names;
+        names.reserve(typeParams.size());
+        for (const auto &param : typeParams) {
+            auto paramName = toStdString(param.localName);
+            auto found = genericArgs.find(paramName);
+            if (found == genericArgs.end() || !found->second) {
+                internalError(
+                    loc,
+                    context + " is missing a concrete type for `" + paramName +
+                        "`",
+                    "This looks like a generic argument selection bug.");
+            }
+            names.push_back(found->second->full_name);
+        }
+        return names;
+    }
+
+    GenericTemplateRevision buildTemplateRevision(
+        const CompilationUnit *ownerUnit) const {
+        if (!ownerUnit) {
+            return {};
+        }
+        return {ownerUnit->interfaceHash(), ownerUnit->implementationHash(),
+                ownerUnit->visibleImportInterfaceHash(), 0};
+    }
+
+    GenericInstanceKey buildFunctionInstanceKey(
+        const ModuleInterface::FunctionDecl &functionDecl,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const ModuleInterface *ownerInterface) {
+        auto *ownerUnit = templateOwnerUnit(ownerInterface);
+        if (!ownerUnit || !unit) {
+            internalError(loc,
+                          "generic function instance is missing its requester "
+                          "or owner module",
+                          "This looks like a generic instantiation bug.");
+        }
+        GenericInstanceKey key;
+        key.requesterModuleKey = unit->moduleKey();
+        key.ownerModuleKey = ownerUnit->moduleKey();
+        key.kind = GenericInstanceKind::Function;
+        key.templateName = functionDecl.localName;
+        key.concreteTypeArgs = buildConcreteTypeArgNames(
+            functionDecl.typeParams, genericArgs, loc,
+            "generic function `" + toStdString(functionDecl.localName) +
+                "` instance");
+        return key;
+    }
+
+    GenericInstanceKey buildStructMethodInstanceKey(
+        const ModuleInterface::TypeDecl &typeDecl, StructType *structType,
+        const CompilationUnit *templateUnit, llvm::StringRef methodName,
+        const location &loc) {
+        if (!structType || !templateUnit || !unit) {
+            internalError(loc,
+                          "generic struct method instance is missing its "
+                          "requester, owner, or concrete self type",
+                          "This looks like a generic method instantiation bug.");
+        }
+        GenericInstanceKey key;
+        key.requesterModuleKey = unit->moduleKey();
+        key.ownerModuleKey = templateUnit->moduleKey();
+        key.kind = GenericInstanceKind::Method;
+        key.templateName = typeDecl.exportedName;
+        key.methodName = string(methodName);
+        key.concreteTypeArgs = buildConcreteTypeArgNames(
+            structType->getAppliedTypeArgs(), loc,
+            "generic struct method `" + methodName.str() + "` instance");
+        return key;
+    }
+
+    void recordGenericInstance(GenericInstanceKey key,
+                               const CompilationUnit *ownerUnit,
+                               std::vector<string> emittedSymbolNames) {
+        if (!unit) {
+            return;
+        }
+        unit->recordGenericInstance(
+            {std::move(key), buildTemplateRevision(ownerUnit),
+             std::move(emittedSymbolNames)});
+    }
+
     std::string buildLocalGenericStructMethodInstanceSymbolName(
         StructType *structType, llvm::StringRef methodName, const location &loc) {
         if (!structType) {
@@ -607,15 +713,20 @@ class FunctionAnalyzer {
         auto *func = declareGenericFunctionInstance(functionDecl, genericArgs,
                                                     symbolName, loc,
                                                     ownerInterface);
+        auto instanceKey =
+            buildFunctionInstanceKey(functionDecl, genericArgs, loc,
+                                     ownerInterface);
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
-        if (runtimeState.emittedFunctionSymbols.count(symbolName) != 0 ||
-            runtimeState.inProgressFunctionSymbols.count(symbolName) != 0 ||
+        if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
+            runtimeState.inProgressInstances.count(instanceKey) != 0 ||
             findOwnerModuleFunction(symbolName)) {
+            recordGenericInstance(instanceKey, templateUnit,
+                                  {string(symbolName)});
             return func;
         }
 
-        GenericFunctionEmissionGuard guard(runtimeState, symbolName);
+        GenericFunctionEmissionGuard guard(runtimeState, instanceKey);
         auto resolvedModule = resolveGenericFunctionInstance(
             global, templateUnit, templateDecl, symbolName,
             templateUnit != unit ? templateUnit->interface() : nullptr,
@@ -634,6 +745,8 @@ class FunctionAnalyzer {
             ownerModule->addFunction(hirInstance);
         }
         guard.markCompleted();
+        recordGenericInstance(std::move(instanceKey), templateUnit,
+                              {string(symbolName)});
         return func;
     }
 
@@ -662,15 +775,19 @@ class FunctionAnalyzer {
                               ? func->getllvmValue()->getName().str()
                               : buildLocalGenericStructMethodInstanceSymbolName(
                                     structType, methodName, loc);
+        auto instanceKey = buildStructMethodInstanceKey(
+            *typeDecl, structType, templateUnit, methodName, loc);
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
-        if (runtimeState.emittedFunctionSymbols.count(symbolName) != 0 ||
-            runtimeState.inProgressFunctionSymbols.count(symbolName) != 0 ||
+        if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
+            runtimeState.inProgressInstances.count(instanceKey) != 0 ||
             findOwnerModuleFunction(symbolName)) {
+            recordGenericInstance(instanceKey, templateUnit,
+                                  {string(symbolName)});
             return func;
         }
 
-        GenericFunctionEmissionGuard guard(runtimeState, symbolName);
+        GenericFunctionEmissionGuard guard(runtimeState, instanceKey);
         auto genericArgs =
             buildAppliedStructGenericArgs(*typeDecl, structType, loc);
         std::vector<string> genericTypeParams;
@@ -699,6 +816,8 @@ class FunctionAnalyzer {
             ownerModule->addFunction(hirInstance);
         }
         guard.markCompleted();
+        recordGenericInstance(std::move(instanceKey), templateUnit,
+                              {string(symbolName)});
         return func;
     }
 
