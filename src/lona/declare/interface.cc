@@ -126,20 +126,38 @@ class InterfaceCollector {
         bool isGeneric() const { return !typeParams.empty(); }
     };
 
-    static std::vector<ModuleInterface::GenericParamDecl>
-    collectGenericParams(const std::vector<AstToken *> *tokens) {
-        std::vector<ModuleInterface::GenericParamDecl> params;
-        if (!tokens) {
-            return params;
+    enum class GenericParamContext {
+        StructDecl,
+        FunctionDecl,
+        TraitImplHeader,
+    };
+
+    std::vector<ModuleInterface::GenericParamDecl>
+    collectGenericParams(const std::vector<AstGenericParam *> *params,
+                         GenericParamContext context) {
+        std::vector<ModuleInterface::GenericParamDecl> collected;
+        if (!params) {
+            return collected;
         }
-        params.reserve(tokens->size());
-        for (auto *token : *tokens) {
-            if (!token) {
+        collected.reserve(params->size());
+        for (auto *param : *params) {
+            if (!param) {
                 continue;
             }
-            params.push_back({token->text, string()});
+            ModuleInterface::GenericParamDecl decl{param->name.text, string()};
+            if (param->hasBoundTrait()) {
+                if (context == GenericParamContext::StructDecl) {
+                    error(param->boundTrait->loc,
+                          "struct type parameters do not support trait bounds in generic v0",
+                          "Keep struct declarations as `struct Box[T]`, and write bounds on functions or impl headers like `impl[T Trait] Box[T]: Trait`.");
+                }
+                auto traitRef = resolveTraitRef(param->boundTrait,
+                                                param->boundTrait->loc);
+                decl.boundTraitName = traitRef.resolvedName;
+            }
+            collected.push_back(std::move(decl));
         }
-        return params;
+        return collected;
     }
 
     static std::unordered_set<std::string>
@@ -1020,7 +1038,7 @@ class InterfaceCollector {
         if (!base) {
             error(loc,
                   "trait impl self type must name a struct type",
-                  "Write `impl Point: Hash` or `impl Box![T]: Hash`, not "
+                  "Write `impl Point: Hash` or `impl[T Trait] Box[T]: Trait`, not "
                   "pointers, arrays, tuples, or function types.");
         }
 
@@ -1060,6 +1078,14 @@ class InterfaceCollector {
                           qualifySelfTypeSpelling(selfTypeNode, typeDecl)) +
                       "`",
                   "Trait v0 currently supports impls for struct types only.");
+        }
+
+        if (typeDecl->isGeneric() &&
+            dynamic_cast<AppliedTypeNode *>(selfTypeNode) == nullptr) {
+            error(loc,
+                  "generic impl self type requires declaration-style type arguments: `" +
+                      toStdString(typeDecl->exportedName) + "`",
+                  "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers.");
         }
 
         StructType *resolvedStructType = nullptr;
@@ -1395,7 +1421,8 @@ class InterfaceCollector {
             interface_->declareStructType(toStdString(structDecl->name),
                                           structDecl->declKind,
                                           collectGenericParams(
-                                              structDecl->typeParams));
+                                              structDecl->typeParams,
+                                              GenericParamContext::StructDecl));
         }
     }
 
@@ -1446,7 +1473,9 @@ class InterfaceCollector {
                       "methods on the concrete type.");
             }
 
-            auto implTypeParams = collectGenericParams(traitImplDecl->typeParams);
+            auto implTypeParams = collectGenericParams(
+                traitImplDecl->typeParams,
+                GenericParamContext::TraitImplHeader);
             auto traitRef = resolveTraitRef(traitImplDecl->trait,
                                             traitImplDecl->loc);
             auto selfRef = resolveImplSelfType(traitImplDecl->selfType,
@@ -1471,6 +1500,7 @@ class InterfaceCollector {
 
             validated.push_back(ValidatedTraitImpl{
                 ModuleInterface::TraitImplDecl{selfRef.resolvedName,
+                                               traitImplDecl->selfType,
                                                traitRef.resolvedName, false,
                                                std::move(implTypeParams)},
                 traitImplDecl->loc});
@@ -1483,6 +1513,7 @@ class InterfaceCollector {
         const std::vector<ValidatedTraitImpl> &validatedImpls) {
         for (const auto &implDecl : validatedImpls) {
             interface_->declareTraitImpl(implDecl.decl.selfTypeSpelling,
+                                         implDecl.decl.selfTypeNode,
                                          implDecl.decl.traitName, false,
                                          implDecl.decl.typeParams);
         }
@@ -1506,7 +1537,8 @@ class InterfaceCollector {
                 continue;
             }
 
-            auto genericParams = collectGenericParams(structDecl->typeParams);
+            auto genericParams = collectGenericParams(
+                structDecl->typeParams, GenericParamContext::StructDecl);
             if (!genericParams.empty()) {
                 auto genericParamNames = collectGenericParamNames(genericParams);
                 for (auto *stmt : body->getBody()) {
@@ -1583,7 +1615,8 @@ class InterfaceCollector {
             collected.typeParams = *scopedTypeParams;
         }
         if (node && node->hasTypeParams()) {
-            auto ownTypeParams = collectGenericParams(node->typeParams);
+            auto ownTypeParams = collectGenericParams(
+                node->typeParams, GenericParamContext::FunctionDecl);
             collected.typeParams.insert(collected.typeParams.end(),
                                         ownTypeParams.begin(),
                                         ownTypeParams.end());

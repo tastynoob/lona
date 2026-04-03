@@ -21,7 +21,7 @@ namespace resolve_impl {
 namespace {
 
 std::vector<string>
-collectGenericParamNames(const std::vector<AstToken *> *tokens) {
+collectGenericParamNames(const std::vector<AstGenericParam *> *tokens) {
     std::vector<string> names;
     if (!tokens) {
         return names;
@@ -29,7 +29,7 @@ collectGenericParamNames(const std::vector<AstToken *> *tokens) {
     names.reserve(tokens->size());
     for (auto *token : *tokens) {
         if (token) {
-            names.push_back(token->text);
+            names.push_back(token->name.text);
         }
     }
     return names;
@@ -37,15 +37,32 @@ collectGenericParamNames(const std::vector<AstToken *> *tokens) {
 
 void
 appendGenericParamNames(std::vector<string> &dest,
-                        const std::vector<AstToken *> *tokens) {
+                        const std::vector<AstGenericParam *> *tokens) {
     if (!tokens) {
         return;
     }
     for (auto *token : *tokens) {
         if (token) {
-            dest.push_back(token->text);
+            dest.push_back(token->name.text);
         }
     }
+}
+
+std::unordered_map<std::string, std::string>
+collectGenericParamBounds(const std::vector<AstGenericParam *> *tokens) {
+    std::unordered_map<std::string, std::string> bounds;
+    if (!tokens) {
+        return bounds;
+    }
+    bounds.reserve(tokens->size());
+    for (auto *token : *tokens) {
+        if (!token || !token->hasBoundTrait()) {
+            continue;
+        }
+        bounds.emplace(toStdString(token->name.text),
+                       describeDotLikeSyntax(token->boundTrait, "<trait>"));
+    }
+    return bounds;
 }
 
 }  // namespace
@@ -739,10 +756,10 @@ class FunctionResolver {
                                          callee->field->text.size());
         auto *methodDecl = resolveVisibleMethodDecl(
             projectionOwnerTypeNode(callee->parent), fieldName, &substs);
-        if (!methodDecl || !methodDecl->returnTypeNode) {
+        if (!methodDecl || !methodDecl->retType) {
             return noGenericCapability();
         }
-        return classifyGenericTypeNode(methodDecl->returnTypeNode, substs);
+        return classifyGenericTypeNode(methodDecl->retType, substs);
     }
 
     GenericCapabilityInfo inferGenericExprInfo(const AstNode *node) const {
@@ -820,7 +837,13 @@ class FunctionResolver {
         }
     }
 
-    std::string genericCapabilityHint() const {
+    std::string genericCapabilityHint(const GenericCapabilityInfo &info) const {
+        if (const auto *bound =
+                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+            return "Bounded generic parameters only allow explicit trait-qualified static calls such as `" +
+                   *bound +
+                   ".method(&value)`. Ordinary member access and operators on `T` stay unavailable even with a bound.";
+        }
         return "Unconstrained generic parameters only allow type-level uses "
                "such as `sizeof[T]()`, `T*`, `T const*`, or `Box![T]`. "
                "Member access and operators require a future bound or a "
@@ -830,10 +853,18 @@ class FunctionResolver {
     [[noreturn]] void errorUnconstrainedGenericMemberUse(
         const location &loc, const GenericCapabilityInfo &info,
         llvm::StringRef memberName) const {
+        if (const auto *bound =
+                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+            error(loc,
+                  "generic parameter `" + toStdString(info.paramName) +
+                      "` does not provide member `" + memberName.str() +
+                      "` through bound `" + *bound + "`",
+                  genericCapabilityHint(info));
+        }
         error(loc,
               "unconstrained generic parameter `" + toStdString(info.paramName) +
                   "` does not provide member `" + memberName.str() + "`",
-              genericCapabilityHint());
+              genericCapabilityHint(info));
     }
 
     std::string describeOperator(token_type op) const {
@@ -862,10 +893,18 @@ class FunctionResolver {
     [[noreturn]] void errorUnconstrainedGenericOperatorUse(
         const location &loc, const GenericCapabilityInfo &info,
         token_type op) const {
+        if (const auto *bound =
+                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+            error(loc,
+                  "generic parameter `" + toStdString(info.paramName) +
+                      "` does not support operator `" + describeOperator(op) +
+                      "` through bound `" + *bound + "`",
+                  genericCapabilityHint(info));
+        }
         error(loc,
               "unconstrained generic parameter `" + toStdString(info.paramName) +
                   "` does not support operator `" + describeOperator(op) + "`",
-              genericCapabilityHint());
+              genericCapabilityHint(info));
     }
 
     const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
@@ -1471,13 +1510,15 @@ class ModuleResolver {
         bool languageEntry, bool guaranteedReturn,
         bool templateValidationOnly = false,
         std::vector<string> genericTypeParams = {},
+        std::unordered_map<std::string, std::string> genericTypeParamBounds = {},
         const ModuleInterface *genericOwnerInterface = nullptr,
         std::unordered_map<std::string, TypeClass *> concreteGenericTypes = {}) {
         auto *resolved = module_->createFunction(
             decl, body, std::move(functionName),
             std::move(methodParentTypeName), loc, topLevelEntry, languageEntry,
             guaranteedReturn, templateValidationOnly,
-            std::move(genericTypeParams), genericOwnerInterface,
+            std::move(genericTypeParams), std::move(genericTypeParamBounds),
+            genericOwnerInterface,
             std::move(concreteGenericTypes));
         if (resolved->isMethod()) {
             resolved->setSelfBinding(module_->createLocalBinding(
@@ -1530,6 +1571,7 @@ class ModuleResolver {
                   "Run declaration collection before name resolution.");
         }
 
+        auto genericTypeParamBounds = collectGenericParamBounds(node->typeParams);
         auto *resolved = createResolvedFunction(
             node, node->body,
             methodParent ? string(node->name)
@@ -1539,7 +1581,8 @@ class ModuleResolver {
                 ? std::move(methodParentTypeName)
                 : (methodParent ? string(methodParent->full_name) : string()),
             node->loc, false, false, node->body && node->body->hasTerminator(),
-            templateValidationOnly, std::move(scopedTypeParams));
+            templateValidationOnly, std::move(scopedTypeParams),
+            std::move(genericTypeParamBounds));
         FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
             .resolve();
     }
@@ -1670,19 +1713,22 @@ ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
 }
 
 ResolvedFunction *
-ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
-                               string functionName, string methodParentTypeName,
-                               const location &loc, bool topLevelEntry,
-                               bool languageEntry, bool guaranteedReturn,
-                               bool templateValidationOnly,
-                               std::vector<string> genericTypeParams,
-                               const ModuleInterface *genericOwnerInterface,
-                               std::unordered_map<std::string, TypeClass *>
-                                   concreteGenericTypes) {
+    ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
+                                   string functionName, string methodParentTypeName,
+                                   const location &loc, bool topLevelEntry,
+                                   bool languageEntry, bool guaranteedReturn,
+                                   bool templateValidationOnly,
+                                   std::vector<string> genericTypeParams,
+                                   std::unordered_map<std::string, std::string>
+                                       genericTypeParamBounds,
+                                   const ModuleInterface *genericOwnerInterface,
+                                   std::unordered_map<std::string, TypeClass *>
+                                       concreteGenericTypes) {
     functions_.push_back(std::make_unique<ResolvedFunction>(
         decl, body, std::move(functionName), std::move(methodParentTypeName),
         loc, topLevelEntry, languageEntry, guaranteedReturn,
         templateValidationOnly, std::move(genericTypeParams),
+        std::move(genericTypeParamBounds),
         genericOwnerInterface,
         std::move(concreteGenericTypes)));
     return functions_.back().get();
@@ -1726,11 +1772,17 @@ resolveGenericFunctionInstance(
     assert(typeMgr);
 
     std::vector<string> genericTypeParams;
+    std::unordered_map<std::string, std::string> genericTypeParamBounds;
     if (decl->typeParams) {
         genericTypeParams.reserve(decl->typeParams->size());
         for (auto *token : *decl->typeParams) {
             if (token) {
-                genericTypeParams.push_back(token->text);
+                genericTypeParams.push_back(token->name.text);
+                if (token->hasBoundTrait()) {
+                    genericTypeParamBounds.emplace(
+                        toStdString(token->name.text),
+                        describeDotLikeSyntax(token->boundTrait, "<trait>"));
+                }
             }
         }
     }
@@ -1739,7 +1791,8 @@ resolveGenericFunctionInstance(
     auto *resolved = module->createFunction(
         decl, decl->body, std::move(resolvedFunctionName), string(), decl->loc,
         false, false, decl->body && decl->body->hasTerminator(), false,
-        std::move(genericTypeParams), genericOwnerInterface,
+        std::move(genericTypeParams), std::move(genericTypeParamBounds),
+        genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     if (decl->args) {
@@ -1778,7 +1831,8 @@ resolveGenericMethodInstance(
     auto *resolved = module->createFunction(
         decl, decl->body, string(decl->name), std::move(methodParentTypeName),
         decl->loc, false, false, decl->body && decl->body->hasTerminator(),
-        false, std::move(genericTypeParams), genericOwnerInterface,
+        false, std::move(genericTypeParams), {},
+        genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     auto *declStructType =

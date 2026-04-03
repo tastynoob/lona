@@ -200,6 +200,12 @@ public:
         const std::string &traitName, const std::string &selfTypeSpelling) const {
         return findVisibleTraitImpls(string(traitName), string(selfTypeSpelling));
     }
+    std::vector<VisibleTraitImpl> findVisibleTraitImpls(
+        const ::string &traitName, TypeClass *selfType) const;
+    std::vector<VisibleTraitImpl> findVisibleTraitImpls(
+        const std::string &traitName, TypeClass *selfType) const {
+        return findVisibleTraitImpls(string(traitName), selfType);
+    }
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();
@@ -215,6 +221,7 @@ public:
     const CompilationUnit *contextUnitForInterface(
         const ModuleInterface *ownerInterface) const;
     std::uint64_t visibleImportInterfaceHash() const;
+    std::uint64_t visibleTraitImplHash() const;
     StructType *materializeAppliedStructType(
         TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
         std::vector<TypeClass *> appliedTypeArgs,

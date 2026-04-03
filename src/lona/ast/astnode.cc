@@ -537,7 +537,7 @@ AstStatList::AstStatList(AstNode *node)
 }
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
-                         std::vector<AstToken *> *typeParams,
+                         std::vector<AstGenericParam *> *typeParams,
                          std::vector<AstNode *> *args, TypeNode *retType,
                          AbiKind abiKind, AccessKind receiverAccess)
     : AstNode(name.loc),

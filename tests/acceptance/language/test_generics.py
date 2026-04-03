@@ -5,7 +5,7 @@ from tests.acceptance.language._syntax_helpers import (
     _emit_json,
     _expect_ir_failure,
 )
-from tests.harness import assert_contains, assert_not_contains
+from tests.harness import assert_contains, assert_not_contains, assert_regex
 from tests.harness.compiler import CompilerHarness
 
 
@@ -29,7 +29,7 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
             right B
         }
 
-        impl[T] Box![T]: Hash
+        impl[T Hash] Box[T]: Hash
 
         def id[T](value T) T {
             ret value
@@ -49,7 +49,8 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
     )
     for needle in [
         '"typeParams": [',
-        '"selfType": "Box![T]"',
+        '"boundTrait": "Hash"',
+        '"selfType": "Box[T]"',
         '"type": "TypeApply"',
         '"type": "FuncRef"',
         '"typeArgs": [',
@@ -928,8 +929,8 @@ def test_generic_v0_trait_impl_headers_accept_applied_self_types(
             }
         }
 
-        impl[T] Box![T]: Hash
-        impl Box![i32]: Hash
+        impl[T Hash] Box[T]: Hash
+        impl Box[i32]: Hash
 
         def main() i32 {
             ret 0
@@ -937,3 +938,217 @@ def test_generic_v0_trait_impl_headers_accept_applied_self_types(
         """,
     )
     assert_contains(ir, "define i32 @main()", label="generic trait impl header ir")
+
+
+def test_generic_v0_bounded_generic_functions_require_visible_impls_and_trait_qualified_calls(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_bound_function_round12.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def hash_one[T Hash](value T) i32 {
+            ret Hash.hash(&value)
+        }
+
+        def main() i32 {
+            ret hash_one(Point(value = 41))
+        }
+        """,
+    )
+    assert_regex(
+        ir,
+        r"@generic_bound_function_round12\.hash_one__inst__.*Point",
+        label="generic bound function ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_bound_function_round12.Point.hash(",
+        label="generic bound function ir",
+    )
+
+
+def test_generic_v0_bound_failures_are_checked_at_instantiation_sites(
+    compiler: CompilerHarness,
+) -> None:
+    _expect_ir_failure(
+        compiler,
+        "generic_bound_failure_round12.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+        }
+
+        def hash_one[T Hash](value T) i32 {
+            ret 0
+        }
+
+        def main() i32 {
+            ret hash_one(Point(value = 41))
+        }
+        """,
+        [
+            "type `generic_bound_failure_round12.Point` does not satisfy bound `generic_bound_failure_round12.Hash` for generic parameter `T` in generic function `hash_one`",
+            "Add `impl generic_bound_failure_round12.Point: generic_bound_failure_round12.Hash` in a visible module, or choose a type that already satisfies the bound.",
+        ],
+    )
+
+
+def test_generic_v0_bounded_params_still_reject_plain_dot_lookup(
+    compiler: CompilerHarness,
+) -> None:
+    _expect_ir_failure(
+        compiler,
+        "generic_bound_member_lookup_bad_round12.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        def bad[T Hash](value T) i32 {
+            ret value.hash()
+        }
+        """,
+        [
+            "generic parameter `T` does not provide member `hash` through bound `Hash`",
+            "Bounded generic parameters only allow explicit trait-qualified static calls such as `Hash.method(&value)`.",
+        ],
+    )
+
+
+def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_generic_receivers(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_trait_impl_static_call_round12.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value
+            }
+        }
+
+        impl Point: Hash
+
+        struct Box[T] {
+            value T
+
+            def hash() i32 {
+                ret 1
+            }
+        }
+
+        impl[T Hash] Box[T]: Hash
+
+        def main() i32 {
+            var box Box![Point] = Box[Point](value = Point(value = 7))
+            ret Hash.hash(&box)
+        }
+        """,
+    )
+    assert_regex(
+        ir,
+        r"define i32 @Box_21_5b.*Point.*_5d\.hash\(ptr ",
+        label="generic trait impl static call ir",
+    )
+    assert_regex(
+        ir,
+        r"call i32 @Box_21_5b.*Point.*_5d\.hash\(ptr ",
+        label="generic trait impl static call ir",
+    )
+
+
+def test_generic_v0_rejects_legacy_impl_header_type_apply_syntax(
+    compiler: CompilerHarness,
+) -> None:
+    _expect_ir_failure(
+        compiler,
+        "generic_trait_impl_legacy_header_bad_round12.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Box[T] {
+            def hash() i32 {
+                ret 1
+            }
+        }
+
+        impl[T Hash] Box![T]: Hash
+        """,
+        [
+            "trait impl headers use `Type[T]`, not `Type![T]`",
+            "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers. Keep `Type![T]` for handwritten type strings elsewhere.",
+        ],
+    )
+
+
+def test_generic_v0_rejects_multi_bounds_and_struct_decl_bounds(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "generic_multi_bound_bad_round12.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            trait Eq {
+                def eq(other i32) bool
+            }
+
+            def hash_one[T Hash + Eq](value T) i32 {
+                ret 0
+            }
+            """,
+            [
+                "generic v0 only supports a single trait bound per type parameter",
+                "Write one bound like `[T Hash]` for now. Multi-bound forms like `[T Hash + Eq]` are not supported yet.",
+            ],
+        ),
+        (
+            "generic_struct_decl_bound_bad_round12.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Box[T Hash] {
+                value T
+            }
+            """,
+            [
+                "struct type parameters do not support trait bounds in generic v0",
+                "Keep struct declarations as `struct Box[T]`, and write bounds on functions or impl headers like `impl[T Trait] Box[T]: Trait`.",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)

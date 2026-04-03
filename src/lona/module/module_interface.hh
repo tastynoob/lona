@@ -94,6 +94,7 @@ public:
 
     struct TraitImplDecl {
         string selfTypeSpelling;
+        TypeNode *selfTypeNode = nullptr;
         string traitName;
         bool hasBody = false;
         std::vector<GenericParamDecl> typeParams;
@@ -240,14 +241,15 @@ public:
         return defineTraitMethods(string(std::move(localName)),
                                   std::move(methods));
     }
-    bool declareTraitImpl(string selfTypeSpelling, string traitName,
-                          bool hasBody = false,
+    bool declareTraitImpl(string selfTypeSpelling, TypeNode *selfTypeNode,
+                          string traitName, bool hasBody = false,
                           std::vector<GenericParamDecl> typeParams = {});
-    bool declareTraitImpl(std::string selfTypeSpelling, std::string traitName,
-                          bool hasBody = false,
+    bool declareTraitImpl(std::string selfTypeSpelling, TypeNode *selfTypeNode,
+                          std::string traitName, bool hasBody = false,
                           std::vector<GenericParamDecl> typeParams = {}) {
         return declareTraitImpl(string(std::move(selfTypeSpelling)),
-                                string(std::move(traitName)), hasBody,
+                                selfTypeNode, string(std::move(traitName)),
+                                hasBody,
                                 std::move(typeParams));
     }
     bool declareStructMethodTemplate(string structLocalName,

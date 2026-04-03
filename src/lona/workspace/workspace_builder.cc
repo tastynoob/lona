@@ -644,7 +644,8 @@ matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
         }
         const GenericTemplateRevision currentRevision{
             ownerUnit->interfaceHash(), ownerUnit->implementationHash(),
-            ownerUnit->visibleImportInterfaceHash(), 0};
+            ownerUnit->visibleImportInterfaceHash(),
+            requesterUnit.visibleTraitImplHash()};
         if (!(record.revision == currentRevision)) {
             return false;
         }

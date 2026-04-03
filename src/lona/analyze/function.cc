@@ -500,7 +500,8 @@ class FunctionAnalyzer {
             return {};
         }
         return {ownerUnit->interfaceHash(), ownerUnit->implementationHash(),
-                ownerUnit->visibleImportInterfaceHash(), 0};
+                ownerUnit->visibleImportInterfaceHash(),
+                unit ? unit->visibleTraitImplHash() : 0};
     }
 
     GenericInstanceKey buildFunctionInstanceKey(
@@ -1894,8 +1895,8 @@ class FunctionAnalyzer {
                   "Only struct types can currently satisfy `impl Type: Trait`.");
         }
 
-        auto visibleImpls = unit->findVisibleTraitImpls(
-            traitDecl->exportedName, toStdString(selfType->full_name));
+        auto visibleImpls =
+            unit->findVisibleTraitImpls(traitDecl->exportedName, selfType);
         if (visibleImpls.empty()) {
             error(borrowSyntax->expr->loc,
                   "type `" + describeResolvedType(selfType) +
@@ -3538,6 +3539,43 @@ class FunctionAnalyzer {
         return genericArgs;
     }
 
+    void enforceGenericTraitBounds(
+        const std::vector<ModuleInterface::GenericParamDecl> &typeParams,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const std::string &context) {
+        if (!unit) {
+            return;
+        }
+        for (const auto &param : typeParams) {
+            if (param.boundTraitName.empty()) {
+                continue;
+            }
+            auto found = genericArgs.find(toStdString(param.localName));
+            if (found == genericArgs.end() || !found->second) {
+                internalError(
+                    loc,
+                    context + " is missing a concrete type for bound parameter `" +
+                        toStdString(param.localName) + "`",
+                    "This looks like a generic bound selection bug.");
+            }
+            auto visibleImpls =
+                unit->findVisibleTraitImpls(param.boundTraitName, found->second);
+            if (!visibleImpls.empty()) {
+                continue;
+            }
+            error(loc,
+                  "type `" + describeResolvedType(found->second) +
+                      "` does not satisfy bound `" +
+                      toStdString(param.boundTraitName) +
+                      "` for generic parameter `" +
+                      toStdString(param.localName) + "` in " + context,
+                  "Add `impl " + describeResolvedType(found->second) + ": " +
+                      toStdString(param.boundTraitName) +
+                      "` in a visible module, or choose a type that already "
+                      "satisfies the bound.");
+        }
+    }
+
     HIRExpr *analyzeGenericFunctionCall(
         AstFieldCall *node, const ModuleInterface::FunctionDecl *functionDecl,
         std::vector<TypeNode *> *explicitTypeArgs,
@@ -3555,6 +3593,9 @@ class FunctionAnalyzer {
         auto genericArgs = resolveGenericCallTypeArgs(
             *functionDecl, normalizedArgs, explicitTypeArgs, node->loc,
             functionName, ownerInterface);
+        enforceGenericTraitBounds(functionDecl->typeParams, genericArgs,
+                                  node->loc,
+                                  "generic function `" + functionName + "`");
 
         if (ownerContextUnit(ownerInterface)) {
             auto *func = instantiateGenericFunction(
@@ -3840,8 +3881,7 @@ class FunctionAnalyzer {
         auto lookup = lookupMember(receiver, fieldName, receiverSpec.loc);
 
         auto visibleImpls = unit->findVisibleTraitImpls(
-            traitBinding->resolvedName(),
-            toStdString(receiverStructType->full_name));
+            traitBinding->resolvedName(), receiverStructType);
         if (visibleImpls.empty()) {
             error(receiverSpec.loc,
                   "type `" + describeResolvedType(receiverStructType) +
@@ -3858,6 +3898,11 @@ class FunctionAnalyzer {
                       "` on `" + describeResolvedType(receiverStructType) + "`",
                   "Implement the required inherent method before writing the "
                   "trait impl.");
+        }
+
+        if (receiverStructType->isAppliedTemplateInstance()) {
+            (void)instantiateGenericStructMethod(receiverStructType, fieldName,
+                                                 receiverSpec.loc);
         }
 
         auto *callee = materializeMemberExpr(
@@ -4020,6 +4065,9 @@ class FunctionAnalyzer {
                 genericArgs.emplace(
                     toStdString(functionDecl->typeParams[i].localName), type);
             }
+            enforceGenericTraitBounds(
+                functionDecl->typeParams, genericArgs, node->loc,
+                "generic function reference `" + functionName + "`");
 
             std::vector<TypeClass *> expectedArgTypes;
             expectedArgTypes.reserve(functionDecl->paramTypeNodes.size());

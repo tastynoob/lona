@@ -157,6 +157,7 @@ class ResolvedFunction {
     bool guaranteedReturn_ = false;
     bool templateValidationOnly_ = false;
     std::vector<string> genericTypeParams_;
+    std::unordered_map<std::string, std::string> genericTypeParamBounds_;
     const ModuleInterface *genericOwnerInterface_ = nullptr;
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes_;
 
@@ -175,6 +176,8 @@ public:
                      bool languageEntry, bool guaranteedReturn,
                      bool templateValidationOnly = false,
                      std::vector<string> genericTypeParams = {},
+                     std::unordered_map<std::string, std::string>
+                         genericTypeParamBounds = {},
                      const ModuleInterface *genericOwnerInterface = nullptr,
                      std::unordered_map<std::string, TypeClass *>
                          concreteGenericTypes = {})
@@ -188,6 +191,7 @@ public:
           guaranteedReturn_(guaranteedReturn),
           templateValidationOnly_(templateValidationOnly),
           genericTypeParams_(std::move(genericTypeParams)),
+          genericTypeParamBounds_(std::move(genericTypeParamBounds)),
           genericOwnerInterface_(genericOwnerInterface),
           concreteGenericTypes_(std::move(concreteGenericTypes)) {}
 
@@ -204,6 +208,20 @@ public:
     bool isTemplateValidationOnly() const { return templateValidationOnly_; }
     const std::vector<string> &genericTypeParams() const {
         return genericTypeParams_;
+    }
+    const std::unordered_map<std::string, std::string> &
+    genericTypeParamBounds() const {
+        return genericTypeParamBounds_;
+    }
+    const std::string *genericTypeParamBound(const std::string &name) const {
+        if (auto found = genericTypeParamBounds_.find(name);
+            found != genericTypeParamBounds_.end() && !found->second.empty()) {
+            return &found->second;
+        }
+        return nullptr;
+    }
+    bool genericTypeParamHasBound(const std::string &name) const {
+        return genericTypeParamBound(name) != nullptr;
     }
     const ModuleInterface *genericOwnerInterface() const {
         return genericOwnerInterface_;
@@ -272,6 +290,8 @@ public:
                                      bool guaranteedReturn,
                                      bool templateValidationOnly = false,
                                      std::vector<string> genericTypeParams = {},
+                                     std::unordered_map<std::string, std::string>
+                                         genericTypeParamBounds = {},
                                      const ModuleInterface *genericOwnerInterface = nullptr,
                                      std::unordered_map<std::string, TypeClass *>
                                          concreteGenericTypes = {});

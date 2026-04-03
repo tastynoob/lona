@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <tuple>
 #include <string_view>
 #include <utility>
 
@@ -29,14 +30,22 @@ void
 hashText(std::uint64_t &seed, std::string_view text);
 
 void
-hashTypeParams(std::uint64_t &seed, const std::vector<AstToken *> *typeParams) {
+hashTypeParams(std::uint64_t &seed,
+               const std::vector<AstGenericParam *> *typeParams) {
     if (!typeParams) {
         seed = combineHash(seed, 0);
         return;
     }
     seed = combineHash(seed, typeParams->size());
     for (auto *param : *typeParams) {
-        hashText(seed, param ? toStdString(param->text) : "<null>");
+        if (!param) {
+            hashText(seed, "<null>");
+            continue;
+        }
+        hashText(seed, toStdString(param->name.text));
+        hashText(seed, param->hasBoundTrait()
+                           ? describeDotLikeSyntax(param->boundTrait, "<trait>")
+                           : std::string());
     }
 }
 
@@ -481,6 +490,430 @@ computeVisibleImportInterfaceHash(const CompilationUnit &unit) {
                                                   : 0));
     }
     return seed;
+}
+
+std::uint64_t
+computeVisibleTraitImplHash(const CompilationUnit &unit) {
+    struct ImplDescriptor {
+        std::string sourceModuleKey;
+        std::string traitName;
+        std::string selfTypeSpelling;
+        std::vector<std::pair<std::string, std::string>> typeParams;
+    };
+
+    std::uint64_t seed = kHashSeed;
+    std::vector<ImplDescriptor> impls;
+    if (const auto *interface = unit.interface()) {
+        for (const auto &implDecl : interface->traitImpls()) {
+            ImplDescriptor desc;
+            desc.sourceModuleKey = toStdString(unit.moduleKey());
+            desc.traitName = toStdString(implDecl.traitName);
+            desc.selfTypeSpelling = toStdString(implDecl.selfTypeSpelling);
+            for (const auto &param : implDecl.typeParams) {
+                desc.typeParams.emplace_back(toStdString(param.localName),
+                                             toStdString(param.boundTraitName));
+            }
+            impls.push_back(std::move(desc));
+        }
+    }
+    for (const auto &entry : unit.importedModules()) {
+        const auto &imported = entry.second;
+        if (!imported.interface) {
+            continue;
+        }
+        for (const auto &implDecl : imported.interface->traitImpls()) {
+            ImplDescriptor desc;
+            desc.sourceModuleKey = toStdString(imported.moduleKey);
+            desc.traitName = toStdString(implDecl.traitName);
+            desc.selfTypeSpelling = toStdString(implDecl.selfTypeSpelling);
+            for (const auto &param : implDecl.typeParams) {
+                desc.typeParams.emplace_back(toStdString(param.localName),
+                                             toStdString(param.boundTraitName));
+            }
+            impls.push_back(std::move(desc));
+        }
+    }
+
+    std::sort(impls.begin(), impls.end(), [](const ImplDescriptor &lhs,
+                                             const ImplDescriptor &rhs) {
+        return std::tie(lhs.sourceModuleKey, lhs.traitName, lhs.selfTypeSpelling,
+                        lhs.typeParams) <
+               std::tie(rhs.sourceModuleKey, rhs.traitName, rhs.selfTypeSpelling,
+                        rhs.typeParams);
+    });
+
+    seed = combineHash(seed, impls.size());
+    for (const auto &impl : impls) {
+        hashText(seed, impl.sourceModuleKey);
+        hashText(seed, impl.traitName);
+        hashText(seed, impl.selfTypeSpelling);
+        seed = combineHash(seed, impl.typeParams.size());
+        for (const auto &[name, bound] : impl.typeParams) {
+            hashText(seed, name);
+            hashText(seed, bound);
+        }
+    }
+    return seed;
+}
+
+bool
+isGenericImplParam(
+    const std::vector<ModuleInterface::GenericParamDecl> &typeParams,
+    llvm::StringRef name) {
+    for (const auto &param : typeParams) {
+        if (toStringRef(param.localName) == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string
+canonicalTypePatternSpelling(
+    const CompilationUnit &ownerUnit, const TypeNode *node,
+    const std::unordered_map<std::string, TypeClass *> &genericBindings) {
+    if (!node) {
+        return "void";
+    }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        return canonicalTypePatternSpelling(ownerUnit, param->type,
+                                            genericBindings);
+    }
+    if (dynamic_cast<const AnyTypeNode *>(node)) {
+        return "any";
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        auto rawName = baseTypeName(base);
+        if (auto found = genericBindings.find(rawName);
+            found != genericBindings.end() && found->second) {
+            return toStdString(found->second->full_name);
+        }
+        std::string moduleName;
+        std::string memberName;
+        if (!splitBaseTypeName(base, moduleName, memberName)) {
+            if (const auto *typeDecl =
+                    resolveVisibleTypeDecl(ownerUnit, const_cast<BaseTypeNode *>(base))) {
+                return toStdString(typeDecl->exportedName);
+            }
+            return rawName;
+        }
+        if (const auto *imported = ownerUnit.findImportedModule(moduleName)) {
+            auto lookup = ownerUnit.lookupTopLevelName(*imported, memberName);
+            if (lookup.isType() && lookup.typeDecl) {
+                return toStdString(lookup.typeDecl->exportedName);
+            }
+        }
+        return rawName;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        std::string text =
+            canonicalTypePatternSpelling(ownerUnit, applied->base,
+                                         genericBindings) +
+            "![";
+        for (std::size_t i = 0; i < applied->args.size(); ++i) {
+            if (i != 0) {
+                text += ", ";
+            }
+            text += canonicalTypePatternSpelling(ownerUnit, applied->args[i],
+                                                 genericBindings);
+        }
+        text += "]";
+        return text;
+    }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        return canonicalTypePatternSpelling(ownerUnit, qualified->base,
+                                            genericBindings) +
+               " const";
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        auto text =
+            canonicalTypePatternSpelling(ownerUnit, pointer->base,
+                                         genericBindings);
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            text += "*";
+        }
+        return text;
+    }
+    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+        return canonicalTypePatternSpelling(ownerUnit, indexable->base,
+                                            genericBindings) +
+               "[*]";
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
+        return canonicalTypePatternSpelling(ownerUnit, array->base,
+                                            genericBindings) +
+               "[]";
+    }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
+        std::string text = "<";
+        for (std::size_t i = 0; i < tuple->items.size(); ++i) {
+            if (i != 0) {
+                text += ", ";
+            }
+            text += canonicalTypePatternSpelling(ownerUnit, tuple->items[i],
+                                                 genericBindings);
+        }
+        text += ">";
+        return text;
+    }
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
+        std::string text = "(";
+        for (std::size_t i = 0; i < func->args.size(); ++i) {
+            if (i != 0) {
+                text += ", ";
+            }
+            if (funcParamBindingKind(func->args[i]) == BindingKind::Ref) {
+                text += "ref ";
+            }
+            text += canonicalTypePatternSpelling(ownerUnit,
+                                                 unwrapFuncParamType(func->args[i]),
+                                                 genericBindings);
+        }
+        text += ":";
+        if (func->ret) {
+            text += " ";
+            text += canonicalTypePatternSpelling(ownerUnit, func->ret,
+                                                 genericBindings);
+        }
+        text += ")";
+        return text;
+    }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
+        return canonicalTypePatternSpelling(ownerUnit, dynType->base,
+                                            genericBindings) +
+               " dyn";
+    }
+    return describeTypeNode(node, "void");
+}
+
+bool
+matchTraitImplSelfTypePattern(
+    const CompilationUnit &ownerUnit,
+    const std::vector<ModuleInterface::GenericParamDecl> &typeParams,
+    const TypeNode *pattern, TypeClass *actualType,
+    std::unordered_map<std::string, TypeClass *> &genericBindings) {
+    if (!pattern || !actualType) {
+        return false;
+    }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(pattern)) {
+        return matchTraitImplSelfTypePattern(ownerUnit, typeParams, param->type,
+                                             actualType, genericBindings);
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(pattern)) {
+        auto rawName = baseTypeName(base);
+        std::string moduleName;
+        std::string memberName;
+        if (!splitBaseTypeName(base, moduleName, memberName) &&
+            isGenericImplParam(typeParams, rawName)) {
+            auto found = genericBindings.find(rawName);
+            if (found == genericBindings.end()) {
+                genericBindings.emplace(rawName, actualType);
+                return true;
+            }
+            return found->second == actualType;
+        }
+        return canonicalTypePatternSpelling(ownerUnit, pattern,
+                                            genericBindings) ==
+               toStdString(actualType->full_name);
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(pattern)) {
+        auto *actualStruct = asUnqualified<StructType>(actualType);
+        if (!actualStruct || !actualStruct->isAppliedTemplateInstance()) {
+            return false;
+        }
+        auto patternBaseName = canonicalTypePatternSpelling(
+            ownerUnit, applied->base, genericBindings);
+        if (toStdString(actualStruct->getAppliedTemplateName()) !=
+            patternBaseName) {
+            return false;
+        }
+        const auto &actualArgs = actualStruct->getAppliedTypeArgs();
+        if (actualArgs.size() != applied->args.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < applied->args.size(); ++i) {
+            if (!matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                               applied->args[i], actualArgs[i],
+                                               genericBindings)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(pattern)) {
+        auto *actualConst = actualType->as<ConstType>();
+        return actualConst &&
+               matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                             qualified->base,
+                                             actualConst->getBaseType(),
+                                             genericBindings);
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(pattern)) {
+        auto *current = actualType;
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            auto *actualPointer = current ? current->as<PointerType>() : nullptr;
+            if (!actualPointer) {
+                return false;
+            }
+            current = actualPointer->getPointeeType();
+        }
+        return matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                             pointer->base, current,
+                                             genericBindings);
+    }
+    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(pattern)) {
+        auto *actualIndexable = actualType->as<IndexablePointerType>();
+        return actualIndexable &&
+               matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                             indexable->base,
+                                             actualIndexable->getElementType(),
+                                             genericBindings);
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(pattern)) {
+        auto *actualArray = actualType->as<ArrayType>();
+        return actualArray &&
+               matchTraitImplSelfTypePattern(ownerUnit, typeParams, array->base,
+                                             actualArray->getElementType(),
+                                             genericBindings);
+    }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(pattern)) {
+        auto *actualTuple = actualType->as<TupleType>();
+        if (!actualTuple ||
+            actualTuple->getItemTypes().size() != tuple->items.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < tuple->items.size(); ++i) {
+            if (!matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                               tuple->items[i],
+                                               actualTuple->getItemTypes()[i],
+                                               genericBindings)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(pattern)) {
+        auto *actualPointer = actualType->as<PointerType>();
+        auto *actualFunc =
+            actualPointer ? actualPointer->getPointeeType()->as<FuncType>()
+                          : nullptr;
+        if (!actualFunc ||
+            actualFunc->getArgTypes().size() != func->args.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < func->args.size(); ++i) {
+            if (!matchTraitImplSelfTypePattern(ownerUnit, typeParams,
+                                               unwrapFuncParamType(func->args[i]),
+                                               actualFunc->getArgTypes()[i],
+                                               genericBindings)) {
+                return false;
+            }
+        }
+        return matchTraitImplSelfTypePattern(ownerUnit, typeParams, func->ret,
+                                             actualFunc->getRetType(),
+                                             genericBindings);
+    }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(pattern)) {
+        auto *actualDyn = actualType->as<DynTraitType>();
+        return actualDyn &&
+               canonicalTypePatternSpelling(ownerUnit, pattern,
+                                            genericBindings) ==
+                   toStdString(actualDyn->full_name);
+    }
+    return false;
+}
+
+bool
+typeSatisfiesVisibleTraitImpl(
+    const CompilationUnit &requesterUnit, const ::string &traitName,
+    TypeClass *selfType, std::unordered_set<std::string> &active);
+
+bool
+traitImplMatchesConcreteSelfType(
+    const CompilationUnit &requesterUnit, const CompilationUnit &ownerUnit,
+    const ModuleInterface::TraitImplDecl &implDecl, TypeClass *selfType,
+    std::unordered_set<std::string> &active) {
+    if (!selfType) {
+        return false;
+    }
+    std::unordered_map<std::string, TypeClass *> genericBindings;
+    if (!implDecl.typeParams.empty()) {
+        if (!matchTraitImplSelfTypePattern(ownerUnit, implDecl.typeParams,
+                                           implDecl.selfTypeNode, selfType,
+                                           genericBindings)) {
+            return false;
+        }
+        for (const auto &param : implDecl.typeParams) {
+            if (param.boundTraitName.empty()) {
+                continue;
+            }
+            auto found = genericBindings.find(toStdString(param.localName));
+            if (found == genericBindings.end() || !found->second) {
+                return false;
+            }
+            if (!typeSatisfiesVisibleTraitImpl(requesterUnit,
+                                               param.boundTraitName,
+                                               found->second, active)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (!implDecl.selfTypeNode) {
+        return implDecl.selfTypeSpelling == selfType->full_name;
+    }
+    return matchTraitImplSelfTypePattern(ownerUnit, implDecl.typeParams,
+                                         implDecl.selfTypeNode, selfType,
+                                         genericBindings);
+}
+
+bool
+typeSatisfiesVisibleTraitImpl(
+    const CompilationUnit &requesterUnit, const ::string &traitName,
+    TypeClass *selfType, std::unordered_set<std::string> &active) {
+    if (!selfType) {
+        return false;
+    }
+    auto key = toStdString(traitName) + "|" + toStdString(selfType->full_name);
+    auto [_, inserted] = active.insert(key);
+    if (!inserted) {
+        return false;
+    }
+    struct Guard {
+        std::unordered_set<std::string> &active;
+        std::string key;
+        ~Guard() { active.erase(key); }
+    } guard{active, key};
+
+    if (const auto *interface = requesterUnit.interface()) {
+        for (const auto &implDecl : interface->traitImpls()) {
+            if (implDecl.traitName != traitName) {
+                continue;
+            }
+            if (traitImplMatchesConcreteSelfType(requesterUnit, requesterUnit,
+                                                 implDecl, selfType, active)) {
+                return true;
+            }
+        }
+    }
+
+    for (const auto &entry : requesterUnit.importedModules()) {
+        const auto &imported = entry.second;
+        if (!imported.interface || !imported.unit) {
+            continue;
+        }
+        for (const auto &implDecl : imported.interface->traitImpls()) {
+            if (implDecl.traitName != traitName) {
+                continue;
+            }
+            if (traitImplMatchesConcreteSelfType(requesterUnit, *imported.unit,
+                                                 implDecl, selfType, active)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 std::vector<string>
@@ -1189,6 +1622,43 @@ CompilationUnit::findVisibleTraitImpls(const ::string &traitName,
     return matches;
 }
 
+std::vector<CompilationUnit::VisibleTraitImpl>
+CompilationUnit::findVisibleTraitImpls(const ::string &traitName,
+                                       TypeClass *selfType) const {
+    std::vector<VisibleTraitImpl> matches;
+    std::unordered_set<std::string> active;
+
+    if (moduleInterface_) {
+        for (const auto &implDecl : moduleInterface_->traitImpls()) {
+            if (implDecl.traitName != traitName) {
+                continue;
+            }
+            if (compilation_unit_impl::traitImplMatchesConcreteSelfType(
+                    *this, *this, implDecl, selfType, active)) {
+                matches.push_back(VisibleTraitImpl{&implDecl, nullptr});
+            }
+        }
+    }
+
+    for (const auto &entry : importedModules_) {
+        const auto &imported = entry.second;
+        if (!imported.interface || !imported.unit) {
+            continue;
+        }
+        for (const auto &implDecl : imported.interface->traitImpls()) {
+            if (implDecl.traitName != traitName) {
+                continue;
+            }
+            if (compilation_unit_impl::traitImplMatchesConcreteSelfType(
+                    *this, *imported.unit, implDecl, selfType, active)) {
+                matches.push_back(VisibleTraitImpl{&implDecl, &imported});
+            }
+        }
+    }
+
+    return matches;
+}
+
 void
 CompilationUnit::clearInterface() {
     if (moduleInterface_) {
@@ -1383,6 +1853,11 @@ CompilationUnit::visibleImportInterfaceHash() const {
     return compilation_unit_impl::computeVisibleImportInterfaceHash(*this);
 }
 
+std::uint64_t
+CompilationUnit::visibleTraitImplHash() const {
+    return compilation_unit_impl::computeVisibleTraitImplHash(*this);
+}
+
 StructType *
 CompilationUnit::materializeAppliedStructType(
     TypeTable *typeTable, const ModuleInterface::TypeDecl &typeDecl,
@@ -1414,7 +1889,8 @@ CompilationUnit::materializeAppliedStructType(
         *this, *templateOwnerUnit, typeDecl, appliedTypeArgs);
     auto revision = GenericTemplateRevision{
         templateOwnerUnit->interfaceHash(), templateOwnerUnit->implementationHash(),
-        templateOwnerUnit->visibleImportInterfaceHash(), 0};
+        templateOwnerUnit->visibleImportInterfaceHash(),
+        visibleTraitImplHash()};
     recordGenericInstance({instanceKey, revision, {}});
 
     auto [_, inserted] = materializingAppliedStructs_.insert(instanceKey);

@@ -6,7 +6,8 @@ namespace lona {
 namespace {
 
 void
-appendTypeParamNames(Json &root, const std::vector<AstToken *> *typeParams) {
+appendTypeParamNames(Json &root,
+                     const std::vector<AstGenericParam *> *typeParams) {
     if (!typeParams) {
         return;
     }
@@ -15,8 +16,36 @@ appendTypeParamNames(Json &root, const std::vector<AstToken *> *typeParams) {
         if (!param) {
             continue;
         }
-        root["typeParams"].push_back(param->text.tochara());
+        Json item = Json::object();
+        param->toJson(item);
+        root["typeParams"].push_back(std::move(item));
     }
+}
+
+std::string
+describeImplSelfTypeSyntax(const TypeNode *node) {
+    if (!node) {
+        return "void";
+    }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        auto prefix = param->bindingKind == BindingKind::Ref ? "ref " : "";
+        return prefix + describeImplSelfTypeSyntax(param->type);
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        return describeTypeNode(base);
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        std::string text = describeImplSelfTypeSyntax(applied->base) + "[";
+        for (std::size_t i = 0; i < applied->args.size(); ++i) {
+            if (i != 0) {
+                text += ", ";
+            }
+            text += describeTypeNode(applied->args[i], "void");
+        }
+        text += "]";
+        return text;
+    }
+    return describeTypeNode(node, "void");
 }
 
 void
@@ -90,6 +119,16 @@ AstTag::toJson(Json &root) const {
         value["type"] = tokenTypeToStr(arg->type);
         value["value"] = arg->text.tochara();
         root["args"].push_back(value);
+    }
+}
+
+void
+AstGenericParam::toJson(Json &root) const {
+    root["name"] = name.text.tochara();
+    if (boundTrait) {
+        root["boundTrait"] = describeDotLikeSyntax(boundTrait, "<trait>");
+    } else {
+        root["boundTrait"] = nullptr;
     }
 }
 
@@ -333,7 +372,7 @@ void
 AstTraitImplDecl::toJson(Json &root) {
     root["type"] = "TraitImplDecl";
     appendTypeParamNames(root, this->typeParams);
-    root["selfType"] = describeTypeNode(this->selfType);
+    root["selfType"] = describeImplSelfTypeSyntax(this->selfType);
     root["trait"] = Json::object();
     if (this->trait) {
         this->trait->toJson(root["trait"]);

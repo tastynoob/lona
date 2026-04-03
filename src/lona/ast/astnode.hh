@@ -23,6 +23,7 @@ class AstIf;
 class AstBreak;
 class AstContinue;
 class AstRet;
+class AstGenericParam;
 class AstTraitDecl;
 class AstTraitImplDecl;
 class AstVisitor;
@@ -96,6 +97,18 @@ public:
     explicit AstTag(AstToken &name, std::vector<AstToken *> *args = nullptr)
         : name(name), args(args ? args : new std::vector<AstToken *>) {}
 
+    void toJson(Json &root) const;
+};
+
+class AstGenericParam {
+public:
+    AstToken const name;
+    AstNode *const boundTrait = nullptr;
+
+    explicit AstGenericParam(AstToken &name, AstNode *boundTrait = nullptr)
+        : name(name), boundTrait(boundTrait) {}
+
+    bool hasBoundTrait() const { return boundTrait != nullptr; }
     void toJson(Json &root) const;
 };
 
@@ -464,12 +477,12 @@ public:
 class AstStructDecl : public AstNode {
 public:
     string const name;
-    std::vector<AstToken *> *const typeParams = nullptr;
+    std::vector<AstGenericParam *> *const typeParams = nullptr;
     AstNode *const body;
     StructDeclKind declKind;
 
     AstStructDecl(AstToken &field, AstNode *body,
-                  std::vector<AstToken *> *typeParams = nullptr,
+                  std::vector<AstGenericParam *> *typeParams = nullptr,
                   StructDeclKind declKind = StructDeclKind::Native)
         : AstNode(field.loc),
           name(field.text),
@@ -502,13 +515,13 @@ public:
 
 class AstTraitImplDecl : public AstNode {
 public:
-    std::vector<AstToken *> *const typeParams = nullptr;
+    std::vector<AstGenericParam *> *const typeParams = nullptr;
     TypeNode *const selfType;
     AstNode *const trait;
     AstNode *const body;
 
     AstTraitImplDecl(TypeNode *selfType, AstNode *trait, AstNode *body,
-                     std::vector<AstToken *> *typeParams = nullptr,
+                     std::vector<AstGenericParam *> *typeParams = nullptr,
                      const location &loc = location())
         : AstNode(loc),
           typeParams(typeParams),
@@ -646,7 +659,7 @@ public:
 class AstFuncDecl : public AstNode {
 public:
     string const name;
-    std::vector<AstToken *> *const typeParams = nullptr;
+    std::vector<AstGenericParam *> *const typeParams = nullptr;
     std::vector<AstNode *> *const args = nullptr;
     AstNode *const body;
     TypeNode *const retType;
@@ -661,7 +674,7 @@ public:
     void setAbiKind(AbiKind kind) { abiKind = kind; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
-                std::vector<AstToken *> *typeParams = nullptr,
+                std::vector<AstGenericParam *> *typeParams = nullptr,
                 std::vector<AstNode *> *args = nullptr,
                 TypeNode *retType = nullptr, AbiKind abiKind = AbiKind::Native,
                 AccessKind receiverAccess = AccessKind::GetOnly);

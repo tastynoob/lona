@@ -112,12 +112,12 @@ ModuleInterface::defineTraitMethods(string localName,
 }
 
 bool
-ModuleInterface::declareTraitImpl(string selfTypeSpelling, string traitName,
-                                  bool hasBody,
+ModuleInterface::declareTraitImpl(string selfTypeSpelling, TypeNode *selfTypeNode,
+                                  string traitName, bool hasBody,
                                   std::vector<GenericParamDecl> typeParams) {
     traitImpls_.push_back(TraitImplDecl{std::move(selfTypeSpelling),
-                                        std::move(traitName), hasBody,
-                                        std::move(typeParams)});
+                                        selfTypeNode, std::move(traitName),
+                                        hasBody, std::move(typeParams)});
     return true;
 }
 

@@ -603,6 +603,118 @@ def test_imported_generic_method_results_do_not_hide_unconstrained_template_use(
     )
 
 
+def test_imported_bounded_generic_functions_check_bounds_and_lower_trait_qualified_calls(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_bound_function/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def hash_one[T Hash](value T) i32 {
+            ret Hash.hash(&value)
+        }
+
+        def make() Point {
+            ret Point(value = 41)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_bound_function/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            ret dep.hash_one(dep.make())
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"@dep\.hash_one__inst__.*dep_2ePoint",
+        label="imported generic bound function ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @dep.Point.hash(",
+        label="imported generic bound function ir",
+    )
+
+
+def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_applied_receivers(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_trait_impl_header/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        struct Box[T] {
+            value T
+
+            def hash() i32 {
+                ret 1
+            }
+        }
+
+        impl[T Hash] Box[T]: Hash
+
+        def make() Box![Point] {
+            ret Box[Point](value = Point(value = 41))
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_trait_impl_header/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box![dep.Point] =
+                dep.Box[dep.Point](value = dep.Point(value = 41))
+            ret dep.Hash.hash(&box)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"define i32 @dep_2eBox_21_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
+        label="imported generic trait impl header ir",
+    )
+    assert_regex(
+        ir,
+        r"call i32 @dep_2eBox_21_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
+        label="imported generic trait impl header ir",
+    )
+
+
 def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     compiler: CompilerHarness,
 ) -> None:

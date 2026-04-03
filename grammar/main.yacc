@@ -7,6 +7,7 @@
         class Driver;
         class AstToken;
         class AstTag;
+        class AstGenericParam;
         class AstNode;
         class AstStatList;
         class AstVarDecl;
@@ -38,12 +39,14 @@
 
     AstToken* token;
     AstTag* tag;
+    AstGenericParam* generic_param;
     AstNode* node;
     AstStatList* stat_list;
     AstVarDecl* var_decl;
     std::vector<AstNode*>* seq;
     std::vector<AstTag*>* tags;
     std::vector<AstToken*>* token_seq;
+    std::vector<AstGenericParam*>* generic_param_seq;
 
     TypeNode* typeNode;
     std::vector<TypeNode*>* type_seq;
@@ -116,8 +119,11 @@
 %type <counter> opt_newlines opt_brace_line_comma opt_set_prefix
 %type <tag> tag_entry
 %type <tags> tag_line tag_entry_seq
-%type <token_seq> tag_arg_seq generic_param_seq opt_type_params
+%type <token_seq> tag_arg_seq
+%type <generic_param> generic_param
+%type <generic_param_seq> generic_param_seq opt_type_params
 %type <node> tag_stat type_bracket_item
+%type <typeNode> impl_self_type impl_self_type_atom legacy_impl_self_type
 
 %start pragram
 
@@ -270,13 +276,28 @@ opt_type_params
     ;
 
 generic_param_seq
-    : FIELD {
-        $$ = new std::vector<AstToken *>;
+    : generic_param {
+        $$ = new std::vector<AstGenericParam *>;
         $$->push_back($1);
     }
-    | generic_param_seq ',' opt_newlines FIELD {
+    | generic_param_seq ',' opt_newlines generic_param {
         $$ = $1;
         $$->push_back($4);
+    }
+    ;
+
+generic_param
+    : FIELD {
+        $$ = new AstGenericParam(*$1);
+    }
+    | FIELD dot_like_name {
+        $$ = new AstGenericParam(*$1, $2);
+    }
+    | FIELD dot_like_name '+' opt_newlines dot_like_name {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "generic v0 only supports a single trait bound per type parameter",
+            "Write one bound like `[T Hash]` for now. Multi-bound forms like `[T Hash + Eq]` are not supported yet.");
     }
     ;
 
@@ -479,11 +500,17 @@ trait_stat
     ;
 
 impl_decl
-    : IMPL opt_type_params type_name ':' opt_newlines dot_like_name NEWLINE {
+    : IMPL opt_type_params impl_self_type ':' opt_newlines dot_like_name NEWLINE {
         $$ = new AstTraitImplDecl($3, $6, nullptr, $2, @$);
     }
-    | IMPL opt_type_params type_name ':' opt_newlines dot_like_name stat_compound {
+    | IMPL opt_type_params impl_self_type ':' opt_newlines dot_like_name stat_compound {
         $$ = new AstTraitImplDecl($3, $6, $7, $2, @$);
+    }
+    | IMPL opt_type_params legacy_impl_self_type ':' opt_newlines dot_like_name NEWLINE {
+        $$ = nullptr;
+    }
+    | IMPL opt_type_params legacy_impl_self_type ':' opt_newlines dot_like_name stat_compound {
+        $$ = nullptr;
     }
     ;
 
@@ -880,6 +907,34 @@ dot_like
 dot_like_name
     : FIELD { $$ = new AstField(*$1); }
     | dot_like_name '.' opt_newlines FIELD { $$ = new AstDotLike($1, $4); }
+    ;
+
+impl_self_type_atom
+    : dot_like_name {
+        $$ = new BaseTypeNode($1, @$);
+    }
+    | TYPE {
+        $$ = new BaseTypeNode($1->text, @$);
+    }
+    ;
+
+impl_self_type
+    : impl_self_type_atom {
+        $$ = $1;
+    }
+    | impl_self_type '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
+        $$ = new AppliedTypeNode($1, *$4, @$);
+        delete $4;
+    }
+    ;
+
+legacy_impl_self_type
+    : impl_self_type '!' '[' opt_newlines type_name_seq opt_newlines ']' %prec type_suffix {
+        throw lona::DiagnosticError(
+            lona::DiagnosticError::Category::Syntax, @$,
+            "trait impl headers use `Type[T]`, not `Type![T]`",
+            "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers. Keep `Type![T]` for handwritten type strings elsewhere.");
+    }
     ;
 
 %include type.sub.yacc

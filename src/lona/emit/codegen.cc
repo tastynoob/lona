@@ -650,13 +650,25 @@ class FunctionCompiler {
                 if (!structType) {
                     error("selector call parent must be a struct value");
                 }
-                auto *callee = scope->getMethodFunction(
-                    structType, toStringRef(selector->getFieldName()));
-                if (!callee) {
+                const auto methodName = toStringRef(selector->getFieldName());
+                auto *callee = scope->getMethodFunction(structType, methodName);
+                if (callee) {
+                    funcType = callee->getType()->as<FuncType>();
+                    calleeValue = callee->getllvmValue();
+                } else if (structType->isAppliedTemplateInstance()) {
+                    auto *methodType = structType->getMethodType(methodName);
+                    auto symbolName =
+                        mangleModuleEntryComponent(structType->full_name) +
+                        "." + methodName.str();
+                    auto *llvmFunc = scope->module.getFunction(symbolName);
+                    if (methodType && llvmFunc) {
+                        funcType = methodType;
+                        calleeValue = llvmFunc;
+                    }
+                }
+                if (!calleeValue || !funcType) {
                     error("unknown struct method");
                 }
-                funcType = callee->getType()->as<FuncType>();
-                calleeValue = callee->getllvmValue();
                 if (!parent->isVariable() || parent->isRegVal() ||
                     !parent->getllvmValue()) {
                     parent = materializeLocal(parent->getType(), parent);
