@@ -524,6 +524,170 @@ def run_trait_dyn_impl_header_interface_hash_case(
     )
 
 
+def run_same_module_generic_runtime_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    app_path = root / "app.lo"
+    first_bonus = rng.randint(1, 4)
+    second_bonus = first_bonus + rng.randint(1, 4)
+    point_value = rng.randint(20, 40)
+
+    write_file(
+        app_path,
+        (
+            "trait Hash {\n"
+            "    def hash() i32\n"
+            "}\n\n"
+            "struct Point {\n"
+            "    value i32\n\n"
+            "    def hash() i32 {\n"
+            "        ret self.value + 1\n"
+            "    }\n"
+            "}\n\n"
+            "impl Point: Hash\n\n"
+            "struct Box[T] {\n"
+            "    value T\n\n"
+            "    def get() T {\n"
+            "        ret self.value\n"
+            "    }\n\n"
+            "    def hash() i32 {\n"
+            f"        ret Hash.hash(&self.value) + {first_bonus}\n"
+            "    }\n"
+            "}\n\n"
+            "impl[T Hash] Box[T]: Hash\n\n"
+            "def id[T](value T) T {\n"
+            "    ret value\n"
+            "}\n\n"
+            "def hash_one[T Hash](value T) i32 {\n"
+            "    ret Hash.hash(&value)\n"
+            "}\n\n"
+            "def main() i32 {\n"
+            f"    var point Point = Point(value = {point_value})\n"
+            "    var box Box[Point] = Box[Point](value = point)\n"
+            "    var out i32 = id[i32](1) + id(2)\n"
+            "    out = out + box.get().hash()\n"
+            "    out = out + hash_one(point)\n"
+            "    ret out + Hash.hash(&box)\n"
+            "}\n"
+        ),
+    )
+    first = runner.compile(app_path)
+    expect_compile_ok(first, compiled=1, reused=0)
+    expect(
+        "id__inst__i32" in first["stdout"],
+        "expected same-module generic function instantiation in incremental smoke",
+    )
+    expect(
+        "Box[" in first["stdout"],
+        "expected concrete applied generic struct layout in incremental smoke",
+    )
+
+    second = runner.compile(app_path)
+    expect_compile_ok(second, compiled=0, reused=1)
+
+    write_file(
+        app_path,
+        (
+            "trait Hash {\n"
+            "    def hash() i32\n"
+            "}\n\n"
+            "struct Point {\n"
+            "    value i32\n\n"
+            "    def hash() i32 {\n"
+            "        ret self.value + 1\n"
+            "    }\n"
+            "}\n\n"
+            "impl Point: Hash\n\n"
+            "struct Box[T] {\n"
+            "    value T\n\n"
+            "    def get() T {\n"
+            "        ret self.value\n"
+            "    }\n\n"
+            "    def hash() i32 {\n"
+            f"        ret Hash.hash(&self.value) + {second_bonus}\n"
+            "    }\n"
+            "}\n\n"
+            "impl[T Hash] Box[T]: Hash\n\n"
+            "def id[T](value T) T {\n"
+            "    ret value\n"
+            "}\n\n"
+            "def hash_one[T Hash](value T) i32 {\n"
+            "    ret Hash.hash(&value)\n"
+            "}\n\n"
+            "def main() i32 {\n"
+            f"    var point Point = Point(value = {point_value})\n"
+            "    var box Box[Point] = Box[Point](value = point)\n"
+            "    var out i32 = id[i32](1) + id(2)\n"
+            "    out = out + box.get().hash()\n"
+            "    out = out + hash_one(point)\n"
+            "    ret out + Hash.hash(&box)\n"
+            "}\n"
+        ),
+    )
+    third = runner.compile(app_path)
+    expect_compile_ok(third, compiled=1, reused=0)
+
+
+def run_imported_generic_owner_context_invalidation_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    helper_path = root / "helper.lo"
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+
+    write_file(
+        helper_path,
+        (
+            "struct Box[T] {\n"
+            "    value T\n"
+            "}\n"
+        ),
+    )
+    write_file(
+        dep_path,
+        (
+            "import helper\n\n"
+            "def make_helper_ptr() helper.Box[i32]* {\n"
+            "    ret null\n"
+            "}\n\n"
+            "def take_helper_ptr[T](value helper.Box[T]*) helper.Box[T]* {\n"
+            "    ret value\n"
+            "}\n"
+        ),
+    )
+    write_file(
+        app_path,
+        (
+            "import dep\n\n"
+            "def main() i32 {\n"
+            "    var out = dep.take_helper_ptr(dep.make_helper_ptr())\n"
+            "    ret 0\n"
+            "}\n"
+        ),
+    )
+
+    first = runner.compile(app_path, output_mode="object_bundle")
+    expect_bundle_compile_ok(first, compiled=3, reused=0, emitted_objects=3, reused_objects=0)
+
+    second = runner.compile(app_path, output_mode="object_bundle")
+    expect_bundle_compile_ok(second, compiled=0, reused=3, emitted_objects=0, reused_objects=3)
+
+    write_file(
+        helper_path,
+        (
+            "struct Box[T] {\n"
+            "    value T\n"
+            "}\n\n"
+            "struct Marker {\n"
+            f"    value i32\n"
+            "}\n"
+        ),
+    )
+
+    third = runner.compile(app_path, output_mode="object_bundle")
+    expect_bundle_compile_ok(third, compiled=3, reused=0, emitted_objects=3, reused_objects=0)
+
+
 def run_randomized_cases(rng: random.Random, runner: SessionRunner, root: Path) -> None:
     case_count = 3
     for index in range(case_count):
@@ -726,6 +890,18 @@ def main() -> int:
                 "trait-dyn-impl-header-interface-hash-invalidation",
                 lambda: run_trait_dyn_impl_header_interface_hash_case(
                     rng, runner, root / "trait_dyn_impl_header_interface"
+                ),
+            )
+            suite.add(
+                "same-module-generic-runtime",
+                lambda: run_same_module_generic_runtime_case(
+                    rng, runner, root / "same_module_generic_runtime"
+                ),
+            )
+            suite.add(
+                "imported-generic-owner-context-invalidation",
+                lambda: run_imported_generic_owner_context_invalidation_case(
+                    rng, runner, root / "imported_generic_owner_context"
                 ),
             )
             suite.add(

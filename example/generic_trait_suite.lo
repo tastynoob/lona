@@ -1,0 +1,60 @@
+// Generic + trait sample: generic functions, applied generic structs,
+// single trait bounds, and trait-qualified static calls.
+
+trait Hash {
+    def hash() i32
+}
+
+struct Point {
+    value i32
+
+    def hash() i32 {
+        ret self.value + 1
+    }
+}
+
+impl Point: Hash
+
+struct Box[T] {
+    value T
+
+    def get() T {
+        ret self.value
+    }
+
+    def hash() i32 {
+        ret 100
+    }
+}
+
+impl[T Hash] Box[T]: Hash
+
+def id[T](value T) T {
+    ret value
+}
+
+def choose_left[T](left T, right T) T {
+    ret left
+}
+
+def hash_one[T Hash](value T) i32 {
+    ret Hash.hash(&value)
+}
+
+def run() i32 {
+    var point Point = Point(value = 41)
+    var box Box[Point] = Box[Point](value = id(point))
+    var copy Point = choose_left[Point](box.get(), point)
+
+    var total i32 = 0
+    total = total + hash_one(copy)
+    total = total + Hash.hash(&box)
+
+    if total != 142 {
+        ret 1
+    }
+
+    ret 0
+}
+
+ret run()

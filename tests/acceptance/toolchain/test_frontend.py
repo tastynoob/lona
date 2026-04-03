@@ -374,6 +374,16 @@ def test_generic_v0_same_module_applied_structs_emit_concrete_runtime_layout_and
     )
     ir = compiler.emit_ir(input_path).expect_ok().stdout
     assert_contains(ir, "define i32 @main()", label="generic applied value ir")
+    assert_contains(
+        ir,
+        '%"Box[i32]" = type { i32 }',
+        label="generic applied value ir",
+    )
+    assert_contains(
+        ir,
+        "@Box_5bi32_5d.get",
+        label="generic applied value ir",
+    )
 
 
 def test_generic_v0_same_module_calls_emit_concrete_runtime_symbols(
@@ -876,6 +886,106 @@ def test_object_bundle_invalidates_imported_generic_struct_methods_when_owner_bo
         second.stderr,
         "reused-module-objects: 0",
         label="generic struct method body change second stats",
+    )
+
+
+def test_object_bundle_invalidates_imported_generic_instances_when_owner_visible_imports_change(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "bundle_import_generic_owner_context/helper.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+        """,
+    )
+    compiler.write_source(
+        "bundle_import_generic_owner_context/dep.lo",
+        """
+        import helper
+
+        def make_helper_ptr() helper.Box[i32]* {
+            ret null
+        }
+
+        def take_helper_ptr[T](value helper.Box[T]*) helper.Box[T]* {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "bundle_import_generic_owner_context/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var out = dep.take_helper_ptr(dep.make_helper_ptr())
+            ret 0
+        }
+        """,
+    )
+    cache_dir = compiler.output_path("import-generic-owner-context-cache")
+
+    first, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-owner-context.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 3", label="generic owner import change first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="generic owner import change first stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-objects: 0",
+        label="generic owner import change first stats",
+    )
+
+    second, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-owner-context.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 0", label="generic owner import change reuse stats")
+    assert_contains(second.stderr, "reused-modules: 3", label="generic owner import change reuse stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-objects: 3",
+        label="generic owner import change reuse stats",
+    )
+
+    compiler.write_source(
+        "bundle_import_generic_owner_context/helper.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        struct Marker {
+            value i32
+        }
+        """,
+    )
+
+    third, _ = compiler.emit_objects(
+        main_path,
+        output_name="import-generic-owner-context.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    third.expect_ok()
+    assert_contains(third.stderr, "compiled-modules: 3", label="generic owner import change third stats")
+    assert_contains(third.stderr, "reused-modules: 0", label="generic owner import change third stats")
+    assert_contains(
+        third.stderr,
+        "reused-module-objects: 0",
+        label="generic owner import change third stats",
     )
 
 

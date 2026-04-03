@@ -1,435 +1,239 @@
 # Generic v0 Internals
 
-本文记录当前仓库里已经实现的 generic v0 内部模型，目标是回答三类问题：
+本文记录当前仓库里已经 shipped 的 generic v0 内部模型。
+它不再描述早期“前端已通、runtime 未通”的过渡状态，而是聚焦现在真实存在的行为边界：
 
-- generic 相关语法节点在前端是怎样建模的
-- 泛型模板信息怎样进入 `ModuleInterface`
-- 为什么当前已经能做接口收集、类型校验和调用点推断，但还没有进入真正的 monomorphization / runtime symbol 生成
+- generic 语法节点怎样进入 AST / type node
+- generic metadata 怎样进入接口与 artifact
+- same-module / imported generic runtime instantiation 怎样生成 concrete IR
+- single trait bound 怎样参与实例化与静态调用
 
-这不是设计草案；这里描述的是当前代码已经在做的事。  
-用户侧语法和语言层规则请看 `docs/proposals/generic_v0.md`；这里专注“编译器内部现在怎样表示与处理 generic v0”。
+用户侧语法和限制见：
+
+- [../../reference/language/type.md](../../reference/language/type.md)
+- [../../reference/language/trait.md](../../reference/language/trait.md)
 
 ## 1. 当前范围
 
-当前仓库里已经落地的 generic v0 主要覆盖：
+当前 generic v0 已经覆盖：
 
-- `struct Box[T]` / `def id[T](...)` / `impl[T] Box![T]: Trait` 的语法与 AST
-- 类型字符串里的 `Name![T]`，以及表达式侧的 `func[T](...)` / `func[T]&<>` 解析
-- `AppliedTypeNode` / `AnyTypeNode` 的类型节点与接口哈希
-- generic template 的接口收集、owner-context 类型解析与 body 校验
-- generic call 的类型实参数量检查、保守推断和签名替换
+- `struct Box[T]`
+- `def id[T](value T) T`
+- 类型位置的 `Box[i32]`
+- 表达式侧的 `id[i32](...)`、`id(...)`、`id[i32]&<>`、`Box[i32](...)`
+- same-module generic function / applied generic struct concrete instantiation
+- imported generic function / applied generic struct 的 importer-owned instantiation
+- structured generic instance key、同图 dedup、artifact 级 cache metadata 与 invalidation
+- unconstrained `T` 的模板校验约束
+- single trait bound `T Trait`
+- `impl[T Trait] Box[T]: Trait`
+- generic body 中的 trait-qualified static call，例如 `Hash.hash(&value)`
 
-当前明确**还没有**落地：
+当前仍然不做：
 
-- 真正的 generic function / generic struct 实例化
-- concrete applied struct layout 物化
-- importer-owned instance artifact
-- bound 语法与 bound satisfaction
-- monomorphized runtime symbol emission
+- multi-bound
+- const generic
+- generic method
+- generic trait
+- default method / associated type
+- 把 bounded `T` 自动放开为 `value.hash()` 这类普通 dot lookup
 
-所以当前 generic v0 的内部状态更准确地说是：
+## 2. 语法与 AST / Type Node
 
-- “前端 / 接口 / 校验通路已接通”
-- “runtime instantiation 仍未实现”
+generic v0 相关入口主要在：
 
-这也是为什么当前许多正例会稳定走到：
-
-- `generic function instantiation is not implemented yet`
-
-而不是再掉回 parser / name-resolution 的旧错误。
-
-## 2. AST 与类型节点
-
-generic v0 相关的 AST / type-node 入口主要在：
-
+- `grammar/main.yacc`
+- `grammar/type.sub.yacc`
 - `src/lona/ast/astnode.hh`
 - `src/lona/ast/astnode_toJson.cc`
 - `src/lona/ast/type_node_tools.cc`
 - `src/lona/ast/type_node_string.cc`
-- `grammar/main.yacc`
-- `grammar/type.sub.yacc`
 
-当前前端新增了四类关键表示：
+当前关键表示包括：
 
 - `AstStructDecl::typeParams`
 - `AstFuncDecl::typeParams`
 - `AstTraitImplDecl::typeParams`
 - `AstTypeApply`
-
-其中：
-
-- 声明处仍然使用 `[T]`
-- 手写类型字符串使用 `Name![T]`
-- 表达式侧 generic apply 使用 `name[T]`
-- 表达式侧的 generic call / function ref 也先落成 `AstTypeApply`
-
-类型层新增了两个专用 type node：
-
-- `AnyTypeNode`
 - `AppliedTypeNode`
+- `AnyTypeNode`
 
-`AppliedTypeNode` 对应：
+当前表面语法分工已经收口为：
 
-- `Box![i32]`
-- `Pair![T, bool]`
-- `dep.Box![i32]`
+- 声明语法写 `[T]`
+- `impl` header 的 self type 写 `Box[T]`
+- 类型位置的 generic apply 也写 `Box[i32]`
+- 表达式侧 generic apply 写 `id[i32](...)`、`id[i32]&<>`、`Box[i32](...)`
 
-`AnyTypeNode` 对应：
+类型位置现在与数组共用 `[]`，内部按 bracket item 形状分流：
 
-- `any*`
-- `any const*`
-- `any[*]`
-- `any const[*]`
+- 整数字面量维度走数组
+- 类型节点走 applied generic type
 
-这里有两个当前实现边界值得明确：
+当前还不支持“编译期常量维度”，所以 bracket item 不是整数维度、也不是合法类型时会直接报错。
 
-1. 类型字符串里的 `![...]` 只表示 type-side generic apply，不和数组后缀共用 `[]`
-2. bare `any` 不是值类型；只有 pointer / indexable-pointer 位置允许使用
+## 3. 接口层与模板元数据
 
-旧的错误写法现在分成两类：
-
-- 类型字符串里写 `Box[i32]`
-- 表达式侧写 `id![i32](1)`
-
-当前会分别给出定向诊断：
-
-- type-side: `generic apply uses ![...]`, not `[...]`
-- expr-side: `expression-side generic apply uses [...]`, not `![...]`
-
-而不是再误落到数组维度分支。
-
-## 3. 接口层数据模型
-
-generic 信息首先进入 `ModuleInterface`，对应文件：
+generic metadata 会进入 `ModuleInterface`，主要对应：
 
 - `src/lona/module/module_interface.hh`
 - `src/lona/module/module_interface.cc`
 - `src/lona/declare/interface.cc`
 
-当前接口层新增或扩展了四类 generic 相关数据：
+接口层会记录：
 
-- `ModuleInterface::GenericParamDecl`
-- `TypeDecl::typeParams`
-- `FunctionDecl::typeParams`
-- `TraitImplDecl::typeParams`
+- type / function / trait impl 的 type parameter 列表
+- 每个 generic parameter 的可选 single bound
+- generic struct method template metadata
+- applied type 与 `any` 的 type-node 形状
 
-另外，generic struct method 当前不会直接变成 runtime method table，而是先保存在：
+generic struct method 不会在模板阶段直接变成 runtime method table；接口层保留的是模板级 method metadata，等具体 applied instance 请求出现时再 concrete 化。
 
-- `TypeDecl::methodTemplates`
+## 4. 类型解析与 concrete applied struct
 
-它记录的是：
-
-- method 名
-- receiver access
-- parameter binding / names
-- parameter type node / spelling
-- return type node / spelling
-- method 自身 type params
-
-这和 monomorphic struct method 的路径不同：
-
-- monomorphic method 会直接进 `StructType` 的 method table
-- generic method template 只保留接口元数据，不直接产生 runtime function
-
-当前接口收集阶段做几件事：
-
-1. 先收 generic struct / function / trait impl header
-2. 把 type params 记录到 `ModuleInterface`
-3. 对 generic 签名做 arity / bare-template / bare-`any` / applied-type 合法性检查
-4. 对 generic struct method 保留 template metadata，而不是像早期实现那样“校验后丢弃”
-
-## 4. `interfaceHash` 与可见接口边界
-
-generic v0 没有把这些信息放进“纯实现细节”层，而是明确进入接口哈希，相关代码在：
+类型解析相关路径主要在：
 
 - `src/lona/module/compilation_unit.cc`
-
-当前 `computeInterfaceHash(...)` 会把下列 generic 相关信息算进 `interfaceHash`：
-
-- struct / function / trait impl 的 `typeParams`
-- `AppliedTypeNode`
-- `AnyTypeNode`
-- direct import 列表
-
-这里 direct import 也要算进哈希，是因为当前 imported generic signature 的语义已经依赖 owner module 的 visible import graph。
-
-典型例子是：
-
-- `dep.take_helper_ptr(...)`
-
-其 exported signature 里如果写了：
-
-- `helper.Box![T]*`
-
-那么 importer 在做推断时，必须以 `dep` 的 owner interface 作为名字解析上下文，而不能按 caller 自己的 import graph 去猜。
-
-因此 generic v0 现在的可见接口边界不只是：
-
-- exported type / function / trait 名字
-
-还包括：
-
-- generic parameter 列表
-- applied type 形状
-- owner interface 可见的 import alias
-
-## 5. 类型解析：模板名、applied type 与 `any`
-
-generic v0 当前的语义类型解析主要落在：
-
-- `src/lona/module/compilation_unit.cc`
-- `src/lona/declare/interface.cc`
 - `src/lona/type/type.hh`
 
-### 5.1 bare generic template 不进入 runtime type 语义
+当前规则是：
 
-`Box` 如果是 generic template，那么这些写法都会被拒绝：
+- bare template 不是 runtime type，`Box` / `Box*` 这类写法继续拒绝
+- `Box[i32]` 会形成 concrete applied type request
+- concrete applied struct 会 materialize 出真实字段布局、ABI 以及 concrete method symbol
 
-- `var box Box`
-- `var p Box*`
+这意味着下面这些路径现在都走 concrete runtime 语义，而不是早期的 opaque placeholder：
 
-当前错误会明确提示：
+- local / field / parameter / return type 上的 `Box[i32]`
+- `Box[i32](...)` 构造
+- `box.get()` 这类实例化后的 inherent method 调用
+- imported `dep.Box[i32]` 的 by-value declared type 与 method call
 
-- generic type template `Box` requires explicit `![...]` type arguments
+## 5. Generic Runtime Instantiation
 
-这条规则的目的很明确：
-
-- generic template 不是普通 runtime type
-- 只有 concrete applied type 才能继续进入 runtime 语义
-
-### 5.2 applied type 当前先落成 opaque struct identity
-
-当 `CompilationUnit::resolveTypeNode(...)` 遇到：
-
-- `Box![i32]`
-- `Pair![i32, bool]`
-
-它当前不会去物化 concrete field layout，而是先创建一个带 applied-template 元数据的 opaque `StructType`：
-
-- `createOpaqueStructType(...)`
-
-这个类型会保存：
-
-- applied 后的完整显示名
-- template exported name
-- concrete type argument 列表
-
-因此当前 `Box![i32]*` 可以稳定通过：
-
-- pointer type formation
-- signature substitution
-- imported signature inference
-
-但 `Box![i32]` 按值使用仍然会被拒绝，因为 concrete layout 还没有实例化出来。
-
-### 5.3 `any` 的内部角色
-
-`any` 在当前实现里不是“万能值类型”，而是受限的 erased pointee type。
-
-内部表示上：
-
-- `AnyTypeNode` 在 AST / type-node 层独立存在
-- `ModuleInterface` 和 `CompilationUnit` 都有专门的 `AnyType`
-
-当前允许的只是：
-
-- `any*`
-- `any const*`
-- `any[*]`
-- `any const[*]`
-
-因此 generic v0 当前把 `any` 收得很窄：
-
-- 它服务于显式擦除边界
-- 不参与普通 by-value generic storage
-
-## 6. owner-context 解析与 imported generic 签名
-
-generic v0 当前一个比较关键的实现点是：
-
-- imported generic signature 不能再只靠 caller 的本地 lookup 去解析名字
-
-相关代码在：
-
-- `src/lona/resolve/resolve.hh`
-- `src/lona/resolve/resolve.cc`
-- `src/lona/analyze/function.cc`
-- `src/lona/module/module_interface.hh`
-
-当前内部做法是：
-
-1. imported function / type reference 会携带显式 `ownerInterface`
-2. generic signature 里的 type name 会优先按 owner interface 的上下文解析
-3. 这条 owner-first 规则同时覆盖：
-   - unqualified 名字
-   - secondary-module-qualified 名字
-
-这样可以避免两类旧错误：
-
-- importer 本地存在同名 `Box`，把 `dep.Box![T]` 的签名推断截走
-- owner signature 里写 `helper.Box![T]`，却错误依赖 caller 也 `import helper`
-
-当前 `ModuleInterface` 里记录 direct imported modules，也是为了让这种 owner-context 解析在 importer 侧仍然可重建。
-
-## 7. generic template 的 resolve 与 body 校验
-
-generic template 当前不会像早期那样被整个跳过；它们会进入一个专门的“模板校验但不 lowering”路径，相关代码在：
-
-- `src/lona/resolve/resolve.hh`
-- `src/lona/resolve/resolve.cc`
-- `src/lona/analyze/module.cc`
-
-核心机制是：
-
-- `ResolvedFunction` 带有 `templateValidationOnly`
-- 同时记录 `genericTypeParams`
-
-这条路径的行为是：
-
-1. generic top-level `def`
-2. generic struct method
-
-都会进入 name resolution
-
-这样 generic body 里的这些错误现在会在编译模块时被直接拒绝：
-
-- 未定义标识符
-- 本地变量使用不可见类型参数
-- `cast[...]` / `sizeof[...]` 的非法类型
-
-但它们**不会**继续进入：
-
-- HIR lowering
-- runtime symbol emission
-- LLVM codegen
-
-`ModuleAnalyzer` 会显式跳过 `templateValidationOnly` 的 resolved function。  
-因此当前 generic template 的状态是：
-
-- body 已校验
-- runtime 实体未生成
-
-## 8. generic call 的语义阶段
-
-generic function call 当前主要在：
+generic runtime 的核心路径主要分布在：
 
 - `src/lona/analyze/function.cc`
+- `src/lona/module/compilation_unit.cc`
+- `src/lona/emit/codegen.cc`
 
-当前已经落地的 generic call 语义包括：
+### 5.1 Function Instances
 
-- 显式 `func[T](...)`
-- 省略 type args 时的保守参数驱动推断
-- `func[T]&<>` 这种“先特化、再取具体函数地址”的前端路径
+generic function 现在支持：
 
-这里有三步关键处理。
+- explicit instantiation：`id[i32](1)`
+- inferred instantiation：`id(1)`
+- specialized function ref：`id[i32]&<>`
+- imported 同构路径：`dep.id[i32](...)`、`dep.id(...)`、`dep.id[i32]&<>`
 
-### 8.1 先收 type args
+实例生成流程大致是：
 
-`resolveGenericCallTypeArgs(...)` 会：
+1. 从 call / function-ref / declared type 形成 generic instance request
+2. 用 structured key 查同图 registry
+3. 命中则复用，未命中则按 substituted signature 重新 resolve / analyze
+4. 生成 concrete HIR / LLVM function symbol
 
-- 做表达式侧 `[...]` 个数检查
-- 若无显式 type args，则按参数模式推断
+### 5.2 Applied Struct Instances
 
-当前推断不是字符串替换，而是递归走 type pattern：
+applied generic struct 现在支持：
 
-- base type parameter
-- `const`
-- pointer
-- indexable pointer
-- array
-- tuple
-- function pointer
-- `AppliedTypeNode`
+- same-module by-value storage
+- imported by-value storage
+- concrete ctor lowering
+- concrete inherent method lowering
+- trait-qualified static call 命中 concrete applied receiver method
 
-因此像下面这些签名现在都能进入统一的 generic call 路径：
+generic struct method 仍然不是“模板阶段直接发射”；它们是随着具体 applied instance 一起 concrete 化。
 
-- `T*`
-- `Pair![T, bool]*`
-- `<Pair![T, bool]*, i32>`
-- `Box![T] const*`
+## 6. Imported Ownership, Dedup, Reuse, Invalidation
 
-### 8.2 再做签名替换
+imported generic runtime 现在采用 importer-owned instance 模型。
 
-拿到 `T -> i32` 这类映射后，`substituteGenericSignatureType(...)` 会递归把模板签名转成 concrete signature type。
+相关文件主要包括：
 
-这一步当前同样支持：
+- `src/lona/module/generic_instance.hh`
+- `src/lona/module/module_artifact.hh`
+- `src/lona/workspace/workspace_builder.cc`
 
-- `AppliedTypeNode`
-- `AnyTypeNode`
-- `DynTypeNode`
-- 指针 / 元组 / 函数指针等复合类型
+当前已经有三层一致的身份模型：
 
-因此 generic call 在语义阶段已经能得到：
+- in-memory same-session instance key
+- recursion / in-flight guard
+- persisted artifact metadata
 
-- concrete parameter type list
-- concrete return type
+key 至少覆盖：
 
-并完成普通的参数绑定检查。
+- template owner identity
+- exported template name
+- decl kind
+- concrete type arguments
+- template revision
+- owner 可见 import 状态
 
-### 8.3 当前终点仍然是 placeholder
+这让 local / imported 的实例请求都能归一到同一种 key，而不是依赖 mangled symbol display string 或 `Box[i32]` 这类纯显示名。
 
-虽然前两步已经接通，但 `analyzeGenericFunctionCall(...)` 当前最后仍然会停在：
+artifact reuse 现在会验证 generic instance record 的 revision 是否仍然匹配当前模板状态，因此：
 
-- `diagnoseGenericInstantiationPending(...)`
+- owner body change
+- owner interface change
+- owner-visible import state change
 
-也就是说，当前 generic call 的真实终点仍然不是实例化，而是一个有意保留的占位诊断。
+都会让 importer 侧的旧 concrete instance 失效。
 
-这也是 generic v0 当前最大的内部边界：
+## 7. Template Validation 与 Unconstrained `T`
 
-- semantic front door 已经完整
-- instantiation back end 还没落地
+模板校验与 generic capability 传播主要落在：
 
-## 9. trait interop 的当前状态
+- `src/lona/resolve/resolve.cc`
+- `src/lona/analyze/function.cc`
 
-generic v0 和 trait v0 当前已经有一层接口级互操作，但还没有进入 bound / monomorphization 阶段。
+当前 unconstrained `T` 仍然严格受限：
 
-已落地的部分在：
+- 允许：`T`、`T*`、`T const*`、`Box[T]`、`sizeof[T]()`
+- 拒绝：`obj.method()`、`obj.field`、`obj + other`、`obj == other`
 
-- `src/lona/declare/interface.cc`
-- `src/lona/module/module_interface.hh`
+这个限制不只覆盖直接表达式，也覆盖别名传播后的结果，例如：
 
-当前已经支持：
+- generic helper return alias
+- applied generic helper return alias
+- generic struct method return alias
 
-- `impl Box![i32]: Hash`
-- `impl[T] Box![T]: Hash`
+模板阶段的目标仍然是“先守住静态能力边界”，而不是把失败路径降格成 runtime fallback。
 
-接口层会保存：
+## 8. Single Trait Bound
 
-- fully-qualified self type spelling
-- trait name
-- impl 的 type params
+single bound 相关逻辑现在已经接通：
 
-这里还有一个当前实现边界：
+- `T Trait`
+- `impl[T Trait] Box[T]: Trait`
+- instantiation-site bound satisfaction
+- trait-qualified static call in generic body
 
-- 如果 self type 已经是 concrete monomorphic struct，接口收集会继续做 method-table 对齐校验
-- 如果 self type 是 applied / generic self type，当前只保留 impl header，不会去做 concrete method table 验证
+当前语义模型是：
 
-换句话说，generic trait impl header 现在已经能稳定进入接口模型；但真正和实例化绑定在一起的 trait satisfaction / bound call 还没有实现。
+1. 声明处记录每个 type parameter 的可选 single bound
+2. 实例化时检查 concrete type 是否有 visible impl
+3. 通过后，generic body 中只允许显式写 `Trait.method(&value, ...)`
 
-## 10. 当前没有实现的部分
+当前故意不做：
 
-虽然 generic v0 当前已经把 parser、接口、body 校验和 owner-context 解析打通了，但它仍然没有进入真正的 runtime generic。
+- `value.method()` on bounded `T`
+- multi-bound
+- declaration-site struct bound
 
-当前明确还没有的东西包括：
+## 9. 当前内部边界
 
-- generic bound 语法与 `boundTraitName` 的实际消费
-- concrete applied struct field layout 物化
-- instantiated function / method body 的 substituted HIR
-- importer-owned instance record
-- instance key / reuse / invalidation
-- monomorphized runtime symbol emission
+generic v0 现在已经是 shipped runtime feature，而不是 placeholder 前端。
 
-因此当前这套内部实现更适合理解成：
+但内部边界仍然明确：
 
-- generic v0 的“前端可验证模板模型”
+- 不做 generic method
+- 不做 const generic
+- 不做 runtime dictionary 主路径
+- 不把 static generic failure 自动回退成 `Trait dyn`
 
-而不是：
+如果后续继续扩展，最自然的方向是：
 
-- generic v0 的完整 monomorphization 后端
-
-后续如果真正补齐 runtime 实例化，这份文档最可能需要扩写的部分是：
-
-- applied struct layout materialization
-- instantiated function symbol naming
-- importer-owned instance cache
-- 与 trait impl graph 相关的 invalidation 边界
+- multi-bound
+- 更强的随机 / 增量回归覆盖
+- 针对 runtime state lifetime 的额外验证

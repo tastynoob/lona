@@ -64,7 +64,26 @@ var nested i32[3][4, 5]
 - 如果需要稳定语义，请改用固定维数组（如 `i32[4]`）或显式指针（如 `i32*` / `i32[*]` / `i32[4]*`）。
 - 数组初始化、索引和维度推断行为见 [expr.md](expr.md) 与 [vardef.md](vardef.md)。
 
-## 5. 元组类型
+## 5. 泛型 applied type
+
+```lona
+var box Box[i32]
+var pair Pair[i32, bool]
+var imported dep.Box[Point]
+```
+
+说明：
+
+- 类型位置的泛型实参现在统一写成 `Type[...]`。
+- `Box[i32]`、`Pair[i32, bool]`、`dep.Box[Point]` 都属于 applied generic type。
+- bare template 仍然不是 runtime concrete type；例如 `var box Box`、`var ptr Box*` 仍然会被拒绝。
+- `Type[...]` 在类型位置和数组共用 `[]` 语法，但当前只按下面两类分流：
+  - `i32[4]`、`i32[4, 5]` 这类整数维度，表示数组
+  - `Box[i32]`、`Pair[Point, bool]` 这类类型实参，表示 applied generic type
+- 当前数组维度只接受整数维度；编译期常量维度还不在这版范围里。
+- 如果 `[]` 里的内容既不是合法数组维度，也不是合法类型实参，编译器会直接报错，而不会做模糊猜测。
+
+## 6. 元组类型
 
 ```lona
 var pair <i32, bool>
@@ -76,7 +95,7 @@ var triple <i32, bool, f32>
 - 元组类型与函数显式取指针 `foo&<...>` 共用 `<...>` 这种类型列表记法。
 - 元组字面量、成员访问和类型推断行为见 [expr.md](expr.md)。
 
-## 6. 函数签名与函数指针
+## 7. 函数签名与函数指针
 
 ```lona
 var tick (:) = ping&<>
@@ -95,7 +114,7 @@ var ref_cb (ref i32: i32) = set7&<ref i32>
 如果函数参数本身按引用传递，则在函数类型里也要显式写出，例如 `(ref i32: i32)`。
 与之配套的取值表达式写作 `foo&<i32>` 或 `set7&<ref i32>`；表达式写法见 [expr.md](expr.md)，直接函数指针值变量的初始化约束见 [vardef.md](vardef.md)。
 
-## 7. 函数指针上的数组 / 指针后缀
+## 8. 函数指针上的数组 / 指针后缀
 
 ```lona
 var table (: i32)[4]
@@ -111,7 +130,7 @@ var cursor (: i32)[*]
 
 旧的裸函数派生写法如 `()[] i32`、`(i32)[4] i32`、`()[*] i32` 现在都不是合法类型语法。
 
-## 8. `Trait dyn` 类型
+## 9. `Trait dyn` 类型
 
 ```lona
 var h Hash dyn

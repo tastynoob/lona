@@ -95,6 +95,7 @@ def generate_case(rng: random.Random, case_id: int) -> GeneratedCase:
         "struct",
         "func_ptr",
         "import",
+        "generic",
     ]
     chosen = set(rng.sample(features, rng.randint(3, 5)))
 
@@ -287,6 +288,71 @@ def apply_{case_id}(v i32, cb (i32: i32)) i32 {{
             ]
         )
         expected_ir.extend([f"@{module_name}.imported_add_{case_id}", f"%{module_name}.ImportedPoint{case_id}"])
+
+    if "generic" in chosen:
+        trait_name = f"Hash{case_id}"
+        point_name = f"Point{case_id}"
+        box_name = f"Box{case_id}"
+        point_bias = rng.randint(1, 4)
+        box_bias = rng.randint(1, 4)
+        add_definition(
+            f"""
+trait {trait_name} {{
+    def hash() i32
+}}
+
+struct {point_name} {{
+    value i32
+
+    def hash() i32 {{
+        ret self.value + {point_bias}
+    }}
+}}
+
+impl {point_name}: {trait_name}
+
+struct {box_name}[T] {{
+    value T
+
+    def get() T {{
+        ret self.value
+    }}
+
+    def hash() i32 {{
+        ret {trait_name}.hash(&self.value) + {box_bias}
+    }}
+}}
+
+impl[T {trait_name}] {box_name}[T]: {trait_name}
+
+def id_{case_id}[T](value T) T {{
+    ret value
+}}
+
+def hash_one_{case_id}[T {trait_name}](value T) i32 {{
+    ret {trait_name}.hash(&value)
+}}
+"""
+        )
+        main_body.extend(
+            [
+                f"    var point_{case_id} {point_name} = {point_name}(value = score)",
+                f"    score = id_{case_id}(score)",
+                f"    score = score + id_{case_id}[i32](1)",
+                f"    var box_{case_id} {box_name}[{point_name}] = {box_name}[{point_name}](value = point_{case_id})",
+                f"    score = score + box_{case_id}.get().hash()",
+                f"    score = score + hash_one_{case_id}(point_{case_id})",
+                f"    score = score + {trait_name}.hash(&box_{case_id})",
+            ]
+        )
+        expected_ir.extend(
+            [
+                f"id_{case_id}__inst__i32",
+                f"hash_one_{case_id}__inst__",
+                f"{point_name}.hash",
+                f"{box_name}[",
+            ]
+        )
 
     main_body.append("    ret score")
 
