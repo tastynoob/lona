@@ -95,6 +95,48 @@ class FunctionResolver {
 
     GenericCapabilityInfo noGenericCapability() const { return {}; }
 
+    const AstNode *genericTypeParamBoundSyntax(llvm::StringRef paramName) const {
+        auto lookupBound =
+            [paramName](const std::vector<AstGenericParam *> *params)
+                -> const AstNode * {
+            if (!params) {
+                return nullptr;
+            }
+            for (auto *param : *params) {
+                if (!param || !param->hasBoundTrait()) {
+                    continue;
+                }
+                if (toStringRef(param->name.text) == paramName) {
+                    return param->boundTrait;
+                }
+            }
+            return nullptr;
+        };
+
+        if (auto *decl = resolved_.decl()) {
+            if (auto *bound = lookupBound(decl->typeParams)) {
+                return bound;
+            }
+            if (auto *structDecl = findEnclosingStructDecl(decl)) {
+                if (auto *bound = lookupBound(structDecl->typeParams)) {
+                    return bound;
+                }
+            }
+        }
+        if (resolved_.isMethod() && unit_) {
+            auto structName = toStdString(resolved_.methodParentTypeName());
+            if (auto dotPos = structName.rfind('.'); dotPos != std::string::npos) {
+                structName = structName.substr(dotPos + 1);
+            }
+            if (auto *structDecl = findStructDeclInUnit(unit_, structName)) {
+                if (auto *bound = lookupBound(structDecl->typeParams)) {
+                    return bound;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     const AstStructDecl *findStructDeclInUnit(const CompilationUnit *searchUnit,
                                               llvm::StringRef localName) const {
         if (!searchUnit) {
@@ -304,6 +346,10 @@ class FunctionResolver {
             }
             std::string moduleName;
             std::string memberName;
+            if (!splitBaseTypeName(base, moduleName, memberName) &&
+                resolved_.concreteGenericType(rawName)) {
+                return noGenericCapability();
+            }
             if (!splitBaseTypeName(base, moduleName, memberName) &&
                 hasGenericTypeParam(rawName)) {
                 return {rawName, 0};
@@ -757,6 +803,22 @@ class FunctionResolver {
         auto *methodDecl = resolveVisibleMethodDecl(
             projectionOwnerTypeNode(callee->parent), fieldName, &substs);
         if (!methodDecl || !methodDecl->retType) {
+            auto *calleeTypeNode = exprVisibleTypeNode(callTargetNode(node));
+            if (auto *func =
+                    dynamic_cast<const FuncPtrTypeNode *>(
+                        stripDecoratedTypeNode(calleeTypeNode))) {
+                return classifyGenericTypeNode(func->ret);
+            }
+            if (auto *array =
+                    dynamic_cast<const ArrayTypeNode *>(
+                        stripDecoratedTypeNode(calleeTypeNode))) {
+                return classifyGenericTypeNode(array->base);
+            }
+            if (auto *indexable =
+                    dynamic_cast<const IndexablePointerTypeNode *>(
+                        stripDecoratedTypeNode(calleeTypeNode))) {
+                return classifyGenericTypeNode(indexable->base);
+            }
             return noGenericCapability();
         }
         auto *explicitTypeArgs = callExplicitTypeArgs(node);
@@ -866,11 +928,10 @@ class FunctionResolver {
     }
 
     std::string genericCapabilityHint(const GenericCapabilityInfo &info) const {
-        if (const auto *bound =
-                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
-            return "Bounded generic parameters only allow explicit trait-qualified static calls such as `" +
-                   *bound +
-                   ".method(&value)`. Ordinary member access and operators on `T` stay unavailable even with a bound.";
+        if (auto bound = genericTypeParamBoundName(info); !bound.empty()) {
+            return "Bounded generic parameters only allow methods provided by bound `" +
+                   bound +
+                   "`, such as `value.method()`. Field access and operators on `T` stay unavailable even with a bound.";
         }
         return "Unconstrained generic parameters only allow type-level uses "
                "such as `sizeof[T]()`, `T*`, `T const*`, or `Box[T]`. "
@@ -878,21 +939,177 @@ class FunctionResolver {
                "concrete type.";
     }
 
+    const ModuleInterface::TraitDecl *resolveVisibleTraitDecl(
+        const std::string &rawName,
+        const ModuleInterface *ownerInterface = nullptr) const {
+        if (rawName.empty()) {
+            return nullptr;
+        }
+
+        auto lookupLocalTrait =
+            [](const ModuleInterface *interface,
+               const std::string &localName)
+                -> const ModuleInterface::TraitDecl * {
+            if (!interface) {
+                return nullptr;
+            }
+            return interface->findTrait(localName);
+        };
+
+        auto dotPos = rawName.find('.');
+        if (dotPos == std::string::npos) {
+            if (auto *traitDecl = lookupLocalTrait(ownerInterface, rawName)) {
+                return traitDecl;
+            }
+            if (!unit_ || !unit_->interface()) {
+                return nullptr;
+            }
+            return unit_->interface()->findTrait(rawName);
+        }
+
+        auto moduleName = rawName.substr(0, dotPos);
+        auto memberName = rawName.substr(dotPos + 1);
+        if (ownerInterface) {
+            if (moduleName == toStdString(ownerInterface->moduleName())) {
+                if (auto *traitDecl =
+                        lookupLocalTrait(ownerInterface, memberName)) {
+                    return traitDecl;
+                }
+            }
+            if (const auto *imported =
+                    ownerInterface->findImportedModule(moduleName);
+                imported && imported->interface) {
+                if (auto *traitDecl =
+                        lookupLocalTrait(imported->interface, memberName)) {
+                    return traitDecl;
+                }
+            }
+        }
+
+        if (!unit_ || !unit_->interface()) {
+            return nullptr;
+        }
+        if (moduleName == toStdString(unit_->moduleName())) {
+            return unit_->interface()->findTrait(memberName);
+        }
+        const auto *imported = unit_->findImportedModule(moduleName);
+        if (!imported || !imported->interface) {
+            return nullptr;
+        }
+        return imported->interface->findTrait(memberName);
+    }
+
+    std::string methodParentTypeParamBoundName(
+        const GenericCapabilityInfo &info) const {
+        if (!resolved_.isMethod() || !unit_ || !unit_->interface()) {
+            return {};
+        }
+        auto methodParentName = toStdString(resolved_.methodParentTypeName());
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        for (const auto &entry : unit_->interface()->types()) {
+            const auto &candidate = entry.second;
+            if (toStdString(candidate.localName) == methodParentName ||
+                toStdString(candidate.exportedName) == methodParentName) {
+                typeDecl = &candidate;
+                break;
+            }
+        }
+        if (!typeDecl) {
+            if (auto dotPos = methodParentName.rfind('.');
+                dotPos != std::string::npos) {
+                auto localName = methodParentName.substr(dotPos + 1);
+                typeDecl = unit_->interface()->findType(localName);
+            } else {
+                typeDecl = unit_->interface()->findType(methodParentName);
+            }
+        }
+        if (!typeDecl) {
+            return {};
+        }
+        for (const auto &param : typeDecl->typeParams) {
+            if (toStdString(param.localName) == toStdString(info.paramName) &&
+                !param.boundTraitName.empty()) {
+                return toStdString(param.boundTraitName);
+            }
+        }
+        return {};
+    }
+
+    std::string genericTypeParamBoundName(
+        const GenericCapabilityInfo &info) const {
+        if (const auto *bound =
+                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+            return *bound;
+        }
+        if (auto bound = methodParentTypeParamBoundName(info); !bound.empty()) {
+            return bound;
+        }
+        if (const auto *boundSyntax =
+                genericTypeParamBoundSyntax(toStringRef(info.paramName))) {
+            return describeDotLikeSyntax(boundSyntax, "<trait>");
+        }
+        return {};
+    }
+
+    const ModuleInterface::TraitDecl *resolveBoundTraitDecl(
+        const GenericCapabilityInfo &info) const {
+        if (const auto *boundSyntax =
+                genericTypeParamBoundSyntax(toStringRef(info.paramName))) {
+            if (auto *traitDecl = resolveVisibleTraitDecl(
+                    describeDotLikeSyntax(boundSyntax, "<trait>"),
+                    resolved_.genericOwnerInterface())) {
+                return traitDecl;
+            }
+        }
+        auto bound = genericTypeParamBoundName(info);
+        if (bound.empty()) {
+            return nullptr;
+        }
+        return resolveVisibleTraitDecl(bound, resolved_.genericOwnerInterface());
+    }
+
     [[noreturn]] void errorUnconstrainedGenericMemberUse(
         const location &loc, const GenericCapabilityInfo &info,
         llvm::StringRef memberName) const {
-        if (const auto *bound =
-                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+        if (auto bound = genericTypeParamBoundName(info); !bound.empty()) {
             error(loc,
                   "generic parameter `" + toStdString(info.paramName) +
                       "` does not provide member `" + memberName.str() +
-                      "` through bound `" + *bound + "`",
+                      "` through bound `" + bound + "`",
                   genericCapabilityHint(info));
         }
         error(loc,
               "unconstrained generic parameter `" + toStdString(info.paramName) +
                   "` does not provide member `" + memberName.str() + "`",
               genericCapabilityHint(info));
+    }
+
+    bool allowsBoundGenericMethodUse(const AstDotLike *dotLike,
+                                     const GenericCapabilityInfo &info) const {
+        if (!dotLike || !info.isDirectValue()) {
+            return false;
+        }
+        const auto *traitDecl = resolveBoundTraitDecl(info);
+        if (!traitDecl) {
+            return false;
+        }
+        return traitDecl->findMethod(dotLike->field->text) != nullptr;
+    }
+
+    void resolveCalledSelector(const AstDotLike *dotLike) {
+        if (!dotLike) {
+            return;
+        }
+        resolveExpr(dotLike->parent);
+        resolveDotLike(dotLike);
+        auto info = inferGenericExprInfo(dotLike->parent);
+        if (info.isDirectValue() &&
+            !allowsBoundGenericMethodUse(dotLike, info)) {
+            errorUnconstrainedGenericMemberUse(
+                dotLike->loc, info,
+                llvm::StringRef(dotLike->field->text.tochara(),
+                                dotLike->field->text.size()));
+        }
     }
 
     std::string describeOperator(token_type op) const {
@@ -921,12 +1138,11 @@ class FunctionResolver {
     [[noreturn]] void errorUnconstrainedGenericOperatorUse(
         const location &loc, const GenericCapabilityInfo &info,
         token_type op) const {
-        if (const auto *bound =
-                resolved_.genericTypeParamBound(toStdString(info.paramName))) {
+        if (auto bound = genericTypeParamBoundName(info); !bound.empty()) {
             error(loc,
                   "generic parameter `" + toStdString(info.paramName) +
                       "` does not support operator `" + describeOperator(op) +
-                      "` through bound `" + *bound + "`",
+                      "` through bound `" + bound + "`",
                   genericCapabilityHint(info));
         }
         error(loc,
@@ -1478,7 +1694,19 @@ class FunctionResolver {
             return;
         }
         if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
-            resolveExpr(call->value);
+            if (auto *typeApply = dynamic_cast<const AstTypeApply *>(call->value)) {
+                if (auto *dotLike =
+                        dynamic_cast<const AstDotLike *>(typeApply->value)) {
+                    resolveCalledSelector(dotLike);
+                } else {
+                    resolveExpr(call->value);
+                }
+            } else if (auto *dotLike =
+                           dynamic_cast<const AstDotLike *>(call->value)) {
+                resolveCalledSelector(dotLike);
+            } else {
+                resolveExpr(call->value);
+            }
             if (call->args) {
                 for (auto *arg : *call->args) {
                     resolveExpr(arg);
@@ -1853,6 +2081,7 @@ resolveGenericMethodInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
     string resolvedFunctionName, string methodParentTypeName,
     std::vector<string> genericTypeParams,
+    std::unordered_map<std::string, std::string> genericTypeParamBounds,
     const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
     if (!global || !decl || resolvedFunctionName.empty() ||
@@ -1868,7 +2097,8 @@ resolveGenericMethodInstance(
         decl, decl->body, std::move(resolvedFunctionName),
         std::move(methodParentTypeName), decl->loc, false, false,
         decl->body && decl->body->hasTerminator(), false,
-        std::move(genericTypeParams), {}, genericOwnerInterface,
+        std::move(genericTypeParams), std::move(genericTypeParamBounds),
+        genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     auto *declStructType =

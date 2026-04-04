@@ -9,7 +9,7 @@
 - [data_model_suite.lo](data_model_suite.lo): 结构体、字段、方法、构造函数、普通指针读写和 `null` 空指针。
 - [function_pointer_suite.lo](function_pointer_suite.lo): `(Args: Ret)` 函数指针、显式函数取指针、已初始化的函数指针存储和间接调用。
 - [generic_trait_suite.lo](generic_trait_suite.lo): `Box[T]`、`id[T](...)`、single trait bound `T Trait`、`impl[T Trait] Box[T]: Trait`，以及 generic body 中的 `Trait.method(&value)` 静态调用。
-- [generic_priority_queue_suite.lo](generic_priority_queue_suite.lo): 更接近 C++ 容器 + 算法风格的 fixed-capacity generic priority queue；示例同时覆盖 declaration-site struct bound、get-only `length`、容器内聚的排序逻辑，以及 generic struct method。
+- [generic_priority_queue_suite.lo](generic_priority_queue_suite.lo): 更接近工程化组件风格的 fixed-capacity generic priority queue；示例覆盖 declaration-site struct bound、直接公开的 get-only `length`、内聚的 `push/peek/capacity` API、generic struct method、局部变量自动类型推导，以及“组件实现 / 业务装配 / 验证入口”三层拆分。
 - [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`sizeof(expr)` / `sizeof[T]()`、`usize`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
 - [container_trait_suite.lo](container_trait_suite.lo): `vector` / `list` / `map` 风格容器、共享的容器 trait、以及共享的 iterator trait；这是当前能力下可运行的复杂 trait 样例。
 - [trait_composition_suite.lo](trait_composition_suite.lo): `trait`、`impl Type: Trait`、显式 self pointer 版 `Trait.method(&value, ...)`、`Trait dyn`，以及嵌入式组合带来的 promoted 字段/方法访问。

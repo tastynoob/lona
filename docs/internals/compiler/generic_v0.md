@@ -30,6 +30,7 @@
 - `impl[T Trait] Box[T]: Trait`
 - generic struct method template 与实例化
 - generic body 中的 trait-qualified static call，例如 `Hash.hash(&value)`
+- bounded generic value 上的普通 bound method dot lookup，例如 `value.hash()`
 
 当前仍然不做：
 
@@ -37,7 +38,6 @@
 - const generic
 - generic trait
 - default method / associated type
-- 把 bounded `T` 自动放开为 `value.hash()` 这类普通 dot lookup
 
 ## 2. 语法与 AST / Type Node
 
@@ -210,17 +210,18 @@ single bound 相关逻辑现在已经接通：
 - `impl[T Trait] Box[T]: Trait`
 - `def method[U Trait](...)` 这类 generic struct method
 - instantiation-site bound satisfaction
+- generic body 中的 direct bound method call
 - trait-qualified static call in generic body
 
 当前语义模型是：
 
 1. 声明处记录每个 type parameter 的可选 single bound
 2. 实例化时检查 concrete type 是否有 visible impl
-3. 通过后，generic body 中只允许显式写 `Trait.method(&value, ...)`
+3. 通过后，generic body 允许 `value.method()` 这种“点选后立即调用”的
+   bound method call，也允许显式写 `Trait.method(&value, ...)`
 
 当前故意不做：
 
-- `value.method()` on bounded `T`
 - multi-bound
 - generic trait method
 

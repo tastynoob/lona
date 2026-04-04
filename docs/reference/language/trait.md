@@ -79,7 +79,7 @@ ret Hash.hash(&point)
 
 - 必须显式写成 `Trait.method(&value, ...)`，或者在已经有 `Type*` 时写 `Trait.method(ptr, ...)`。
 - imported trait 也一样，例如 `dep.Hash.hash(&point)`。
-- bounded generic body 里也沿用这一条；例如 `def hash_one[T Hash](value T) i32 { ret Hash.hash(&value) }`。
+- bounded generic body 里这条路径仍然可用；例如 `def hash_one[T Hash](value T) i32 { ret Hash.hash(&value) }`。
 - 第一个源码实参就是显式 receiver；编译器会把它当成 hidden self pointer。
 - 这条路径暂时不接受临时值 receiver，例如 `Trait.method(&Point(...), ...)`。
 - 编译器会先验证 receiver 的 concrete type 是否有 visible impl。
@@ -89,9 +89,8 @@ ret Hash.hash(&point)
 
 当前不做的事：
 
-- trait method 不会自动注入普通 `obj.method(...)` 查找。
 - `Hash(point)`、`Hash.hash` 这种把 trait namespace 当 runtime value 的写法没有特殊值语义。
-- 即使 `T` 有 bound，`value.hash()` 仍然不会因为 `T Hash` 自动放开；继续写 `Hash.hash(&value)`。
+- unconstrained `T` 仍然不会自动得到普通 `obj.method(...)` 查找；没有 bound 时继续写 `Hash.hash(&value)` 也不成立，因为编译器还不知道 `T` 满足哪个 trait。
 
 ## 4. `Trait dyn`
 
@@ -222,7 +221,7 @@ struct Point {
 impl Point: Hash
 
 def hash_one[T Hash](value T) i32 {
-    ret Hash.hash(&value)
+    ret value.hash()
 }
 
 struct Box[T Hash] {
@@ -249,8 +248,9 @@ impl[T Hash] Box[T]: Hash
 - `impl[T Trait] Box[T]: Trait` 的 self type 使用普通的 `Box[T]` 声明语法，不走任何额外的类型字符串特例。
 - generic struct method 允许声明自己的 type parameter；实例化同样支持 same-module 和 imported 调用。
 - generic struct method 的 bound 也按实例化点检查。
-- generic function body 中，bounded `T` 只开放显式 trait-qualified static call，例如 `Hash.hash(&value)`。
-- bounded `T` 仍然不开放普通 dot lookup；`value.hash()` 会继续报错。
+- generic function / method body 中，bounded `T` 允许直接调用 bound trait method，例如 `value.hash()`。
+- 显式 trait-qualified static call `Hash.hash(&value)` 仍然可用，特别适合需要强调 trait 身份或避免命名歧义时。
+- bounded `T` 仍然不开放裸字段访问、字段写入与运算符；bound 只会放开“直接方法调用”这一种 dot 形态。
 
 当前明确不支持：
 

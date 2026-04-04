@@ -1,58 +1,69 @@
-// Generic + trait container sample: a fixed-capacity priority queue with
-// declaration-site bounds, generic methods, by-value storage, and
-// container-level trait impls.
+// Generic + trait container sample: a small fixed-capacity priority queue
+// written in a more production-style shape. The queue owns a cohesive API,
+// keeps `length` get-only for callers, and separates component code from
+// scenario assembly.
 
 trait Ranked {
     def rank() i32
 }
 
-trait SizedCollection {
-    def len() i32
-}
-
-struct Job {
-    id i32
-    urgency i32
-    cost i32
+struct BuildTask {
+    task_id i32
+    customer_impact i32
+    implementation_cost i32
+    risk i32
 
     def rank() i32 {
-        ret self.urgency * 10 - self.cost
+        ret self.customer_impact * 10 - self.implementation_cost - self.risk
     }
 }
 
-impl Job: Ranked
+impl BuildTask: Ranked
 
 struct SmallPriorityQueue[T Ranked] {
-    set items T[8]
+    items T[8]
     length i32
 
-    def len() i32 {
-        ret self.length
+    def capacity() i32 {
+        ret 8
     }
 
-    def top() T {
+    def is_empty() bool {
+        ret self.length == 0
+    }
+
+    def is_full() bool {
+        ret self.length >= self.capacity()
+    }
+
+    def peek_highest() T {
         ret self.items(0)
     }
 
-    def bottom() T {
+    def peek_lowest() T {
         ret self.items(self.length - 1)
     }
 
-    set def push_ranked(value T) bool {
-        if self.length >= 8 {
+    def slot_rank(index i32) i32 {
+        ret self.items(index).rank()
+    }
+
+    def should_promote(current_index i32, previous_index i32) bool {
+        ret self.slot_rank(current_index) > self.slot_rank(previous_index)
+    }
+
+    set def push(value T) bool {
+        if self.is_full() {
             ret false
         }
 
         self.items(self.length) = value
         self.length = self.length + 1
 
-        var cursor i32 = self.length - 1
+        var cursor = self.length - 1
         for cursor > 0 {
-            var current_rank i32 = Ranked.rank(&self.items(cursor))
-            var previous_rank i32 = Ranked.rank(&self.items(cursor - 1))
-
-            if current_rank > previous_rank {
-                var swap T = self.items(cursor - 1)
+            if self.should_promote(cursor, cursor - 1) {
+                var swap = self.items(cursor - 1)
                 self.items(cursor - 1) = self.items(cursor)
                 self.items(cursor) = swap
                 cursor = cursor - 1
@@ -65,21 +76,20 @@ struct SmallPriorityQueue[T Ranked] {
     }
 
     def total_rank() i32 {
-        var index i32 = 0
-        var out i32 = 0
+        var index = 0
+        var out = 0
         for index < self.length {
-            out = out + Ranked.rank(&self.items(index))
+            out = out + self.slot_rank(index)
             index = index + 1
         }
         ret out
     }
 
-    def echo[U](value U) U {
-        ret value
-    }
-
-    def outranks[U Ranked](other U) bool {
-        ret self.rank() > Ranked.rank(&other)
+    def would_preempt[U Ranked](other U) bool {
+        if self.is_empty() {
+            ret false
+        }
+        ret self.slot_rank(0) > other.rank()
     }
 
     def rank() i32 {
@@ -87,83 +97,114 @@ struct SmallPriorityQueue[T Ranked] {
     }
 }
 
-impl[T] SmallPriorityQueue[T]: SizedCollection
 impl[T Ranked] SmallPriorityQueue[T]: Ranked
 
-def make_queue[T]() SmallPriorityQueue[T] {
+def make_small_priority_queue[T Ranked]() SmallPriorityQueue[T] {
     var out SmallPriorityQueue[T]
     ret out
 }
 
-def choose_higher_ranked[T Ranked](left T, right T) T {
-    if Ranked.rank(&left) >= Ranked.rank(&right) {
+def select_stronger_queue[T Ranked](left T, right T) T {
+    if left.rank() >= right.rank() {
         ret left
     }
     ret right
 }
 
-def best_of_two_queues[T Ranked](
-    left SmallPriorityQueue[T],
-    right SmallPriorityQueue[T]
-) SmallPriorityQueue[T] {
-    ret choose_higher_ranked(left, right)
+def seed_primary_release_lane() SmallPriorityQueue[BuildTask] {
+    var lane = make_small_priority_queue[BuildTask]()
+    if !lane.push(
+        BuildTask(task_id = 10, customer_impact = 5, implementation_cost = 3,
+                  risk = 1)
+    ) {
+        ret lane
+    }
+    if !lane.push(
+        BuildTask(task_id = 20, customer_impact = 8, implementation_cost = 2,
+                  risk = 0)
+    ) {
+        ret lane
+    }
+    if !lane.push(
+        BuildTask(task_id = 30, customer_impact = 6, implementation_cost = 1,
+                  risk = 2)
+    ) {
+        ret lane
+    }
+    ret lane
+}
+
+def seed_overflow_release_lane() SmallPriorityQueue[BuildTask] {
+    var lane = make_small_priority_queue[BuildTask]()
+    if !lane.push(
+        BuildTask(task_id = 40, customer_impact = 7, implementation_cost = 1,
+                  risk = 1)
+    ) {
+        ret lane
+    }
+    if !lane.push(
+        BuildTask(task_id = 50, customer_impact = 4, implementation_cost = 1,
+                  risk = 1)
+    ) {
+        ret lane
+    }
+    ret lane
+}
+
+def choose_release_lane(
+    primary SmallPriorityQueue[BuildTask],
+    overflow SmallPriorityQueue[BuildTask]
+) SmallPriorityQueue[BuildTask] {
+    ret select_stronger_queue(primary, overflow)
 }
 
 def run() i32 {
-    var incoming SmallPriorityQueue[Job] = make_queue[Job]()
-    var deferred SmallPriorityQueue[Job] = make_queue[Job]()
+    var primary_release_lane = seed_primary_release_lane()
+    var overflow_release_lane = seed_overflow_release_lane()
 
-    if !incoming.push_ranked(Job(id = 10, urgency = 5, cost = 3)) {
+    if primary_release_lane.is_empty() {
         ret 1
     }
-    if !incoming.push_ranked(Job(id = 20, urgency = 8, cost = 2)) {
+    if primary_release_lane.length != 3 {
         ret 2
     }
-    if !incoming.push_ranked(Job(id = 30, urgency = 6, cost = 1)) {
+    if primary_release_lane.capacity() != 8 {
         ret 3
     }
-
-    if !deferred.push_ranked(Job(id = 40, urgency = 7, cost = 1)) {
+    if primary_release_lane.is_full() {
         ret 4
     }
-    if !deferred.push_ranked(Job(id = 50, urgency = 4, cost = 1)) {
+
+    var highest_priority = primary_release_lane.peek_highest()
+    var lowest_priority = primary_release_lane.peek_lowest()
+    if highest_priority.task_id != 20 {
         ret 5
     }
-
-    if incoming.length != 3 {
+    if lowest_priority.task_id != 10 {
         ret 6
     }
-    if SizedCollection.len(&incoming) != 3 {
+    if primary_release_lane.total_rank() != 171 {
         ret 7
     }
-    var incoming_top Job = incoming.top()
-    var incoming_bottom Job = incoming.bottom()
-    if Ranked.rank(&incoming_top) != 78 {
+    if overflow_release_lane.total_rank() != 105 {
         ret 8
     }
-    if Ranked.rank(&incoming_bottom) != 47 {
+    if !primary_release_lane.would_preempt(
+        BuildTask(task_id = 60, customer_impact = 1, implementation_cost = 0,
+                  risk = 0)
+    ) {
         ret 9
     }
-    if incoming.total_rank() != 184 {
+
+    var selected_lane =
+        choose_release_lane(primary_release_lane, overflow_release_lane)
+    var selected_task = selected_lane.peek_highest()
+    if selected_task.task_id != 20 {
         ret 10
     }
-    if deferred.total_rank() != 108 {
-        ret 11
-    }
-    if incoming.echo[i32](3) != 3 {
-        ret 12
-    }
-    if !incoming.outranks(Job(id = 60, urgency = 1, cost = 0)) {
-        ret 13
-    }
 
-    var chosen SmallPriorityQueue[Job] = best_of_two_queues(incoming, deferred)
-    var chosen_top Job = chosen.top()
-    if chosen_top.id != 20 {
-        ret 14
-    }
-
-    ret incoming.total_rank() + deferred.total_rank() + chosen_top.id
+    ret primary_release_lane.total_rank() +
+        overflow_release_lane.total_rank() + selected_task.task_id
 }
 
 ret run()

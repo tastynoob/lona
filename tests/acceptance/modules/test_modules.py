@@ -603,7 +603,7 @@ def test_imported_generic_method_results_do_not_hide_unconstrained_template_use(
     )
 
 
-def test_imported_bounded_generic_functions_check_bounds_and_lower_trait_qualified_calls(
+def test_imported_bounded_generic_functions_check_bounds_and_lower_plain_dot_calls(
     compiler: CompilerHarness,
 ) -> None:
     compiler.write_source(
@@ -624,7 +624,7 @@ def test_imported_bounded_generic_functions_check_bounds_and_lower_trait_qualifi
         impl Point: Hash
 
         def hash_one[T Hash](value T) i32 {
-            ret Hash.hash(&value)
+            ret value.hash()
         }
 
         def make() Point {

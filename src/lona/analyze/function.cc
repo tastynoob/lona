@@ -866,15 +866,23 @@ class FunctionAnalyzer {
         auto genericArgs =
             buildAppliedStructGenericArgs(*typeDecl, structType, loc);
         std::vector<string> genericTypeParams;
+        std::unordered_map<std::string, std::string> genericTypeParamBounds;
         genericTypeParams.reserve(typeDecl->typeParams.size());
+        genericTypeParamBounds.reserve(typeDecl->typeParams.size());
         for (const auto &param : typeDecl->typeParams) {
-            genericTypeParams.push_back(toStdString(param.localName));
+            auto paramName = toStdString(param.localName);
+            genericTypeParams.push_back(paramName);
+            if (!param.boundTraitName.empty()) {
+                genericTypeParamBounds.emplace(
+                    paramName, toStdString(param.boundTraitName));
+            }
         }
 
         auto resolvedModule = resolveGenericMethodInstance(
             global, templateUnit, methodDecl, string(symbolName),
             toStdString(structType->full_name),
             std::move(genericTypeParams),
+            std::move(genericTypeParamBounds),
             templateUnit != unit ? templateUnit->interface() : nullptr,
             std::move(genericArgs));
         if (!resolvedModule || resolvedModule->functions().size() != 1) {
@@ -1143,15 +1151,33 @@ class FunctionAnalyzer {
 
         GenericFunctionEmissionGuard guard(runtimeState, instanceKey);
         std::vector<string> genericTypeParams;
-        genericTypeParams.reserve(lookup.methodTemplate->typeParams.size());
+        genericTypeParams.reserve(lookup.typeDecl->typeParams.size() +
+                                  lookup.methodTemplate->typeParams.size());
+        std::unordered_map<std::string, std::string> genericTypeParamBounds;
+        genericTypeParamBounds.reserve(lookup.typeDecl->typeParams.size() +
+                                       lookup.methodTemplate->typeParams.size());
+        for (const auto &param : lookup.typeDecl->typeParams) {
+            auto paramName = toStdString(param.localName);
+            genericTypeParams.push_back(paramName);
+            if (!param.boundTraitName.empty()) {
+                genericTypeParamBounds.emplace(
+                    paramName, toStdString(param.boundTraitName));
+            }
+        }
         for (const auto &param : lookup.methodTemplate->typeParams) {
-            genericTypeParams.push_back(toStdString(param.localName));
+            auto paramName = toStdString(param.localName);
+            genericTypeParams.push_back(paramName);
+            if (!param.boundTraitName.empty()) {
+                genericTypeParamBounds.emplace(
+                    paramName, toStdString(param.boundTraitName));
+            }
         }
 
         auto resolvedModule = resolveGenericMethodInstance(
             global, lookup.ownerUnit, lookup.methodDecl, string(symbolName),
             toStdString(structType->full_name),
             std::move(genericTypeParams),
+            std::move(genericTypeParamBounds),
             lookup.ownerUnit != unit ? lookup.ownerUnit->interface() : nullptr,
             genericArgs);
         if (!resolvedModule || resolvedModule->functions().size() != 1) {

@@ -948,26 +948,157 @@ def test_generic_v0_bound_failures_are_checked_at_instantiation_sites(
     )
 
 
-def test_generic_v0_bounded_params_still_reject_plain_dot_lookup(
+def test_generic_v0_bounded_params_allow_plain_dot_lookup_for_bound_methods(
     compiler: CompilerHarness,
 ) -> None:
-    _expect_ir_failure(
+    ir = _emit_ir(
         compiler,
-        "generic_bound_member_lookup_bad_round12.lo",
+        "generic_bound_member_lookup_ok_round14.lo",
         """
         trait Hash {
             def hash() i32
         }
 
-        def bad[T Hash](value T) i32 {
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        def hash_one[T Hash](value T) i32 {
             ret value.hash()
         }
+
+        def main() i32 {
+            ret hash_one(Point(value = 41))
+        }
         """,
-        [
-            "generic parameter `T` does not provide member `hash` through bound `Hash`",
-            "Bounded generic parameters only allow explicit trait-qualified static calls such as `Hash.method(&value)`.",
-        ],
     )
+    assert_regex(
+        ir,
+        r"@generic_bound_member_lookup_ok_round14\.hash_one__inst__.*Point",
+        label="bounded dot lookup ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_bound_member_lookup_ok_round14.Point.hash(",
+        label="bounded dot lookup ir",
+    )
+
+
+def test_generic_v0_bounded_array_projection_results_allow_plain_dot_lookup(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_bound_array_projection_ok_round15.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        struct Box[T Hash] {
+            items T[2]
+
+            set def store(index i32, value T) {
+                self.items(index) = value
+            }
+
+            def slot_hash(index i32) i32 {
+                ret self.items(index).hash()
+            }
+        }
+
+        def main() i32 {
+            var box Box[Point]
+            box.store(0, Point(value = 10))
+            box.store(1, Point(value = 41))
+            ret box.slot_hash(1)
+        }
+        """,
+    )
+    assert_contains(
+        ir,
+        "call i32 @generic_bound_array_projection_ok_round15.Point.hash(",
+        label="bounded array projection ir",
+    )
+
+
+def test_generic_v0_bounded_params_still_reject_bare_member_read_and_write(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "generic_bound_bare_member_read_rejected_round16.lo",
+            """
+            trait Value {
+                def value() i32
+            }
+
+            struct Record {
+                value i32
+
+                def value() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Record: Value
+
+            def bad_read[T Value](x T) i32 {
+                ret x.value
+            }
+            """,
+            [
+                "generic parameter `T` does not provide member `value` through bound `Value`",
+                "Bounded generic parameters only allow methods provided by bound `Value`, such as `value.method()`.",
+            ],
+        ),
+        (
+            "generic_bound_bare_member_write_rejected_round16.lo",
+            """
+            trait Value {
+                def value() i32
+            }
+
+            struct Record {
+                value i32
+
+                def value() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Record: Value
+
+            def bad_write[T Value](x T) i32 {
+                var copy = x
+                copy.value = 9
+                ret 0
+            }
+            """,
+            [
+                "generic parameter `T` does not provide member `value` through bound `Value`",
+                "Bounded generic parameters only allow methods provided by bound `Value`, such as `value.method()`.",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
 
 
 def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_generic_receivers(
