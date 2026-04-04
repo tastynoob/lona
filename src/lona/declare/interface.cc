@@ -146,11 +146,6 @@ class InterfaceCollector {
             }
             ModuleInterface::GenericParamDecl decl{param->name.text, string()};
             if (param->hasBoundTrait()) {
-                if (context == GenericParamContext::StructDecl) {
-                    error(param->boundTrait->loc,
-                          "struct type parameters do not support trait bounds in generic v0",
-                          "Keep struct declarations as `struct Box[T]`, and write bounds on functions or impl headers like `impl[T Trait] Box[T]: Trait`.");
-                }
                 auto traitRef = resolveTraitRef(param->boundTrait,
                                                 param->boundTrait->loc);
                 decl.boundTraitName = traitRef.resolvedName;
@@ -501,6 +496,9 @@ class InterfaceCollector {
             if (structType->getMethodType(toStringRef(method.localName))) {
                 continue;
             }
+            if (method.typeParams.size() > method.enclosingTypeParamCount) {
+                continue;
+            }
             std::vector<TypeClass *> argTypes;
             auto *selfPointee = interfaceMethodReceiverPointeeType(
                 interface_, structType, method.receiverAccess);
@@ -547,8 +545,11 @@ class InterfaceCollector {
                         toStdString(typeDecl.localName) + "." +
                         toStdString(method.localName) + "`");
             }
+            auto paramBindingKinds = method.paramBindingKinds;
+            paramBindingKinds.insert(paramBindingKinds.begin(),
+                                     BindingKind::Value);
             auto *funcType = interface_->getOrCreateFunctionType(
-                argTypes, retType, method.paramBindingKinds);
+                argTypes, retType, paramBindingKinds);
             structType->addMethodType(toStringRef(method.localName), funcType,
                                       method.paramNames);
         }
@@ -1600,14 +1601,6 @@ class InterfaceCollector {
             nullptr) {
         CollectedFunctionInterface collected;
         validateFunctionReceiverAccess(node, methodParent);
-        if (node && node->hasTypeParams() && methodParent) {
-            error(node->loc,
-                  "generic methods are not supported in generic v0: `" +
-                      toStdString(methodParent->full_name) + "." +
-                      toStdString(node->name) + "`",
-                  "Use a top-level generic `def`, or move type variation to "
-                  "the enclosing type instead of declaring a generic method.");
-        }
         collected.paramNames = extractParamNames(node);
         collected.paramBindingKinds =
             extractParamBindingKinds(node, methodParent != nullptr);
@@ -1742,18 +1735,25 @@ class InterfaceCollector {
                 auto *funcType = collected.type;
                 if (!funcType) {
                     if (collected.isGeneric() && typeDecl) {
+                        auto methodParamBindingKinds =
+                            std::move(collected.paramBindingKinds);
+                        if (!methodParamBindingKinds.empty()) {
+                            methodParamBindingKinds.erase(
+                                methodParamBindingKinds.begin());
+                        }
                         interface_->declareStructMethodTemplate(
                             toStdString(structDecl->name),
                             ModuleInterface::MethodTemplateDecl{
                                 funcDecl->name,
                                 funcDecl->receiverAccess,
                                 std::move(collected.paramNames),
-                                std::move(collected.paramBindingKinds),
+                                std::move(methodParamBindingKinds),
                                 std::move(collected.paramTypeNodes),
                                 std::move(collected.paramTypeSpellings),
                                 collected.returnTypeNode,
                                 std::move(collected.returnTypeSpelling),
                                 std::move(collected.typeParams),
+                                typeDecl ? typeDecl->typeParams.size() : 0,
                             });
                     }
                     continue;
@@ -1850,8 +1850,8 @@ public:
         interface_->clear();
         declareImportedModules();
         collectTopLevelLists(unit_.syntaxTree());
-        declareStructs();
         declareTraitNames();
+        declareStructs();
         completeStructs();
         defineTraitMethods();
         declareGlobals();

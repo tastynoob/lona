@@ -9,6 +9,7 @@
 - [data_model_suite.lo](data_model_suite.lo): 结构体、字段、方法、构造函数、普通指针读写和 `null` 空指针。
 - [function_pointer_suite.lo](function_pointer_suite.lo): `(Args: Ret)` 函数指针、显式函数取指针、已初始化的函数指针存储和间接调用。
 - [generic_trait_suite.lo](generic_trait_suite.lo): `Box[T]`、`id[T](...)`、single trait bound `T Trait`、`impl[T Trait] Box[T]: Trait`，以及 generic body 中的 `Trait.method(&value)` 静态调用。
+- [generic_priority_queue_suite.lo](generic_priority_queue_suite.lo): 更接近 C++ 容器 + 算法风格的 fixed-capacity generic priority queue；示例同时覆盖 declaration-site struct bound、get-only `length`、容器内聚的排序逻辑，以及 generic struct method。
 - [syntax_suite.lo](syntax_suite.lo): `cast[...]`、`sizeof(expr)` / `sizeof[T]()`、`usize`、`tobits()/u8[N].toXXX()`、tuple、固定维度数组、位运算、比较和逻辑短路。
 - [container_trait_suite.lo](container_trait_suite.lo): `vector` / `list` / `map` 风格容器、共享的容器 trait、以及共享的 iterator trait；这是当前能力下可运行的复杂 trait 样例。
 - [trait_composition_suite.lo](trait_composition_suite.lo): `trait`、`impl Type: Trait`、显式 self pointer 版 `Trait.method(&value, ...)`、`Trait dyn`，以及嵌入式组合带来的 promoted 字段/方法访问。
@@ -27,12 +28,13 @@
 1. 先看 [algorithms_suite.lo](algorithms_suite.lo) 了解基础控制流。
 2. 再看 [data_model_suite.lo](data_model_suite.lo) 和 [function_pointer_suite.lo](function_pointer_suite.lo)。
 3. 需要看 system-level `C FFI` 和真实运行样例时，查 [c_ffi_linked_list.lo](c_ffi_linked_list.lo)。
-4. 需要看当前 `generic + trait` 的可运行样例时，查 [generic_trait_suite.lo](generic_trait_suite.lo)。
-5. 需要看 `trait` 和组合特性的联动时，查 [trait_composition_suite.lo](trait_composition_suite.lo)。
-6. 需要看容器接口、iterator trait 和跨容器复用时，查 [container_trait_suite.lo](container_trait_suite.lo)。
-7. 需要看未来 `generic + trait` 容器目标形态时，查 [generic_container_sketch.md](generic_container_sketch.md)。
-8. 需要看当前语法收口结果时，查 [syntax_suite.lo](syntax_suite.lo)。
-9. 需要模块导入时，查 [modules/main.lo](modules/main.lo)。
+4. 需要看最小闭合的 `generic + trait` 语法样例时，查 [generic_trait_suite.lo](generic_trait_suite.lo)。
+5. 需要看更接近 C++ 容器 + 算法风格的泛型样例时，查 [generic_priority_queue_suite.lo](generic_priority_queue_suite.lo)。
+6. 需要看 `trait` 和组合特性的联动时，查 [trait_composition_suite.lo](trait_composition_suite.lo)。
+7. 需要看容器接口、iterator trait 和跨容器复用时，查 [container_trait_suite.lo](container_trait_suite.lo)。
+8. 需要看未来 `generic + trait` 容器目标形态时，查 [generic_container_sketch.md](generic_container_sketch.md)。
+9. 需要看当前语法收口结果时，查 [syntax_suite.lo](syntax_suite.lo)。
+10. 需要模块导入时，查 [modules/main.lo](modules/main.lo)。
 
 说明：
 

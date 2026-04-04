@@ -759,6 +759,34 @@ class FunctionResolver {
         if (!methodDecl || !methodDecl->retType) {
             return noGenericCapability();
         }
+        auto *explicitTypeArgs = callExplicitTypeArgs(node);
+        if (methodDecl->typeParams) {
+            if (explicitTypeArgs) {
+                const auto count =
+                    std::min(explicitTypeArgs->size(), methodDecl->typeParams->size());
+                for (std::size_t i = 0; i < count; ++i) {
+                    auto *param = methodDecl->typeParams->at(i);
+                    if (!param) {
+                        continue;
+                    }
+                    recordGenericCapabilitySubst(
+                        substs, toStringRef(param->name.text),
+                        classifyGenericTypeNode(explicitTypeArgs->at(i)));
+                }
+            }
+            const auto argCount = node->args ? node->args->size() : 0;
+            auto *args = node->args;
+            const auto paramCount =
+                std::min(argCount, methodDecl->args ? methodDecl->args->size() : 0);
+            for (std::size_t i = 0; i < paramCount; ++i) {
+                auto *argExpr = callArgValue(args->at(i));
+                auto *argDecl = dynamic_cast<AstVarDecl *>(methodDecl->args->at(i));
+                inferGenericCapabilitySubsts(
+                    argDecl ? argDecl->typeNode : nullptr,
+                    exprVisibleTypeNode(argExpr), inferGenericExprInfo(argExpr),
+                    substs);
+            }
+        }
         return classifyGenericTypeNode(methodDecl->retType, substs);
     }
 
@@ -1541,9 +1569,11 @@ class ModuleResolver {
         return resolved;
     }
 
-    void resolveFunction(AstFuncDecl *node, StructType *methodParent = nullptr,
-                         string methodParentTypeName = string(),
-                         std::vector<string> scopedTypeParams = {}) {
+    void resolveFunction(
+        AstFuncDecl *node, StructType *methodParent = nullptr,
+        string methodParentTypeName = string(),
+        std::vector<string> scopedTypeParams = {},
+        std::unordered_map<std::string, std::string> scopedTypeParamBounds = {}) {
         if (!node) {
             return;
         }
@@ -1571,7 +1601,10 @@ class ModuleResolver {
                   "Run declaration collection before name resolution.");
         }
 
-        auto genericTypeParamBounds = collectGenericParamBounds(node->typeParams);
+        auto genericTypeParamBounds = std::move(scopedTypeParamBounds);
+        auto ownGenericTypeParamBounds = collectGenericParamBounds(node->typeParams);
+        genericTypeParamBounds.insert(ownGenericTypeParamBounds.begin(),
+                                      ownGenericTypeParamBounds.end());
         auto *resolved = createResolvedFunction(
             node, node->body,
             methodParent ? string(node->name)
@@ -1613,11 +1646,12 @@ class ModuleResolver {
             return;
         }
         auto scopedTypeParams = collectGenericParamNames(node->typeParams);
+        auto scopedTypeParamBounds = collectGenericParamBounds(node->typeParams);
         for (auto *stmt : body->getBody()) {
             auto *func = dynamic_cast<AstFuncDecl *>(stmt);
             if (func) {
                 resolveFunction(func, structType, resolvedStructName,
-                                scopedTypeParams);
+                                scopedTypeParams, scopedTypeParamBounds);
             }
         }
     }
@@ -1817,10 +1851,12 @@ resolveGenericFunctionInstance(
 std::unique_ptr<ResolvedModule>
 resolveGenericMethodInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
-    string methodParentTypeName, std::vector<string> genericTypeParams,
+    string resolvedFunctionName, string methodParentTypeName,
+    std::vector<string> genericTypeParams,
     const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes) {
-    if (!global || !decl || methodParentTypeName.empty()) {
+    if (!global || !decl || resolvedFunctionName.empty() ||
+        methodParentTypeName.empty()) {
         return nullptr;
     }
 
@@ -1829,10 +1865,10 @@ resolveGenericMethodInstance(
 
     auto module = std::make_unique<ResolvedModule>();
     auto *resolved = module->createFunction(
-        decl, decl->body, string(decl->name), std::move(methodParentTypeName),
-        decl->loc, false, false, decl->body && decl->body->hasTerminator(),
-        false, std::move(genericTypeParams), {},
-        genericOwnerInterface,
+        decl, decl->body, std::move(resolvedFunctionName),
+        std::move(methodParentTypeName), decl->loc, false, false,
+        decl->body && decl->body->hasTerminator(), false,
+        std::move(genericTypeParams), {}, genericOwnerInterface,
         std::move(concreteGenericTypes));
 
     auto *declStructType =

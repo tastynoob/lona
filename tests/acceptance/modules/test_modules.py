@@ -755,6 +755,94 @@ def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     )
 
 
+def test_imported_struct_decl_bounds_and_generic_methods_lower_in_requester(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_struct_bound_method/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        struct Other {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 10
+            }
+        }
+
+        impl Point: Hash
+        impl Other: Hash
+
+        struct Box[T Hash] {
+            value T
+
+            def hash_value() i32 {
+                ret Hash.hash(&self.value)
+            }
+
+            def echo[U](value U) U {
+                ret value
+            }
+
+            def score_with[U Hash](other U) i32 {
+                ret Hash.hash(&self.value) + Hash.hash(&other)
+            }
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_struct_bound_method/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var box dep.Box[dep.Point] =
+                dep.Box[dep.Point](value = dep.Point(value = 41))
+            if box.hash_value() != 42 {
+                ret 1
+            }
+            if box.echo[i32](7) != 7 {
+                ret 2
+            }
+            if !box.echo(true) {
+                ret 3
+            }
+            if box.score_with(dep.Other(value = 5)) != 57 {
+                ret 4
+            }
+            ret 0
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"@dep_2eBox_5b.*dep_2ePoint.*_5d\.echo__inst__i32",
+        label="imported generic method explicit instantiation ir",
+    )
+    assert_regex(
+        ir,
+        r"@dep_2eBox_5b.*dep_2ePoint.*_5d\.echo__inst__bool",
+        label="imported generic method inferred instantiation ir",
+    )
+    assert_regex(
+        ir,
+        r"@dep_2eBox_5b.*dep_2ePoint.*_5d\.score_with__inst__.*dep_2eOther",
+        label="imported generic method bounded instantiation ir",
+    )
+
+
 def test_imported_trait_supports_local_impl_dynamic_dispatch(
     compiler: CompilerHarness,
 ) -> None:

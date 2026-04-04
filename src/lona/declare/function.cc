@@ -321,12 +321,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 bool exportNamespace) {
     validateFunctionReceiverAccess(node, methodParent);
     if (node && node->hasTypeParams() && methodParent) {
-        error(node->loc,
-              "generic methods are not supported in generic v0: `" +
-                  toStdString(methodParent->full_name) + "." +
-                  toStdString(node->name) + "`",
-              "Use a top-level generic `def`, or move type variation to the "
-              "enclosing type instead of declaring a generic method.");
+        return nullptr;
     }
     auto &funcName = node->name;
     auto resolvedFunctionName = resolveFunctionSymbolName(

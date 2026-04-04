@@ -59,7 +59,10 @@ impl Point: Hash
 - `impl[T Trait] Box[T]: Trait` 表示“对所有满足该单 bound 的具体实例，现有的 inherent method 可以满足该 trait”。
 - 编译器会按方法名、receiver access、参数个数、参数 binding kind、参数类型、返回类型检查满足性。
 - `impl Type: Trait { ... }` 在 v0 中仍然会被拒绝。
-- struct 声明本身仍然不支持在 `struct Box[T Hash]` 这种位置写 bound。
+- struct 声明现在支持单 bound，例如 `struct Box[T Hash]`。
+- struct 方法现在也可以带自己的 generic parameter，例如
+  `def map[U](...)` 或 `def merge[U Hash](...)`。
+- trait 方法本身仍然不能声明 generic parameter。
 - 同一可见程序图中，`(Trait, Type)` 只能有一份 visible impl。
 - orphan rule 仍然生效：`trait` 或 `Type` 至少有一方必须定义在当前模块。
 
@@ -222,11 +225,15 @@ def hash_one[T Hash](value T) i32 {
     ret Hash.hash(&value)
 }
 
-struct Box[T] {
+struct Box[T Hash] {
     value T
 
     def hash() i32 {
-        ret 1
+        ret Hash.hash(&self.value)
+    }
+
+    def echo[U](value U) U {
+        ret value
     }
 }
 
@@ -238,14 +245,17 @@ impl[T Hash] Box[T]: Hash
 - 每个 type parameter 只支持一个 trait bound，例如 `T Hash`。
 - bound satisfaction 在实例化点检查，而不是模板声明点提前假设成立。
 - same-module 和 imported generic instantiation 都会检查 bound。
+- struct 声明位置也支持同样的 single bound，例如 `struct Box[T Hash]`。
 - `impl[T Trait] Box[T]: Trait` 的 self type 使用普通的 `Box[T]` 声明语法，不走任何额外的类型字符串特例。
+- generic struct method 允许声明自己的 type parameter；实例化同样支持 same-module 和 imported 调用。
+- generic struct method 的 bound 也按实例化点检查。
 - generic function body 中，bounded `T` 只开放显式 trait-qualified static call，例如 `Hash.hash(&value)`。
 - bounded `T` 仍然不开放普通 dot lookup；`value.hash()` 会继续报错。
 
 当前明确不支持：
 
 - multi-bound，例如 `[T Hash + Eq]`
-- 在 `struct Box[T Hash]` 这种 struct 声明位置写 bound
+- trait method 自己再带 generic parameter
 - default method、associated type、generic trait、negative impl
 
 ## 10. 实现边界

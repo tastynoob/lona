@@ -1,0 +1,169 @@
+// Generic + trait container sample: a fixed-capacity priority queue with
+// declaration-site bounds, generic methods, by-value storage, and
+// container-level trait impls.
+
+trait Ranked {
+    def rank() i32
+}
+
+trait SizedCollection {
+    def len() i32
+}
+
+struct Job {
+    id i32
+    urgency i32
+    cost i32
+
+    def rank() i32 {
+        ret self.urgency * 10 - self.cost
+    }
+}
+
+impl Job: Ranked
+
+struct SmallPriorityQueue[T Ranked] {
+    set items T[8]
+    length i32
+
+    def len() i32 {
+        ret self.length
+    }
+
+    def top() T {
+        ret self.items(0)
+    }
+
+    def bottom() T {
+        ret self.items(self.length - 1)
+    }
+
+    set def push_ranked(value T) bool {
+        if self.length >= 8 {
+            ret false
+        }
+
+        self.items(self.length) = value
+        self.length = self.length + 1
+
+        var cursor i32 = self.length - 1
+        for cursor > 0 {
+            var current_rank i32 = Ranked.rank(&self.items(cursor))
+            var previous_rank i32 = Ranked.rank(&self.items(cursor - 1))
+
+            if current_rank > previous_rank {
+                var swap T = self.items(cursor - 1)
+                self.items(cursor - 1) = self.items(cursor)
+                self.items(cursor) = swap
+                cursor = cursor - 1
+            } else {
+                cursor = 0
+            }
+        }
+
+        ret true
+    }
+
+    def total_rank() i32 {
+        var index i32 = 0
+        var out i32 = 0
+        for index < self.length {
+            out = out + Ranked.rank(&self.items(index))
+            index = index + 1
+        }
+        ret out
+    }
+
+    def echo[U](value U) U {
+        ret value
+    }
+
+    def outranks[U Ranked](other U) bool {
+        ret self.rank() > Ranked.rank(&other)
+    }
+
+    def rank() i32 {
+        ret self.total_rank()
+    }
+}
+
+impl[T] SmallPriorityQueue[T]: SizedCollection
+impl[T Ranked] SmallPriorityQueue[T]: Ranked
+
+def make_queue[T]() SmallPriorityQueue[T] {
+    var out SmallPriorityQueue[T]
+    ret out
+}
+
+def choose_higher_ranked[T Ranked](left T, right T) T {
+    if Ranked.rank(&left) >= Ranked.rank(&right) {
+        ret left
+    }
+    ret right
+}
+
+def best_of_two_queues[T Ranked](
+    left SmallPriorityQueue[T],
+    right SmallPriorityQueue[T]
+) SmallPriorityQueue[T] {
+    ret choose_higher_ranked(left, right)
+}
+
+def run() i32 {
+    var incoming SmallPriorityQueue[Job] = make_queue[Job]()
+    var deferred SmallPriorityQueue[Job] = make_queue[Job]()
+
+    if !incoming.push_ranked(Job(id = 10, urgency = 5, cost = 3)) {
+        ret 1
+    }
+    if !incoming.push_ranked(Job(id = 20, urgency = 8, cost = 2)) {
+        ret 2
+    }
+    if !incoming.push_ranked(Job(id = 30, urgency = 6, cost = 1)) {
+        ret 3
+    }
+
+    if !deferred.push_ranked(Job(id = 40, urgency = 7, cost = 1)) {
+        ret 4
+    }
+    if !deferred.push_ranked(Job(id = 50, urgency = 4, cost = 1)) {
+        ret 5
+    }
+
+    if incoming.length != 3 {
+        ret 6
+    }
+    if SizedCollection.len(&incoming) != 3 {
+        ret 7
+    }
+    var incoming_top Job = incoming.top()
+    var incoming_bottom Job = incoming.bottom()
+    if Ranked.rank(&incoming_top) != 78 {
+        ret 8
+    }
+    if Ranked.rank(&incoming_bottom) != 47 {
+        ret 9
+    }
+    if incoming.total_rank() != 184 {
+        ret 10
+    }
+    if deferred.total_rank() != 108 {
+        ret 11
+    }
+    if incoming.echo[i32](3) != 3 {
+        ret 12
+    }
+    if !incoming.outranks(Job(id = 60, urgency = 1, cost = 0)) {
+        ret 13
+    }
+
+    var chosen SmallPriorityQueue[Job] = best_of_two_queues(incoming, deferred)
+    var chosen_top Job = chosen.top()
+    if chosen_top.id != 20 {
+        ret 14
+    }
+
+    ret incoming.total_rank() + deferred.total_rank() + chosen_top.id
+}
+
+ret run()

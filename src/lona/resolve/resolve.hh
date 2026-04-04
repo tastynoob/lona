@@ -315,7 +315,8 @@ resolveGenericFunctionInstance(
 std::unique_ptr<ResolvedModule>
 resolveGenericMethodInstance(
     GlobalScope *global, const CompilationUnit *unit, const AstFuncDecl *decl,
-    string methodParentTypeName, std::vector<string> genericTypeParams,
+    string resolvedFunctionName, string methodParentTypeName,
+    std::vector<string> genericTypeParams,
     const ModuleInterface *genericOwnerInterface,
     std::unordered_map<std::string, TypeClass *> concreteGenericTypes);
 

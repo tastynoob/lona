@@ -53,6 +53,7 @@ public:
         TypeNode *returnTypeNode = nullptr;
         string returnTypeSpelling = "void";
         std::vector<GenericParamDecl> typeParams;
+        std::size_t enclosingTypeParamCount = 0;
 
         bool isGeneric() const { return !typeParams.empty(); }
     };

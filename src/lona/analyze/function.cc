@@ -333,7 +333,7 @@ class FunctionAnalyzer {
         return nullptr;
     }
 
-    const AstStructDecl *findGenericStructDecl(
+    const AstStructDecl *findStructDecl(
         const CompilationUnit *templateUnit,
         const ModuleInterface::TypeDecl &typeDecl) const {
         if (!templateUnit) {
@@ -348,11 +348,62 @@ class FunctionAnalyzer {
         }
         for (auto *stmt : body->getBody()) {
             auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-            if (!structDecl || !structDecl->hasTypeParams()) {
+            if (!structDecl) {
                 continue;
             }
             if (toStdString(structDecl->name) == toStdString(typeDecl.localName)) {
                 return structDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    const ModuleInterface::TypeDecl *findVisibleTypeDeclForStructType(
+        StructType *structType, const CompilationUnit **ownerUnitOut) const {
+        if (ownerUnitOut) {
+            *ownerUnitOut = nullptr;
+        }
+        if (!structType || !unit) {
+            return nullptr;
+        }
+        if (auto *appliedTemplateDecl =
+                findAppliedTemplateDecl(structType, ownerUnitOut)) {
+            return appliedTemplateDecl;
+        }
+        if (unit->interface()) {
+            for (const auto &entry : unit->interface()->types()) {
+                if (entry.second.type == structType ||
+                    entry.second.exportedName == structType->full_name) {
+                    if (ownerUnitOut) {
+                        *ownerUnitOut = unit;
+                    }
+                    return &entry.second;
+                }
+            }
+        }
+        for (const auto &imported : unit->importedModules()) {
+            if (!imported.second.interface || !imported.second.unit) {
+                continue;
+            }
+            for (const auto &entry : imported.second.interface->types()) {
+                if (entry.second.exportedName == structType->full_name) {
+                    if (ownerUnitOut) {
+                        *ownerUnitOut = imported.second.unit;
+                    }
+                    return &entry.second;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    const ModuleInterface::MethodTemplateDecl *findGenericMethodTemplateDecl(
+        const ModuleInterface::TypeDecl &typeDecl,
+        llvm::StringRef methodName) const {
+        for (const auto &method : typeDecl.methodTemplates) {
+            if (toStringRef(method.localName) == methodName &&
+                method.typeParams.size() > method.enclosingTypeParamCount) {
+                return &method;
             }
         }
         return nullptr;
@@ -530,7 +581,7 @@ class FunctionAnalyzer {
     GenericInstanceKey buildStructMethodInstanceKey(
         const ModuleInterface::TypeDecl &typeDecl, StructType *structType,
         const CompilationUnit *templateUnit, llvm::StringRef methodName,
-        const location &loc) {
+        const std::vector<TypeClass *> &methodTypeArgs, const location &loc) {
         if (!structType || !templateUnit || !unit) {
             internalError(loc,
                           "generic struct method instance is missing its "
@@ -546,6 +597,12 @@ class FunctionAnalyzer {
         key.concreteTypeArgs = buildConcreteTypeArgNames(
             structType->getAppliedTypeArgs(), loc,
             "generic struct method `" + methodName.str() + "` instance");
+        auto methodArgNames = buildConcreteTypeArgNames(
+            methodTypeArgs, loc,
+            "generic struct method `" + methodName.str() + "` instance");
+        key.concreteTypeArgs.insert(key.concreteTypeArgs.end(),
+                                    methodArgNames.begin(),
+                                    methodArgNames.end());
         return key;
     }
 
@@ -561,15 +618,31 @@ class FunctionAnalyzer {
     }
 
     std::string buildLocalGenericStructMethodInstanceSymbolName(
-        StructType *structType, llvm::StringRef methodName, const location &loc) {
+        StructType *structType, llvm::StringRef methodName,
+        const std::vector<TypeClass *> &methodTypeArgs, const location &loc) {
         if (!structType) {
             internalError(loc,
                           "generic struct method is missing its concrete self "
                           "type",
                           "This looks like a method instantiation bug.");
         }
-        return mangleModuleEntryComponent(structType->full_name) + "." +
-               methodName.str();
+        auto symbolName = mangleModuleEntryComponent(structType->full_name) +
+                          "." + methodName.str();
+        if (methodTypeArgs.empty()) {
+            return symbolName;
+        }
+        symbolName += "__inst";
+        for (auto *typeArg : methodTypeArgs) {
+            if (!typeArg) {
+                internalError(
+                    loc,
+                    "generic struct method `" + methodName.str() +
+                        "` instance is missing a concrete method type argument",
+                    "This looks like a generic method instantiation bug.");
+            }
+            symbolName += "__" + mangleModuleEntryComponent(typeArg->full_name);
+        }
+        return symbolName;
     }
 
     Function *declareLocalGenericStructMethodInstance(
@@ -595,7 +668,7 @@ class FunctionAnalyzer {
         }
         auto symbolName =
             buildLocalGenericStructMethodInstanceSymbolName(structType,
-                                                            methodName, loc);
+                                                            methodName, {}, loc);
         auto *llvmFunc = llvm::Function::Create(
             getFunctionAbiLLVMType(*typeMgr, funcType, true),
             llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
@@ -604,6 +677,7 @@ class FunctionAnalyzer {
         auto *func =
             new Function(llvmFunc, funcType, std::move(paramNames), true);
         typeMgr->bindMethodFunction(structType, methodName, func);
+        global->addObj(string(symbolName), func);
         return func;
     }
 
@@ -760,7 +834,7 @@ class FunctionAnalyzer {
             return typeMgr->getMethodFunction(structType, methodName);
         }
 
-        auto *templateDecl = findGenericStructDecl(templateUnit, *typeDecl);
+        auto *templateDecl = findStructDecl(templateUnit, *typeDecl);
         auto *methodDecl = findLocalStructMethodDecl(templateDecl, methodName);
         if (!templateDecl || !methodDecl) {
             internalError(
@@ -775,9 +849,9 @@ class FunctionAnalyzer {
         auto symbolName = func->getllvmValue()
                               ? func->getllvmValue()->getName().str()
                               : buildLocalGenericStructMethodInstanceSymbolName(
-                                    structType, methodName, loc);
+                                    structType, methodName, {}, loc);
         auto instanceKey = buildStructMethodInstanceKey(
-            *typeDecl, structType, templateUnit, methodName, loc);
+            *typeDecl, structType, templateUnit, methodName, {}, loc);
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
         if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
@@ -798,7 +872,7 @@ class FunctionAnalyzer {
         }
 
         auto resolvedModule = resolveGenericMethodInstance(
-            global, templateUnit, methodDecl,
+            global, templateUnit, methodDecl, string(symbolName),
             toStdString(structType->full_name),
             std::move(genericTypeParams),
             templateUnit != unit ? templateUnit->interface() : nullptr,
@@ -820,6 +894,342 @@ class FunctionAnalyzer {
         recordGenericInstance(std::move(instanceKey), templateUnit,
                               {string(symbolName)});
         return func;
+    }
+
+    struct GenericMethodTemplateLookup {
+        const ModuleInterface::TypeDecl *typeDecl = nullptr;
+        const ModuleInterface::MethodTemplateDecl *methodTemplate = nullptr;
+        const CompilationUnit *ownerUnit = nullptr;
+        const AstFuncDecl *methodDecl = nullptr;
+
+        bool found() const {
+            return typeDecl != nullptr && methodTemplate != nullptr &&
+                   ownerUnit != nullptr && methodDecl != nullptr;
+        }
+    };
+
+    GenericMethodTemplateLookup lookupGenericMethodTemplate(
+        StructType *structType, llvm::StringRef methodName,
+        const location &loc) {
+        GenericMethodTemplateLookup lookup;
+        lookup.typeDecl = findVisibleTypeDeclForStructType(structType,
+                                                           &lookup.ownerUnit);
+        if (!lookup.typeDecl || !lookup.ownerUnit) {
+            return lookup;
+        }
+        lookup.methodTemplate =
+            findGenericMethodTemplateDecl(*lookup.typeDecl, methodName);
+        if (!lookup.methodTemplate) {
+            return lookup;
+        }
+        auto *structDecl = findStructDecl(lookup.ownerUnit, *lookup.typeDecl);
+        lookup.methodDecl = findLocalStructMethodDecl(structDecl, methodName);
+        if (!structDecl || !lookup.methodDecl) {
+            internalError(
+                loc,
+                "generic method `" + methodName.str() +
+                    "` is missing its template AST",
+                "This looks like a generic method registration bug.");
+        }
+        return lookup;
+    }
+
+    std::unordered_map<std::string, TypeClass *> resolveGenericMethodTypeArgs(
+        const ModuleInterface::TypeDecl &typeDecl,
+        const ModuleInterface::MethodTemplateDecl &methodTemplate,
+        StructType *receiverStructType, const CallArgList &normalizedArgs,
+        std::vector<TypeNode *> *explicitTypeArgs, const location &loc,
+        const std::string &methodName,
+        const ModuleInterface *ownerInterface) {
+        const auto paramCount = methodTemplate.paramTypeNodes.size();
+        if (methodTemplate.paramBindingKinds.size() != paramCount) {
+            internalError(loc,
+                          "generic method `" + methodName +
+                              "` is missing parameter binding metadata",
+                          "Rebuild interface collection before analyzing "
+                          "generic method calls.");
+        }
+
+        std::vector<FormalCallArg> syntaxFormals;
+        syntaxFormals.reserve(paramCount);
+        for (std::size_t i = 0; i < paramCount; ++i) {
+            const string *paramName =
+                i < methodTemplate.paramNames.size()
+                    ? &methodTemplate.paramNames[i]
+                    : nullptr;
+            syntaxFormals.push_back({paramName, nullptr,
+                                     methodTemplate.paramBindingKinds[i],
+                                     FormalCallArgKind::FunctionParameter, i});
+        }
+        auto orderedArgs = collectOrderedCallArgs(
+            normalizedArgs, syntaxFormals,
+            {loc, CallBindingTargetKind::FunctionCall, nullptr,
+             !methodTemplate.paramNames.empty()});
+
+        std::unordered_map<std::string, TypeClass *> selectedByName;
+        selectedByName.reserve(methodTemplate.typeParams.size());
+        for (const auto &param : methodTemplate.typeParams) {
+            selectedByName.emplace(toStdString(param.localName), nullptr);
+        }
+
+        auto receiverGenericArgs =
+            buildAppliedStructGenericArgs(typeDecl, receiverStructType, loc);
+        for (const auto &param : typeDecl.typeParams) {
+            auto paramName = toStdString(param.localName);
+            auto found = receiverGenericArgs.find(paramName);
+            if (found == receiverGenericArgs.end() || !found->second) {
+                internalError(
+                    loc,
+                    "generic method `" + methodName +
+                        "` is missing the receiver's concrete type for `" +
+                        paramName + "`",
+                    "This looks like a generic receiver instantiation bug.");
+            }
+            selectedByName[paramName] = found->second;
+        }
+
+        const auto methodTypeParamOffset = methodTemplate.enclosingTypeParamCount;
+        const auto methodTypeParamCount =
+            methodTemplate.typeParams.size() >= methodTypeParamOffset
+                ? methodTemplate.typeParams.size() - methodTypeParamOffset
+                : 0;
+
+        if (explicitTypeArgs && !explicitTypeArgs->empty()) {
+            if (explicitTypeArgs->size() != methodTypeParamCount) {
+                error(loc,
+                      "generic type argument count mismatch for `" +
+                          methodName + "`: expected " +
+                          std::to_string(methodTypeParamCount) + ", got " +
+                          std::to_string(explicitTypeArgs->size()),
+                      "Match the number of `[` `]` type arguments to the "
+                      "generic parameter list.");
+            }
+            for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
+                auto *type = requireType(
+                    explicitTypeArgs->at(i), explicitTypeArgs->at(i)->loc,
+                    "unknown generic type argument at index " +
+                        std::to_string(i) + " for `" + methodName + "`");
+                selectedByName[toStdString(
+                    methodTemplate.typeParams[methodTypeParamOffset + i]
+                        .localName)] = type;
+            }
+        } else if (methodTypeParamCount != 0) {
+            for (std::size_t i = 0; i < paramCount; ++i) {
+                auto *expr = requireNonCallExpr(orderedArgs[i].value);
+                auto *actualType = expr ? expr->getType() : nullptr;
+                if (!actualType) {
+                    error(orderedArgs[i].loc,
+                          "cannot infer generic type argument from a "
+                          "non-value expression in `" +
+                              methodName + "`");
+                }
+                inferGenericArgsFromPattern(methodTemplate.paramTypeNodes[i],
+                                            actualType, selectedByName,
+                                            orderedArgs[i].loc, methodName,
+                                            ownerInterface);
+            }
+            for (std::size_t i = methodTypeParamOffset;
+                 i < methodTemplate.typeParams.size(); ++i) {
+                auto paramName =
+                    toStdString(methodTemplate.typeParams[i].localName);
+                auto *inferred = selectedByName[paramName];
+                if (!inferred) {
+                    error(loc,
+                          "cannot infer generic type argument `" + paramName +
+                              "` for `" + methodName + "`",
+                          "Pass explicit type arguments like `" + methodName +
+                              "[T](...)`.");
+                }
+            }
+        }
+
+        return selectedByName;
+    }
+
+    Function *declareGenericMethodInstance(
+        StructType *structType,
+        const ModuleInterface::MethodTemplateDecl &methodTemplate,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const std::vector<TypeClass *> &methodTypeArgs,
+        const std::string &symbolName, const location &loc,
+        const ModuleInterface *ownerInterface) {
+        if (auto *existing = global->getObj(string(symbolName))) {
+            auto *func = existing->as<Function>();
+            if (!func) {
+                internalError(
+                    loc,
+                    "generic method instance symbol `" + symbolName +
+                        "` collides with a non-function global",
+                    "This looks like a symbol declaration bug.");
+            }
+            return func;
+        }
+        if (!structType) {
+            internalError(loc,
+                          "generic method instance is missing its concrete "
+                          "receiver type",
+                          "This looks like a generic method instantiation bug.");
+        }
+
+        std::vector<TypeClass *> argTypes;
+        argTypes.reserve(methodTemplate.paramTypeNodes.size() + 1);
+        auto *selfPointee =
+            methodTemplate.receiverAccess == AccessKind::GetSet
+                ? static_cast<TypeClass *>(structType)
+                : static_cast<TypeClass *>(typeMgr->createConstType(structType));
+        argTypes.push_back(typeMgr->createPointerType(selfPointee));
+        for (auto *paramTypeNode : methodTemplate.paramTypeNodes) {
+            argTypes.push_back(substituteGenericSignatureType(
+                paramTypeNode, genericArgs, loc,
+                toStdString(methodTemplate.localName), ownerInterface));
+        }
+        auto *retType = substituteGenericSignatureType(
+            methodTemplate.returnTypeNode, genericArgs, loc,
+            toStdString(methodTemplate.localName), ownerInterface);
+        auto paramBindingKinds = methodTemplate.paramBindingKinds;
+        paramBindingKinds.insert(paramBindingKinds.begin(),
+                                 BindingKind::Value);
+        auto *funcType = typeMgr->getOrCreateFunctionType(
+            argTypes, retType, paramBindingKinds, AbiKind::Native);
+        if (!funcType) {
+            internalError(loc,
+                          "failed to build concrete method type for `" +
+                              symbolName + "`",
+                          "This looks like a generic method instantiation bug.");
+        }
+
+        auto *llvmFunc = llvm::Function::Create(
+            getFunctionAbiLLVMType(*typeMgr, funcType, true),
+            llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
+            global->module);
+        annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        auto *func = new Function(llvmFunc, funcType, methodTemplate.paramNames,
+                                  true);
+        global->addObj(string(symbolName), func);
+        (void)methodTypeArgs;
+        return func;
+    }
+
+    Function *instantiateGenericMethod(
+        StructType *structType, const GenericMethodTemplateLookup &lookup,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const std::vector<TypeClass *> &methodTypeArgs, const location &loc) {
+        if (!lookup.found()) {
+            internalError(loc,
+                          "generic method instantiation is missing its "
+                          "template metadata",
+                          "This looks like a generic method lookup bug.");
+        }
+
+        auto symbolName = buildLocalGenericStructMethodInstanceSymbolName(
+            structType, toStringRef(lookup.methodTemplate->localName),
+            methodTypeArgs, loc);
+        auto *func = declareGenericMethodInstance(
+            structType, *lookup.methodTemplate, genericArgs, methodTypeArgs,
+            symbolName, loc,
+            lookup.ownerUnit != unit ? lookup.ownerUnit->interface() : nullptr);
+        auto instanceKey = buildStructMethodInstanceKey(
+            *lookup.typeDecl, structType, lookup.ownerUnit,
+            toStringRef(lookup.methodTemplate->localName), methodTypeArgs, loc);
+
+        auto &runtimeState = genericRuntimeStateFor(ownerModule);
+        if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
+            runtimeState.inProgressInstances.count(instanceKey) != 0 ||
+            findOwnerModuleFunction(symbolName)) {
+            recordGenericInstance(instanceKey, lookup.ownerUnit,
+                                  {string(symbolName)});
+            return func;
+        }
+
+        GenericFunctionEmissionGuard guard(runtimeState, instanceKey);
+        std::vector<string> genericTypeParams;
+        genericTypeParams.reserve(lookup.methodTemplate->typeParams.size());
+        for (const auto &param : lookup.methodTemplate->typeParams) {
+            genericTypeParams.push_back(toStdString(param.localName));
+        }
+
+        auto resolvedModule = resolveGenericMethodInstance(
+            global, lookup.ownerUnit, lookup.methodDecl, string(symbolName),
+            toStdString(structType->full_name),
+            std::move(genericTypeParams),
+            lookup.ownerUnit != unit ? lookup.ownerUnit->interface() : nullptr,
+            genericArgs);
+        if (!resolvedModule || resolvedModule->functions().size() != 1) {
+            internalError(
+                loc,
+                "generic method instance `" + symbolName +
+                    "` did not resolve to exactly one function body",
+                "This looks like a generic method resolve bug.");
+        }
+
+        auto *hirInstance = analyzeResolvedFunction(
+            global, ownerModule, unit, *resolvedModule->functions().front());
+        if (!findOwnerModuleFunction(symbolName)) {
+            ownerModule->addFunction(hirInstance);
+        }
+        guard.markCompleted();
+        recordGenericInstance(std::move(instanceKey), lookup.ownerUnit,
+                              {string(symbolName)});
+        return func;
+    }
+
+    HIRExpr *borrowMethodReceiver(HIRExpr *receiver, const location &loc) {
+        if (!receiver) {
+            return nullptr;
+        }
+        auto binding = operatorResolver.resolveUnary(
+            '&', receiver->getType(), isAddressable(receiver), loc);
+        return makeHIR<HIRUnaryOper>(binding, receiver, binding.resultType, loc);
+    }
+
+    HIRExpr *lowerDirectGenericMethodCall(Function *methodFunc,
+                                          HIRExpr *receiver,
+                                          CallArgList normalizedArgs,
+                                          const location &callLoc,
+                                          llvm::StringRef methodName) {
+        if (!methodFunc || !receiver) {
+            internalError(
+                callLoc,
+                "generic method call is missing its callee or receiver",
+                "This looks like a generic method lowering bug.");
+        }
+        auto *funcType = methodFunc->getType() ? methodFunc->getType()->as<FuncType>()
+                                               : nullptr;
+        if (!funcType) {
+            internalError(callLoc,
+                          "generic method call is missing its function type",
+                          "This looks like a generic method instantiation bug.");
+        }
+        requireMethodReceiverCompatible(receiver->getType(), methodName,
+                                        funcType, callLoc);
+
+        const auto &paramTypes = funcType->getArgTypes();
+        std::vector<FormalCallArg> formals;
+        formals.reserve(paramTypes.size() > 0 ? paramTypes.size() - 1 : 0);
+        for (std::size_t i = 1; i < paramTypes.size(); ++i) {
+            const string *paramName =
+                i - 1 < methodFunc->paramNames().size()
+                    ? &methodFunc->paramNames()[i - 1]
+                    : nullptr;
+            formals.push_back({paramName, paramTypes[i],
+                               funcType->getArgBindingKind(i),
+                               FormalCallArgKind::FunctionParameter, i - 1});
+        }
+        auto boundArgs =
+            bindCallArgs(normalizedArgs, formals,
+                         {callLoc, CallBindingTargetKind::FunctionCall, nullptr,
+                          !methodFunc->paramNames().empty()});
+
+        std::vector<HIRExpr *> args;
+        args.reserve(boundArgs.size() + 1);
+        args.push_back(borrowMethodReceiver(receiver, callLoc));
+        for (const auto &arg : boundArgs) {
+            args.push_back(arg.expr);
+        }
+
+        auto *retType = funcType->getRetType();
+        return makeHIR<HIRCall>(makeHIR<HIRValue>(methodFunc, callLoc),
+                                std::move(args), retType, callLoc);
     }
 
     StructType *currentMethodParentType() {
@@ -898,17 +1308,15 @@ class FunctionAnalyzer {
         return isConstQualifiedType(type);
     }
 
-    void requireMethodReceiverCompatible(HIRSelector *selector,
+    void requireMethodReceiverCompatible(TypeClass *parentType,
+                                         llvm::StringRef methodName,
                                          FuncType *funcType,
                                          const location &loc) {
-        if (!selector || !funcType) {
+        if (!parentType || !funcType) {
             return;
         }
-
-        auto *parentType =
-            selector->getParent() ? selector->getParent()->getType() : nullptr;
         auto *receiverPointeeType = getMethodReceiverPointee(funcType);
-        if (!parentType || !receiverPointeeType) {
+        if (!receiverPointeeType) {
             internalError(
                 loc, "method call is missing its receiver type information",
                 "This looks like a compiler pipeline bug.");
@@ -918,10 +1326,23 @@ class FunctionAnalyzer {
         }
 
         error(loc,
-              "set method `" + toStdString(selector->getFieldName()) +
+              "set method `" + methodName.str() +
                   "` requires a writable receiver, got " +
                   describeResolvedType(parentType),
               "Call it on a writable value, or use a non-`set` method here.");
+    }
+
+    void requireMethodReceiverCompatible(HIRSelector *selector,
+                                         FuncType *funcType,
+                                         const location &loc) {
+        if (!selector) {
+            return;
+        }
+        auto *parentType =
+            selector->getParent() ? selector->getParent()->getType() : nullptr;
+        requireMethodReceiverCompatible(parentType,
+                                        toStringRef(selector->getFieldName()),
+                                        funcType, loc);
     }
 
     EntityRef classifyEntity(HIRExpr *expr) {
@@ -1781,6 +2202,13 @@ class FunctionAnalyzer {
                 "This looks like a compiler pipeline bug.");
         }
         if (resolved.isMethod()) {
+            if (resolved.decl() &&
+                (resolved.decl()->hasTypeParams() ||
+                 toStdString(resolved.decl()->name) !=
+                     toStdString(resolved.functionName()))) {
+                return requireGlobalFunction(resolved.functionName(), loc,
+                                             "generic method instance");
+            }
             auto *structType = requireStructTypeByName(
                 resolved.methodParentTypeName(), loc, "method parent type");
             auto *func = typeMgr->getMethodFunction(
@@ -3626,6 +4054,72 @@ class FunctionAnalyzer {
         diagnoseGenericInstantiationPending(functionName, node->loc);
     }
 
+    HIRExpr *tryAnalyzeGenericMethodCall(
+        AstFieldCall *node, AstDotLike *calleeSyntax,
+        std::vector<TypeNode *> *explicitTypeArgs = nullptr) {
+        if (!node || !calleeSyntax) {
+            return nullptr;
+        }
+        if (resolvedTraitBinding(calleeSyntax->parent)) {
+            return nullptr;
+        }
+        if (auto *binding = resolvedEntityBinding(calleeSyntax->parent);
+            binding && binding->kind() == ResolvedEntityRef::Kind::Module) {
+            return nullptr;
+        }
+
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        auto *receiver = requireExpr(calleeSyntax->parent);
+        auto methodName = toStdString(calleeSyntax->field->text);
+        auto receiverAttempt = lookupMemberWithImplicitDeref(
+            receiver, methodName, calleeSyntax->loc,
+            !isExplicitDerefSyntax(calleeSyntax->parent));
+        auto *receiverStructType =
+            receiverAttempt.parent
+                ? asUnqualified<StructType>(receiverAttempt.parent->getType())
+                : nullptr;
+        if (!receiverStructType) {
+            return nullptr;
+        }
+
+        auto lookup = lookupGenericMethodTemplate(
+            receiverStructType, toStringRef(methodName), calleeSyntax->loc);
+        if (!lookup.found()) {
+            return nullptr;
+        }
+
+        auto *ownerInterface =
+            lookup.ownerUnit != unit ? lookup.ownerUnit->interface() : nullptr;
+        auto genericArgs = resolveGenericMethodTypeArgs(
+            *lookup.typeDecl, *lookup.methodTemplate, receiverStructType,
+            normalizedArgs, explicitTypeArgs, node->loc,
+            describeMemberOwnerSyntax(calleeSyntax), ownerInterface);
+        enforceGenericTraitBounds(
+            lookup.methodTemplate->typeParams, genericArgs, node->loc,
+            "generic method `" + describeMemberOwnerSyntax(calleeSyntax) + "`");
+
+        std::vector<TypeClass *> methodTypeArgs;
+        for (std::size_t i = lookup.methodTemplate->enclosingTypeParamCount;
+             i < lookup.methodTemplate->typeParams.size(); ++i) {
+            auto found = genericArgs.find(
+                toStdString(lookup.methodTemplate->typeParams[i].localName));
+            if (found == genericArgs.end() || !found->second) {
+                internalError(
+                    node->loc,
+                    "generic method `" + describeMemberOwnerSyntax(calleeSyntax) +
+                        "` is missing a concrete type argument",
+                    "This looks like a generic method inference bug.");
+            }
+            methodTypeArgs.push_back(found->second);
+        }
+
+        auto *methodFunc = instantiateGenericMethod(
+            receiverStructType, lookup, genericArgs, methodTypeArgs, node->loc);
+        return lowerDirectGenericMethodCall(
+            methodFunc, receiverAttempt.parent, std::move(normalizedArgs),
+            node->loc, toStringRef(lookup.methodTemplate->localName));
+    }
+
     HIRExpr *analyzeGenericTypeCall(
         AstFieldCall *node, const ModuleInterface::TypeDecl *typeDecl,
         std::vector<TypeNode *> *explicitTypeArgs, const std::string &typeName,
@@ -4597,6 +5091,14 @@ class FunctionAnalyzer {
         (void)expectedType;
         if (auto *typeApplyNode =
                 node->value ? node->value->as<AstTypeApply>() : nullptr) {
+            if (auto *dotLikeNode = typeApplyNode->value
+                                        ? typeApplyNode->value->as<AstDotLike>()
+                                        : nullptr) {
+                if (auto *genericMethodCall = tryAnalyzeGenericMethodCall(
+                        node, dotLikeNode, typeApplyNode->typeArgs)) {
+                    return genericMethodCall;
+                }
+            }
             if (auto *binding =
                     resolvedGenericFunctionBinding(typeApplyNode->value)) {
                 return analyzeGenericFunctionCall(
@@ -4675,6 +5177,10 @@ class FunctionAnalyzer {
                 binding->kind() == ResolvedEntityRef::Kind::GenericType) {
                 diagnoseGenericTypeCall(describeMemberOwnerSyntax(dotLikeNode),
                                         node->loc);
+            }
+            if (auto *genericMethodCall =
+                    tryAnalyzeGenericMethodCall(node, dotLikeNode)) {
+                return genericMethodCall;
             }
             if (auto *traitBinding = resolvedTraitBinding(dotLikeNode->parent)) {
                 return analyzeTraitQualifiedCall(node, dotLikeNode,

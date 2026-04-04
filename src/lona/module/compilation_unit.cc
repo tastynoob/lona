@@ -1916,6 +1916,36 @@ CompilationUnit::materializeAppliedStructType(
         genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
                             appliedTypeArgs[i]);
     }
+    for (const auto &param : typeDecl.typeParams) {
+        if (param.boundTraitName.empty()) {
+            continue;
+        }
+        auto found = genericArgs.find(toStdString(param.localName));
+        if (found == genericArgs.end() || !found->second) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "generic struct `" + toStdString(typeDecl.localName) +
+                    "` instance is missing a concrete type for bound parameter `" +
+                    toStdString(param.localName) + "`",
+                "This looks like a generic struct instantiation bug.");
+        }
+        auto visibleImpls =
+            contextUnit.findVisibleTraitImpls(param.boundTraitName, found->second);
+        if (!visibleImpls.empty()) {
+            continue;
+        }
+        auto typeName = toStdString(found->second->full_name);
+        auto boundName = toStdString(param.boundTraitName);
+        auto paramName = toStdString(param.localName);
+        auto genericTypeName = toStdString(typeDecl.exportedName);
+        error(location(),
+              "type `" + typeName + "` does not satisfy bound `" + boundName +
+                  "` for generic parameter `" + paramName +
+                  "` in generic type `" + genericTypeName + "`",
+              "Add `impl " + typeName + ": " + boundName +
+                  "` in a visible module, or choose a type that already "
+                  "satisfies the bound.");
+    }
 
     if (structType->isOpaque()) {
         auto *structDecl = compilation_unit_impl::findLocalStructDecl(
@@ -1981,6 +2011,9 @@ CompilationUnit::materializeAppliedStructType(
 
     for (const auto &method : typeDecl.methodTemplates) {
         if (structType->getMethodType(toStringRef(method.localName))) {
+            continue;
+        }
+        if (method.typeParams.size() > method.enclosingTypeParamCount) {
             continue;
         }
 
@@ -2049,8 +2082,11 @@ CompilationUnit::materializeAppliedStructType(
                     "." + toStdString(method.localName) + "`");
         }
 
+        auto paramBindingKinds = method.paramBindingKinds;
+        paramBindingKinds.insert(paramBindingKinds.begin(),
+                                 BindingKind::Value);
         auto *funcType = typeTable->getOrCreateFunctionType(
-            argTypes, retType, method.paramBindingKinds, AbiKind::Native);
+            argTypes, retType, paramBindingKinds, AbiKind::Native);
         structType->addMethodType(toStringRef(method.localName), funcType,
                                   method.paramNames);
     }
