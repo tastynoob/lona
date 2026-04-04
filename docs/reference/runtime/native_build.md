@@ -141,6 +141,8 @@ lac-native --target x86_64-none-elf input.lo output/program
 - 如果显式传 `--cache-dir <dir>`，bundle object 会写到 `<dir>/output.manifest.d/`
 - 如果显式传 `--no-cache`，本轮会跳过 object cache 复用并强制重新编译模块
 - `--emit entry` 会单独生成 hosted `main(argc, argv) -> __lona_main__` object
+- `--emit entry` 只支持 hosted target；bare target 会直接报错
+- `-I` / `--include-dir` 可以传给 `lona-ir`、`lac` 和 `lac-native`，用于追加模块 include 搜索目录
 
 带优化级别：
 

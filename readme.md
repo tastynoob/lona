@@ -128,10 +128,10 @@ flowchart LR
 
 ### 依赖
 
+on debain/ubuntu
+
 ```bash
-apt install llvm-18-dev
-apt install nlohmann-json3-dev
-apt install bison flex clang
+apt install llvm-18-dev bison flex clang nlohmann-json3-dev python3-pytest bear
 ```
 
 ### 构建

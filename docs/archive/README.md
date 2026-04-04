@@ -11,6 +11,5 @@
 子目录：
 
 - [design/string_bytes_v0.md](design/string_bytes_v0.md): 早期字符串 / 字节串草案。
-- [plans/indexable_pointer_plan.md](plans/indexable_pointer_plan.md): `T[*]` 落地前的早期计划。
 - [plans/module_object_build_v0.md](plans/module_object_build_v0.md): 模块 object build 的阶段性实施计划。
 - [runtime/system_crt_build_v0.md](runtime/system_crt_build_v0.md): hosted system CRT 路线的早期构建说明。

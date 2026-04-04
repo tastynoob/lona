@@ -150,5 +150,3 @@ i32*[4]   // 指针数组
 - 指针算术
 - 完整的指针比较规则
 - `T[]` 的稳定用户语义
-
-如果需要后续规划，见 [../../proposals/next_plan.md](../../proposals/next_plan.md)。

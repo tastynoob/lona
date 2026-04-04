@@ -177,5 +177,3 @@ fill_first(ref row)
 - 数组元素类型
 - 返回类型
 - 全局变量
-
-后续规划见 [../../proposals/next_plan.md](../../proposals/next_plan.md)。

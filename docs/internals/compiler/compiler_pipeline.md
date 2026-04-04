@@ -19,11 +19,12 @@
 ## 当前默认阶段
 
 1. `collect-declarations`
-2. `lower-hir`
-3. `emit-llvm`
-4. `optimize-llvm`
-5. `verify-llvm`
-6. `print-llvm`
+2. `define-globals`
+3. `lower-hir`
+4. `emit-llvm`
+5. `optimize-llvm`
+6. `verify-llvm`
+7. `print-llvm`
 
 这些 stage 只负责“单个模块”的 lowering 和 codegen。
 
@@ -31,9 +32,12 @@ generic v0 当前在 pipeline 里的位置需要单独说明：
 
 - generic template declaration 会参与接口收集
 - generic template body 会参与 resolve 阶段的模板校验
-- 但未实例化 template 当前不会进入 HIR / LLVM lowering
+- 只有实例化出来的 concrete generic function / struct method / applied
+  struct instance 会继续进入 HIR / LLVM lowering
+- 未实例化 template 本体不会直接进入 HIR / LLVM lowering
 
-generic 的内部数据模型与这条“先校验、暂不实例化”的边界见
+generic 的内部数据模型与这条“模板先校验、实例按需进入 lowering”的
+边界见
 [generic_v0.md](generic_v0.md)。
 
 ## 模块调度

@@ -93,6 +93,8 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 
 - `--target <triple>`
   - 指定目标 triple，例如 `x86_64-unknown-linux-gnu`
+- `-I <dir>` / `--include-dir <dir>`
+  - 追加模块 include 搜索目录；解析 `import` 时会排在 importing 文件目录之后
 - `-O <0-3>`
   - 指定 LLVM 优化级别
 - `--verify-ir`
@@ -113,6 +115,7 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit objects` 必须显式提供 manifest 输出路径
 - `--emit objects` 不支持 `--lto full`
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径
+- `--emit entry` 只支持 hosted target；bare target 会直接拒绝
 - `--emit entry` 不支持 `--lto full`
 - 只要带上编译相关参数，例如 `--target`、`--verify-ir`、`--lto`，默认输出模式就会切到 LLVM IR，而不是 AST JSON
 
@@ -155,6 +158,8 @@ lac --target x86_64-unknown-linux-gnu input.lo output/program
 
 - `-O <0-3>`
   - 转发给 `lona-ir`
+- `-I <dir>` / `--include-dir <dir>`
+  - 转发给 `lona-ir`，追加模块 include 搜索目录
 - `--target <triple>`
   - 指定 hosted target
 - `--lto <off|full>`
@@ -218,6 +223,8 @@ lac-native --target x86_64-none-elf input.lo output/program
 
 - `-O <0-3>`
   - 转发给 `lona-ir`
+- `-I <dir>` / `--include-dir <dir>`
+  - 转发给 `lona-ir`，追加模块 include 搜索目录
 - `--target <triple>`
   - 指定 bare target
 - `--lto <off|full>`
