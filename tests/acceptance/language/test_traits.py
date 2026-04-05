@@ -72,6 +72,44 @@ def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
     assert_contains(ir, "define i32 @main()", label="trait header ir")
 
 
+def test_trait_v0_impl_for_body_supports_member_static_and_dyn_calls(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_impl_for_body.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var view Hash dyn = cast[Hash dyn](&point)
+            ret point.hash() + Hash.hash(&point) + view.hash() - 126
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait impl-for ir")
+    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="trait impl-for ir")
+    assert_contains(ir, "@__lona_trait_witness__", label="trait impl-for ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait impl-for ir",
+    )
+
+
 def test_trait_v0_static_qualified_calls_and_impl_validation(
     compiler: CompilerHarness,
 ) -> None:
@@ -199,6 +237,36 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
             }
             """,
             ["parameter type mismatch for `hash` at index 0"],
+        ),
+        (
+            "trait_impl_body_conflict_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.value + 1
+                }
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "conflicts with an existing method of the same name",
+                "This first implementation still routes `obj.method()` through a single method table",
+            ],
         ),
         (
             "trait_impl_duplicate_visible.lo",
@@ -1184,7 +1252,7 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
             ],
         ),
         (
-            "trait_impl_body_bad.lo",
+            "trait_impl_body_type_params_bad.lo",
             """
             trait Hash {
                 def hash() i32
@@ -1194,7 +1262,10 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
                 value i32
             }
 
-            impl Point: Hash {
+            impl[T Hash] Hash for Point {
+                def hash() i32 {
+                    ret self.value
+                }
             }
 
             def main() i32 {
@@ -1202,8 +1273,34 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
             }
             """,
             [
-                "trait impl bodies are not supported in trait v0",
-                "Declare only `impl Type: Trait` headers for now.",
+                "currently requires a monomorphic local concrete struct impl",
+                "Generic or imported impl forms still need the header-only impl form in this first cut.",
+            ],
+        ),
+        (
+            "trait_impl_body_generic_self_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Box[T] {
+                value T
+            }
+
+            impl Hash for Box[i32] {
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            def main() i32 {
+                ret 0
+            }
+            """,
+            [
+                "currently requires a monomorphic local concrete struct impl",
+                "Generic or imported impl forms still need the header-only impl form in this first cut.",
             ],
         ),
         (

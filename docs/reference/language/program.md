@@ -45,18 +45,25 @@ trait Hash {
 
 trait 的完整规则见 [trait.md](trait.md)。
 
-## 6. 顶层可以放 impl header
+## 6. 顶层可以放 impl 声明
 
 ```lona
 impl Point: Hash
 impl Point: dep.Hash
+impl Hash for Point {
+    def hash() i32 {
+        ret self.value + 1
+    }
+}
 ```
 
 说明：
 
-- `impl Type: Trait` 是顶层声明。
-- 当前只支持 header；`impl Type: Trait { ... }` 仍然会被拒绝。
-- impl header 只声明满足关系；真正的方法体仍然写在 `Type` 自己的 inherent methods 上。
+- `impl Type: Trait` 和 `impl Trait for Type` 都是顶层声明。
+- `impl Trait for Type { ... }` 当前支持最小可用的 impl body。
+- 这版 impl body 只稳定支持 local、non-generic、concrete struct self type。
+- `obj.method()`、`Trait.method(&obj)` 和 `Trait dyn` 都可以调用这些 impl body 里定义的方法。
+- 同名 trait method 的完全分流还没有做完，所以 impl body 方法名当前仍然不能和现有同名方法并存。
 
 ## 7. 顶层允许空行
 

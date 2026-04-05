@@ -37,10 +37,23 @@ struct IntVector {
         ret self.values(index)
     }
 
+    def start_iter() VectorIter {
+        ret VectorIter(source = self, index = 0)
+    }
+}
+
+struct VectorIter {
+    source IntVector const*
+    set index i32
+}
+
+impl SizedCollection for IntVector {
     def len() i32 {
         ret self.length
     }
+}
 
+impl IntAggregate for IntVector {
     def total() i32 {
         var index i32 = 0
         var out i32 = 0
@@ -50,16 +63,9 @@ struct IntVector {
         }
         ret out
     }
-
-    def start_iter() VectorIter {
-        ret VectorIter(source = self, index = 0)
-    }
 }
 
-struct VectorIter {
-    source IntVector const*
-    set index i32
-
+impl IntIter for VectorIter {
     def done() bool {
         ret self.index >= (*self.source).length
     }
@@ -70,10 +76,6 @@ struct VectorIter {
         ret out
     }
 }
-
-impl IntVector: SizedCollection
-impl IntVector: IntAggregate
-impl VectorIter: IntIter
 
 struct ListNode {
     set value i32
@@ -104,10 +106,23 @@ struct IntList {
         self.tail = idx
     }
 
+    def start_iter() ListIter {
+        ret ListIter(source = self, current = self.head)
+    }
+}
+
+struct ListIter {
+    source IntList const*
+    set current i32
+}
+
+impl SizedCollection for IntList {
     def len() i32 {
         ret self.length
     }
+}
 
+impl IntAggregate for IntList {
     def total() i32 {
         var cur = self.head
         var out i32 = 0
@@ -117,16 +132,9 @@ struct IntList {
         }
         ret out
     }
-
-    def start_iter() ListIter {
-        ret ListIter(source = self, current = self.head)
-    }
 }
 
-struct ListIter {
-    source IntList const*
-    set current i32
-
+impl IntIter for ListIter {
     def done() bool {
         ret self.current == -1
     }
@@ -137,10 +145,6 @@ struct ListIter {
         ret out
     }
 }
-
-impl IntList: SizedCollection
-impl IntList: IntAggregate
-impl ListIter: IntIter
 
 struct IntMap {
     set keys i32[8]
@@ -173,10 +177,23 @@ struct IntMap {
         ret fallback
     }
 
+    def start_iter() MapIter {
+        ret MapIter(source = self, index = 0)
+    }
+}
+
+struct MapIter {
+    source IntMap const*
+    set index i32
+}
+
+impl SizedCollection for IntMap {
     def len() i32 {
         ret self.length
     }
+}
 
+impl IntAggregate for IntMap {
     def total() i32 {
         var index i32 = 0
         var out i32 = 0
@@ -186,16 +203,9 @@ struct IntMap {
         }
         ret out
     }
-
-    def start_iter() MapIter {
-        ret MapIter(source = self, index = 0)
-    }
 }
 
-struct MapIter {
-    source IntMap const*
-    set index i32
-
+impl EntryIter for MapIter {
     def done() bool {
         ret self.index >= (*self.source).length
     }
@@ -208,10 +218,6 @@ struct MapIter {
         ret out
     }
 }
-
-impl IntMap: SizedCollection
-impl IntMap: IntAggregate
-impl MapIter: EntryIter
 
 def make_vector() IntVector {
     var out IntVector

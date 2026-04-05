@@ -4,6 +4,7 @@
 
 - `trait` 顶层声明
 - `impl Type: Trait` header
+- `impl Trait for Type { ... }` 这类带方法体的 impl
 - `impl[T Trait] Box[T]: Trait` 这类单 bound generic impl header
 - `def func[T Trait](value T)` 这类单 trait bound generic function
 - `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 静态限定调用
@@ -37,34 +38,41 @@ trait CounterLike {
 }
 ```
 
-## 2. impl header
+## 2. impl
 
 ```lona
 struct Point {
     value i32
+}
 
+impl Hash for Point {
     def hash() i32 {
         ret self.value + 1
     }
 }
-
-impl Point: Hash
 ```
-
-当前 `impl` 只是 header，不承载方法体。
 
 规则：
 
-- `impl Point: Hash` 表示“现有的 `Point` inherent methods 满足 `Hash`”。
+- `impl Point: Hash` 仍然表示“现有的 `Point` methods 满足 `Hash`”。
+- `impl Hash for Point { ... }` 允许直接在 impl body 里写 trait 方法实现。
 - `impl[T Trait] Box[T]: Trait` 表示“对所有满足该单 bound 的具体实例，现有的 inherent method 可以满足该 trait”。
 - 编译器会按方法名、receiver access、参数个数、参数 binding kind、参数类型、返回类型检查满足性。
-- `impl Type: Trait { ... }` 在 v0 中仍然会被拒绝。
+- `impl Trait for Type { ... }` 当前只稳定支持 local、non-generic、concrete struct self type。
+- 这版 impl body 里只允许 trait 已声明的方法定义；不允许额外 helper method。
 - struct 声明现在支持单 bound，例如 `struct Box[T Hash]`。
 - struct 方法现在也可以带自己的 generic parameter，例如
   `def map[U](...)` 或 `def merge[U Hash](...)`。
 - trait 方法本身仍然不能声明 generic parameter。
 - 同一可见程序图中，`(Trait, Type)` 只能有一份 visible impl。
 - orphan rule 仍然生效：`trait` 或 `Type` 至少有一方必须定义在当前模块。
+
+当前 first cut 边界：
+
+- `obj.method()` 仍然支持调用 impl body 里定义的方法。
+- `Trait.method(&value, ...)` 和 `Trait dyn` 也会绑定到同一份实现。
+- 同名 trait method 的独立命名空间还没完成，所以 impl body 方法名当前不能和已有同名方法并存。
+- generic self type、imported self type 目前仍然只支持 header-only impl。
 
 ## 3. 静态限定调用
 
@@ -83,7 +91,7 @@ ret Hash.hash(&point)
 - 第一个源码实参就是显式 receiver；编译器会把它当成 hidden self pointer。
 - 这条路径暂时不接受临时值 receiver，例如 `Trait.method(&Point(...), ...)`。
 - 编译器会先验证 receiver 的 concrete type 是否有 visible impl。
-- 通过后会直接绑定到 concrete inherent method，不经过 witness table。
+- 通过后会直接绑定到 concrete method 实现；如果方法来自 `impl Trait for Type { ... }`，也会绑定到这份实现，不经过 witness table。
 - getter 需要 `Self const*`；setter 需要 `Self*`。
 - 因此 `Trait.bump(&const_value, ...)` 会被拒绝。
 
@@ -174,7 +182,8 @@ trait CounterLike {
 
 - trait body 中声明字段、`var`、`global` 或可执行语句
 - trait method 在 trait body 中带函数体
-- `impl Type: Trait { ... }` body 尚未支持
+- impl body 用在 generic self type 或 imported self type 上
+- impl body 与现有同名方法冲突
 - `cast[Trait dyn](&temporary)` 的源值不可寻址
 - concrete type 没有实现目标 trait
 - `Trait.method(value, ...)` 少了显式 self pointer
@@ -186,9 +195,9 @@ trait v0 当前不依赖“trait 身份”去区分同名方法。
 
 当前实现模型是：
 
-- `impl Type: Trait` 只做满足性声明，不提供独立的 impl body。
-- trait 方法满足性是去匹配现有 inherent method。
-- 普通 `obj.method(...)` 仍然优先只看 inherent method，不做 trait-based disambiguation。
+- `impl Type: Trait` 仍然是 header-only 满足性声明。
+- `impl Trait for Type { ... }` 会把方法实现接到当前 concrete type 上。
+- 普通 `obj.method(...)` 仍然按当前 concrete type 的单一方法表查找，不做 trait-based disambiguation。
 
 因此推荐风格是：
 
@@ -197,7 +206,7 @@ trait v0 当前不依赖“trait 身份”去区分同名方法。
 
 当前边界：
 
-- 同名且同签名的方法，可能被多个 trait 共同复用。
+- 同名且同签名的方法，header-only impl 仍可能被多个 trait 共同复用。
 - 同名但不同签名的方法，不会因为 trait 名不同而自动分流；由于当前不支持重载，这类写法应视为不受支持。
 - 想稳定表达“调用哪个 trait 的方法”，继续使用显式限定调用，例如 `HashA.hashA(&value)`。
 

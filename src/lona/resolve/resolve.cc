@@ -65,6 +65,17 @@ collectGenericParamBounds(const std::vector<AstGenericParam *> *tokens) {
     return bounds;
 }
 
+BaseTypeNode *
+traitImplSelfTypeBase(TypeNode *node) {
+    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+        return base;
+    }
+    if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+        return dynamic_cast<BaseTypeNode *>(applied->base);
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 class FunctionResolver {
@@ -1884,6 +1895,41 @@ class ModuleResolver {
         }
     }
 
+    void resolveTraitImpl(AstTraitImplDecl *node) {
+        if (!node || !node->hasBody() || !unit_ || node->hasTypeParams()) {
+            return;
+        }
+
+        auto *selfBase = traitImplSelfTypeBase(node->selfType);
+        if (!selfBase) {
+            return;
+        }
+
+        std::string moduleName;
+        std::string memberName;
+        if (splitBaseTypeName(selfBase, moduleName, memberName)) {
+            return;
+        }
+        if (!dynamic_cast<BaseTypeNode *>(node->selfType)) {
+            return;
+        }
+
+        auto *selfType = unit_->resolveType(typeMgr_, node->selfType);
+        auto *structType = selfType ? selfType->as<StructType>() : nullptr;
+        auto *body = dynamic_cast<AstStatList *>(node->body);
+        if (!structType || !body) {
+            return;
+        }
+
+        for (auto *stmt : body->getBody()) {
+            auto *func = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!func) {
+                continue;
+            }
+            resolveFunction(func, structType, toStdString(structType->full_name));
+        }
+    }
+
     void resolveTopLevel(AstStatList *body) {
         auto *execBody = new AstStatList();
         bool hasImports = false;
@@ -1899,8 +1945,11 @@ class ModuleResolver {
             if (dynamic_cast<AstGlobalDecl *>(stmt)) {
                 continue;
             }
-            if (dynamic_cast<AstTraitDecl *>(stmt) ||
-                dynamic_cast<AstTraitImplDecl *>(stmt)) {
+            if (dynamic_cast<AstTraitDecl *>(stmt)) {
+                continue;
+            }
+            if (auto *traitImplDecl = dynamic_cast<AstTraitImplDecl *>(stmt)) {
+                resolveTraitImpl(traitImplDecl);
                 continue;
             }
             if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {

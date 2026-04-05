@@ -985,21 +985,97 @@ class InterfaceCollector {
               "Trait v0 only allows method signatures inside trait bodies.");
     }
 
+    static std::string describeTraitImplContext(const ResolvedTraitRef &traitRef,
+                                                const ResolvedSelfTypeRef &selfRef) {
+        return "`" + toStdString(traitRef.resolvedName) + " for " +
+               toStdString(selfRef.resolvedName) + "`";
+    }
+
+    void validateTraitImplBodySupport(AstTraitImplDecl *traitImplDecl,
+                                      const ResolvedTraitRef &traitRef,
+                                      const ResolvedSelfTypeRef &selfRef) {
+        if (!traitImplDecl || !traitImplDecl->hasBody()) {
+            return;
+        }
+        if (!traitImplDecl->hasTypeParams() && selfRef.localToUnit &&
+            selfRef.concreteMethodValidation) {
+            return;
+        }
+        error(traitImplDecl->loc,
+              "trait impl body " + describeTraitImplContext(traitRef, selfRef) +
+                  " currently requires a monomorphic local concrete struct impl",
+              "Use `impl Trait for LocalStruct { ... }` for a local concrete "
+              "struct for now. Generic or imported impl forms still need the "
+              "header-only impl form in this first cut.");
+    }
+
+    std::vector<AstFuncDecl *> collectTraitImplBodyMethods(
+        AstTraitImplDecl *traitImplDecl, const ResolvedTraitRef &traitRef,
+        const ResolvedSelfTypeRef &selfRef) {
+        std::vector<AstFuncDecl *> methods;
+        auto *body = dynamic_cast<AstStatList *>(traitImplDecl ? traitImplDecl->body
+                                                               : nullptr);
+        if (!body) {
+            return methods;
+        }
+
+        validateTraitImplBodySupport(traitImplDecl, traitRef, selfRef);
+
+        std::unordered_set<std::string> seenMethods;
+        for (auto *stmt : body->getBody()) {
+            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
+            if (!funcDecl) {
+                error(stmt ? stmt->loc : traitImplDecl->loc,
+                      "trait impl body " +
+                          describeTraitImplContext(traitRef, selfRef) +
+                          " can only contain method definitions",
+                      "Keep only `def name(...) { ... }` entries inside the "
+                      "impl body.");
+            }
+            if (funcDecl->hasTypeParams()) {
+                error(funcDecl->loc,
+                      "generic methods are not supported in trait impl body " +
+                          describeTraitImplContext(traitRef, selfRef),
+                      "Keep trait impl methods monomorphic for now.");
+            }
+            if (!funcDecl->hasBody()) {
+                error(funcDecl->loc,
+                      "trait impl method `" + toStdString(funcDecl->name) +
+                          "` in " +
+                          describeTraitImplContext(traitRef, selfRef) +
+                          " must have a body",
+                      "Write `def " + toStdString(funcDecl->name) +
+                          "(...) { ... }` inside the impl body.");
+            }
+            if (!seenMethods.emplace(toStdString(funcDecl->name)).second) {
+                error(funcDecl->loc,
+                      "duplicate trait impl method `" +
+                          toStdString(funcDecl->name) + "` in " +
+                          describeTraitImplContext(traitRef, selfRef),
+                      "Keep only one definition for each trait method inside "
+                      "the impl body.");
+            }
+            methods.push_back(funcDecl);
+        }
+        return methods;
+    }
+
     ResolvedTraitRef resolveTraitRef(AstNode *traitSyntax,
                                      const location &loc) {
         std::vector<std::string> segments;
         if (!collectDotLikeSegments(traitSyntax, segments) || segments.empty()) {
-            error(loc, "invalid trait reference in impl header",
-                  "Use a trait name like `Hash` or `dep.Hash` after `:`.");
+            error(loc, "invalid trait reference in impl declaration",
+                  "Use a trait name like `Hash` or `dep.Hash` in "
+                  "`impl Type: Trait` or `impl Trait for Type`.");
         }
 
         if (segments.size() == 1) {
             if (const auto *traitDecl = interface_->findTrait(segments[0])) {
                 return {traitDecl, traitDecl->exportedName, true};
             }
-            error(loc, "unknown trait `" + segments[0] + "` in impl header",
+            error(loc, "unknown trait `" + segments[0] + "` in impl declaration",
                   "Declare the trait in this module or import the module that "
-                  "defines it before writing `impl Type: Trait`.");
+                  "defines it before writing the impl.");
         }
 
         if (segments.size() != 2) {
@@ -1024,7 +1100,7 @@ class InterfaceCollector {
             error(loc,
                   "unknown trait `" + describeDotLikeSyntax(traitSyntax,
                                                             "<trait>") +
-                      "` in impl header",
+                      "` in impl declaration",
                   "Only directly imported top-level traits are available "
                   "through `file.Trait`.");
         }
@@ -1039,8 +1115,9 @@ class InterfaceCollector {
         if (!base) {
             error(loc,
                   "trait impl self type must name a struct type",
-                  "Write `impl Point: Hash` or `impl[T Trait] Box[T]: Trait`, not "
-                  "pointers, arrays, tuples, or function types.");
+                  "Write `impl Point: Hash`, `impl Hash for Point`, or "
+                  "`impl[T Trait] Box[T]: Trait`, not pointers, arrays, "
+                  "tuples, or function types.");
         }
 
         auto genericParamNames = collectGenericParamNames(typeParams);
@@ -1086,7 +1163,8 @@ class InterfaceCollector {
             error(loc,
                   "generic impl self type requires declaration-style type arguments: `" +
                       toStdString(typeDecl->exportedName) + "`",
-                  "Write `impl[T Trait] Box[T]: Trait` or `impl Box[i32]: Trait` in impl headers.");
+                  "Write `impl[T Trait] Box[T]: Trait`, `impl Box[i32]: Trait`, "
+                  "or the corresponding `impl Trait for ...` spelling.");
         }
 
         StructType *resolvedStructType = nullptr;
@@ -1241,7 +1319,7 @@ class InterfaceCollector {
                           "duplicate visible impl for trait `" +
                               toStdString(implDecl.traitName) + "` and type `" +
                               toStdString(implDecl.selfTypeSpelling) + "`",
-                          "Only one visible `impl Type: Trait` is allowed for each "
+                          "Only one visible impl is allowed for each "
                           "(Trait, Type) pair. Existing source: " +
                               found->second + ", new source: " + source + ".");
                 }
@@ -1257,9 +1335,9 @@ class InterfaceCollector {
                       "duplicate visible impl for trait `" +
                           toStdString(entry.decl.traitName) + "` and type `" +
                           toStdString(entry.decl.selfTypeSpelling) + "`",
-                      "Only one visible `impl Type: Trait` is allowed for each "
+                      "Only one visible impl is allowed for each "
                       "(Trait, Type) pair. Existing source: " + found->second +
-                          ".");
+                      ".");
             }
             seenSources.emplace(
                 std::move(key),
@@ -1291,8 +1369,8 @@ class InterfaceCollector {
                       "trait method `" + toStdString(funcDecl->name) +
                           "` cannot have a body in trait v0",
                       "Keep only the method signature inside the trait. "
-                      "`impl Type: Trait { ... }` bodies are not supported "
-                      "yet either.");
+                      "Put implementations in a separate impl body such as "
+                      "`impl Hash for Point { ... }`.");
             }
             if (funcDecl->hasTypeParams()) {
                 error(funcDecl->loc,
@@ -1466,14 +1544,6 @@ class InterfaceCollector {
         validated.reserve(traitImplDecls_.size());
 
         for (auto *traitImplDecl : traitImplDecls_) {
-            if (traitImplDecl->hasBody()) {
-                error(traitImplDecl->loc,
-                      "trait impl bodies are not supported in trait v0",
-                      "Declare only `impl Type: Trait` headers for now. "
-                      "Keep the actual method implementations as inherent "
-                      "methods on the concrete type.");
-            }
-
             auto implTypeParams = collectGenericParams(
                 traitImplDecl->typeParams,
                 GenericParamContext::TraitImplHeader);
@@ -1487,11 +1557,45 @@ class InterfaceCollector {
                       "impl `" + toStdString(selfRef.resolvedName) + ": " +
                           toStdString(traitRef.resolvedName) +
                           "` violates the trait orphan rule",
-                      "At least one side of `impl Type: Trait` must be defined "
-                      "in the current module.");
+                      "At least one side of an impl must be defined in the "
+                      "current module.");
             }
 
-            if (selfRef.concreteMethodValidation) {
+            if (traitImplDecl->hasBody()) {
+                auto bodyMethods =
+                    collectTraitImplBodyMethods(traitImplDecl, traitRef, selfRef);
+                std::unordered_map<std::string, AstFuncDecl *> bodyMethodMap;
+                for (auto *methodDecl : bodyMethods) {
+                    bodyMethodMap.emplace(toStdString(methodDecl->name),
+                                          methodDecl);
+                    if (traitRef.decl->findMethod(
+                            toStdString(methodDecl->name)) == nullptr) {
+                        error(methodDecl->loc,
+                              "trait impl body " +
+                                  describeTraitImplContext(traitRef, selfRef) +
+                                  " defines unknown method `" +
+                                  toStdString(methodDecl->name) + "`",
+                              "Only methods declared by trait `" +
+                                  toStdString(traitRef.resolvedName) +
+                                  "` may appear in this impl body.");
+                    }
+                }
+                for (const auto &method : traitRef.decl->methods) {
+                    if (bodyMethodMap.find(toStdString(method.localName)) ==
+                        bodyMethodMap.end()) {
+                        error(traitImplDecl->loc,
+                              "impl `" + toStdString(selfRef.resolvedName) +
+                                  ": " + toStdString(traitRef.resolvedName) +
+                                  "` is missing method `" +
+                                  toStdString(method.localName) + "`",
+                              "Define `def " + toStdString(method.localName) +
+                                  "(...) { ... }` inside this impl body.");
+                    }
+                    validateTraitMethodMatch(*traitRef.decl, method,
+                                             selfRef.structType,
+                                             traitImplDecl->loc);
+                }
+            } else if (selfRef.concreteMethodValidation) {
                 for (const auto &method : traitRef.decl->methods) {
                     validateTraitMethodMatch(*traitRef.decl, method,
                                              selfRef.structType,
@@ -1502,7 +1606,8 @@ class InterfaceCollector {
             validated.push_back(ValidatedTraitImpl{
                 ModuleInterface::TraitImplDecl{selfRef.resolvedName,
                                                traitImplDecl->selfType,
-                                               traitRef.resolvedName, false,
+                                               traitRef.resolvedName,
+                                               traitImplDecl->hasBody(),
                                                std::move(implTypeParams)},
                 traitImplDecl->loc});
         }
@@ -1515,7 +1620,8 @@ class InterfaceCollector {
         for (const auto &implDecl : validatedImpls) {
             interface_->declareTraitImpl(implDecl.decl.selfTypeSpelling,
                                          implDecl.decl.selfTypeNode,
-                                         implDecl.decl.traitName, false,
+                                         implDecl.decl.traitName,
+                                         implDecl.decl.hasBody,
                                          implDecl.decl.typeParams);
         }
     }
@@ -1766,6 +1872,54 @@ class InterfaceCollector {
                                         funcDecl->name.size()),
                         funcType, extractParamNames(funcDecl));
                 }
+            }
+        }
+
+        for (auto *traitImplDecl : traitImplDecls_) {
+            if (!traitImplDecl || !traitImplDecl->hasBody()) {
+                continue;
+            }
+            auto implTypeParams = collectGenericParams(
+                traitImplDecl->typeParams,
+                GenericParamContext::TraitImplHeader);
+            auto traitRef = resolveTraitRef(traitImplDecl->trait,
+                                            traitImplDecl->loc);
+            auto selfRef = resolveImplSelfType(traitImplDecl->selfType,
+                                               implTypeParams,
+                                               traitImplDecl->loc);
+            auto bodyMethods =
+                collectTraitImplBodyMethods(traitImplDecl, traitRef, selfRef);
+            if (!selfRef.localToUnit || !selfRef.concreteMethodValidation ||
+                !selfRef.structType) {
+                continue;
+            }
+
+            for (auto *funcDecl : bodyMethods) {
+                auto methodName = llvm::StringRef(funcDecl->name.tochara(),
+                                                  funcDecl->name.size());
+                if (selfRef.structType->getMethodType(methodName) != nullptr) {
+                    error(funcDecl->loc,
+                          "trait impl method `" +
+                              toStdString(funcDecl->name) + "` on `" +
+                              describeResolvedType(selfRef.structType) +
+                              "` conflicts with an existing method of the same "
+                              "name",
+                          "This first implementation still routes "
+                          "`obj.method()` through a single method table. Keep "
+                          "method names distinct for now, or stay with the "
+                          "header-only impl form.");
+                }
+
+                auto collected =
+                    collectFunctionInterface(funcDecl, selfRef.structType);
+                if (!collected.type) {
+                    error(funcDecl->loc,
+                          "generic methods are not supported in trait impl body " +
+                              describeTraitImplContext(traitRef, selfRef),
+                          "Keep trait impl methods monomorphic for now.");
+                }
+                selfRef.structType->addMethodType(
+                    methodName, collected.type, extractParamNames(funcDecl));
             }
         }
 

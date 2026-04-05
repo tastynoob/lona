@@ -1,5 +1,6 @@
 // Generic + trait sample: generic functions, applied generic structs,
-// single trait bounds, and trait-qualified static calls.
+// concrete impl bodies, generic header-only impls, and trait-qualified
+// static calls.
 
 trait Hash {
     def hash() i32
@@ -7,13 +8,13 @@ trait Hash {
 
 struct Point {
     value i32
+}
 
+impl Hash for Point {
     def hash() i32 {
         ret self.value + 1
     }
 }
-
-impl Point: Hash
 
 struct Box[T] {
     value T

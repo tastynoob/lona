@@ -143,7 +143,7 @@ import-stat       ::= "import" ImportPath NL
 - `import` 只能放在文件顶层；当前写法是无引号、无后缀的路径，例如 `import math` 或 `import pkg/math`。
 - `import` 不属于 `stat`，因此不能出现在块、函数体或结构体体内；写在这些位置会在 parser 阶段报错。
 - `global` 也只允许出现在文件顶层，不属于普通 `stat`。
-- `trait` 与 `impl Type: Trait` 也只允许出现在文件顶层。
+- `trait` 与 `impl` 也只允许出现在文件顶层。
 
 ### 3.2 语句
 
@@ -258,6 +258,8 @@ impl-decl         ::= "impl" type-name ":" dot-like-name NL
                     | "impl" type-name ":" NL* dot-like-name NL
                     | "impl" type-name ":" dot-like-name block
                     | "impl" type-name ":" NL* dot-like-name block
+                    | "impl" dot-like-name "for" NL* type-name NL
+                    | "impl" dot-like-name "for" NL* type-name block
 
 field-decl        ::= IDENT type-name
                     | "_" type-name
@@ -291,7 +293,9 @@ param-decl-seq    ::= param-decl
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为函数声明。
 - `trait Name` 与后面的 `{` 也必须写在同一行；`trait Name` 单独占一行时表示空 trait declaration。
 - `trait` body 当前稳定语义只接受方法签名；为了给用户更明确的 targeted diagnostic，parser 还会暂时接纳 `field`、`var`、`global`、`ret`、`if`、`for`、块语句等形状，然后在语义阶段统一拒绝。
-- `impl Type: Trait` 当前只稳定支持 header；`impl ... { ... }` 这条语法入口保留是为了发出“trait impl body 尚未支持”的定向诊断。
+- `impl Type: Trait` 和 `impl Trait for Type` 都是合法顶层声明。
+- `impl Trait for Type { ... }` 当前已经支持最小可用的 impl body；`impl Type: Trait { ... }` 也仍然能被 parser 接住。
+- 这版 impl body 只稳定支持 local、non-generic、concrete struct self type；generic self type、imported self type 仍然建议继续用 header-only 形式。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
 - trait / impl / `Trait dyn` 的完整语义见 [trait.md](./trait.md)。

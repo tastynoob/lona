@@ -260,8 +260,11 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         hashTypeParams(seed, traitImplDecl->typeParams);
         hashTypeNode(seed, traitImplDecl->selfType);
         hashText(seed, describeDotLikeSyntax(traitImplDecl->trait));
-        hashText(seed, traitImplDecl->hasBody() ? "impl-body:present"
-                                                : "impl-body:none");
+        if (traitImplDecl->body) {
+            hashInterfaceList(seed, traitImplDecl->body);
+        } else {
+            hashText(seed, "impl-body:none");
+        }
         return;
     }
     if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {

@@ -12,13 +12,13 @@ struct BuildTask {
     customer_impact i32
     implementation_cost i32
     risk i32
+}
 
+impl Ranked for BuildTask {
     def rank() i32 {
         ret self.customer_impact * 10 - self.implementation_cost - self.risk
     }
 }
-
-impl BuildTask: Ranked
 
 struct SmallPriorityQueue[T Ranked] {
     items T[8]

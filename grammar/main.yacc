@@ -506,6 +506,12 @@ impl_decl
     | IMPL opt_type_params impl_self_type ':' opt_newlines dot_like_name stat_compound {
         $$ = new AstTraitImplDecl($3, $6, $7, $2, @$);
     }
+    | IMPL opt_type_params dot_like_name FOR opt_newlines impl_self_type NEWLINE {
+        $$ = new AstTraitImplDecl($6, $3, nullptr, $2, @$);
+    }
+    | IMPL opt_type_params dot_like_name FOR opt_newlines impl_self_type stat_compound {
+        $$ = new AstTraitImplDecl($6, $3, $7, $2, @$);
+    }
     ;
 
 /* var define */
