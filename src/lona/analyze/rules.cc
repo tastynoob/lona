@@ -133,7 +133,15 @@ getMethodSelectorType(TypeTable *typeMgr, HIRSelector *selector) {
                      ? typeMgr->getMethodFunction(
                            structType, toStringRef(selector->getFieldName()))
                      : nullptr;
-    return func && func->getType() ? func->getType()->as<FuncType>() : nullptr;
+    if (func && func->getType()) {
+        return func->getType()->as<FuncType>();
+    }
+    if (auto *methodType =
+            structType->getMethodType(toStringRef(selector->getFieldName()))) {
+        return methodType;
+    }
+    return structType->getTraitMethodTypeByKey(
+        toStringRef(selector->getFieldName()));
 }
 
 size_t

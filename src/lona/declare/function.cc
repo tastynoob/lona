@@ -3,6 +3,7 @@
 #include "lona/abi/abi.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
+#include "lona/sema/moduleentry.hh"
 
 namespace lona {
 namespace declarationsupport_impl {
@@ -195,6 +196,16 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
 }
 
 }  // namespace
+
+std::string
+resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName,
+                             llvm::StringRef methodName) {
+    if (!methodParent) {
+        return methodName.str();
+    }
+    return toStdString(methodParent->full_name) + ".__trait__." +
+           mangleModuleEntryComponent(traitName) + "." + methodName.str();
+}
 
 std::vector<string>
 extractParamNames(AstFuncDecl *node) {

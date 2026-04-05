@@ -1296,6 +1296,87 @@ class InterfaceCollector {
         }
     }
 
+    void validateTraitBodyMethodMatch(
+        const ModuleInterface::TraitDecl &traitDecl,
+        const ModuleInterface::TraitMethodDecl &method, StructType *selfType,
+        const location &implLoc) {
+        auto methodKey =
+            traitMethodSlotKey(traitDecl.exportedName, method.localName);
+        auto *methodType = selfType->getTraitMethodTypeByKey(methodKey);
+        const auto implLabel =
+            "`" + describeResolvedType(selfType) + ": " +
+            toStdString(traitDecl.exportedName) + "`";
+        if (!methodType) {
+            error(implLoc,
+                  "impl " + implLabel + " is missing method `" +
+                      toStdString(method.localName) + "`",
+                  "Define `def " + toStdString(method.localName) +
+                      "(...) { ... }` inside this impl body.");
+        }
+
+        auto actualReceiverAccess = inferMethodReceiverAccess(
+            selfType, methodType, implLoc, toStringRef(method.localName));
+        if (actualReceiverAccess != method.receiverAccess) {
+            error(
+                implLoc,
+                "impl " + implLabel + " has receiver access mismatch for `" +
+                    toStdString(method.localName) + "`",
+                "Trait `" + toStdString(traitDecl.exportedName) + "` expects `" +
+                    accessKindKeyword(method.receiverAccess) + " def " +
+                    toStdString(method.localName) + "`.");
+        }
+
+        const auto &argTypes = methodType->getArgTypes();
+        const std::size_t actualParamCount =
+            argTypes.empty() ? 0 : argTypes.size() - 1;
+        if (actualParamCount != method.paramTypeSpellings.size()) {
+            error(implLoc,
+                  "impl " + implLabel + " has parameter count mismatch for `" +
+                      toStdString(method.localName) + "`: expected " +
+                      std::to_string(method.paramTypeSpellings.size()) +
+                      ", got " + std::to_string(actualParamCount),
+                  "Match the trait method signature exactly.");
+        }
+
+        for (std::size_t i = 0; i < actualParamCount; ++i) {
+            const auto actualBindingKind = methodType->getArgBindingKind(i + 1);
+            if (actualBindingKind != method.paramBindingKinds[i]) {
+                error(implLoc,
+                      "impl " + implLabel +
+                          " has parameter binding mismatch for `" +
+                          toStdString(method.localName) + "` at index " +
+                          std::to_string(i),
+                      "Trait `" + toStdString(traitDecl.exportedName) +
+                          "` expects `" +
+                          bindingKindKeyword(method.paramBindingKinds[i]) +
+                          "` at that position.");
+            }
+
+            const auto actualTypeName =
+                describeResolvedTypeName(argTypes[i + 1]);
+            if (actualTypeName != method.paramTypeSpellings[i]) {
+                error(implLoc,
+                      "impl " + implLabel + " has parameter type mismatch for `" +
+                          toStdString(method.localName) + "` at index " +
+                          std::to_string(i) + ": expected `" +
+                          toStdString(method.paramTypeSpellings[i]) + "`, got `" +
+                          actualTypeName + "`",
+                      "Match the trait method parameter types exactly.");
+            }
+        }
+
+        const auto actualReturnTypeName =
+            describeResolvedTypeName(methodType->getRetType());
+        if (actualReturnTypeName != method.returnTypeSpelling) {
+            error(implLoc,
+                  "impl " + implLabel + " has return type mismatch for `" +
+                      toStdString(method.localName) + "`: expected `" +
+                      toStdString(method.returnTypeSpelling) + "`, got `" +
+                      actualReturnTypeName + "`",
+                  "Match the trait method return type exactly.");
+        }
+    }
+
     void checkVisibleTraitImplConflicts(
         const std::vector<ValidatedTraitImpl> &validatedImpls) {
         std::unordered_map<std::string, std::string> seenSources;
@@ -1591,9 +1672,9 @@ class InterfaceCollector {
                               "Define `def " + toStdString(method.localName) +
                                   "(...) { ... }` inside this impl body.");
                     }
-                    validateTraitMethodMatch(*traitRef.decl, method,
-                                             selfRef.structType,
-                                             traitImplDecl->loc);
+                    validateTraitBodyMethodMatch(*traitRef.decl, method,
+                                                 selfRef.structType,
+                                                 traitImplDecl->loc);
                 }
             } else if (selfRef.concreteMethodValidation) {
                 for (const auto &method : traitRef.decl->methods) {
@@ -1897,19 +1978,6 @@ class InterfaceCollector {
             for (auto *funcDecl : bodyMethods) {
                 auto methodName = llvm::StringRef(funcDecl->name.tochara(),
                                                   funcDecl->name.size());
-                if (selfRef.structType->getMethodType(methodName) != nullptr) {
-                    error(funcDecl->loc,
-                          "trait impl method `" +
-                              toStdString(funcDecl->name) + "` on `" +
-                              describeResolvedType(selfRef.structType) +
-                              "` conflicts with an existing method of the same "
-                              "name",
-                          "This first implementation still routes "
-                          "`obj.method()` through a single method table. Keep "
-                          "method names distinct for now, or stay with the "
-                          "header-only impl form.");
-                }
-
                 auto collected =
                     collectFunctionInterface(funcDecl, selfRef.structType);
                 if (!collected.type) {
@@ -1918,8 +1986,9 @@ class InterfaceCollector {
                               describeTraitImplContext(traitRef, selfRef),
                           "Keep trait impl methods monomorphic for now.");
                 }
-                selfRef.structType->addMethodType(
-                    methodName, collected.type, extractParamNames(funcDecl));
+                selfRef.structType->addTraitMethodType(
+                    toStringRef(traitRef.resolvedName), methodName,
+                    collected.type, extractParamNames(funcDecl));
             }
         }
 
@@ -2113,6 +2182,45 @@ materializeStructMethodBindings(TypeTable *typeMgr, StructType *structType) {
 }
 
 void
+materializeStructTraitMethodBindings(TypeTable *typeMgr,
+                                     StructType *structType) {
+    if (!typeMgr || !structType) {
+        return;
+    }
+
+    for (const auto &entry : structType->getTraitMethodTypes()) {
+        const auto methodKey =
+            traitMethodSlotKey(entry.second.traitName, entry.second.methodName);
+        if (typeMgr->getMethodFunction(structType, toStringRef(methodKey))) {
+            continue;
+        }
+
+        auto *storedMethodType = typeMgr->internType(entry.second.funcType);
+        auto *methodType =
+            storedMethodType ? storedMethodType->as<FuncType>() : nullptr;
+        if (!methodType) {
+            continue;
+        }
+
+        auto llvmName = declarationsupport_impl::resolveTraitMethodSymbolName(
+            structType, toStringRef(entry.second.traitName),
+            toStringRef(entry.second.methodName));
+        auto *llvmFunc = typeMgr->getModule().getFunction(llvmName);
+        if (!llvmFunc) {
+            llvmFunc = llvm::Function::Create(
+                getFunctionAbiLLVMType(*typeMgr, methodType, true),
+                llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
+                typeMgr->getModule());
+            annotateFunctionAbi(*llvmFunc, methodType->getAbiKind());
+        }
+
+        typeMgr->bindMethodFunction(
+            structType, toStringRef(methodKey),
+            new Function(llvmFunc, methodType, entry.second.paramNames, true));
+    }
+}
+
+void
 materializeUnitInterface(Scope *global, CompilationUnit &unit,
                          bool exportNamespace) {
     initBuildinType(global);
@@ -2187,6 +2295,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
             continue;
         }
         materializeStructMethodBindings(typeMgr, structType);
+        materializeStructTraitMethodBindings(typeMgr, structType);
     }
 
     for (const auto &implDecl : interface->traitImpls()) {
@@ -2196,6 +2305,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
             continue;
         }
         materializeStructMethodBindings(typeMgr, structType);
+        materializeStructTraitMethodBindings(typeMgr, structType);
     }
 
     unit.markInterfaceCollected();

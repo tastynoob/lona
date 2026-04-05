@@ -34,6 +34,18 @@ namespace lona {
 
 class CompilationUnit;
 
+inline std::string
+traitMethodSlotKey(llvm::StringRef traitName, llvm::StringRef methodName) {
+    return traitName.str() + "::" + methodName.str();
+}
+
+inline std::string
+traitMethodSlotKey(const ::string &traitName, const ::string &methodName) {
+    return traitMethodSlotKey(
+        llvm::StringRef(traitName.tochara(), traitName.size()),
+        llvm::StringRef(methodName.tochara(), methodName.size()));
+}
+
 std::string
 normalizeTargetTriple(const std::string &triple);
 bool
@@ -159,6 +171,12 @@ class StructType : public TypeClass {
 public:
     // type : index
     using ValueTy = std::pair<TypeClass *, int>;
+    struct TraitMethodEntry {
+        string traitName;
+        string methodName;
+        FuncType *funcType = nullptr;
+        std::vector<string> paramNames;
+    };
 
 private:
     llvm::StringMap<ValueTy> members;
@@ -166,6 +184,7 @@ private:
     llvm::StringSet<> embeddedMembers;
     llvm::StringMap<FuncType *> methodTypes;
     llvm::StringMap<std::vector<string>> methodParamNames;
+    std::unordered_map<std::string, TraitMethodEntry> traitMethodTypes;
 
     bool opaque = false;
     StructDeclKind declKind = StructDeclKind::Native;
@@ -229,6 +248,15 @@ public:
         methodParamNames[name] = std::move(paramNames);
     }
 
+    void addTraitMethodType(llvm::StringRef traitName, llvm::StringRef methodName,
+                            FuncType *funcType,
+                            std::vector<string> paramNames = {}) {
+        auto key = traitMethodSlotKey(traitName, methodName);
+        traitMethodTypes[key] = TraitMethodEntry{
+            string(traitName.str()), string(methodName.str()), funcType,
+            std::move(paramNames)};
+    }
+
     ValueTy *getMember(llvm::StringRef name) {
         auto it = members.find(name);
         if (it == members.end()) {
@@ -257,12 +285,61 @@ public:
         return it->second;
     }
 
+    FuncType *getTraitMethodType(llvm::StringRef traitName,
+                                 llvm::StringRef methodName) {
+        return getTraitMethodTypeByKey(
+            llvm::StringRef(traitMethodSlotKey(traitName, methodName)));
+    }
+
+    FuncType *getTraitMethodTypeByKey(llvm::StringRef key) {
+        auto it = traitMethodTypes.find(key.str());
+        if (it == traitMethodTypes.end()) {
+            return nullptr;
+        }
+        return it->second.funcType;
+    }
+
     const std::vector<string> *getMethodParamNames(llvm::StringRef name) const {
         auto it = methodParamNames.find(name);
         if (it == methodParamNames.end()) {
             return nullptr;
         }
         return &it->second;
+    }
+
+    const std::vector<string> *getTraitMethodParamNames(
+        llvm::StringRef traitName, llvm::StringRef methodName) const {
+        return getTraitMethodParamNamesByKey(
+            llvm::StringRef(traitMethodSlotKey(traitName, methodName)));
+    }
+
+    const std::vector<string> *getTraitMethodParamNamesByKey(
+        llvm::StringRef key) const {
+        auto it = traitMethodTypes.find(key.str());
+        if (it == traitMethodTypes.end()) {
+            return nullptr;
+        }
+        return &it->second.paramNames;
+    }
+
+    const TraitMethodEntry *getTraitMethodEntryByKey(llvm::StringRef key) const {
+        auto it = traitMethodTypes.find(key.str());
+        if (it == traitMethodTypes.end()) {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    std::vector<const TraitMethodEntry *> findTraitMethodsByLocalName(
+        llvm::StringRef methodName) const {
+        std::vector<const TraitMethodEntry *> matches;
+        for (const auto &entry : traitMethodTypes) {
+            if (llvm::StringRef(entry.second.methodName.tochara(),
+                                entry.second.methodName.size()) == methodName) {
+                matches.push_back(&entry.second);
+            }
+        }
+        return matches;
     }
 
     const llvm::StringMap<ValueTy> &getMembers() const { return members; }
@@ -274,6 +351,10 @@ public:
     }
     const llvm::StringMap<FuncType *> &getMethodTypes() const {
         return methodTypes;
+    }
+    const std::unordered_map<std::string, TraitMethodEntry> &
+    getTraitMethodTypes() const {
+        return traitMethodTypes;
     }
     std::vector<ValueTy> getMembersInOrder() const {
         std::vector<ValueTy> ordered(members.size(), {nullptr, -1});
@@ -907,6 +988,20 @@ public:
                     }
                 }
 
+                std::vector<StructType::TraitMethodEntry> internedTraitMethods;
+                internedTraitMethods.reserve(structType->getTraitMethodTypes().size());
+                for (const auto &method : structType->getTraitMethodTypes()) {
+                    auto *internedMethod = internType(method.second.funcType);
+                    auto *funcType = internedMethod ? internedMethod->as<FuncType>()
+                                                   : nullptr;
+                    if (!funcType) {
+                        return nullptr;
+                    }
+                    auto entry = method.second;
+                    entry.funcType = funcType;
+                    internedTraitMethods.push_back(std::move(entry));
+                }
+
                 targetStruct->setDeclKind(structType->getDeclKind());
                 if (!targetStruct->isAppliedTemplateInstance() &&
                     structType->isAppliedTemplateInstance()) {
@@ -932,6 +1027,20 @@ public:
                         targetStruct->addMethodType(method.first(),
                                                     method.second,
                                                     std::move(paramNames));
+                    }
+                }
+                for (const auto &method : internedTraitMethods) {
+                    auto key = traitMethodSlotKey(method.traitName,
+                                                  method.methodName);
+                    if (!targetStruct->getTraitMethodTypeByKey(key) ||
+                        targetStruct->getTraitMethodTypeByKey(key) !=
+                            method.funcType) {
+                        targetStruct->addTraitMethodType(
+                            llvm::StringRef(method.traitName.tochara(),
+                                            method.traitName.size()),
+                            llvm::StringRef(method.methodName.tochara(),
+                                            method.methodName.size()),
+                            method.funcType, method.paramNames);
                     }
                 }
                 return targetStruct;

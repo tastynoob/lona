@@ -29,6 +29,12 @@ RUNTIME_DOCS = [
     Path("reference/runtime/native_build.md"),
     Path("reference/runtime/c_ffi.md"),
 ]
+STRIP_LINK_TARGET_RE = re.compile(
+    r"\[([^\]]+)\]\(\.\./\.\./(?:internals|archive|proposals)/[^)]+\)"
+)
+STRIP_BARE_PATH_RE = re.compile(
+    r"\.\./\.\./(?:internals|archive|proposals)/[^\s)]+"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -183,6 +189,15 @@ def copy_selected_docs(docs_root: Path, references_dir: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def sanitize_reference_markdown(references_dir: Path) -> None:
+    for path in references_dir.rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        sanitized = STRIP_LINK_TARGET_RE.sub(r"\1", text)
+        sanitized = STRIP_BARE_PATH_RE.sub("internal reference", sanitized)
+        if sanitized != text:
+            path.write_text(sanitized, encoding="utf-8")
+
+
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -195,6 +210,7 @@ def build_skill(repo_root: Path, docs_root: Path, skill_name: str, description: 
 
     references_dir = output / "references"
     copy_selected_docs(docs_root, references_dir)
+    sanitize_reference_markdown(references_dir)
     write_text(output / "SKILL.md", build_skill_md(skill_name, description))
     write_text(references_dir / "skill-index.md", build_skill_index(references_dir))
     return output

@@ -8,6 +8,7 @@
 - `impl[T Trait] Box[T]: Trait` 这类单 bound generic impl header
 - `def func[T Trait](value T)` 这类单 trait bound generic function
 - `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 静态限定调用
+- `value.Trait.method(...)` / `ptr.Trait.method(...)` 显式 receiver trait 路径
 - `Trait dyn` 显式、非 owning 的动态 trait object
 - `cast[Trait dyn](&value)` 借用式构造
 
@@ -56,6 +57,7 @@ impl Hash for Point {
 
 - `impl Point: Hash` 仍然表示“现有的 `Point` methods 满足 `Hash`”。
 - `impl Hash for Point { ... }` 允许直接在 impl body 里写 trait 方法实现。
+- 这类 impl body 方法属于 trait 专属方法命名空间，不会和普通 inherent method 共用同一个方法槽。
 - `impl[T Trait] Box[T]: Trait` 表示“对所有满足该单 bound 的具体实例，现有的 inherent method 可以满足该 trait”。
 - 编译器会按方法名、receiver access、参数个数、参数 binding kind、参数类型、返回类型检查满足性。
 - `impl Trait for Type { ... }` 当前只稳定支持 local、non-generic、concrete struct self type。
@@ -69,9 +71,8 @@ impl Hash for Point {
 
 当前 first cut 边界：
 
-- `obj.method()` 仍然支持调用 impl body 里定义的方法。
-- `Trait.method(&value, ...)` 和 `Trait dyn` 也会绑定到同一份实现。
-- 同名 trait method 的独立命名空间还没完成，所以 impl body 方法名当前不能和已有同名方法并存。
+- `Trait.method(&value, ...)`、`value.Trait.method(...)` 和 `Trait dyn` 都会绑定到同一份 trait 实现；`obj.method()` 在选择到该 trait 方法时也会命中同一份实现。
+- local concrete type 上，trait impl body 方法可以和 inherent method 同名，也可以和其他 trait 的同名方法并存。
 - generic self type、imported self type 目前仍然只支持 header-only impl。
 
 ## 3. 静态限定调用
@@ -100,7 +101,61 @@ ret Hash.hash(&point)
 - `Hash(point)`、`Hash.hash` 这种把 trait namespace 当 runtime value 的写法没有特殊值语义。
 - unconstrained `T` 仍然不会自动得到普通 `obj.method(...)` 查找；没有 bound 时继续写 `Hash.hash(&value)` 也不成立，因为编译器还不知道 `T` 满足哪个 trait。
 
-## 4. `Trait dyn`
+## 4. 显式 receiver trait 路径
+
+除了静态限定调用，还可以直接在 receiver 后面写 trait 名：
+
+```lona
+var point = Point(value = 41)
+ret point.Hash.hash()
+```
+
+规则：
+
+- 当前稳定形式是 `value.Trait.method(...)` 和 `ptr.Trait.method(...)`。
+- 这里的 `Trait` 必须是当前模块里定义的 trait 名。
+- receiver 必须是 concrete struct value，或者可解引用到 concrete struct 的 `Type*`。
+- 这条路径会先验证该 concrete type 是否存在 visible impl。
+- getter / setter 的 receiver 可写性规则和普通 trait 调用一致；`set def` 仍然要求可写 receiver。
+- 如果对象上真的存在名为 `Trait` 的普通成员路径，那么普通成员路径优先，不会强行改按 trait 路径解释。
+
+例如：
+
+```lona
+trait Hash {
+    def read() i32
+}
+
+trait Metric {
+    def read() i32
+}
+
+struct Point {
+    value i32
+}
+
+impl Hash for Point {
+    def read() i32 {
+        ret self.value + 1
+    }
+}
+
+impl Metric for Point {
+    def read() i32 {
+        ret self.value + 2
+    }
+}
+
+var point = Point(value = 40)
+ret point.Hash.read() + point.Metric.read()
+```
+
+当前边界：
+
+- imported trait 还不支持 `value.dep.Trait.method(...)` 这种多段 receiver path；这类场景继续写 `dep.Trait.method(&value, ...)`。
+- bounded generic `T` 目前不走 `value.Trait.method(...)` 这条路径；generic body 里继续使用 `value.method()` 或 `Trait.method(&value, ...)`。
+
+## 5. `Trait dyn`
 
 ```lona
 var point = Point(value = 41)
@@ -118,7 +173,7 @@ ret h.hash()
 - 只有显式写出 `cast[Hash dyn](...)` 时，才会构造 trait object。
 - 如果借用源是只读的，构造结果会自动变成只读 trait object，也就是 `Hash const dyn`。
 
-## 5. trait object 构造
+## 6. trait object 构造
 
 当前稳定构造语法是：
 
@@ -150,7 +205,7 @@ ret h.hash()
 - 从临时值直接构造 trait object
 - owning trait object
 
-## 6. dyn receiver 可变性
+## 7. dyn receiver 可变性
 
 `Trait dyn` 现在不再按“整个 trait 是否 dyn-compatible”一刀切，而是按“当前方法 + 当前 receiver”的组合检查。
 
@@ -176,41 +231,88 @@ trait CounterLike {
 - `cast[CounterLike dyn](&const_counter)` 会得到 `CounterLike const dyn`
 - `CounterLike const dyn` 只能调用 `read()`，不能调用 `bump(...)`
 
-## 7. 常见诊断
+## 8. 常见诊断
 
 当前常见 trait v0 诊断包括：
 
 - trait body 中声明字段、`var`、`global` 或可执行语句
 - trait method 在 trait body 中带函数体
 - impl body 用在 generic self type 或 imported self type 上
-- impl body 与现有同名方法冲突
+- `obj.method()` 命中多个同名 trait 方法时的歧义错误
 - `cast[Trait dyn](&temporary)` 的源值不可寻址
 - concrete type 没有实现目标 trait
 - `Trait.method(value, ...)` 少了显式 self pointer
-- `set def` 被调用在只读的 `Trait const dyn` 或 `&const_value` 上
+- `set def` 被调用在只读的 `Trait const dyn`、`&const_value` 或只读的 `value.Trait.method(...)` receiver 上
 
-## 8. 方法命名与歧义
+## 9. 方法命名与歧义
 
-trait v0 当前不依赖“trait 身份”去区分同名方法。
+trait v0 现在已经把 trait 方法和 ordinary inherent method 分到不同命名空间。
 
 当前实现模型是：
 
 - `impl Type: Trait` 仍然是 header-only 满足性声明。
-- `impl Trait for Type { ... }` 会把方法实现接到当前 concrete type 上。
-- 普通 `obj.method(...)` 仍然按当前 concrete type 的单一方法表查找，不做 trait-based disambiguation。
+- `impl Trait for Type { ... }` 会给 `(SelfType, Trait, Method)` 注册一份 trait 专属实现。
+- `Trait.method(&value, ...)`、`value.Trait.method(...)` 和 `Trait dyn` 都优先绑定到这份 trait 专属实现。
+- header-only impl 仍然复用 concrete type 上已有的 inherent method。
 
-因此推荐风格是：
+普通 `obj.method(...)` 的查找优先级是：
 
-- trait 方法名在用户层面保持显式区分，例如 `hashA`、`hashB`，而不是依赖不同 trait 都叫 `hash`。
-- 即使两个 trait 的同名方法在当前版本里因为签名完全一致而可以共用同一个 concrete method，这也不应作为推荐 API 风格。
+1. 先找 ordinary inherent method。
+2. 如果没有 inherent method，再看同名 trait 方法。
+3. 如果同名 trait 方法只有一个，则允许直接调用。
+4. 如果同名 trait 方法有多个，则报歧义，要求显式写 trait 身份。
+
+例如：
+
+```lona
+trait Hash {
+    def read() i32
+}
+
+trait Metric {
+    def read() i32
+}
+
+struct Point {
+    value i32
+
+    def read() i32 {
+        ret self.value + 100
+    }
+}
+
+impl Hash for Point {
+    def read() i32 {
+        ret self.value + 1
+    }
+}
+
+impl Metric for Point {
+    def read() i32 {
+        ret self.value + 2
+    }
+}
+```
+
+此时：
+
+- `point.read()` 调用 inherent method。
+- `point.Hash.read()` 调用 `Hash` 的 trait 方法实现。
+- `point.Metric.read()` 调用 `Metric` 的 trait 方法实现。
+- `Hash.read(&point)` 和 `Metric.read(&point)` 也分别命中对应 trait 实现。
+
+如果去掉 inherent method，那么：
+
+- 当只有一个同名 trait 方法时，`point.read()` 仍然允许。
+- 当有多个同名 trait 方法时，`point.read()` 会报歧义。
 
 当前边界：
 
-- 同名且同签名的方法，header-only impl 仍可能被多个 trait 共同复用。
-- 同名但不同签名的方法，不会因为 trait 名不同而自动分流；由于当前不支持重载，这类写法应视为不受支持。
-- 想稳定表达“调用哪个 trait 的方法”，继续使用显式限定调用，例如 `HashA.hashA(&value)`。
+- imported trait 同名歧义目前建议用静态限定调用来消歧，例如 `left.Hash.read(&point)`、`right.Hash.read(&point)`。
+- `value.Trait.method(...)` 只支持单段 trait 名，不支持 `value.dep.Trait.method(...)`。
+- 由于语言当前不支持重载，trait 身份也不会把“同名但不同参数签名”的普通方法调用变成重载分派系统。
 
-## 9. 泛型与 single bound
+## 10. 泛型与 single bound
 
 trait v0 现在已经支持最小闭合的 generic + trait 组合：
 
@@ -260,6 +362,7 @@ impl[T Hash] Box[T]: Hash
 - generic function / method body 中，bounded `T` 允许直接调用 bound trait method，例如 `value.hash()`。
 - 显式 trait-qualified static call `Hash.hash(&value)` 仍然可用，特别适合需要强调 trait 身份或避免命名歧义时。
 - bounded `T` 仍然不开放裸字段访问、字段写入与运算符；bound 只会放开“直接方法调用”这一种 dot 形态。
+- `value.Trait.method(...)` 这条 receiver trait path 当前仍然要求 concrete struct receiver，因此不作为 bounded generic 的稳定语法。
 
 当前明确不支持：
 
@@ -267,7 +370,7 @@ impl[T Hash] Box[T]: Hash
 - trait method 自己再带 generic parameter
 - default method、associated type、generic trait、negative impl
 
-## 10. 实现边界
+## 11. 实现边界
 
 trait v0 当前不包含：
 

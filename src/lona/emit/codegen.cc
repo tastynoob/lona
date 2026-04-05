@@ -185,6 +185,25 @@ class FunctionCompiler {
         return traitDecl;
     }
 
+    std::string resolveConcreteTraitMethodLookupName(
+        StructType *selfType, const ModuleInterface::TraitDecl &traitDecl,
+        llvm::StringRef methodName) {
+        if (!selfType) {
+            return {};
+        }
+        auto traitMethodKey =
+            traitMethodSlotKey(traitDecl.exportedName, methodName);
+        if (selfType->getTraitMethodTypeByKey(toStringRef(traitMethodKey)) ||
+            scope->getMethodFunction(selfType, toStringRef(traitMethodKey))) {
+            return traitMethodKey;
+        }
+        if (selfType->getMethodType(methodName) ||
+            scope->getMethodFunction(selfType, methodName)) {
+            return methodName.str();
+        }
+        return {};
+    }
+
     llvm::ArrayType *getTraitWitnessLLVMType(std::size_t slotCount) {
         auto *ptrType = llvm::PointerType::getUnqual(context);
         return llvm::ArrayType::get(ptrType, slotCount);
@@ -209,12 +228,18 @@ class FunctionCompiler {
         slots.reserve(traitDecl.methods.size());
         auto *ptrType = llvm::PointerType::getUnqual(context);
         for (const auto &method : traitDecl.methods) {
-            auto *callee =
-                scope->getMethodFunction(selfType, toStringRef(method.localName));
+            auto methodLookupName = resolveConcreteTraitMethodLookupName(
+                selfType, traitDecl, toStringRef(method.localName));
+            auto *callee = methodLookupName.empty()
+                               ? nullptr
+                               : scope->getMethodFunction(
+                                     selfType, toStringRef(methodLookupName));
             if (!callee || !callee->getllvmValue()) {
                 error(loc,
-                      "missing method `" + toStdString(selfType->full_name) +
-                          "." + toStdString(method.localName) +
+                      "missing trait method `" +
+                          toStdString(traitDecl.exportedName) + "." +
+                          toStdString(method.localName) + "` for `" +
+                          toStdString(selfType->full_name) +
                           "` for trait witness lowering",
                       "This looks like a compiler pipeline bug.");
             }
@@ -655,7 +680,8 @@ class FunctionCompiler {
                 if (callee) {
                     funcType = callee->getType()->as<FuncType>();
                     calleeValue = callee->getllvmValue();
-                } else if (structType->isAppliedTemplateInstance()) {
+                } else if (structType->isAppliedTemplateInstance() &&
+                           structType->getMethodType(methodName)) {
                     auto *methodType = structType->getMethodType(methodName);
                     auto symbolName =
                         mangleModuleEntryComponent(structType->full_name) +
@@ -664,6 +690,16 @@ class FunctionCompiler {
                     if (methodType && llvmFunc) {
                         funcType = methodType;
                         calleeValue = llvmFunc;
+                    }
+                } else if (auto *traitMethodType =
+                               structType->getTraitMethodTypeByKey(methodName)) {
+                    auto *bound =
+                        scope->getMethodFunction(structType, methodName);
+                    if (bound) {
+                        funcType = bound->getType()->as<FuncType>();
+                        calleeValue = bound->getllvmValue();
+                    } else {
+                        funcType = traitMethodType;
                     }
                 }
                 if (!calleeValue || !funcType) {

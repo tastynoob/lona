@@ -36,6 +36,10 @@ extractParamNames(AstFuncDecl *node);
 std::vector<BindingKind>
 extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false);
 
+std::string
+resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName,
+                             llvm::StringRef methodName);
+
 TypeClass *
 methodReceiverPointeeType(TypeTable *typeMgr, StructType *methodParent,
                           AccessKind receiverAccess);

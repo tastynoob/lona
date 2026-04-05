@@ -1051,6 +1051,131 @@ def test_imported_trait_readonly_dyn_signatures_work_across_module_boundaries(
     )
 
 
+def test_imported_traits_with_same_local_name_support_distinct_body_impl_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_same_local_name_imported/left.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+        """,
+    )
+    compiler.write_source(
+        "trait_same_local_name_imported/right.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_same_local_name_imported/main.lo",
+        """
+        import left
+        import right
+
+        struct Point {
+            value i32
+        }
+
+        impl left.Hash for Point {
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl right.Hash for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            var a left.Hash dyn = cast[left.Hash dyn](&point)
+            var b right.Hash dyn = cast[right.Hash dyn](&point)
+            ret left.Hash.read(&point) + right.Hash.read(&point) +
+                a.read() + b.read() - 166
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@__lona_trait_witness__", label="imported same-local-name trait ir")
+    assert_contains(ir, "__trait__", label="imported same-local-name trait ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="imported same-local-name trait ir",
+    )
+
+
+def test_imported_traits_with_same_local_name_report_unqualified_method_ambiguity(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_same_local_name_imported_ambiguous/left.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+        """,
+    )
+    compiler.write_source(
+        "trait_same_local_name_imported_ambiguous/right.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_same_local_name_imported_ambiguous/main.lo",
+        """
+        import left
+        import right
+
+        struct Point {
+            value i32
+        }
+
+        impl left.Hash for Point {
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl right.Hash for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            ret point.read()
+        }
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "ambiguous trait method `read`",
+        label="imported same-local-name ambiguity diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "left.Hash.read(<self>, ...)",
+        label="imported same-local-name ambiguity diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "right.Hash.read(<self>, ...)",
+        label="imported same-local-name ambiguity diagnostic",
+    )
+
+
 def test_import_supports_nested_module_paths_from_include_root(
     compiler: CompilerHarness,
 ) -> None:

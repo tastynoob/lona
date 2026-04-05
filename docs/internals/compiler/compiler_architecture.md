@@ -151,7 +151,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `collect-declarations` 也会在接口层验证 trait 满足性、orphan rule 和 visible impl coherence
 - `define-globals` 为当前模块的全局变量补齐 LLVM global storage 和静态 initializer
 - `lower-hir` 执行 resolve 和 HIR 分析
-- `lower-hir` 也负责把 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 绑定到 concrete inherent method，以及把 `Trait dyn` / `h.method()` lower 到专用 trait-object HIR 节点
+- `lower-hir` 也负责把 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` / `value.Trait.method(...)` 绑定到 concrete trait impl method；如果是 header-only impl，则回退到 concrete inherent method；同时也会把 `Trait dyn` / `h.method()` lower 到专用 trait-object HIR 节点
 - `emit-llvm` 把函数级 HIR lowering 成 LLVM IR
 - `emit-llvm` 也会为 `Trait dyn` 生成 witness table，并把动态调用降成间接 dispatch
 - `optimize-llvm` 应用 LLVM 优化 pipeline

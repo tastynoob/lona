@@ -62,8 +62,9 @@ impl Hash for Point {
 - `impl Type: Trait` 和 `impl Trait for Type` 都是顶层声明。
 - `impl Trait for Type { ... }` 当前支持最小可用的 impl body。
 - 这版 impl body 只稳定支持 local、non-generic、concrete struct self type。
-- `obj.method()`、`Trait.method(&obj)` 和 `Trait dyn` 都可以调用这些 impl body 里定义的方法。
-- 同名 trait method 的完全分流还没有做完，所以 impl body 方法名当前仍然不能和现有同名方法并存。
+- `obj.method()`、`Trait.method(&obj)`、`obj.Trait.method()` 和 `Trait dyn` 都可以调用这些 impl body 里定义的方法。
+- trait 方法和普通成员方法现在属于不同命名空间；如果有普通成员方法同名，`obj.method()` 仍然优先命中普通成员方法。
+- 当同一类型上有多个 trait 提供同名方法时，普通 `obj.method()` 会报歧义，此时改写成 `obj.Trait.method()` 或 `Trait.method(&obj)`。
 
 ## 7. 顶层允许空行
 

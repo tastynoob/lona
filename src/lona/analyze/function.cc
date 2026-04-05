@@ -109,6 +109,38 @@ public:
     void markCompleted() { completed_ = true; }
 };
 
+std::string
+displayTraitReceiverSegment(llvm::StringRef resolvedTraitName) {
+    auto dotPos = resolvedTraitName.rfind('.');
+    if (dotPos == llvm::StringRef::npos) {
+        return resolvedTraitName.str();
+    }
+    return resolvedTraitName.substr(dotPos + 1).str();
+}
+
+FuncType *
+getStructMethodTypeByKey(StructType *structType, llvm::StringRef methodKey) {
+    if (!structType) {
+        return nullptr;
+    }
+    if (auto *methodType = structType->getMethodType(methodKey)) {
+        return methodType;
+    }
+    return structType->getTraitMethodTypeByKey(methodKey);
+}
+
+const std::vector<string> *
+getStructMethodParamNamesByKey(const StructType *structType,
+                               llvm::StringRef methodKey) {
+    if (!structType) {
+        return nullptr;
+    }
+    if (auto *paramNames = structType->getMethodParamNames(methodKey)) {
+        return paramNames;
+    }
+    return structType->getTraitMethodParamNamesByKey(methodKey);
+}
+
 }  // namespace
 
 class FunctionAnalyzer {
@@ -1402,8 +1434,10 @@ class FunctionAnalyzer {
         MemberLookupOwner owner;
         LookupResult result;
         std::optional<InjectedMemberBinding> injectedMember;
+        std::string resolvedMethodName;
         std::vector<std::string> promotedPath;
         std::vector<std::vector<std::string>> ambiguousPromotedPaths;
+        std::vector<std::string> ambiguousTraitNames;
     };
 
     struct MemberLookupAttempt {
@@ -1439,8 +1473,16 @@ class FunctionAnalyzer {
         return owner;
     }
 
-    LookupResult lookupDirectValueMember(const MemberLookupOwner &owner,
-                                         const std::string &fieldName) {
+    LookupResult lookupDirectValueMember(
+        const MemberLookupOwner &owner, const std::string &fieldName,
+        std::string *resolvedMethodName = nullptr,
+        std::vector<std::string> *ambiguousTraitNames = nullptr) {
+        if (resolvedMethodName) {
+            resolvedMethodName->clear();
+        }
+        if (ambiguousTraitNames) {
+            ambiguousTraitNames->clear();
+        }
         auto result = owner.entity.dot(fieldName);
         if (owner.tupleType) {
             TupleType::ValueTy member;
@@ -1467,8 +1509,40 @@ class FunctionAnalyzer {
             }
             if (auto *methodType = owner.structType->getMethodType(
                     llvm::StringRef(fieldName))) {
+                if (resolvedMethodName) {
+                    *resolvedMethodName = fieldName;
+                }
                 result.kind = LookupResultKind::Method;
                 result.resultEntity = EntityRef::typedValue(methodType);
+                return result;
+            }
+            auto traitMethods =
+                owner.structType->findTraitMethodsByLocalName(fieldName);
+            if (traitMethods.size() == 1) {
+                auto *entry = traitMethods.front();
+                if (resolvedMethodName) {
+                    *resolvedMethodName = traitMethodSlotKey(
+                        entry->traitName, entry->methodName);
+                }
+                result.kind = LookupResultKind::Method;
+                result.resultEntity = EntityRef::typedValue(entry->funcType);
+                return result;
+            }
+            if (traitMethods.size() > 1) {
+                result.kind = LookupResultKind::Ambiguous;
+                if (ambiguousTraitNames) {
+                    ambiguousTraitNames->reserve(traitMethods.size());
+                    for (const auto *entry : traitMethods) {
+                        ambiguousTraitNames->push_back(
+                            toStdString(entry->traitName));
+                    }
+                    std::sort(ambiguousTraitNames->begin(),
+                              ambiguousTraitNames->end());
+                    ambiguousTraitNames->erase(
+                        std::unique(ambiguousTraitNames->begin(),
+                                    ambiguousTraitNames->end()),
+                        ambiguousTraitNames->end());
+                }
                 return result;
             }
             result.kind = LookupResultKind::NotFound;
@@ -1551,11 +1625,19 @@ class FunctionAnalyzer {
     LookupResult lookupPromotedValueMember(
         const MemberLookupOwner &owner, const std::string &fieldName,
         std::vector<std::string> &promotedPath,
-        std::vector<std::vector<std::string>> &ambiguousPaths) {
+        std::vector<std::vector<std::string>> &ambiguousPaths,
+        std::string *resolvedMethodName = nullptr,
+        std::vector<std::string> *ambiguousTraitNames = nullptr) {
         LookupResult result = owner.entity.dot(fieldName);
         result.kind = LookupResultKind::NotFound;
         promotedPath.clear();
         ambiguousPaths.clear();
+        if (resolvedMethodName) {
+            resolvedMethodName->clear();
+        }
+        if (ambiguousTraitNames) {
+            ambiguousTraitNames->clear();
+        }
         if (!owner.structType) {
             return result;
         }
@@ -1566,6 +1648,8 @@ class FunctionAnalyzer {
             struct Candidate {
                 LookupResult result;
                 std::vector<std::string> path;
+                std::string resolvedMethodName;
+                std::vector<std::string> ambiguousTraitNames;
             };
 
             std::vector<Candidate> candidates;
@@ -1575,17 +1659,28 @@ class FunctionAnalyzer {
                 promotedOwner.entity = EntityRef::typedValue(state.valueType);
                 promotedOwner.valueType = state.valueType;
                 promotedOwner.structType = state.structType;
-                auto promotedLookup =
-                    lookupDirectValueMember(promotedOwner, fieldName);
+                Candidate candidate;
+                candidate.path = state.path;
+                auto promotedLookup = lookupDirectValueMember(
+                    promotedOwner, fieldName, &candidate.resolvedMethodName,
+                    &candidate.ambiguousTraitNames);
                 if (promotedLookup.kind == LookupResultKind::ValueField ||
                     promotedLookup.kind == LookupResultKind::Method) {
-                    candidates.push_back({promotedLookup, state.path});
+                    candidate.result = promotedLookup;
+                    candidates.push_back(std::move(candidate));
                 }
                 collectEmbeddedLookupStates(state, next);
             }
 
             if (candidates.size() == 1) {
                 promotedPath = candidates.front().path;
+                if (resolvedMethodName) {
+                    *resolvedMethodName = candidates.front().resolvedMethodName;
+                }
+                if (ambiguousTraitNames) {
+                    *ambiguousTraitNames =
+                        candidates.front().ambiguousTraitNames;
+                }
                 return candidates.front().result;
             }
             if (candidates.size() > 1) {
@@ -1617,14 +1712,17 @@ class FunctionAnalyzer {
             return lookup;
         }
 
-        lookup.result = lookupDirectValueMember(lookup.owner, fieldName);
+        lookup.result = lookupDirectValueMember(
+            lookup.owner, fieldName, &lookup.resolvedMethodName,
+            &lookup.ambiguousTraitNames);
         if (lookup.result.kind != LookupResultKind::NotFound) {
             return lookup;
         }
 
         lookup.result = lookupPromotedValueMember(
             lookup.owner, fieldName, lookup.promotedPath,
-            lookup.ambiguousPromotedPaths);
+            lookup.ambiguousPromotedPaths, &lookup.resolvedMethodName,
+            &lookup.ambiguousTraitNames);
         return lookup;
     }
 
@@ -1675,8 +1773,11 @@ class FunctionAnalyzer {
                     current, fieldName, lookup.result.resultEntity.valueType(),
                     loc);
             case LookupResultKind::Method:
-                return makeHIR<HIRSelector>(current, fieldName, nullptr, loc,
-                                            HIRSelectorKind::Method);
+                return makeHIR<HIRSelector>(
+                    current,
+                    lookup.resolvedMethodName.empty() ? fieldName
+                                                      : lookup.resolvedMethodName,
+                    nullptr, loc, HIRSelectorKind::Method);
             case LookupResultKind::InjectedMember:
                 if (allowInjectedMember) {
                     return nullptr;
@@ -1710,6 +1811,45 @@ class FunctionAnalyzer {
         }
 
         if (lookup.result.kind == LookupResultKind::Ambiguous) {
+            if (!lookup.ambiguousTraitNames.empty()) {
+                std::string help = "Disambiguate with ";
+                for (std::size_t i = 0; i < lookup.ambiguousTraitNames.size();
+                     ++i) {
+                    const auto &traitName = lookup.ambiguousTraitNames[i];
+                    const auto dotPos = traitName.rfind('.');
+                    const bool isCurrentModuleTrait =
+                        unit && dotPos != std::string::npos &&
+                        traitName.substr(0, dotPos) ==
+                            toStdString(unit->moduleName());
+                    const bool useReceiverPath =
+                        dotPos == std::string::npos || isCurrentModuleTrait;
+                    if (i != 0) {
+                        help +=
+                            i + 1 == lookup.ambiguousTraitNames.size() ? " or "
+                                                                       : ", ";
+                    } else {
+                        help += useReceiverPath
+                                    ? "an explicit trait path such as "
+                                    : "a static trait-qualified call such as ";
+                    }
+                    if (useReceiverPath) {
+                        auto ownerName = ownerLabel.empty()
+                                             ? std::string("<expr>")
+                                             : ownerLabel;
+                        auto localTraitName =
+                            dotPos == std::string::npos
+                                ? traitName
+                                : traitName.substr(dotPos + 1);
+                        help += "`" + ownerName + "." + localTraitName + "." +
+                                fieldName + "(...)`";
+                    } else {
+                        help += "`" + traitName + "." + fieldName +
+                                "(<self>, ...)`";
+                    }
+                }
+                help += ".";
+                error(loc, "ambiguous trait method `" + fieldName + "`", help);
+            }
             std::vector<std::string> suggestions;
             suggestions.reserve(lookup.ambiguousPromotedPaths.size());
             for (const auto &path : lookup.ambiguousPromotedPaths) {
@@ -1965,6 +2105,37 @@ class FunctionAnalyzer {
         return traitDecl;
     }
 
+    const ModuleInterface::TraitDecl *findVisibleReceiverTraitDecl(
+        llvm::StringRef rawName) const {
+        if (!unit) {
+            return nullptr;
+        }
+        auto lookup = unit->lookupTopLevelName(rawName.str());
+        return lookup.isTrait() ? lookup.traitDecl : nullptr;
+    }
+
+    std::string resolveConcreteTraitMethodLookupName(
+        StructType *receiverStructType,
+        const ModuleInterface::TraitDecl &traitDecl,
+        llvm::StringRef methodName) const {
+        if (!receiverStructType) {
+            return {};
+        }
+        auto traitMethodKey =
+            traitMethodSlotKey(traitDecl.exportedName, methodName);
+        if (receiverStructType->getTraitMethodTypeByKey(
+                toStringRef(traitMethodKey)) ||
+            typeMgr->getMethodFunction(receiverStructType,
+                                       toStringRef(traitMethodKey))) {
+            return traitMethodKey;
+        }
+        if (receiverStructType->getMethodType(methodName) ||
+            typeMgr->getMethodFunction(receiverStructType, methodName)) {
+            return methodName.str();
+        }
+        return {};
+    }
+
     const ModuleInterface::TraitMethodDecl *findTraitMethodDecl(
         const ModuleInterface::TraitDecl &traitDecl, llvm::StringRef methodName,
         std::size_t *slotIndex = nullptr) {
@@ -2003,6 +2174,65 @@ class FunctionAnalyzer {
             return nullptr;
         }
         return requireTypeByName(typeName, loc, context);
+    }
+
+    HIRExpr *buildConcreteTraitMethodCall(
+        AstFieldCall *node, const ModuleInterface::TraitDecl &traitDecl,
+        const ModuleInterface::TraitMethodDecl &traitMethod,
+        HIRExpr *receiver, StructType *receiverStructType,
+        llvm::StringRef methodLookupName, const CallArgList &callArgs,
+        const location &calleeLoc) {
+        if (!receiver || !receiverStructType) {
+            internalError(calleeLoc,
+                          "trait method call is missing its concrete receiver",
+                          "This looks like a trait call lowering bug.");
+        }
+
+        if (receiverStructType->isAppliedTemplateInstance() &&
+            methodLookupName ==
+                llvm::StringRef(traitMethod.localName.tochara(),
+                                traitMethod.localName.size()) &&
+            receiverStructType->getMethodType(methodLookupName)) {
+            (void)instantiateGenericStructMethod(receiverStructType,
+                                                 methodLookupName, calleeLoc);
+        }
+
+        auto *callee = makeHIR<HIRSelector>(receiver, methodLookupName.str(),
+                                            nullptr, calleeLoc,
+                                            HIRSelectorKind::Method);
+
+        std::vector<FormalCallArg> formals;
+        formals.reserve(traitMethod.paramTypeSpellings.size());
+        for (std::size_t i = 0; i < traitMethod.paramTypeSpellings.size();
+             ++i) {
+            auto *paramType = resolveTraitMethodTypeBySpelling(
+                traitMethod.paramTypeSpellings[i], node->loc,
+                "trait method call parameter type");
+            const string *paramName =
+                i < traitMethod.paramNames.size()
+                    ? &traitMethod.paramNames[i]
+                    : nullptr;
+            formals.push_back({paramName, paramType,
+                               traitMethod.paramBindingKinds[i],
+                               FormalCallArgKind::FunctionParameter, i});
+        }
+
+        auto boundArgs = bindCallArgs(
+            callArgs, formals,
+            {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
+             !traitMethod.paramNames.empty()});
+
+        std::vector<HIRExpr *> args;
+        args.reserve(boundArgs.size());
+        for (const auto &arg : boundArgs) {
+            args.push_back(arg.expr);
+        }
+
+        auto *retType = resolveTraitMethodTypeBySpelling(
+            traitMethod.returnTypeSpelling, node->loc,
+            "trait method call return type");
+        (void)traitDecl;
+        return makeHIR<HIRCall>(callee, std::move(args), retType, node->loc);
     }
 
     FuncType *getOrCreateTraitDynSlotType(
@@ -2116,13 +2346,15 @@ class FunctionAnalyzer {
             }
             auto methodName = toStringRef(selector->getFieldName());
             auto *methodFunc = typeMgr->getMethodFunction(structType, methodName);
-            if (!methodFunc && structType->isAppliedTemplateInstance()) {
+            if (!methodFunc && structType->isAppliedTemplateInstance() &&
+                structType->getMethodType(methodName)) {
                 methodFunc =
                     instantiateGenericStructMethod(structType, methodName,
                                                    loc);
             }
             auto *funcType = methodFunc ? methodFunc->getType()->as<FuncType>()
-                                        : structType->getMethodType(methodName);
+                                        : getStructMethodTypeByKey(structType,
+                                                                   methodName);
             if (!funcType) {
                 internalError(loc, "unknown struct method");
             }
@@ -2132,7 +2364,7 @@ class FunctionAnalyzer {
             resolution.paramNames =
                 methodFunc && !methodFunc->paramNames().empty()
                     ? &methodFunc->paramNames()
-                    : structType->getMethodParamNames(methodName);
+                    : getStructMethodParamNamesByKey(structType, methodName);
             resolution.argOffset = getMethodCallArgOffset(selector, funcType);
             if (auto *retType = funcType->getRetType()) {
                 resolution.resultEntity = EntityRef::typedValue(retType);
@@ -2228,6 +2460,13 @@ class FunctionAnalyzer {
                 "This looks like a compiler pipeline bug.");
         }
         if (resolved.isMethod()) {
+            auto *structType = requireStructTypeByName(
+                resolved.methodParentTypeName(), loc, "method parent type");
+            auto *func = typeMgr->getMethodFunction(
+                structType, toStringRef(resolved.functionName()));
+            if (func) {
+                return func;
+            }
             if (resolved.decl() &&
                 (resolved.decl()->hasTypeParams() ||
                  toStdString(resolved.decl()->name) !=
@@ -2235,10 +2474,6 @@ class FunctionAnalyzer {
                 return requireGlobalFunction(resolved.functionName(), loc,
                                              "generic method instance");
             }
-            auto *structType = requireStructTypeByName(
-                resolved.methodParentTypeName(), loc, "method parent type");
-            auto *func = typeMgr->getMethodFunction(
-                structType, toStringRef(resolved.functionName()));
             if (!func) {
                 internalError(loc,
                               "resolved method `" +
@@ -4398,7 +4633,6 @@ class FunctionAnalyzer {
                           "This looks like a trait-qualified receiver "
                           "lowering bug.");
         }
-        auto lookup = lookupMember(receiver, fieldName, receiverSpec.loc);
 
         auto visibleImpls = unit->findVisibleTraitImpls(
             traitBinding->resolvedName(), receiverStructType);
@@ -4412,28 +4646,20 @@ class FunctionAnalyzer {
                       "` in a visible module.");
         }
 
-        if (lookup.result.kind != LookupResultKind::Method) {
+        auto methodLookupName = resolveConcreteTraitMethodLookupName(
+            receiverStructType, *traitDecl, fieldName);
+        if (methodLookupName.empty()) {
             error(receiverSpec.loc,
-                  "trait-qualified call expected method `" + fieldName +
-                      "` on `" + describeResolvedType(receiverStructType) + "`",
-                  "Implement the required inherent method before writing the "
-                  "trait impl.");
-        }
-
-        if (receiverStructType->isAppliedTemplateInstance()) {
-            (void)instantiateGenericStructMethod(receiverStructType, fieldName,
-                                                 receiverSpec.loc);
-        }
-
-        auto *callee = materializeMemberExpr(
-            receiver, fieldName, lookup,
-            calleeSyntax ? calleeSyntax->loc : node->loc, true);
-        if (!callee) {
-            internalError(node->loc,
-                          "trait-qualified call did not produce a method "
-                          "selector",
-                          "This looks like a trait-qualified call lowering "
-                          "bug.");
+                  "trait `" + toStdString(traitBinding->resolvedName()) +
+                      "` is missing method implementation `" + fieldName +
+                      "` for `" + describeResolvedType(receiverStructType) +
+                      "`",
+                  "Define it in `impl " +
+                      displayTraitReceiverSegment(
+                          toStringRef(traitBinding->resolvedName())) +
+                      " for " + describeResolvedType(receiverStructType) +
+                      " { ... }`, or keep a matching inherent method for the "
+                      "header-only impl form.");
         }
 
         CallArgList remainingArgs;
@@ -4441,37 +4667,106 @@ class FunctionAnalyzer {
         for (std::size_t i = 1; i < normalizedArgs.size(); ++i) {
             remainingArgs.push_back(normalizedArgs[i]);
         }
+        return buildConcreteTraitMethodCall(
+            node, *traitDecl, *traitMethod, receiver, receiverStructType,
+            toStringRef(methodLookupName), remainingArgs,
+            calleeSyntax ? calleeSyntax->loc : node->loc);
+    }
 
-        std::vector<FormalCallArg> formals;
-        formals.reserve(traitMethod->paramTypeSpellings.size());
-        for (std::size_t i = 0; i < traitMethod->paramTypeSpellings.size();
-             ++i) {
-            auto *paramType = resolveTraitMethodTypeBySpelling(
-                traitMethod->paramTypeSpellings[i], node->loc,
-                "trait-qualified call parameter type");
-            const string *paramName =
-                i < traitMethod->paramNames.size()
-                    ? &traitMethod->paramNames[i]
-                    : nullptr;
-            formals.push_back({paramName, paramType,
-                               traitMethod->paramBindingKinds[i],
-                               FormalCallArgKind::FunctionParameter, i});
+    HIRExpr *tryAnalyzeReceiverTraitQualifiedCall(AstFieldCall *node,
+                                                  AstDotLike *calleeSyntax) {
+        auto *traitSelector =
+            calleeSyntax && calleeSyntax->parent
+                ? calleeSyntax->parent->as<AstDotLike>()
+                : nullptr;
+        if (!traitSelector) {
+            return nullptr;
         }
-        auto boundArgs = bindCallArgs(
-            remainingArgs, formals,
-            {node->loc, CallBindingTargetKind::FunctionCall, nullptr,
-             !traitMethod->paramNames.empty()});
-
-        std::vector<HIRExpr *> args;
-        args.reserve(boundArgs.size());
-        for (const auto &arg : boundArgs) {
-            args.push_back(arg.expr);
+        if (auto *binding = resolved.dotLike(traitSelector);
+            binding && binding->kind() == ResolvedEntityRef::Kind::Trait) {
+            return nullptr;
         }
 
-        auto *retType = resolveTraitMethodTypeBySpelling(
-            traitMethod->returnTypeSpelling, node->loc,
-            "trait-qualified call return type");
-        return makeHIR<HIRCall>(callee, std::move(args), retType, node->loc);
+        auto *traitDecl =
+            findVisibleReceiverTraitDecl(toStringRef(traitSelector->field->text));
+        if (!traitDecl) {
+            return nullptr;
+        }
+
+        auto fieldName = toStdString(calleeSyntax->field->text);
+        const auto *traitMethod =
+            findTraitMethodDecl(*traitDecl, toStringRef(fieldName));
+        if (!traitMethod) {
+            error(calleeSyntax->loc,
+                  "unknown trait method `" +
+                      displayTraitReceiverSegment(
+                          toStringRef(traitDecl->exportedName)) +
+                      "." + fieldName + "`",
+                  "Check the trait method name, or update the trait "
+                  "declaration.");
+        }
+
+        auto *receiverExpr = requireExpr(traitSelector->parent);
+        auto receiverAttempt = lookupMemberWithImplicitDeref(
+            receiverExpr, toStdString(traitSelector->field->text),
+            traitSelector->loc, !isExplicitDerefSyntax(traitSelector->parent));
+        if (receiverAttempt.lookup.result.kind != LookupResultKind::NotFound) {
+            return nullptr;
+        }
+
+        auto *receiver = receiverAttempt.parent;
+        auto *receiverStructType =
+            receiver ? asUnqualified<StructType>(receiver->getType()) : nullptr;
+        if (!receiverStructType) {
+            error(traitSelector->loc,
+                  "trait receiver path expects a concrete struct value for `" +
+                      displayTraitReceiverSegment(
+                          toStringRef(traitDecl->exportedName)) +
+                      "`",
+                  "Write `value.Trait.method(...)` on a struct value, or "
+                  "dereference a concrete `Type*` first.");
+        }
+
+        requireTraitMethodWritableReceiver(
+            *traitMethod, receiver->getType(), traitSelector->loc,
+            "Setter trait calls through `value.Trait.method(...)` require a "
+            "writable receiver. Use a writable value, or dereference a "
+            "writable pointer before the trait path.");
+
+        auto visibleImpls =
+            unit->findVisibleTraitImpls(traitDecl->exportedName,
+                                        receiverStructType);
+        if (visibleImpls.empty()) {
+            error(traitSelector->loc,
+                  "type `" + describeResolvedType(receiverStructType) +
+                      "` does not implement trait `" +
+                      toStdString(traitDecl->exportedName) + "`",
+                  "Add `impl " + displayTraitReceiverSegment(
+                                         toStringRef(traitDecl->exportedName)) +
+                      " for " + describeResolvedType(receiverStructType) +
+                      "` in a visible module.");
+        }
+
+        auto methodLookupName = resolveConcreteTraitMethodLookupName(
+            receiverStructType, *traitDecl, fieldName);
+        if (methodLookupName.empty()) {
+            error(traitSelector->loc,
+                  "trait `" + toStdString(traitDecl->exportedName) +
+                      "` is missing method implementation `" + fieldName +
+                      "` for `" + describeResolvedType(receiverStructType) +
+                      "`",
+                  "Define it in `impl " +
+                      displayTraitReceiverSegment(
+                          toStringRef(traitDecl->exportedName)) +
+                      " for " + describeResolvedType(receiverStructType) +
+                      " { ... }`, or keep a matching inherent method for the "
+                      "header-only impl form.");
+        }
+
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        return buildConcreteTraitMethodCall(
+            node, *traitDecl, *traitMethod, receiver, receiverStructType,
+            toStringRef(methodLookupName), normalizedArgs, calleeSyntax->loc);
     }
 
     HIRExpr *analyzeTraitObjectCall(AstFieldCall *node, AstDotLike *calleeSyntax,
@@ -5203,6 +5498,10 @@ class FunctionAnalyzer {
                 binding->kind() == ResolvedEntityRef::Kind::GenericType) {
                 diagnoseGenericTypeCall(describeMemberOwnerSyntax(dotLikeNode),
                                         node->loc);
+            }
+            if (auto *receiverTraitCall =
+                    tryAnalyzeReceiverTraitQualifiedCall(node, dotLikeNode)) {
+                return receiverTraitCall;
             }
             if (auto *genericMethodCall =
                     tryAnalyzeGenericMethodCall(node, dotLikeNode)) {

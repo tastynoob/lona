@@ -296,6 +296,7 @@ param-decl-seq    ::= param-decl
 - `impl Type: Trait` 和 `impl Trait for Type` 都是合法顶层声明。
 - `impl Trait for Type { ... }` 当前已经支持最小可用的 impl body；`impl Type: Trait { ... }` 也仍然能被 parser 接住。
 - 这版 impl body 只稳定支持 local、non-generic、concrete struct self type；generic self type、imported self type 仍然建议继续用 header-only 形式。
+- trait 方法和普通成员方法现在是分离命名空间；`obj.method()` 先找普通成员方法，再在 trait 方法中做唯一匹配，必要时可写成 `obj.Trait.method()` 或 `Trait.method(&obj)` 消歧。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
 - trait / impl / `Trait dyn` 的完整语义见 [trait.md](./trait.md)。

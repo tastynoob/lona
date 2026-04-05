@@ -101,7 +101,11 @@ def test_trait_v0_impl_for_body_supports_member_static_and_dyn_calls(
         """,
     )
     assert_contains(ir, "define i32 @main()", label="trait impl-for ir")
-    assert_regex(ir, r"call i32 @.*Point\.hash\(ptr ", label="trait impl-for ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.__trait__\..*Hash\.hash\(ptr ",
+        label="trait impl-for ir",
+    )
     assert_contains(ir, "@__lona_trait_witness__", label="trait impl-for ir")
     assert_contains(
         ir,
@@ -237,36 +241,6 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
             }
             """,
             ["parameter type mismatch for `hash` at index 0"],
-        ),
-        (
-            "trait_impl_body_conflict_bad.lo",
-            """
-            trait Hash {
-                def hash() i32
-            }
-
-            struct Point {
-                value i32
-
-                def hash() i32 {
-                    ret self.value
-                }
-            }
-
-            impl Hash for Point {
-                def hash() i32 {
-                    ret self.value + 1
-                }
-            }
-
-            def main() i32 {
-                ret 0
-            }
-            """,
-            [
-                "conflicts with an existing method of the same name",
-                "This first implementation still routes `obj.method()` through a single method table",
-            ],
         ),
         (
             "trait_impl_duplicate_visible.lo",
@@ -473,6 +447,301 @@ def test_trait_v0_supports_multiple_traits_with_same_method_name(
             "parameter count mismatch for `hash`",
         ],
     )
+
+
+def test_trait_v0_trait_impl_bodies_support_same_name_with_explicit_receiver_paths(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_impl_body_same_method_name.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+
+        trait Metric {
+            def read() i32
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Hash for Point {
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Metric for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            var h Hash dyn = cast[Hash dyn](&point)
+            var m Metric dyn = cast[Metric dyn](&point)
+            ret Hash.read(&point) + Metric.read(&point) +
+                point.Hash.read() + point.Metric.read() +
+                h.read() + m.read() - 249
+        }
+        """,
+    )
+    assert_contains(ir, "@__lona_trait_witness__", label="trait impl body same-name ir")
+    assert_contains(ir, "__trait__", label="trait impl body same-name ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait impl body same-name ir",
+    )
+
+    _expect_ir_failure(
+        compiler,
+        "trait_impl_body_same_method_name_ambiguous.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+
+        trait Metric {
+            def read() i32
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Hash for Point {
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Metric for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            ret point.read()
+        }
+        """,
+        [
+            "ambiguous trait method `read`",
+            "point.Hash.read(...)",
+            "point.Metric.read(...)",
+        ],
+    )
+
+
+def test_trait_v0_inherent_methods_still_win_over_trait_impl_body_methods(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_impl_body_inherent_precedence.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+
+        struct Point {
+            value i32
+
+            def read() i32 {
+                ret self.value + 100
+            }
+        }
+
+        impl Hash for Point {
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            ret point.read() + point.Hash.read() + Hash.read(&point) - 222
+        }
+        """,
+    )
+    assert_contains(ir, "__trait__", label="trait inherent precedence ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.read\(ptr ",
+        label="trait inherent precedence ir",
+    )
+
+
+def test_trait_v0_explicit_receiver_trait_paths_cover_pointer_and_mixed_impl_forms(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_receiver_path_mixed_impls.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+
+        trait Metric {
+            def read() i32
+        }
+
+        struct Point {
+            value i32
+
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Point: Hash
+
+        impl Metric for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 40)
+            var ptr Point* = &point
+            var h Hash dyn = cast[Hash dyn](&point)
+            var m Metric dyn = cast[Metric dyn](&point)
+            ret ptr.Hash.read() + ptr.Metric.read() +
+                Hash.read(&point) + Metric.read(&point) +
+                h.read() + m.read() - 249
+        }
+        """,
+    )
+    assert_contains(ir, "@__lona_trait_witness__", label="trait receiver path mixed impls ir")
+    assert_contains(ir, "__trait__", label="trait receiver path mixed impls ir")
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait receiver path mixed impls ir",
+    )
+
+
+def test_trait_v0_explicit_receiver_trait_path_does_not_shadow_real_members(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_receiver_path_member_shadowing.lo",
+        """
+        trait Hash {
+            def read() i32
+        }
+
+        struct View {
+            value i32
+
+            def read() i32 {
+                ret self.value + 1
+            }
+        }
+
+        struct Holder {
+            Hash View
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Hash for Point {
+            def read() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def main() i32 {
+            var holder = Holder(Hash = View(value = 30))
+            var point = Point(value = 40)
+            ret holder.Hash.read() + point.Hash.read() - 73
+        }
+        """,
+    )
+    assert_regex(
+        ir,
+        r"call i32 @.*View\.read\(ptr ",
+        label="trait receiver path member shadowing ir",
+    )
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.__trait__\..*Hash\.read\(ptr ",
+        label="trait receiver path member shadowing ir",
+    )
+
+
+def test_trait_v0_explicit_receiver_trait_path_reports_unknown_methods_and_writable_setters(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "trait_receiver_path_unknown_method_bad.lo",
+            """
+            trait Hash {
+                def read() i32
+            }
+
+            struct Point {
+                value i32
+            }
+
+            impl Hash for Point {
+                def read() i32 {
+                    ret self.value + 1
+                }
+            }
+
+            def main() i32 {
+                var point = Point(value = 40)
+                ret point.Hash.missing()
+            }
+            """,
+            [
+                "unknown trait method `Hash.missing`",
+            ],
+        ),
+        (
+            "trait_receiver_path_setter_const_bad.lo",
+            """
+            trait CounterLike {
+                set def bump(step i32) i32
+            }
+
+            struct Counter {
+                value i32
+            }
+
+            impl CounterLike for Counter {
+                set def bump(step i32) i32 {
+                    self.value = self.value + step
+                    ret self.value
+                }
+            }
+
+            def main() i32 {
+                const counter = Counter(value = 40)
+                ret counter.CounterLike.bump(1)
+            }
+            """,
+            [
+                "set trait method `bump` requires a writable receiver",
+                "Setter trait calls through `value.Trait.method(...)` require a writable receiver",
+            ],
+        ),
+    ]
+    for name, source, needles in failures:
+        _expect_ir_failure(compiler, name, source, needles)
 
 
 def test_trait_v0_allows_local_trait_dyn_fields_before_trait_declaration(

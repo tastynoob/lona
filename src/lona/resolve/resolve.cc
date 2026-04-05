@@ -1811,6 +1811,7 @@ class ModuleResolver {
     void resolveFunction(
         AstFuncDecl *node, StructType *methodParent = nullptr,
         string methodParentTypeName = string(),
+        string methodLookupName = string(),
         std::vector<string> scopedTypeParams = {},
         std::unordered_map<std::string, std::string> scopedTypeParamBounds = {}) {
         if (!node) {
@@ -1820,10 +1821,12 @@ class ModuleResolver {
         const bool templateValidationOnly = !scopedTypeParams.empty();
         Function *function = nullptr;
         string resolvedFunctionName = node->name;
+        if (methodParent && !methodLookupName.empty()) {
+            resolvedFunctionName = std::move(methodLookupName);
+        }
         if (!templateValidationOnly && methodParent) {
             function = typeMgr_->getMethodFunction(
-                methodParent,
-                llvm::StringRef(node->name.tochara(), node->name.size()));
+                methodParent, toStringRef(resolvedFunctionName));
         } else if (!templateValidationOnly) {
             if (unit_) {
                 auto lookup = unit_->lookupTopLevelName(node->name);
@@ -1846,9 +1849,9 @@ class ModuleResolver {
                                       ownGenericTypeParamBounds.end());
         auto *resolved = createResolvedFunction(
             node, node->body,
-            methodParent ? string(node->name)
+            methodParent ? std::move(resolvedFunctionName)
                          : (templateValidationOnly ? string()
-                                                   : resolvedFunctionName),
+                                                   : std::move(resolvedFunctionName)),
             !methodParentTypeName.empty()
                 ? std::move(methodParentTypeName)
                 : (methodParent ? string(methodParent->full_name) : string()),
@@ -1890,6 +1893,7 @@ class ModuleResolver {
             auto *func = dynamic_cast<AstFuncDecl *>(stmt);
             if (func) {
                 resolveFunction(func, structType, resolvedStructName,
+                                string(),
                                 scopedTypeParams, scopedTypeParamBounds);
             }
         }
@@ -1897,6 +1901,31 @@ class ModuleResolver {
 
     void resolveTraitImpl(AstTraitImplDecl *node) {
         if (!node || !node->hasBody() || !unit_ || node->hasTypeParams()) {
+            return;
+        }
+
+        string resolvedTraitName;
+        if (auto *traitField = dynamic_cast<AstField *>(node->trait)) {
+            auto lookup = unit_->lookupTopLevelName(toStdString(traitField->name));
+            if (lookup.isTrait()) {
+                resolvedTraitName = lookup.resolvedName;
+            }
+        } else if (auto *traitDot = dynamic_cast<AstDotLike *>(node->trait)) {
+            auto *moduleField = dynamic_cast<AstField *>(traitDot->parent);
+            if (moduleField) {
+                auto moduleLookup =
+                    unit_->lookupTopLevelName(toStdString(moduleField->name));
+                if (moduleLookup.isModule() && moduleLookup.importedModule) {
+                    auto traitLookup = unit_->lookupTopLevelName(
+                        *moduleLookup.importedModule,
+                        toStdString(traitDot->field->text));
+                    if (traitLookup.isTrait()) {
+                        resolvedTraitName = traitLookup.resolvedName;
+                    }
+                }
+            }
+        }
+        if (resolvedTraitName.empty()) {
             return;
         }
 
@@ -1926,7 +1955,9 @@ class ModuleResolver {
             if (!func) {
                 continue;
             }
-            resolveFunction(func, structType, toStdString(structType->full_name));
+            resolveFunction(
+                func, structType, toStdString(structType->full_name),
+                traitMethodSlotKey(resolvedTraitName, toStdString(func->name)));
         }
     }
 
