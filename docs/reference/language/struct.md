@@ -1,7 +1,7 @@
 # 结构体声明示例
 
 > 对应 `grammar.md` 的“3.3 结构体与函数声明”。
-> 本文讲普通 `struct` 语义，以及 bodyless `struct Name` 这种 opaque 声明。`#[repr "C"] struct` 的 C 边界规则见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+> 本文讲普通 `struct` 语义，以及 bodyless `struct Name` 这种 opaque 声明。泛型结构体与 declaration-site bound 见 [generic.md](generic.md)。`#[repr "C"] struct` 的 C 边界规则见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 > `set`、字段投影、receiver 可写性和字段 `const` 边界的统一规则见 [mutability.md](mutability.md)。
 
 ## 1. 只有字段的结构体
@@ -21,6 +21,30 @@ struct Line {
     finish Point
 }
 ```
+
+## 2.1 结构体也可以声明泛型参数
+
+```lona
+struct Box[T] {
+    value T
+}
+
+struct Pair[A, B] {
+    left A
+    right B
+}
+
+struct HashedBox[T Hash] {
+    value T
+}
+```
+
+说明：
+
+- 泛型参数列表统一写在结构体名后面的 `[...]`。
+- `struct Box[T]` 声明的是类型模板；真正使用时必须写成 `Box[i32]` 这类 applied generic type。
+- generic v0 当前支持单 trait bound，例如 `struct HashedBox[T Hash]`。
+- 更完整的实例化、推断与限制见 [generic.md](generic.md)。
 
 ## 3. 嵌入字段与成员提升
 

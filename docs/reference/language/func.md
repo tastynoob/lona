@@ -1,7 +1,7 @@
 # 函数声明示例
 
 > 对应 `grammar.md` 的“3.3 结构体与函数声明”。
-> 本文只讲顶层 `def`。结构体方法见 [struct.md](struct.md)，C ABI 顶层函数见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
+> 本文只讲顶层 `def`。结构体方法见 [struct.md](struct.md)，泛型函数与实例化见 [generic.md](generic.md)，C ABI 顶层函数见 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 
 ## 1. 无参数、无显式返回类型
 
@@ -79,6 +79,26 @@ inc(ref x)
 ```lona
 var cb (ref i32: i32) = @inc
 ```
+
+## 5.1 顶层函数也可以声明泛型参数
+
+```lona
+def id[T](value T) T {
+    ret value
+}
+
+def hash_one[T Hash](value T) i32 {
+    ret value.hash()
+}
+```
+
+说明：
+
+- 泛型参数列表写在函数名后面的 `[...]`。
+- generic v0 当前支持单 trait bound，例如 `[T Hash]`。
+- 调用时既可以显式写成 `id[i32](1)`，也可以在可推断时直接写成 `id(1)`。
+- 如果要把泛型函数当函数值使用，必须先实例化，例如 `@id[i32]`。
+- 更完整的泛型规则见 [generic.md](generic.md)；trait bound 允许的能力边界见 [trait.md](trait.md)。
 
 ## 6. 函数体总是块语句
 

@@ -1,7 +1,7 @@
 # 类型写法示例
 
 > 对应 `grammar.md` 的“3.6 类型语法”。
-> 本文只讲类型写法本身。字面量、`cast[T](expr)`、结构体类型名的 call-like 初始化和花括号初始化见 [expr.md](expr.md) 与 [vardef.md](vardef.md)；指针语义见 [pointer.md](pointer.md)，`ref` 语义见 [ref.md](ref.md)。
+> 本文只讲类型写法本身。字面量、`cast[T](expr)`、结构体类型名的 call-like 初始化和花括号初始化见 [expr.md](expr.md) 与 [vardef.md](vardef.md)；指针语义见 [pointer.md](pointer.md)，`ref` 语义见 [ref.md](ref.md)，泛型整体规则见 [generic.md](generic.md)。
 
 ## 1. 内建类型
 
@@ -82,6 +82,7 @@ var imported dep.Box[Point]
   - `Box[i32]`、`Pair[Point, bool]` 这类类型实参，表示 applied generic type
 - 当前数组维度只接受整数维度；编译期常量维度还不在这版范围里。
 - 如果 `[]` 里的内容既不是合法数组维度，也不是合法类型实参，编译器会直接报错，而不会做模糊猜测。
+- 关于泛型结构体声明、generic function instantiation、类型推断和 single bound，见 [generic.md](generic.md)。
 
 ## 6. 元组类型
 

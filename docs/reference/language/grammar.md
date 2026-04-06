@@ -12,6 +12,7 @@
 - 控制流与块语句：[controlflow.md](controlflow.md)
 - 表达式：[expr.md](expr.md)
 - 类型写法：[type.md](type.md)
+- 泛型：[generic.md](generic.md)
 - trait 与 `Trait dyn`：[trait.md](trait.md)
 
 ## 1. 词法规则
@@ -206,9 +207,9 @@ tag-arg           ::= IDENT
 tagged-struct-decl ::= struct-decl
                      | tag-line struct-decl
 
-struct-decl       ::= "struct" IDENT NL
-                    | "struct" IDENT "{" "}"
-                    | "struct" IDENT "{"
+struct-decl       ::= "struct" IDENT opt-type-params NL
+                    | "struct" IDENT opt-type-params "{" "}"
+                    | "struct" IDENT opt-type-params "{"
                       ( struct-stat | NL )
                       { NL | struct-stat }
                       "}"
@@ -222,20 +223,29 @@ tagged-func-decl  ::= func-decl
 tagged-global-decl ::= global-decl
                      | tag-line global-decl
 
+opt-type-params   ::= /* empty */
+                    | "[" generic-param-seq "]"
+
+generic-param-seq ::= generic-param
+                    | generic-param-seq "," generic-param
+
+generic-param     ::= IDENT
+                    | IDENT dot-like-name
+
 global-decl       ::= "global" IDENT type-name NL
                     | "global" IDENT type-name "=" expr NL
                     | "global" IDENT type-name "=" brace-init NL
                     | "global" IDENT "=" expr NL
                     | "global" IDENT "=" brace-init NL
 
-func-decl         ::= [ "set" ] "def" IDENT "(" ")" NL
-                    | [ "set" ] "def" IDENT "(" ")" type-name NL
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" NL
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name NL
-                    | [ "set" ] "def" IDENT "(" ")" block
-                    | [ "set" ] "def" IDENT "(" ")" type-name block
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" block
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name block
+func-decl         ::= [ "set" ] "def" IDENT opt-type-params "(" ")" NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" ")" type-name NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" type-name NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" ")" block
+                    | [ "set" ] "def" IDENT opt-type-params "(" ")" type-name block
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" block
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" type-name block
 
 trait-decl        ::= "trait" IDENT NL
                     | "trait" IDENT "{ }"
@@ -247,17 +257,17 @@ trait-decl        ::= "trait" IDENT NL
 trait-stat        ::= trait-func-decl
                     | /* parser 还会接纳更多成员与语句形状，语义阶段再给 targeted diagnostic */
 
-trait-func-decl   ::= [ "set" ] "def" IDENT "(" ")" NL
-                    | [ "set" ] "def" IDENT "(" ")" type-name NL
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" NL
-                    | [ "set" ] "def" IDENT "(" param-decl-seq ")" type-name NL
+trait-func-decl   ::= [ "set" ] "def" IDENT opt-type-params "(" ")" NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" ")" type-name NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" NL
+                    | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" type-name NL
 
-impl-decl         ::= "impl" type-name ":" dot-like-name NL
-                    | "impl" type-name ":" NL* dot-like-name NL
-                    | "impl" type-name ":" dot-like-name block
-                    | "impl" type-name ":" NL* dot-like-name block
-                    | "impl" dot-like-name "for" NL* type-name NL
-                    | "impl" dot-like-name "for" NL* type-name block
+impl-decl         ::= "impl" opt-type-params type-name ":" dot-like-name NL
+                    | "impl" opt-type-params type-name ":" NL* dot-like-name NL
+                    | "impl" opt-type-params type-name ":" dot-like-name block
+                    | "impl" opt-type-params type-name ":" NL* dot-like-name block
+                    | "impl" opt-type-params dot-like-name "for" NL* type-name NL
+                    | "impl" opt-type-params dot-like-name "for" NL* type-name block
 
 field-decl        ::= IDENT type-name
                     | "_" type-name
@@ -277,6 +287,8 @@ param-decl-seq    ::= param-decl
 
 说明：
 
+- 泛型参数列表统一写在名字后面的 `[...]`，例如 `struct Box[T]`、`def id[T](value T) T`、`impl[T Hash] Box[T]: Hash`。
+- generic v0 当前每个类型参数只支持一个 trait bound；例如 `[T Hash]` 合法，`[T Hash + Eq]` 会给 targeted diagnostic。
 - tag line 必须单独占一行，然后紧跟一个函数声明、结构体声明或变量定义。
 - tag line 也可以跟一个 `global` 声明。
 - 当前内建 tag 只有 `extern` 和 `repr`。
@@ -298,6 +310,7 @@ param-decl-seq    ::= param-decl
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
 - trait / impl / `Trait dyn` 的完整语义见 [trait.md](./trait.md)。
+- generic v0 的完整语义见 [generic.md](./generic.md)。
 
 ### 3.4 变量定义
 
@@ -503,6 +516,7 @@ type-name-seq     ::= type-name
 说明：
 
 - 元组类型 `<T1, T2, ...>` 已经进入 parser / AST。
+- applied generic type 在类型层统一通过 `postfix-type "[" expr-seq "]"` 进入，再在语义阶段按“数组维度”或“类型实参”分流。
 - 顶层函数声明仍写成 `def foo(v i32) i32` 这种“参数头 + 返回类型”形式。
 - 但在类型位置里，parser 只接受显式函数指针，例如 `(:)`、`(i32, bool: i32)`。
 - 裸函数签名如 `(i32, bool) i32` 不再作为 `type-name` 的合法写法。
@@ -513,6 +527,7 @@ type-name-seq     ::= type-name
 - `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。
 - `base-type "[]"` 这种显式未定长数组类型写法对用户是禁止的；如果想省略数组维度，请用 `var a = {1, 2}` 这类初始化器推断。
 - 更具体的类型语义见 [type.md](./type.md)。
+- 泛型声明与实例化规则见 [generic.md](./generic.md)。
 
 ## 4. 运算符优先级与结合性
 

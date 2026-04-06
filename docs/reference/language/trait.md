@@ -370,6 +370,8 @@ impl[T Hash] Box[T]: Hash
 - trait method 自己再带 generic parameter
 - default method、associated type、generic trait、negative impl
 
+如果你想先看 generic v0 的整体入口，包括 `Type[...]`、`name[T](...)`、`@name[T]`、推断和 unconstrained/bounded 参数边界，见 [generic.md](generic.md)。
+
 ## 11. 实现边界
 
 trait v0 当前不包含：
