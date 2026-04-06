@@ -85,7 +85,7 @@ dep.Counter(1)
   - `lookupTopLevelName(...)`
   - `lookupTopLevelName(importedModule, ...)`
 - 当前模块顶层名字与 imported 模块成员名字，已经复用同一类查询结果，只在“查找空间”上区分，不再切换一套完全不同的搜索顺序。
-- resolve 阶段对简单标识符和显式函数取指针，已经统一落成轻量 `ResolvedEntityRef`，不再分别保存“全局对象名 / 全局类型名 / 其它裸字符串”。
+- resolve 阶段对简单标识符和显式函数实体引用，已经统一落成轻量 `ResolvedEntityRef`，不再分别保存“全局对象名 / 全局类型名 / 其它裸字符串”。
 - sema / HIR lowering 阶段已经引入：
   - `EntityRef`
   - `LookupResult`

@@ -34,7 +34,7 @@
 这条链路现在是：
 
 1. `resolve` 把裸模块别名解析成 `ResolvedEntityRef::module`
-2. `resolve` 在处理 `AstSelector(module, member)` 时，若 parent 是 imported 模块别名：
+2. `resolve` 在处理 `AstDotLike(module, member)` 时，若 parent 是 imported 模块别名：
    - 命中函数则直接绑定成 `ResolvedEntityRef::globalValue(...)`
    - 命中全局变量也直接绑定成 `ResolvedEntityRef::globalValue(...)`
    - 命中类型则直接绑定成 `ResolvedEntityRef::type(...)`
@@ -118,25 +118,23 @@
 因此，这轮收口的范围应明确限定为：
 
 - 只前移 `module.xxx`
-- 不把所有 `AstSelector` 一次性塞进 `resolve`
+- 不把所有 `AstDotLike` 一次性塞进 `resolve`
 
 ## 6. 建议实现方向
 
-### 6.1 在 `resolve` 中为 `AstSelector` 增加绑定结果
+### 6.1 在 `resolve` 中为 `AstDotLike` 维护绑定结果
 
 当前 `ResolvedFunction` 已经为下面几类语法节点保存了解析结果：
 
 - `AstField`
+- `AstDotLike`
 - `AstFuncRef`
 
-下一步应增加对 `AstSelector` 的绑定表，例如：
-
-- `bindSelector(const AstSelector *, ResolvedEntityRef)`
-- `selector(const AstSelector *) -> const ResolvedEntityRef *`
+也就是说，模块限定路径与普通点分路径都已经可以通过 `AstDotLike` 的绑定表进入后续阶段，不需要再引入另一套 selector 节点模型。
 
 ### 6.2 只在“parent 是 imported 模块”时折叠 selector
 
-`resolve` 在处理 `AstSelector(parent, field)` 时：
+`resolve` 在处理 `AstDotLike(parent, field)` 时：
 
 1. 先解析 `parent`
 2. 如果 `parent` 已经被解析成 imported 模块别名
@@ -155,14 +153,14 @@
 - `ResolvedEntityRef::globalValue("math.counter")`
 - `ResolvedEntityRef::type("math.Counter")`
 
-### 6.3 `analysis` 优先消费已解析 selector
+### 6.3 `analysis` 优先消费已解析 dot-like 路径
 
-`analysis` 中的两条主路径都应先检查 selector 是否已有 resolve 结果：
+`analysis` 中的两条主路径都应先检查 dot-like 路径是否已有 resolve 结果：
 
-- `analyzeSelector(AstSelector *)`
-- `analyzeCall(AstFieldCall *)` 中 `callee` 为 `AstSelector` 的分支
+- `analyzeDotLike(AstDotLike *)`
+- `analyzeCall(AstFieldCall *)` 中 `callee` 为 `AstDotLike` 的分支
 
-若 selector 已经在 `resolve` 中被折叠：
+若 dot-like 路径已经在 `resolve` 中被折叠：
 
 - 直接物化成具体 `HIRValue(Function)`、`HIRValue(某个已解析的全局对象)` 或 `HIRValue(TypeObject)`
 - 不再重新走 `lookupMember(...)`

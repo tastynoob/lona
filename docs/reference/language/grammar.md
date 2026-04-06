@@ -383,14 +383,16 @@ cast-expr         ::= "cast" "[" type-name "]" "(" expr ")"
 
 tuple-literal     ::= "(" expr "," expr-seq ")"
 
-func-pointer-ref  ::= "@" variable
-                    | "@" type-apply-expr
+func-ref-expr     ::= "@" func-ref-target
+
+func-ref-target   ::= dot-like-name
+                    | dot-like-name "[" type-name-seq "]"
 
 single-value      ::= variable
                     | CONST
                     | BOOL
                     | cast-expr
-                    | func-pointer-ref
+                    | func-ref-expr
                     | field-call
                     | expr-paren
                     | tuple-literal
@@ -399,9 +401,9 @@ field-call        ::= single-value "(" ")"
                     | single-value "(" call-arg-seq ")"
 
 variable          ::= IDENT
-                    | field-selector
 
-field-selector    ::= single-value "." IDENT
+dot-like-name     ::= IDENT
+                    | dot-like-name "." IDENT
 
 expr-seq          ::= expr
                     | expr-seq "," expr
@@ -448,6 +450,8 @@ brace-init-item   ::= expr
 说明：
 
 - 当前 `xxx(...)` 统一视为“括号应用”语法；语义阶段再区分它是函数调用、函数指针调用还是数组索引。
+- `@` 只接受“函数路径目标”，也就是顶层函数名、模块限定函数名，或它们后面跟一组显式类型实参。
+- parser 会先把 `@dep.id[i32]` 绑定成一个完整的函数实体引用，再把后续 `()` 当成对该函数指针值的调用；因此 `@dep.id[i32](1)` 等价于 `(@dep.id[i32])(1)`。
 - `expr-assign-left` 在 parser 层包含 `field-call`，因此 `a(1)`、`grid(1, 2)` 这类数组索引写法可以出现在赋值左侧。
 - 如果形参是 `ref`，调用点也必须显式写 `ref`，例如 `inc(ref x)`、`inc(ref value = x)`；结构体方法继续使用普通成员调用语法，具体规则见 [struct.md](./struct.md)。
 - `_ T` 是嵌入字段声明。它在语义上仍然是一个真实结构体字段，只是源码里不直接写字段名。
@@ -503,7 +507,7 @@ type-name-seq     ::= type-name
 - 但在类型位置里，parser 只接受显式函数指针，例如 `(:)`、`(i32, bool: i32)`。
 - 裸函数签名如 `(i32, bool) i32` 不再作为 `type-name` 的合法写法。
 - 函数指针类型本身是一个完整的 `type-primary`，因此后面可以继续接普通后缀，例如 `(i32: i32)*`、`(: i32)[4]`。
-- 函数取指针不在类型层完成，而是通过表达式 `@foo`、`@dep.foo`、`@id[i32]` 显式写出。
+- 函数实体引用不在类型层完成，而是通过表达式 `@foo`、`@dep.foo`、`@id[i32]` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法。
 - `postfix-type "dyn"` 当前只接受 trait 名，因此用户层稳定写法是 `Hash dyn`、`dep.Hash dyn`。
 - `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。
@@ -534,6 +538,7 @@ type-name-seq     ::= type-name
 说明：
 
 - 上表描述的是 parser 当前的优先级表。
+- parser 还使用一个内部优先级标记来约束 `@` 的 target 绑定：它低于 `.`、高于普通二元运算，因此 `@dep.id[i32](1)` 会按 `(@dep.id[i32])(1)` 解析。
 - 表达式层的数组访问统一走 `()`，并在语义阶段区分为函数调用或数组索引。
 - 运算符的具体语义见 [expr.md](./expr.md)。
 
