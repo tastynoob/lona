@@ -1,6 +1,7 @@
 #include "cmdline.hpp"
 #include "lona/driver/session.hh"
 #include "lona/err/err.hh"
+#include "lona/version.hh"
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -94,6 +95,7 @@ main(int argc, char *argv[]) {
     cli.add("verify-ir", 0, "verify generated LLVM IR before printing");
     cli.add("debug", 'g', "emit LLVM debug metadata");
     cli.add("stats", 0, "print per-phase compile statistics to stderr");
+    cli.add("version", 0, "print language version and compiler revision");
     cli.add<int>("opt", 'O', "LLVM optimization level (0-3)", false, 0,
                  cmdline::range(0, 3));
     auto normalizedArgs = normalizeMainCliArgs(argc, argv);
@@ -103,6 +105,10 @@ main(int argc, char *argv[]) {
         return 1;
     }
     cli.parse_check(normalizedArgs.args);
+    if (cli.exist("version")) {
+        std::cout << lona::versionString() << '\n';
+        flushProcessStreamsAndExit(0, &std::cout);
+    }
 
     const auto &args = cli.rest();
     if (args.size() > 2) {

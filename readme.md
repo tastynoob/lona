@@ -107,11 +107,11 @@ flowchart LR
 目前仓库里的工具入口已经做了拆分：
 
 - `lona-ir`
-  - 专注做一件事：把 `.lo` 编译成目标相关的文本 LLVM IR、object bundle，或显式 LTO 的最终 object
+  - 专注做一件事：把 `.lo` 编译成目标相关的文本 LLVM IR、bundle/object 产物，或显式 LTO 的最终 object
 - `lac`
   - `lona compiler`
   - 默认走 `x86_64-unknown-linux-gnu`
-  - 默认先调用 `lona-ir --emit objects --target x86_64-unknown-linux-gnu`，再调用系统 linker driver 生成可执行文件
+  - 默认先调用 `lona-ir --emit obj --target x86_64-unknown-linux-gnu`，再调用系统 linker driver 生成可执行文件
 - `lac-native`
   - 走 bare 路线
   - 默认走 `x86_64-none-elf`
@@ -162,9 +162,10 @@ make install
 ### 常用命令
 
 ```bash
+lona-ir --version
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
-lona-ir --emit objects --target x86_64-unknown-linux-gnu input.lo output.manifest
-lona-ir --emit obj --lto full --target x86_64-unknown-linux-gnu input.lo output.o
+lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.manifest
+lona-ir --emit linked-obj --lto full --target x86_64-unknown-linux-gnu input.lo output.o
 lac input.lo output/program
 lac-native input.lo output/program
 ```

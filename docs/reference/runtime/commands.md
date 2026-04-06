@@ -47,6 +47,12 @@
 lona-ir input.lo
 ```
 
+查看当前语言版本和编译器修订版本：
+
+```bash
+lona-ir --version
+```
+
 输出验证过的 LLVM IR：
 
 ```bash
@@ -103,6 +109,9 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 
 - `--target <triple>`
   - 指定目标 triple，例如 `x86_64-unknown-linux-gnu`
+- `--version`
+  - 打印当前版本号，格式为 `语言版本 + 修订版本`
+  - 当前语言版本固定为 `0.1 beta`
 - `-I <dir>` / `--include-dir <dir>`
   - 追加模块 include 搜索目录；解析 `import` 时会排在 importing 文件目录之后
 - `-O <0-3>`

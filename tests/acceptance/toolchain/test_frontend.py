@@ -19,6 +19,17 @@ def test_acceptance_fixture_json(compiler: CompilerHarness, fixtures_dir: Path) 
     assert_contains(result.stdout, '"type": "FieldCall"', label="frontend json")
 
 
+def test_compiler_version_prints_language_and_revision(compiler: CompilerHarness) -> None:
+    result = run_command([str(compiler.compiler_bin), "--version"], cwd=compiler.repo_root)
+    result.expect_ok()
+    assert_regex(
+        result.stdout,
+        r"^0\.1 beta \+ (?:[0-9a-f]{12}|unknown)\n?$",
+        label="compiler version",
+    )
+    assert result.stderr == "", result.describe()
+
+
 def test_acceptance_fixture_ir_variants(compiler: CompilerHarness, fixtures_dir: Path) -> None:
     base_ir = compiler.emit_ir(fixtures_dir / "acceptance_main.lo").expect_ok().stdout
     assert_regex(base_ir, r"^define i64 @.*Complex\.add\(ptr [^,]+, i64 [^)]+\)", label="frontend ir")
