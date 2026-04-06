@@ -17,6 +17,11 @@
 namespace lona {
 
 class WorkspaceBuilder {
+    enum class BundleArtifactKind {
+        Bitcode,
+        Object,
+    };
+
     struct LinkedModule {
         std::unique_ptr<llvm::LLVMContext> context;
         std::unique_ptr<llvm::Module> module;
@@ -31,10 +36,15 @@ class WorkspaceBuilder {
         const CompilationUnit &unit) const;
     static ModuleEntryRole artifactEntryRoleFor(
         const CompilationUnit &unit, const CompilationUnit &rootUnit);
-    std::string bundleObjectFileName(const ModuleArtifact &artifact) const;
-    std::filesystem::path bundleObjectPath(
+    std::string bundleMemberFileName(const ModuleArtifact &artifact,
+                                     BundleArtifactKind kind) const;
+    std::filesystem::path bundleMemberPath(
         const ModuleArtifact &artifact,
-        const std::filesystem::path &bundleDir) const;
+        const std::filesystem::path &bundleDir,
+        BundleArtifactKind kind) const;
+    void persistArtifactOutput(const ModuleArtifact &artifact,
+                               const std::filesystem::path &artifactCacheDir,
+                               BundleArtifactKind kind) const;
     bool matchesArtifact(const CompilationUnit &unit,
                          const ModuleArtifact &artifact,
                          const CompileOptions &options,
@@ -51,7 +61,7 @@ class WorkspaceBuilder {
                               SessionStats &stats) const;
     int buildArtifacts(CompilationUnit &rootUnit, const CompileOptions &options,
                        bool requireObjects, bool requireBitcode,
-                       const std::filesystem::path *objectCacheDir,
+                       const std::filesystem::path *artifactCacheDir,
                        SessionStats &stats, std::ostream &out) const;
     int compileModule(CompilationUnit &unit, const CompileOptions &options,
                       ModuleArtifact &artifact, bool emitObject,
@@ -71,13 +81,20 @@ public:
                               SessionStats &stats, std::ostream &out) const;
     int emitIR(CompilationUnit &rootUnit, const CompileOptions &options,
                SessionStats &stats, std::ostream &out) const;
-    int emitObject(CompilationUnit &rootUnit, const CompileOptions &options,
-                   const std::string &outputPath, SessionStats &stats,
-                   std::ostream &out) const;
+    int emitBitcodeBundle(CompilationUnit &rootUnit,
+                          const CompileOptions &options,
+                          const std::string &outputPath,
+                          const std::string &cacheOutputPath,
+                          SessionStats &stats, std::ostream &out) const;
     int emitObjectBundle(CompilationUnit &rootUnit,
                          const CompileOptions &options,
                          const std::string &outputPath,
                          const std::string &cacheOutputPath,
+                         SessionStats &stats, std::ostream &out) const;
+    int emitLinkedObject(CompilationUnit &rootUnit,
+                         const CompileOptions &options,
+                         const std::string &outputPath,
+                         const std::string &artifactCachePath,
                          SessionStats &stats, std::ostream &out) const;
 };
 

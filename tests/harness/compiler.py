@@ -151,7 +151,7 @@ class CompilerHarness:
         args.append(str(input_path))
         return self._run(args)
 
-    def emit_obj(
+    def emit_linked_obj(
         self,
         input_path: Path,
         *,
@@ -159,12 +159,21 @@ class CompilerHarness:
         verify_ir: bool = True,
         target: str | None = None,
         lto: str | None = None,
+        cache_dir: Path | None = None,
+        stats: bool = False,
+        no_cache: bool = False,
         include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
-        args = ["--emit", "obj"]
+        args = ["--emit", "linked-obj"]
         if verify_ir:
             args.append("--verify-ir")
+        if stats:
+            args.append("--stats")
+        if no_cache:
+            args.append("--no-cache")
+        if cache_dir is not None:
+            args.extend(["--cache-dir", str(cache_dir)])
         if target is not None:
             args.extend(["--target", target])
         if lto is not None:
@@ -173,7 +182,7 @@ class CompilerHarness:
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
-    def emit_objects(
+    def emit_obj_bundle(
         self,
         input_path: Path,
         *,
@@ -187,7 +196,38 @@ class CompilerHarness:
         include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
-        args = ["--emit", "objects"]
+        args = ["--emit", "obj"]
+        if verify_ir:
+            args.append("--verify-ir")
+        if stats:
+            args.append("--stats")
+        if no_cache:
+            args.append("--no-cache")
+        if cache_dir is not None:
+            args.extend(["--cache-dir", str(cache_dir)])
+        if target is not None:
+            args.extend(["--target", target])
+        if lto is not None:
+            args.extend(["--lto", lto])
+        self._extend_include_paths(args, include_paths)
+        args.extend([str(input_path), str(output_path)])
+        return self._run(args), output_path
+
+    def emit_bc_bundle(
+        self,
+        input_path: Path,
+        *,
+        output_name: str,
+        cache_dir: Path | None = None,
+        verify_ir: bool = True,
+        target: str | None = None,
+        lto: str | None = None,
+        stats: bool = False,
+        no_cache: bool = False,
+        include_paths: list[Path] | None = None,
+    ) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        args = ["--emit", "bc"]
         if verify_ir:
             args.append("--verify-ir")
         if stats:
@@ -223,6 +263,8 @@ class CompilerHarness:
         *,
         output_name: str,
         lto: str | None = None,
+        cache_dir: Path | None = None,
+        stats: bool = False,
         extra_env: dict[str, str] | None = None,
         include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
@@ -234,6 +276,10 @@ class CompilerHarness:
         cmd = [str(self.system_driver)]
         if lto is not None:
             cmd.extend(["--lto", lto])
+        if cache_dir is not None:
+            cmd.extend(["--cache-dir", str(cache_dir)])
+        if stats:
+            cmd.append("--stats")
         self._extend_include_paths(cmd, include_paths)
         cmd.extend([str(input_path), str(output_path)])
         result = run_command(
@@ -249,6 +295,8 @@ class CompilerHarness:
         *,
         output_name: str,
         lto: str | None = None,
+        cache_dir: Path | None = None,
+        stats: bool = False,
         include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
         output_path = self.output_path(output_name)
@@ -257,6 +305,10 @@ class CompilerHarness:
         cmd = [str(self.native_driver)]
         if lto is not None:
             cmd.extend(["--lto", lto])
+        if cache_dir is not None:
+            cmd.extend(["--cache-dir", str(cache_dir)])
+        if stats:
+            cmd.append("--stats")
         self._extend_include_paths(cmd, include_paths)
         cmd.extend([str(input_path), str(output_path)])
         result = run_command(

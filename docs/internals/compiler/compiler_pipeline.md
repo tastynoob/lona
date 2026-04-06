@@ -54,7 +54,7 @@ generic 的内部数据模型与这条“模板先校验、实例按需进入 lo
 - 所有需要的模块 artifact 生成完后，`WorkspaceBuilder` 会显式进入链接阶段
 - 当前实现使用 LLVM linker 把 root 模块和其依赖模块的 bitcode artifact 拼装成最终 module
 - `--emit ir` 输出的是最终链接后的 LLVM IR，而不是 root 模块的半成品 IR
-- `--emit objects` 默认走模块 object bundle 快路径，不会额外生成文本 IR
+- `--emit bc` / `--emit obj` 默认走模块 bundle 快路径，不会额外生成文本 IR
 
 ## 扩展约定
 

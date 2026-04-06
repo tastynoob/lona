@@ -21,6 +21,13 @@ TARGET_TRIPLE="${TARGET_TRIPLE:-x86_64-unknown-linux-gnu}"
 LTO_MODE="${LTO_MODE:-off}"
 KEEP_TEMP=0
 OPT_LEVEL=0
+STATS=0
+DEFAULT_CACHE_ROOT="${LONA_CACHE_DIR:-${TMPDIR:-/tmp}/lona-cache}"
+CACHE_ROOT="$DEFAULT_CACHE_ROOT"
+
+sanitize_path_component() {
+    printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'
+}
 
 usage() {
     cat <<'EOF'
@@ -33,6 +40,9 @@ Options:
                  Target triple for hosted builds
   --lto <off|full>
                  Link-time optimization mode
+  --cache-dir <dir>
+                 Persistent artifact cache root (default: ${TMPDIR:-/tmp}/lona-cache)
+  --stats        Forward compile statistics from lona-ir
   --keep-temp    Keep intermediate .o file
   -h, --help     Show this help
 EOF
@@ -69,6 +79,18 @@ while [ "$#" -gt 0 ]; do
         --lto)
             LTO_MODE="$2"
             shift 2
+            ;;
+        --cache-dir)
+            CACHE_ROOT="$2"
+            shift 2
+            ;;
+        --cache-dir=*)
+            CACHE_ROOT="${1#--cache-dir=}"
+            shift
+            ;;
+        --stats)
+            STATS=1
+            shift
             ;;
         --keep-temp)
             KEEP_TEMP=1
@@ -144,23 +166,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+TARGET_CACHE_KEY="$(sanitize_path_component "$TARGET_TRIPLE")"
+PERSISTENT_CACHE_ROOT="$CACHE_ROOT/system/$TARGET_CACHE_KEY"
+OBJECT_CACHE_DIR="$PERSISTENT_CACHE_ROOT/object-bundle"
+LINKED_BITCODE_CACHE_DIR="$PERSISTENT_CACHE_ROOT/linked-bitcode"
+STATS_ARGS=()
+if [ "$STATS" -eq 1 ]; then
+    STATS_ARGS+=(--stats)
+fi
+
 OBJECTS=()
 if [ "$LTO_MODE" = "full" ]; then
     FINAL_OBJECT="$TMPDIR_LOCAL/program.lto.o"
-    "$LONA_IR_BIN" --emit obj --lto full --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+    "$LONA_IR_BIN" --emit linked-obj --lto full --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        "${STATS_ARGS[@]}" \
+        --cache-dir "$LINKED_BITCODE_CACHE_DIR" \
         "${INCLUDE_ARGS[@]}" \
         "$INPUT" "$FINAL_OBJECT"
     OBJECTS=("$FINAL_OBJECT")
 else
     MANIFEST_PATH="$TMPDIR_LOCAL/objects.manifest"
-    CACHE_DIR="$TMPDIR_LOCAL/objects"
-    "$LONA_IR_BIN" --emit objects --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+    "$LONA_IR_BIN" --emit obj --target "$TARGET_TRIPLE" --verify-ir -O "$OPT_LEVEL" \
+        "${STATS_ARGS[@]}" \
         "${INCLUDE_ARGS[@]}" \
-        --cache-dir "$CACHE_DIR" \
+        --cache-dir "$OBJECT_CACHE_DIR" \
         "$INPUT" "$MANIFEST_PATH"
 
-    while IFS=$'\t' read -r KIND ROLE PATH_VALUE; do
-        if [ "$KIND" = "object" ] && [ -n "${PATH_VALUE:-}" ]; then
+    while IFS=$'\t' read -r RECORD_KIND ARTIFACT_KIND ROLE PATH_VALUE; do
+        if [ "$RECORD_KIND" = "artifact" ] && [ "$ARTIFACT_KIND" = "obj" ] && [ -n "${PATH_VALUE:-}" ]; then
             OBJECTS+=("$PATH_VALUE")
         fi
     done < "$MANIFEST_PATH"

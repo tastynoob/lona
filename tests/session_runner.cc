@@ -17,8 +17,10 @@ buildSessionRunnerOptions(const Json &command) {
         command.value("output_mode", std::string("llvm_ir"));
     if (outputMode == "ast_json") {
         options.outputMode = OutputMode::AstJson;
-    } else if (outputMode == "object_file") {
-        options.outputMode = OutputMode::ObjectFile;
+    } else if (outputMode == "linked_object") {
+        options.outputMode = OutputMode::LinkedObject;
+    } else if (outputMode == "bitcode_bundle") {
+        options.outputMode = OutputMode::BitcodeBundle;
     } else if (outputMode == "object_bundle") {
         options.outputMode = OutputMode::ObjectBundle;
     } else {
@@ -42,7 +44,8 @@ compileSessionRunnerCommand(CompilerSession &session, const Json &command) {
     Json result = Json::object();
     const auto input = command.at("input").get<std::string>();
     auto options = buildSessionRunnerOptions(command);
-    if (options.outputMode == OutputMode::ObjectBundle) {
+    if (options.outputMode == OutputMode::BitcodeBundle ||
+        options.outputMode == OutputMode::ObjectBundle) {
         const std::string requestedOutput =
             command.value("output_path", std::string());
         const auto manifestPath = requestedOutput.empty()
@@ -60,7 +63,7 @@ compileSessionRunnerCommand(CompilerSession &session, const Json &command) {
     result["exit_code"] = exitCode;
     const std::string output = out.str();
     result["stdout_size"] = output.size();
-    if (options.outputMode == OutputMode::ObjectFile) {
+    if (options.outputMode == OutputMode::LinkedObject) {
         result["stdout"] = "";
     } else {
         result["stdout"] = output;

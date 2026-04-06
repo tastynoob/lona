@@ -67,17 +67,21 @@ main(int argc, char *argv[]) {
     cmdline::parser cli;
     cli.add<std::string>(
         "emit", 0,
-        "select output artifact: ir, entry (hosted entry object), obj (single "
-        "final object), or objects (module object bundle)",
+        "select output artifact: ir, bc (module bitcode bundle), obj (module "
+        "object bundle), linked-obj (single final object), or entry (hosted "
+        "entry object)",
         false, "",
-        cmdline::oneof<std::string>("ir", "entry", "obj", "objects"));
+        cmdline::oneof<std::string>("ir", "entry", "bc", "obj",
+                                    "linked-obj"));
     cli.add<std::string>("target", 0,
                          "LLVM target triple, for example x86_64-none-elf or "
                          "x86_64-unknown-linux-gnu",
                          false, "");
-    cli.add<std::string>("cache-dir", 0,
-                         "output directory for `--emit objects` bundle members",
-                         false, "./lona_cache");
+    cli.add<std::string>(
+        "cache-dir", 0,
+        "artifact cache directory for module bundles and linked-object "
+        "bitcode intermediates",
+        false, "./lona_cache");
     cli.add<std::string>(
         "include-dir", 'I',
         "add a module include search directory; searched after the importing "
@@ -111,8 +115,9 @@ main(int argc, char *argv[]) {
         cli.exist("emit") ? cli.get<std::string>("emit") : std::string();
     const bool emitIR = emitTarget == "ir";
     const bool emitEntry = emitTarget == "entry";
+    const bool emitBitcodeBundle = emitTarget == "bc";
     const bool emitObject = emitTarget == "obj";
-    const bool emitObjects = emitTarget == "objects";
+    const bool emitLinkedObject = emitTarget == "linked-obj";
     const std::string ltoMode = cli.get<std::string>("lto");
 
     if (emitEntry) {
@@ -127,20 +132,24 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (emitObjects && args.size() != 2) {
+    const bool emitBundle = emitBitcodeBundle || emitObject;
+    if (emitBundle && args.size() != 2) {
         std::cerr
-            << "`--emit objects` requires an explicit manifest output path\n";
+            << "`--emit " << emitTarget
+            << "` requires an explicit manifest output path\n";
         std::cerr << cli.usage();
         return 1;
     }
-    if (emitObjects && ltoMode != "off") {
-        std::cerr << "`--emit objects` does not support `--lto " << ltoMode
+    if (emitBundle && ltoMode != "off") {
+        std::cerr << "`--emit " << emitTarget << "` does not support `--lto "
+                  << ltoMode
                   << "`\n";
         std::cerr << cli.usage();
         return 1;
     }
-    if (!emitObjects && cli.exist("cache-dir")) {
-        std::cerr << "`--cache-dir` is only supported with `--emit objects`\n";
+    if (!(emitBundle || emitLinkedObject) && cli.exist("cache-dir")) {
+        std::cerr << "`--cache-dir` is only supported with `--emit bc`, "
+                     "`--emit obj`, or `--emit linked-obj`\n";
         std::cerr << cli.usage();
         return 1;
     }
@@ -158,10 +167,10 @@ main(int argc, char *argv[]) {
     const std::string outputPath =
         emitEntry ? args[0] : (args.size() == 2 ? args[1] : std::string());
     const bool builderWritesOutputDirectly =
-        !outputPath.empty() && (emitEntry || emitObject);
+        !outputPath.empty() && (emitEntry || emitLinkedObject);
     if (!outputPath.empty() && !builderWritesOutputDirectly) {
         std::ios::openmode fileMode = std::ios::out;
-        if (emitEntry || emitObject) {
+        if (emitEntry || emitLinkedObject) {
             fileMode |= std::ios::binary;
         }
         output.open(outputPath, fileMode);
@@ -179,24 +188,30 @@ main(int argc, char *argv[]) {
     }
 
     lona::SessionOptions options;
-    const bool compileMode = emitIR || emitEntry || emitObject || emitObjects ||
-                             cli.exist("no-cache") || cli.exist("verify-ir") ||
-                             cli.exist("debug") || cli.exist("opt") ||
-                             cli.exist("target") || ltoMode != "off";
-    if (emitObjects) {
+    const bool compileMode =
+        emitIR || emitEntry || emitBitcodeBundle || emitObject ||
+        emitLinkedObject || cli.exist("no-cache") || cli.exist("verify-ir") ||
+        cli.exist("debug") || cli.exist("opt") || cli.exist("target") ||
+        ltoMode != "off";
+    if (emitBitcodeBundle) {
+        options.outputMode = lona::OutputMode::BitcodeBundle;
+    } else if (emitObject) {
         options.outputMode = lona::OutputMode::ObjectBundle;
     } else if (emitEntry) {
         options.outputMode = lona::OutputMode::EntryObject;
-    } else if (emitObject) {
-        options.outputMode = lona::OutputMode::ObjectFile;
+    } else if (emitLinkedObject) {
+        options.outputMode = lona::OutputMode::LinkedObject;
     } else if (compileMode) {
         options.outputMode = lona::OutputMode::LLVMIR;
     } else {
         options.outputMode = lona::OutputMode::AstJson;
     }
     options.outputPath = outputPath;
-    options.cacheOutputPath =
-        emitObjects ? cli.get<std::string>("cache-dir") : std::string();
+    options.artifactCachePath = emitBundle
+                                    ? cli.get<std::string>("cache-dir")
+                                    : (cli.exist("cache-dir")
+                                           ? cli.get<std::string>("cache-dir")
+                                           : std::string());
     options.compile.optLevel = cli.get<int>("opt");
     options.compile.noCache = cli.exist("no-cache");
     options.compile.verifyIR = cli.exist("verify-ir");

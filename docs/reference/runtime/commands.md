@@ -34,8 +34,9 @@
 
 - AST JSON
 - LLVM IR
-- 单最终 object
+- 模块 bitcode bundle
 - 模块 object bundle
+- 单最终 object
 - hosted entry object
 
 ### 2.1 最常见用法
@@ -58,16 +59,22 @@ lona-ir --emit ir --verify-ir input.lo
 lona-ir --emit ir --verify-ir input.lo output.ll
 ```
 
+生成模块 bitcode bundle manifest：
+
+```bash
+lona-ir --emit bc --verify-ir input.lo output.manifest
+```
+
 生成模块 object bundle manifest：
 
 ```bash
-lona-ir --emit objects --verify-ir input.lo output.manifest
+lona-ir --emit obj --verify-ir input.lo output.manifest
 ```
 
 显式走 full-LTO 并输出单最终 object：
 
 ```bash
-lona-ir --emit obj --lto full --verify-ir -O3 input.lo output.o
+lona-ir --emit linked-obj --lto full --verify-ir -O3 input.lo output.o
 ```
 
 为 hosted system 路径单独生成 entry object：
@@ -82,10 +89,13 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 默认输出 AST JSON
 - `--emit ir`
   - 输出 LLVM IR
-- `--emit objects`
-  - 输出模块 object bundle manifest
+- `--emit bc`
+  - 输出模块 bitcode bundle manifest
 - `--emit obj`
+  - 输出模块 object bundle manifest
+- `--emit linked-obj`
   - 输出单最终 object
+  - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
 - `--emit entry`
   - 输出 hosted `main(argc, argv)` wrapper object
 
@@ -102,7 +112,8 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--lto <off|full>`
   - 选择 link-time optimization 模式
 - `--cache-dir <dir>`
-  - 只对 `--emit objects` 生效；指定 object bundle 输出目录
+  - 对 `--emit bc` / `--emit obj` 生效时，指定 bundle 成员目录根
+  - 对 `--emit linked-obj` 生效时，指定模块 bitcode 中间缓存目录
 - `--no-cache`
   - 禁用本轮模块 artifact 复用
 - `-g`
@@ -112,8 +123,12 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 
 ### 2.4 参数边界
 
-- `--emit objects` 必须显式提供 manifest 输出路径
-- `--emit objects` 不支持 `--lto full`
+- `--emit bc` 必须显式提供 manifest 输出路径
+- `--emit bc` 不支持 `--lto full`
+- `--emit obj` 必须显式提供 manifest 输出路径
+- `--emit obj` 不支持 `--lto full`
+- `--emit linked-obj` 支持 `--lto off|full`
+- `--emit linked-obj` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `<output>.d/`
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径
 - `--emit entry` 只支持 hosted target；bare target 会直接拒绝
 - `--emit entry` 不支持 `--lto full`
@@ -125,7 +140,7 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 
 它内部会：
 
-1. 调用 `lona-ir --emit objects`
+1. 调用 `lona-ir --emit obj`
 2. 检查 object bundle 中是否存在 `__lona_main__`
 3. 额外生成 hosted entry object
 4. 调用系统 linker driver 产出最终程序
@@ -164,6 +179,12 @@ lac --target x86_64-unknown-linux-gnu input.lo output/program
   - 指定 hosted target
 - `--lto <off|full>`
   - 控制是否走 full-LTO 慢路径
+- `--cache-dir <dir>`
+  - 指定 `lac` 的持久 artifact cache root
+  - 默认使用 `${TMPDIR:-/tmp}/lona-cache`
+  - hosted 构建会按 `system/<target>/...` 分层缓存模块 object 或 linked-obj bitcode 中间产物
+- `--stats`
+  - 把 `lona-ir` 的编译统计透传到 stderr
 - `--keep-temp`
   - 保留中间 object 和 manifest
 - `-h` / `--help`
@@ -191,7 +212,7 @@ lac --target x86_64-unknown-linux-gnu input.lo output/program
 
 它内部会：
 
-1. 调用 `lona-ir --emit objects`
+1. 调用 `lona-ir --emit obj`
 2. 汇编 bare startup object
 3. 用 linker script 和 `ld` 链接出最终 ELF
 
@@ -229,6 +250,12 @@ lac-native --target x86_64-none-elf input.lo output/program
   - 指定 bare target
 - `--lto <off|full>`
   - 控制是否走 full-LTO 慢路径
+- `--cache-dir <dir>`
+  - 指定 `lac-native` 的持久 artifact cache root
+  - 默认使用 `${TMPDIR:-/tmp}/lona-cache`
+  - bare 构建会按 `native/<target>/...` 分层缓存模块 object 或 linked-obj bitcode 中间产物
+- `--stats`
+  - 把 `lona-ir` 的编译统计透传到 stderr
 - `--keep-temp`
   - 保留中间 object
 - `-h` / `--help`

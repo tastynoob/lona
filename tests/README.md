@@ -33,7 +33,7 @@
 
 ## Tools
 
-- [tools/compile_case.py](tools/compile_case.py): 测试辅助脚本；将 `.lo` 编译成验证过的 LLVM IR，并继续生成单最终 `.o`。这是 tests/helper 路径，不代表默认构建链。
+- [tools/compile_case.py](tools/compile_case.py): 测试辅助脚本；将 `.lo` 编译成验证过的 LLVM IR，并继续生成单最终 `.o`。内部走 `--emit linked-obj`，这是 tests/helper 路径，不代表默认构建链。
 - [tools/expect_diag.py](tools/expect_diag.py): 断言某个 `.lo` 编译失败并包含指定诊断子串。
 - [test_skill.md](test_skill.md): AI 生成测试样例时应遵守的约束和工作流。
 - [test_agent.py](test_agent.py): 调用 `codex` 按 `test_skill.md` 自动生成并验证测试样例的入口。

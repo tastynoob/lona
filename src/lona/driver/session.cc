@@ -143,14 +143,20 @@ CompilerSession::runFile(const std::string &inputPath,
                 "entry object emission should not load source files",
                 "Use CompilerSession::runEntry instead.");
         }
-        if (options.outputMode == OutputMode::ObjectFile) {
-            return finish(builder_.emitObject(
-                unit, options.compile, options.outputPath, lastStats_, out));
+        if (options.outputMode == OutputMode::BitcodeBundle) {
+            return finish(builder_.emitBitcodeBundle(
+                unit, options.compile, options.outputPath,
+                options.artifactCachePath, lastStats_, out));
         }
         if (options.outputMode == OutputMode::ObjectBundle) {
             return finish(builder_.emitObjectBundle(
                 unit, options.compile, options.outputPath,
-                options.cacheOutputPath, lastStats_, out));
+                options.artifactCachePath, lastStats_, out));
+        }
+        if (options.outputMode == OutputMode::LinkedObject) {
+            return finish(builder_.emitLinkedObject(
+                unit, options.compile, options.outputPath,
+                options.artifactCachePath, lastStats_, out));
         }
         auto *jsonTree = unit.requireSyntaxTree();
         Json root = Json::object();

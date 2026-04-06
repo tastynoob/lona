@@ -36,7 +36,9 @@ def test_acceptance_fixture_ir_variants(compiler: CompilerHarness, fixtures_dir:
 
 
 def test_object_emission_marks_native_abi(compiler: CompilerHarness, fixtures_dir: Path) -> None:
-    result, obj_path = compiler.emit_obj(fixtures_dir / "acceptance_main.lo", output_name="acceptance_main.o")
+    result, obj_path = compiler.emit_linked_obj(
+        fixtures_dir / "acceptance_main.lo", output_name="acceptance_main.o"
+    )
     result.expect_ok()
     assert obj_path.stat().st_size > 0, f"expected non-empty object file: {obj_path}"
     assert_magic_bytes(obj_path, b"\x7fELF")
@@ -45,7 +47,7 @@ def test_object_emission_marks_native_abi(compiler: CompilerHarness, fixtures_di
 
 
 def test_macho_object_emission_keeps_native_abi_payload(compiler: CompilerHarness, fixtures_dir: Path) -> None:
-    result, obj_path = compiler.emit_obj(
+    result, obj_path = compiler.emit_linked_obj(
         fixtures_dir / "acceptance_main.lo",
         output_name="acceptance_main-darwin.o",
         target="x86_64-apple-darwin",
@@ -113,7 +115,7 @@ def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) ->
         }
         """,
     )
-    result, obj_path = compiler.emit_obj(
+    result, obj_path = compiler.emit_linked_obj(
         input_path,
         output_name="c-abi-only.o",
         target="x86_64-unknown-linux-gnu",
@@ -121,6 +123,68 @@ def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) ->
     result.expect_ok()
     assert not nm_contains_symbol(obj_path, "__lona_native_abi_", cwd=compiler.repo_root)
     assert_not_contains(obj_path.read_bytes().decode("latin-1"), "lona.native_abi=", label="c abi object payload")
+
+
+def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "linked_object_cache/dep.lo",
+        """
+        def add1(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    app_path = compiler.write_source(
+        "linked_object_cache/main.lo",
+        """
+        import dep
+
+        def run() i32 {
+            ret dep.add1(41)
+        }
+
+        ret run()
+        """,
+    )
+
+    first, _ = compiler.emit_linked_obj(
+        app_path,
+        output_name="linked-default-cache.o",
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 2", label="linked object default cache first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="linked object default cache first stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-bitcode: 0",
+        label="linked object default cache first stats",
+    )
+
+    cache_dir = compiler.output_path("linked-default-cache.o.d")
+    assert cache_dir.is_dir(), f"expected linked-object bitcode cache dir: {cache_dir}"
+    assert len(list(cache_dir.glob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+
+    second, _ = compiler.emit_linked_obj(
+        app_path,
+        output_name="linked-default-cache.o",
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 0", label="linked object default cache reuse stats")
+    assert_contains(second.stderr, "reused-modules: 2", label="linked object default cache reuse stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-bitcode: 2",
+        label="linked object default cache reuse stats",
+    )
+    assert_contains(
+        second.stderr,
+        "emitted-module-bitcode: 0",
+        label="linked object default cache reuse stats",
+    )
 
 
 def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> None:
@@ -135,7 +199,7 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
         """,
     )
 
-    result, manifest_path = compiler.emit_objects(
+    result, manifest_path = compiler.emit_obj_bundle(
         input_path,
         output_name="bundle.manifest",
         target="x86_64-unknown-linux-gnu",
@@ -143,7 +207,8 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
     result.expect_ok()
     manifest = manifest_path.read_text(encoding="utf-8")
     expected_bundle_dir = compiler.repo_root / "lona_cache" / f"{manifest_path.name}.d"
-    assert_contains(manifest, "format\tlona-object-bundle-v0", label="object bundle manifest")
+    assert_contains(manifest, "format\tlona-artifact-bundle-v1", label="object bundle manifest")
+    assert_contains(manifest, "kind\tobj", label="object bundle manifest")
     assert_contains(
         manifest,
         "target\tx86_64-unknown-linux-gnu",
@@ -151,16 +216,16 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
     )
     assert_contains(
         manifest,
-        "object\tmodule\t",
+        "artifact\tobj\t",
         label="object bundle manifest",
     )
-    assert_not_contains(manifest, "object\thosted-entry\t", label="object bundle manifest")
+    assert_not_contains(manifest, "artifact\tobj\thosted-entry\t", label="object bundle manifest")
 
     object_paths = []
     for line in manifest.splitlines():
         parts = line.split("\t")
-        if len(parts) == 3 and parts[0] == "object":
-            object_paths.append(Path(parts[2]))
+        if len(parts) == 4 and parts[0] == "artifact" and parts[1] == "obj":
+            object_paths.append(Path(parts[3]))
 
     assert object_paths, "expected object bundle to list at least one object"
     for object_path in object_paths:
@@ -189,14 +254,14 @@ def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHa
         """,
     )
     cache_dir = compiler.output_path("shared-cache")
-    linux_result, linux_manifest_path = compiler.emit_objects(
+    linux_result, linux_manifest_path = compiler.emit_obj_bundle(
         input_path,
         output_name="linux.manifest",
         cache_dir=cache_dir,
         target="x86_64-unknown-linux-gnu",
     )
     linux_result.expect_ok()
-    bare_result, bare_manifest_path = compiler.emit_objects(
+    bare_result, bare_manifest_path = compiler.emit_obj_bundle(
         input_path,
         output_name="bare.manifest",
         cache_dir=cache_dir,
@@ -208,8 +273,8 @@ def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHa
         manifest = manifest_path.read_text(encoding="utf-8")
         for line in manifest.splitlines():
             parts = line.split("\t")
-            if len(parts) == 3 and parts[0] == "object" and parts[1] == "module":
-                return Path(parts[2])
+            if len(parts) == 4 and parts[0] == "artifact" and parts[1] == "obj":
+                return Path(parts[3])
         raise AssertionError(f"missing module object entry in {manifest_path}")
 
     assert first_module_path(linux_manifest_path) != first_module_path(bare_manifest_path)
@@ -223,7 +288,7 @@ def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -
         """,
     )
     cache_dir = compiler.output_path("bundle-cache")
-    result, manifest_path = compiler.emit_objects(
+    result, manifest_path = compiler.emit_obj_bundle(
         input_path,
         output_name="bundle-cache.manifest",
         cache_dir=cache_dir,
@@ -235,8 +300,8 @@ def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -
     object_paths = []
     for line in manifest.splitlines():
         parts = line.split("\t")
-        if len(parts) == 3 and parts[0] == "object":
-            object_paths.append(Path(parts[2]))
+        if len(parts) == 4 and parts[0] == "artifact" and parts[1] == "obj":
+            object_paths.append(Path(parts[3]))
 
     assert object_paths, "expected emitted cache bundle objects"
     for object_path in object_paths:
@@ -675,7 +740,7 @@ def test_object_bundle_reuses_cached_objects_across_cli_invocations(
         """,
     )
     cache_dir = compiler.output_path("reuse-cache")
-    first, _ = compiler.emit_objects(
+    first, _ = compiler.emit_obj_bundle(
         input_path,
         output_name="reuse.manifest",
         cache_dir=cache_dir,
@@ -691,7 +756,7 @@ def test_object_bundle_reuses_cached_objects_across_cli_invocations(
         label="first object bundle stats",
     )
 
-    second, _ = compiler.emit_objects(
+    second, _ = compiler.emit_obj_bundle(
         input_path,
         output_name="reuse.manifest",
         cache_dir=cache_dir,
@@ -718,7 +783,7 @@ def test_object_bundle_no_cache_forces_full_recompile(
         """,
     )
     cache_dir = compiler.output_path("no-cache-reuse")
-    first, _ = compiler.emit_objects(
+    first, _ = compiler.emit_obj_bundle(
         input_path,
         output_name="no-cache.manifest",
         cache_dir=cache_dir,
@@ -727,7 +792,7 @@ def test_object_bundle_no_cache_forces_full_recompile(
     )
     first.expect_ok()
 
-    second, _ = compiler.emit_objects(
+    second, _ = compiler.emit_obj_bundle(
         input_path,
         output_name="no-cache.manifest",
         cache_dir=cache_dir,
@@ -768,7 +833,7 @@ def test_object_bundle_invalidates_imported_generic_function_instances_when_owne
     )
     cache_dir = compiler.output_path("import-generic-function-cache")
 
-    first, _ = compiler.emit_objects(
+    first, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-function.manifest",
         cache_dir=cache_dir,
@@ -797,7 +862,7 @@ def test_object_bundle_invalidates_imported_generic_function_instances_when_owne
         """,
     )
 
-    second, _ = compiler.emit_objects(
+    second, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-function.manifest",
         cache_dir=cache_dir,
@@ -842,7 +907,7 @@ def test_object_bundle_invalidates_imported_generic_struct_methods_when_owner_bo
     )
     cache_dir = compiler.output_path("import-generic-struct-method-cache")
 
-    first, _ = compiler.emit_objects(
+    first, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-struct-method.manifest",
         cache_dir=cache_dir,
@@ -872,7 +937,7 @@ def test_object_bundle_invalidates_imported_generic_struct_methods_when_owner_bo
         """,
     )
 
-    second, _ = compiler.emit_objects(
+    second, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-struct-method.manifest",
         cache_dir=cache_dir,
@@ -927,7 +992,7 @@ def test_object_bundle_invalidates_imported_generic_instances_when_owner_visible
     )
     cache_dir = compiler.output_path("import-generic-owner-context-cache")
 
-    first, _ = compiler.emit_objects(
+    first, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-owner-context.manifest",
         cache_dir=cache_dir,
@@ -943,7 +1008,7 @@ def test_object_bundle_invalidates_imported_generic_instances_when_owner_visible
         label="generic owner import change first stats",
     )
 
-    second, _ = compiler.emit_objects(
+    second, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-owner-context.manifest",
         cache_dir=cache_dir,
@@ -972,7 +1037,7 @@ def test_object_bundle_invalidates_imported_generic_instances_when_owner_visible
         """,
     )
 
-    third, _ = compiler.emit_objects(
+    third, _ = compiler.emit_obj_bundle(
         main_path,
         output_name="import-generic-owner-context.manifest",
         cache_dir=cache_dir,
@@ -996,7 +1061,7 @@ def test_object_bundle_rejects_lto_mode(compiler: CompilerHarness) -> None:
         ret 0
         """,
     )
-    rejected, _ = compiler.emit_objects(
+    rejected, _ = compiler.emit_obj_bundle(
         input_path,
         output_name="bundle-lto-rejected.manifest",
         target="x86_64-unknown-linux-gnu",
@@ -1194,3 +1259,38 @@ def test_pointer_roundtrip_lowering_uses_pointer_alloca(compiler: CompilerHarnes
     assert_contains(ir, "store ptr ", label="pointer ir")
     assert_contains(ir, "load ptr, ptr ", label="pointer ir")
     assert_contains(ir, "store i32 %", label="pointer ir")
+
+
+def test_bitcode_bundle_emits_only_module_bitcode(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "bundle_bitcode.lo",
+        """
+        ret 0
+        """,
+    )
+
+    result, manifest_path = compiler.emit_bc_bundle(
+        input_path,
+        output_name="bundle-bc.manifest",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_ok()
+    manifest = manifest_path.read_text(encoding="utf-8")
+    expected_bundle_dir = compiler.repo_root / "lona_cache" / f"{manifest_path.name}.d"
+    assert_contains(manifest, "format\tlona-artifact-bundle-v1", label="bitcode bundle manifest")
+    assert_contains(manifest, "kind\tbc", label="bitcode bundle manifest")
+    assert_contains(manifest, "target\tx86_64-unknown-linux-gnu", label="bitcode bundle manifest")
+    assert_contains(manifest, "artifact\tbc\t", label="bitcode bundle manifest")
+
+    bitcode_paths = []
+    for line in manifest.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 4 and parts[0] == "artifact" and parts[1] == "bc":
+            bitcode_paths.append(Path(parts[3]))
+
+    assert bitcode_paths, "expected bitcode bundle to list at least one module"
+    for bitcode_path in bitcode_paths:
+        assert bitcode_path.is_file(), f"expected emitted bundle bitcode: {bitcode_path}"
+        assert bitcode_path.stat().st_size > 0, f"expected non-empty bundle bitcode: {bitcode_path}"
+        assert bitcode_path.suffix == ".bc"
+        assert bitcode_path.parent == expected_bundle_dir

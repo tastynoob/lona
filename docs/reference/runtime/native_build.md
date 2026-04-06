@@ -57,17 +57,17 @@ native object 还会额外携带：
 职责分工：
 
 - `lac`
-  - 调用 `lona-ir --emit objects`
+  - 调用 `lona-ir --emit obj`
   - 读取 manifest，收集模块 object
   - 额外生成 hosted entry object
   - 检查 object bundle 中是否存在 `__lona_main__`
   - 调用系统 linker driver 生成最终程序
-  - 如果显式传 `--lto full`，则改走 `lona-ir --emit obj --lto full`
+  - 如果显式传 `--lto full`，则改走 `lona-ir --emit linked-obj --lto full`
 - `lac-native`
-  - 调用 `lona-ir --emit objects --target x86_64-none-elf`
+  - 调用 `lona-ir --emit obj --target x86_64-none-elf`
   - 汇编启动代码
   - 使用 linker script 把 startup object 和多 object bundle 链接成 ELF 可执行文件
-  - 如果显式传 `--lto full`，则改走 `lona-ir --emit obj --lto full`
+  - 如果显式传 `--lto full`，则改走 `lona-ir --emit linked-obj --lto full`
 - bare startup assembly
   - 提供 `_start`
   - 调用稳定入口 `__lona_main__`
@@ -125,9 +125,10 @@ lac-native input.lo output/program
 
 ```bash
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
-lona-ir --emit objects --target x86_64-unknown-linux-gnu input.lo output.manifest
+lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.manifest
+lona-ir --emit bc --target x86_64-unknown-linux-gnu input.lo output.manifest
 lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
-lona-ir --emit objects --cache-dir cache/objects --target x86_64-unknown-linux-gnu input.lo output.manifest
+lona-ir --emit obj --cache-dir cache/objects --target x86_64-unknown-linux-gnu input.lo output.manifest
 lac --lto full input.lo output/program
 lac-native --lto full input.lo output/program
 lac --target x86_64-unknown-linux-gnu input.lo output/program
@@ -136,10 +137,14 @@ lac-native --target x86_64-none-elf input.lo output/program
 
 其中：
 
-- `--emit objects` 会写一个 manifest
+- `--emit bc` / `--emit obj` 都会写一个 manifest
 - 默认 bundle object 会写到 `./lona_cache/output.manifest.d/`
 - 如果显式传 `--cache-dir <dir>`，bundle object 会写到 `<dir>/output.manifest.d/`
+- `--emit linked-obj output.o` 默认会把模块 bitcode 中间缓存写到 `output.o.d/`
+- 如果显式传 `--cache-dir <dir>`，`--emit linked-obj` 会改用 `<dir>/` 作为模块 bitcode cache
 - 如果显式传 `--no-cache`，本轮会跳过 object cache 复用并强制重新编译模块
+- `lac` / `lac-native` 默认不会把 cache 放进一次性临时目录；它们会使用 `${TMPDIR:-/tmp}/lona-cache` 作为持久 cache root
+- 如果显式传 `lac --cache-dir <dir>` 或 `lac-native --cache-dir <dir>`，则改用该目录作为持久 cache root
 - `--emit entry` 会单独生成 hosted `main(argc, argv) -> __lona_main__` object
 - `--emit entry` 只支持 hosted target；bare target 会直接报错
 - `-I` / `--include-dir` 可以传给 `lona-ir`、`lac` 和 `lac-native`，用于追加模块 include 搜索目录
@@ -154,7 +159,7 @@ lac -O 2 input.lo output/program
 
 ```bash
 lona-ir --emit ir --lto full -O3 input.lo output.ll
-lona-ir --emit obj --lto full -O3 input.lo output.o
+lona-ir --emit linked-obj --lto full -O3 input.lo output.o
 lac --lto full -O 3 input.lo output/program
 ```
 

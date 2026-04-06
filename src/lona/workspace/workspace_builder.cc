@@ -513,7 +513,7 @@ decodeGenericInstanceRecord(const Json &root) {
 Json
 encodeArtifactMetadata(const ModuleArtifact &artifact) {
     Json root = Json::object();
-    root["format"] = "lona-object-bundle-metadata-v0";
+    root["format"] = "lona-artifact-bundle-metadata-v1";
     root["path"] = toStdString(artifact.path());
     root["module_key"] = toStdString(artifact.moduleKey());
     root["module_name"] = toStdString(artifact.moduleName());
@@ -541,12 +541,13 @@ encodeArtifactMetadata(const ModuleArtifact &artifact) {
 
 ModuleArtifact
 decodeArtifactMetadata(const Json &root) {
-    if (root.value("format", std::string()) !=
-        "lona-object-bundle-metadata-v0") {
+    const auto format = root.value("format", std::string());
+    if (format != "lona-object-bundle-metadata-v0" &&
+        format != "lona-artifact-bundle-metadata-v1") {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "cached object bundle metadata has an unsupported format",
-            "Clear the object bundle cache and rebuild.");
+            "cached artifact bundle metadata has an unsupported format",
+            "Clear the bundle cache and rebuild.");
     }
 
     ModuleArtifact artifact(
@@ -592,7 +593,7 @@ readArtifactMetadataIfPresent(const std::filesystem::path &path) {
     } catch (const std::exception &err) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "I couldn't parse cached object metadata `" + path.string() + "`.",
+            "I couldn't parse cached artifact metadata `" + path.string() + "`.",
             err.what());
     }
     return decodeArtifactMetadata(root);
@@ -605,14 +606,14 @@ writeArtifactMetadata(const std::filesystem::path &path,
     if (!out) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "I couldn't write cached object metadata `" + path.string() + "`.",
+            "I couldn't write cached artifact metadata `" + path.string() + "`.",
             "Check that the cache directory is writable.");
     }
     out << encodeArtifactMetadata(artifact).dump(2) << '\n';
     if (!out) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "I couldn't finish writing cached object metadata `" +
+            "I couldn't finish writing cached artifact metadata `" +
                 path.string() + "`.",
             "Check that the cache directory is writable.");
     }
@@ -683,6 +684,7 @@ using workspace_builder_impl::createHostedMainShimModule;
 using workspace_builder_impl::emitBitcodeData;
 using workspace_builder_impl::emitObjectData;
 using workspace_builder_impl::emitObjectFile;
+using workspace_builder_impl::entryRoleKeyword;
 using workspace_builder_impl::ensureNativeAbiVersionField;
 using workspace_builder_impl::isLanguageEntryType;
 using workspace_builder_impl::languageEntryName;
@@ -830,7 +832,8 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(
 }
 
 std::string
-WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
+WorkspaceBuilder::bundleMemberFileName(const ModuleArtifact &artifact,
+                                       BundleArtifactKind kind) const {
     std::string stem = artifact.moduleName().empty()
                            ? "module"
                            : toStdString(artifact.moduleName());
@@ -849,7 +852,8 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
         [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
 
     std::ostringstream cacheKey;
-    cacheKey << artifact.moduleKey() << "|" << artifact.targetTriple() << "|O"
+    cacheKey << artifact.moduleKey() << "|" << artifact.targetTriple() << "|"
+             << (kind == BundleArtifactKind::Object ? "O" : "B")
              << artifact.optLevel() << "|"
              << (artifact.debugInfo() ? "g" : "ng")
              << "|src=" << artifact.sourceHash()
@@ -865,14 +869,46 @@ WorkspaceBuilder::bundleObjectFileName(const ModuleArtifact &artifact) const {
                   std::hash<std::string>{}(cacheKey.str()));
     const char *roleSuffix =
         artifact.entryRole() == ModuleEntryRole::Root ? "root" : "dependency";
-    return stem + "-" + roleSuffix + "-" + suffix.str() + ".o";
+    const char *extension =
+        kind == BundleArtifactKind::Object ? ".o" : ".bc";
+    return stem + "-" + roleSuffix + "-" + suffix.str() + extension;
 }
 
 std::filesystem::path
-WorkspaceBuilder::bundleObjectPath(
+WorkspaceBuilder::bundleMemberPath(
     const ModuleArtifact &artifact,
-    const std::filesystem::path &bundleDir) const {
-    return bundleDir / bundleObjectFileName(artifact);
+    const std::filesystem::path &bundleDir, BundleArtifactKind kind) const {
+    return bundleDir / bundleMemberFileName(artifact, kind);
+}
+
+void
+WorkspaceBuilder::persistArtifactOutput(
+    const ModuleArtifact &artifact,
+    const std::filesystem::path &artifactCacheDir,
+    BundleArtifactKind kind) const {
+    std::filesystem::create_directories(artifactCacheDir);
+    const auto memberPath = bundleMemberPath(artifact, artifactCacheDir, kind);
+    if (kind == BundleArtifactKind::Object) {
+        if (!artifact.hasObjectCode()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "artifact cache write is missing object code for `" +
+                    toStdString(artifact.path()) + "`",
+                "This looks like a compiler object caching bug.");
+        }
+        writeBinaryFile(memberPath, artifact.objectCode());
+    } else {
+        if (!artifact.hasBitcode()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "artifact cache write is missing bitcode for `" +
+                    toStdString(artifact.path()) + "`",
+                "This looks like a compiler bitcode caching bug.");
+        }
+        writeBinaryFile(memberPath, artifact.bitcode());
+    }
+    writeArtifactMetadata(std::filesystem::path(memberPath.string() + ".meta.json"),
+                          artifact);
 }
 
 bool
@@ -976,7 +1012,7 @@ int
 WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  const CompileOptions &options,
                                  bool requireObjects, bool requireBitcode,
-                                 const std::filesystem::path *objectCacheDir,
+                                 const std::filesystem::path *artifactCacheDir,
                                  SessionStats &stats, std::ostream &out) const {
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
     return executor_->execute(
@@ -1012,15 +1048,27 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 if (artifactExitCode != 0) {
                     return artifactExitCode;
                 }
+                if (artifactCacheDir != nullptr &&
+                    (requireObjects != requireBitcode)) {
+                    persistArtifactOutput(
+                        *cachedArtifact, *artifactCacheDir,
+                        requireObjects ? BundleArtifactKind::Object
+                                       : BundleArtifactKind::Bitcode);
+                }
                 return 0;
             }
 
             ModuleArtifact artifact =
                 createArtifact(*queuedUnit, options, rootUnit);
-            if (!options.noCache && objectCacheDir != nullptr &&
-                requireObjects && !requireBitcode) {
+            if (!options.noCache && artifactCacheDir != nullptr &&
+                (requireObjects != requireBitcode)) {
+                const auto bundleKind = requireObjects
+                                            ? BundleArtifactKind::Object
+                                            : BundleArtifactKind::Bitcode;
+                auto memberPath =
+                    bundleMemberPath(artifact, *artifactCacheDir, bundleKind);
                 auto metadataPath = std::filesystem::path(
-                    bundleObjectPath(artifact, *objectCacheDir).string() +
+                    memberPath.string() +
                     ".meta.json");
                 auto cacheRestoreStart = Clock::now();
                 auto cachedMetadata =
@@ -1030,14 +1078,22 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 if (cachedMetadata.has_value() &&
                     matchesArtifact(*queuedUnit, *cachedMetadata, options,
                                     artifact.entryRole())) {
-                    auto cachedObject = readBinaryFileIfPresent(
-                        bundleObjectPath(artifact, *objectCacheDir));
-                    if (cachedObject.has_value()) {
-                        cachedMetadata->setObjectCode(std::move(*cachedObject));
+                    auto cachedBytes = readBinaryFileIfPresent(memberPath);
+                    if (cachedBytes.has_value()) {
+                        if (bundleKind == BundleArtifactKind::Object) {
+                            cachedMetadata->setObjectCode(
+                                std::move(*cachedBytes));
+                        } else {
+                            cachedMetadata->setBitcode(std::move(*cachedBytes));
+                        }
                         workspace_.storeArtifact(std::move(*cachedMetadata));
                         queuedUnit->markCompiled();
                         ++stats.reusedModules;
-                        ++stats.reusedModuleObjects;
+                        if (bundleKind == BundleArtifactKind::Object) {
+                            ++stats.reusedModuleObjects;
+                        } else {
+                            ++stats.reusedModuleBitcode;
+                        }
                         return 0;
                     }
                 }
@@ -1047,6 +1103,12 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                               requireBitcode, stats, out);
             if (moduleExitCode != 0) {
                 return moduleExitCode;
+            }
+            if (artifactCacheDir != nullptr && (requireObjects != requireBitcode)) {
+                persistArtifactOutput(
+                    artifact, *artifactCacheDir,
+                    requireObjects ? BundleArtifactKind::Object
+                                   : BundleArtifactKind::Bitcode);
             }
             workspace_.storeArtifact(std::move(artifact));
             return 0;
@@ -1259,13 +1321,23 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
 }
 
 int
-WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
-                             const CompileOptions &options,
-                             const std::string &outputPath, SessionStats &stats,
-                             std::ostream &out) const {
+WorkspaceBuilder::emitLinkedObject(CompilationUnit &rootUnit,
+                                   const CompileOptions &options,
+                                   const std::string &outputPath,
+                                   const std::string &artifactCachePath,
+                                   SessionStats &stats,
+                                   std::ostream &out) const {
     const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
+    std::optional<std::filesystem::path> artifactCacheDir;
+    if (!artifactCachePath.empty()) {
+        artifactCacheDir = std::filesystem::path(artifactCachePath);
+    } else if (!outputPath.empty()) {
+        artifactCacheDir = std::filesystem::path(outputPath + ".d");
+    }
     int exitCode =
-        buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
+        buildArtifacts(rootUnit, options, false, true,
+                       artifactCacheDir ? &*artifactCacheDir : nullptr, stats,
+                       out);
     if (exitCode != 0) {
         return exitCode;
     }
@@ -1321,6 +1393,84 @@ WorkspaceBuilder::emitObject(CompilationUnit &rootUnit,
 }
 
 int
+WorkspaceBuilder::emitBitcodeBundle(CompilationUnit &rootUnit,
+                                    const CompileOptions &options,
+                                    const std::string &outputPath,
+                                    const std::string &cacheOutputPath,
+                                    SessionStats &stats,
+                                    std::ostream &out) const {
+    if (options.ltoMode != CompileOptions::LTOMode::Off) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "`--emit bc` does not support link-time optimization",
+            "Use `--emit linked-obj --lto full` for the explicit slow LTO "
+            "path.");
+    }
+    if (outputPath.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "bitcode bundle emission requires an explicit manifest output path",
+            "Pass an output file when using `--emit bc`.");
+    }
+
+    namespace fs = std::filesystem;
+    fs::path manifestPath = fs::path(outputPath);
+    fs::path bundleStem = manifestPath.filename();
+    bundleStem += ".d";
+    fs::path bundleDir = cacheOutputPath.empty()
+                             ? manifestPath.parent_path() / bundleStem
+                             : fs::path(cacheOutputPath) / bundleStem;
+    fs::create_directories(bundleDir);
+
+    int exitCode =
+        buildArtifacts(rootUnit, options, false, true, &bundleDir, stats, out);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    out << "format\tlona-artifact-bundle-v1\n";
+    out << "kind\tbc\n";
+    out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
+
+    auto writeStart = Clock::now();
+    for (const auto &path :
+         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
+        auto *unit = workspace_.moduleGraph().find(path);
+        if (unit == nullptr) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission references a missing module `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module graph bug.");
+        }
+        auto *artifact = workspace_.findArtifact(
+            path, artifactEntryRoleFor(*unit, rootUnit));
+        if (artifact == nullptr) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module artifact `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module scheduling bug.");
+        }
+        if (!artifact->hasBitcode()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module bitcode for `" +
+                    toStdString(artifact->path()) + "`",
+                "This looks like a compiler bitcode emission bug.");
+        }
+
+        fs::path bitcodePath =
+            bundleMemberPath(*artifact, bundleDir, BundleArtifactKind::Bitcode);
+        out << "artifact\tbc\t" << entryRoleKeyword(artifact->entryRole())
+            << '\t' << fs::absolute(bitcodePath).string() << '\n';
+    }
+    accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
+
+    return 0;
+}
+
+int
 WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
                                    const CompileOptions &options,
                                    const std::string &outputPath,
@@ -1330,14 +1480,15 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
     if (options.ltoMode != CompileOptions::LTOMode::Off) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "`--emit objects` does not support link-time optimization",
-            "Use `--emit obj --lto full` for the explicit slow LTO path.");
+            "`--emit obj` does not support link-time optimization",
+            "Use `--emit linked-obj --lto full` for the explicit slow LTO "
+            "path.");
     }
     if (outputPath.empty()) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
-            "multi-object emission requires an explicit manifest output path",
-            "Pass an output file when using `--emit objects`.");
+            "object bundle emission requires an explicit manifest output path",
+            "Pass an output file when using `--emit obj`.");
     }
 
     namespace fs = std::filesystem;
@@ -1355,7 +1506,8 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
         return exitCode;
     }
 
-    out << "format\tlona-object-bundle-v0\n";
+    out << "format\tlona-artifact-bundle-v1\n";
+    out << "kind\tobj\n";
     out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
 
     auto writeStart = Clock::now();
@@ -1386,11 +1538,10 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
                 "This looks like a compiler object emission bug.");
         }
 
-        fs::path objectPath = bundleObjectPath(*artifact, bundleDir);
-        writeBinaryFile(objectPath, artifact->objectCode());
-        writeArtifactMetadata(
-            fs::path(objectPath.string() + ".meta.json"), *artifact);
-        out << "object\tmodule\t" << fs::absolute(objectPath).string() << '\n';
+        fs::path objectPath =
+            bundleMemberPath(*artifact, bundleDir, BundleArtifactKind::Object);
+        out << "artifact\tobj\t" << entryRoleKeyword(artifact->entryRole())
+            << '\t' << fs::absolute(objectPath).string() << '\n';
     }
     accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
 

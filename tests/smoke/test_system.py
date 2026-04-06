@@ -113,7 +113,7 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
         label="bad main build",
     )
 
-    main_obj_result, main_obj = compiler.emit_obj(
+    main_obj_result, main_obj = compiler.emit_linked_obj(
         main_program,
         output_name="return_9.o",
         target="x86_64-unknown-linux-gnu",
@@ -125,7 +125,7 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     assert_regex(defined_symbols, r" [BD] __lona_argc$", label="main object symbols")
     assert_regex(defined_symbols, r" [BD] __lona_argv$", label="main object symbols")
 
-    ffi_obj_result, ffi_obj = compiler.emit_obj(
+    ffi_obj_result, ffi_obj = compiler.emit_linked_obj(
         ffi_main_program,
         output_name="ffi_main.o",
         target="x86_64-unknown-linux-gnu",
@@ -143,6 +143,109 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
         "already declares or imports a non-entry symbol named `main`",
         label="ffi main build",
     )
+
+
+def test_system_driver_reuses_persistent_object_cache(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "system_cache/dep.lo",
+        """
+        def add1(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    main_program = compiler.write_source(
+        "system_cache/main.lo",
+        """
+        import dep
+
+        def run() i32 {
+            ret dep.add1(41)
+        }
+
+        ret run()
+        """,
+    )
+    cache_dir = compiler.output_path("lac-cache-root")
+
+    first, exe = compiler.build_system_executable(
+        main_program,
+        output_name="system-cache",
+        cache_dir=cache_dir,
+        stats=True,
+    )
+    first.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+    assert_contains(first.stderr, "compiled-modules: 2", label="system cache first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="system cache first stats")
+    assert_contains(first.stderr, "reused-module-objects: 0", label="system cache first stats")
+
+    second, exe = compiler.build_system_executable(
+        main_program,
+        output_name="system-cache",
+        cache_dir=cache_dir,
+        stats=True,
+    )
+    second.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+    assert_contains(second.stderr, "compiled-modules: 0", label="system cache reuse stats")
+    assert_contains(second.stderr, "reused-modules: 2", label="system cache reuse stats")
+    assert_contains(second.stderr, "reused-module-objects: 2", label="system cache reuse stats")
+
+
+def test_system_driver_defaults_to_persistent_tmp_cache(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "system_tmp_cache/dep.lo",
+        """
+        def add1(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    main_program = compiler.write_source(
+        "system_tmp_cache/main.lo",
+        """
+        import dep
+
+        ret dep.add1(41)
+        """,
+    )
+    tmp_root = compiler.output_path("driver-tmp-root")
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    extra_env = {"TMPDIR": str(tmp_root)}
+
+    first, exe = compiler.build_system_executable(
+        main_program,
+        output_name="system-tmp-cache",
+        stats=True,
+        extra_env=extra_env,
+    )
+    first.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+    assert_contains(first.stderr, "compiled-modules: 2", label="system tmp cache first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="system tmp cache first stats")
+
+    expected_cache_dir = (
+        tmp_root
+        / "lona-cache"
+        / "system"
+        / "x86_64-unknown-linux-gnu"
+        / "object-bundle"
+        / "objects.manifest.d"
+    )
+    assert expected_cache_dir.is_dir(), f"expected persistent tmp cache dir: {expected_cache_dir}"
+
+    second, exe = compiler.build_system_executable(
+        main_program,
+        output_name="system-tmp-cache",
+        stats=True,
+        extra_env=extra_env,
+    )
+    second.expect_ok()
+    compiler.run_executable(exe).expect_exit_code(42)
+    assert_contains(second.stderr, "compiled-modules: 0", label="system tmp cache reuse stats")
+    assert_contains(second.stderr, "reused-modules: 2", label="system tmp cache reuse stats")
+    assert_contains(second.stderr, "reused-module-objects: 2", label="system tmp cache reuse stats")
 
 
 def test_system_trait_dyn_dispatch_runtime(compiler: CompilerHarness) -> None:

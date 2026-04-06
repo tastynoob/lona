@@ -70,7 +70,7 @@ def main() -> int:
         [
             str(compiler),
             "--emit",
-            "obj",
+            "linked-obj",
             "--target",
             "x86_64-unknown-linux-gnu",
             "--verify-ir",
@@ -89,4 +89,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

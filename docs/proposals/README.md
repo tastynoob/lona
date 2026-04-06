@@ -12,5 +12,6 @@
 
 - [const_qualifier_v0.md](const_qualifier_v0.md): `const` 类型修饰符草案。
 - [generic_v0.md](generic_v0.md): 泛型 v0 草案，目标是让静态泛型、trait 约束和当前模块化缓存模型形成可落地的第一版组合。
+- [output_artifact_reclassification.md](output_artifact_reclassification.md): 重新按 `bc` / `obj` / `linked-obj` 分类输出产物，为增量编译和后续 LTO 收口稳定 CLI 边界。
 - [trait_v0.md](trait_v0.md): trait / static dispatch / dynamic trait object 草案。
 - [trait_v0_dyn_mutability.md](trait_v0_dyn_mutability.md): `Trait dyn` 可写性扩展计划，目标是让 `set def` 通过 `Hash dyn` / `Hash const dyn` 分流进入动态分派。

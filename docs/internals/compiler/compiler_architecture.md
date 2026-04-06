@@ -398,8 +398,8 @@ artifact 可复用的条件是：
 这层不在 `CompilerSession` 内部直接产出 ELF，而是走下面这条链路：
 
 1. `lona-ir --emit ir --target <triple>` 生成目标相关的最终链接 LLVM IR
-2. 默认 `lona-ir --emit objects --target <triple>` 生成模块 object bundle
-3. 显式 `lona-ir --emit obj --lto full --target <triple>` 走 full-LTO 慢路径并生成最终对象文件
+2. `lona-ir --emit bc --target <triple>` 或 `--emit obj --target <triple>` 生成模块 bundle
+3. 显式 `lona-ir --emit linked-obj --lto full --target <triple>` 走 full-LTO 慢路径并生成最终对象文件
 4. system 路径通过 `lac` 把 object bundle 或 full-LTO 最终 `.o` 交给系统 linker driver
 5. bare 路径则用 `lac-native`、启动汇编和 linker script 产出 ELF
 
@@ -419,14 +419,16 @@ artifact 可复用的条件是：
 当前增量编译分两层：
 
 - 同一 `CompilerSession` 内的内存态增量复用
-- `--emit objects` 路径下基于 `cache-dir` 的磁盘 object 复用
+- `--emit bc` / `--emit obj` 路径下基于 `cache-dir` 的磁盘 bundle 复用
+- `--emit linked-obj` 路径下基于模块 bitcode 的磁盘中间缓存复用
 
 已具备：
 
 - 同一 `CompilerSession` 内，多次构建可复用 `ModuleInterface`
 - 同一 `CompilerSession` 内，多次构建可复用 `ModuleArtifact`
 - 同一 `CompilerSession` 内，多次构建可复用模块 object / bitcode artifact
-- 多次独立 CLI 调用 `lona-ir --emit objects` 时，可通过同一个 `cache-dir/<manifest>.d/` 复用模块 object
+- 多次独立 CLI 调用 `lona-ir --emit bc` 或 `--emit obj` 时，可通过同一个 `cache-dir/<manifest>.d/` 复用模块 bundle 成员
+- 多次独立 CLI 调用 `lona-ir --emit linked-obj out.o` 时，可默认通过 `out.o.d/` 复用模块 bitcode；显式传 `--cache-dir <dir>` 时则改用该目录
 - 当模块 body 改变但接口不变时，只重编该模块
 - 当模块接口改变时，直接 importer 会失效并重新编译
 

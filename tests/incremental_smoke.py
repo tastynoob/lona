@@ -119,7 +119,11 @@ def expect_bundle_compile_ok(
 ) -> None:
     expect_equal(result["exit_code"], 0, "compile exit code")
     expect_equal(result["stderr"], "", "diagnostics")
-    expect("format\tlona-object-bundle-v0" in result["stdout"], "expected bundle manifest output")
+    expect(
+        "format\tlona-artifact-bundle-v1" in result["stdout"],
+        "expected bundle manifest output",
+    )
+    expect("kind\tobj" in result["stdout"], "expected object bundle manifest kind")
     stats = result["stats"]
     expect_equal(stats["compiled_modules"], compiled, "compiled module count")
     expect_equal(stats["reused_modules"], reused, "reused module count")
@@ -740,7 +744,7 @@ def run_module_bitcode_reuse_case(rng: random.Random, runner: SessionRunner, roo
     write_file(dep_path, dependency_text(first_delta))
     write_file(app_path, program_text("dep", argument))
     expect_object_compile_ok(
-        runner.compile(app_path, output_mode="object_file", lto="full"),
+        runner.compile(app_path, output_mode="linked_object", lto="full"),
         compiled=2,
         reused=0,
         emitted_bitcode=2,
@@ -750,7 +754,7 @@ def run_module_bitcode_reuse_case(rng: random.Random, runner: SessionRunner, roo
     )
 
     expect_object_compile_ok(
-        runner.compile(app_path, output_mode="object_file", lto="full"),
+        runner.compile(app_path, output_mode="linked_object", lto="full"),
         compiled=0,
         reused=2,
         emitted_bitcode=0,
@@ -761,7 +765,7 @@ def run_module_bitcode_reuse_case(rng: random.Random, runner: SessionRunner, roo
 
     write_file(dep_path, dependency_text(second_delta))
     expect_object_compile_ok(
-        runner.compile(app_path, output_mode="object_file", lto="full"),
+        runner.compile(app_path, output_mode="linked_object", lto="full"),
         compiled=1,
         reused=1,
         emitted_bitcode=1,

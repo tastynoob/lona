@@ -25,14 +25,15 @@ enum class OutputMode {
     AstJson,
     LLVMIR,
     EntryObject,
-    ObjectFile,
+    BitcodeBundle,
     ObjectBundle,
+    LinkedObject,
 };
 
 struct SessionOptions {
     OutputMode outputMode = OutputMode::AstJson;
     std::string outputPath;
-    std::string cacheOutputPath;
+    std::string artifactCachePath;
     CompileOptions compile;
 };
 
