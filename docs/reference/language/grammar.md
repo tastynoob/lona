@@ -96,12 +96,10 @@
 +  -  *  /  %  !  ~  <  >  |  &  ^
 += -= *= /= %= &= ^= |= <<= >>= == != <= >= << >> && ||
 { } : = ( ) [ ] @ # , .
-&<
 ```
 
 说明：
 
-- `&<` 是显式函数取指针的专用起始符。
 - 词法层已经把常见 C 风格运算符家族接了进来。
 - 这些符号在表达式层的具体语义见 [expr.md](expr.md)。
 
@@ -385,8 +383,8 @@ cast-expr         ::= "cast" "[" type-name "]" "(" expr ")"
 
 tuple-literal     ::= "(" expr "," expr-seq ")"
 
-func-pointer-ref  ::= IDENT "&<" ">"
-                    | IDENT "&<" func-param-type-seq ">"
+func-pointer-ref  ::= "@" variable
+                    | "@" type-apply-expr
 
 single-value      ::= variable
                     | CONST
@@ -404,12 +402,6 @@ variable          ::= IDENT
                     | field-selector
 
 field-selector    ::= single-value "." IDENT
-
-func-param-type   ::= type-name
-                    | "ref" type-name
-
-func-param-type-seq ::= func-param-type
-                      | func-param-type-seq "," func-param-type
 
 expr-seq          ::= expr
                     | expr-seq "," expr
@@ -511,7 +503,7 @@ type-name-seq     ::= type-name
 - 但在类型位置里，parser 只接受显式函数指针，例如 `(:)`、`(i32, bool: i32)`。
 - 裸函数签名如 `(i32, bool) i32` 不再作为 `type-name` 的合法写法。
 - 函数指针类型本身是一个完整的 `type-primary`，因此后面可以继续接普通后缀，例如 `(i32: i32)*`、`(: i32)[4]`。
-- 函数取指针不在类型层完成，而是通过表达式 `foo&<i32, bool>` 显式写出。
+- 函数取指针不在类型层完成，而是通过表达式 `@foo`、`@dep.foo`、`@id[i32]` 显式写出。
 - 连续 `[]` 和单个 `[,]` 当前都已进入类型语法。
 - `postfix-type "dyn"` 当前只接受 trait 名，因此用户层稳定写法是 `Hash dyn`、`dep.Hash dyn`。
 - `base-type "[*]"` 现在表示稳定可用的“可索引指针”类型。

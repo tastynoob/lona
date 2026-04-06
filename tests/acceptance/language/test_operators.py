@@ -129,7 +129,7 @@ def test_pointer_dot_and_call_auto_deref_runtime(compiler: CompilerHarness) -> N
         def run() i32 {
             var counter = Counter(4)
             var counter_ptr Counter* = &counter
-            var cb (: i32) = one&<>
+            var cb (: i32) = @one
             var cb_ptr (: i32)* = &cb
 
             counter_ptr.value = counter_ptr.value + 2
@@ -219,7 +219,7 @@ def test_explicit_deref_call_does_not_trigger_extra_implicit_deref(compiler: Com
         }
 
         def bad() i32 {
-            var cb (: i32) = one&<>
+            var cb (: i32) = @one
             var cb_ptr (: i32)* = &cb
             var cb_pp (: i32)** = &cb_ptr
             ret (*cb_pp)()

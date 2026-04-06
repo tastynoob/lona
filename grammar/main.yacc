@@ -74,7 +74,6 @@
 %token IF "if" ELSE "else" FOR "for"
 %token IMPORT "import"
 %token DEF "def" SET "set" STRUCT "struct" TRAIT "trait" IMPL "impl" DYN "dyn"
-%token FUNC_PTR_OPEN "&<"
 %token NEWLINE "newline"
 %token ASSIGN_ADD "+=" ASSIGN_SUB "-="
 %token ASSIGN_MUL "*=" ASSIGN_DIV "/=" ASSIGN_MOD "%="
@@ -96,6 +95,7 @@
 %left SHIFT_LEFT SHIFT_RIGHT
 %left '+' '-' // + -
 %left '*' '/' '%' // * /
+%left FUNC_REF_BIND
 %left '.'
 %left '(' ')' '[' ']'
 %right unary
@@ -106,7 +106,7 @@
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
 %type <node> variable final_expr expr_assign_left expr_getpointee expr expr_assign expr_binOp expr_unary
-%type <node> expr_paren atom_expr postfix_expr type_apply_expr dot_like dot_like_name
+%type <node> expr_paren atom_expr postfix_expr type_apply_expr dot_like dot_like_name func_ref_expr func_ref_target
 %type <node> param_decl var_def trait_var_def
 %type <stat_list> pragram_statlist struct_statlist trait_statlist stat_list stat_compound
 %type <var_decl> field_decl var_decl
@@ -742,10 +742,22 @@ atom_expr
     | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
     | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
     | NULL_KW { $$ = new AstConst(*new AstToken(TokenType::ConstNull, "null", @$)); }
+    | func_ref_expr { $$ = $1; }
     | cast_expr { $$ = $1; }
     | sizeof_expr { $$ = $1; }
     | expr_paren { $$ = $1; }
     | tuple_literal { $$ = $1; }
+    ;
+
+func_ref_expr
+    : '@' func_ref_target { $$ = new AstFuncRef($2, @$); }
+    ;
+
+func_ref_target
+    : dot_like_name %prec FUNC_REF_BIND { $$ = $1; }
+    | dot_like_name '[' opt_newlines type_name_seq opt_newlines ']' {
+        $$ = new AstTypeApply($1, $4, @$);
+    }
     ;
 
 postfix_expr
@@ -753,12 +765,6 @@ postfix_expr
     | call_like { $$ = $1; }
     | dot_like { $$ = $1; }
     | type_apply_expr { $$ = $1; }
-    | postfix_expr FUNC_PTR_OPEN opt_newlines '>' {
-        $$ = new AstFuncRef($1, new std::vector<TypeNode*>(), @$);
-    }
-    | postfix_expr FUNC_PTR_OPEN opt_newlines func_param_type_seq opt_newlines '>' {
-        $$ = new AstFuncRef($1, $4, @$);
-    }
     ;
 
 cast_expr

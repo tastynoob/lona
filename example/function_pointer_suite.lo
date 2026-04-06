@@ -1,4 +1,4 @@
-// Function-pointer sample: explicit acquisition via name&<...> and initialized storage.
+// Function-pointer sample: explicit acquisition via @name and initialized storage.
 
 def inc(v i32) i32 {
     ret v + 1
@@ -9,11 +9,11 @@ def sum(a i32, b i32) i32 {
 }
 
 def make_inc() (i32: i32) {
-    ret inc&<i32>
+    ret @inc
 }
 
 def make_sum() (i32, i32: i32) {
-    ret sum&<i32, i32>
+    ret @sum
 }
 
 struct CallbackBox {
@@ -21,14 +21,14 @@ struct CallbackBox {
     binary (i32, i32: i32)
 }
 
-var inc_ptr (i32: i32) = inc&<i32>
-var sum_ptr (i32, i32: i32) = sum&<i32, i32>
+var inc_ptr (i32: i32) = @inc
+var sum_ptr (i32, i32: i32) = @sum
 var next_inc = make_inc()
 var next_sum = make_sum()
 var callback_box = CallbackBox(inc_ptr, sum_ptr)
 
 def call_local() i32 {
-    var cb = inc&<i32>
+    var cb = @inc
     ret cb(41)
 }
 

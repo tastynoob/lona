@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -499,14 +500,45 @@ def test_imported_generic_function_refs_instantiate_one_concrete_symbol(
         import dep
 
         def main() i32 {
-            var cb (i32: i32) = dep.id[i32]&<>
-            ret cb(dep.id[i32](1))
+            var cb (i32: i32) = @dep.id[i32]
+            var left i32 = @dep.id[i32](1)
+            ret left + cb(dep.id[i32](1))
         }
         """,
     )
     ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_contains(ir, "@dep.id__inst__i32", label="imported generic ref ir")
     assert len(re.findall(r"^define i32 @dep\.id__inst__i32\(i32 ", ir, re.M)) == 1
+
+
+def test_imported_generic_function_ref_inline_call_json_uses_call_over_funcref(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_function_ref_json/dep.lo",
+        """
+        def id[T](value T) T {
+            ret value
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_function_ref_json/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            ret @dep.id[i32](1)
+        }
+        """,
+    )
+    json_out = compiler.emit_json(main_path).expect_ok().stdout
+    root = json.loads(json_out)
+    ret_value = root["body"]["body"][1]["body"]["body"][0]["value"]
+    assert ret_value["type"] == "FieldCall"
+    assert ret_value["value"]["type"] == "FuncRef"
+    assert ret_value["value"]["value"]["type"] == "TypeApply"
+    assert ret_value["value"]["value"]["value"]["type"] == "DotLike"
 
 
 def test_imported_generic_helper_results_do_not_hide_unconstrained_template_use(

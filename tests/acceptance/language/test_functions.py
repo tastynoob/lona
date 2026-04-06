@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from tests.harness import assert_contains, assert_not_contains, assert_regex
 from tests.harness.compiler import CompilerHarness
 
@@ -21,7 +23,7 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
             }
 
             def hold() i32 {
-                var cb (i32: i32) = foo&<i32>
+                var cb (i32: i32) = @foo
                 ret 0
             }
             """,
@@ -33,7 +35,7 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
             def ping() {}
 
             def hold() i32 {
-                var cb (:) = ping&<>
+                var cb (:) = @ping
                 cb()
                 ret 0
             }
@@ -48,7 +50,7 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
             }
 
             def hold() i32 {
-                var cb (i32: i32) = foo&<i32>
+                var cb (i32: i32) = @foo
                 var slot (i32: i32)* = &cb
                 ret (*slot)(7)
             }
@@ -63,7 +65,7 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
             }
 
             def hold() i32 {
-                var table (: i32)[1] = {ping&<>}
+                var table (: i32)[1] = {@ping}
                 ret table(0)()
             }
             """,
@@ -78,7 +80,7 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
             }
 
             def hold() i32 {
-                var cb (ref i32: i32) = set7&<ref i32>
+                var cb (ref i32: i32) = @set7
                 var x i32 = 1
                 ret cb(ref x)
             }
@@ -106,6 +108,53 @@ def test_function_pointer_lowering_variants(compiler: CompilerHarness) -> None:
                 assert_contains(ir, needle, label=name)
 
 
+def test_function_reference_inline_call_parses_as_indirect_invoke(
+    compiler: CompilerHarness,
+) -> None:
+    ir = compiler.emit_ir(
+        compiler.write_source(
+            "func_ref_inline_call.lo",
+            """
+            def foo(v i32) i32 {
+                ret v + 1
+            }
+
+            def hold() i32 {
+                ret @foo(7)
+            }
+            """,
+        )
+    ).expect_ok().stdout
+    assert_contains(ir, "define i32 @foo", label="inline func ref ir")
+    assert_contains(ir, "define i32 @hold", label="inline func ref ir")
+    assert_regex(ir, r"call i32 .*i32 7\)", label="inline func ref ir")
+
+
+def test_function_reference_inline_call_json_wraps_func_ref_before_call(
+    compiler: CompilerHarness,
+) -> None:
+    json_out = compiler.emit_json(
+        compiler.write_source(
+            "func_ref_inline_call_json.lo",
+            """
+            def foo(v i32) i32 {
+                ret v + 1
+            }
+
+            def hold() i32 {
+                ret @foo(7)
+            }
+            """,
+        )
+    ).expect_ok().stdout
+    root = json.loads(json_out)
+    ret_value = root["body"]["body"][1]["body"]["body"][0]["value"]
+    assert ret_value["type"] == "FieldCall"
+    assert ret_value["value"]["type"] == "FuncRef"
+    assert ret_value["value"]["value"]["type"] == "field"
+    assert ret_value["value"]["value"]["name"] == "foo"
+
+
 def test_function_pointer_aggregate_and_direct_return_lowering(compiler: CompilerHarness) -> None:
     packed_ir = compiler.emit_ir(
         compiler.write_source(
@@ -121,7 +170,7 @@ def test_function_pointer_aggregate_and_direct_return_lowering(compiler: Compile
             }
 
             def hold() i32 {
-                var cb (Pair: Pair) = echo&<Pair>
+                var cb (Pair: Pair) = @echo
                 var pair = Pair(left = 1, right = 2)
                 ret cb(pair).right
             }
@@ -147,7 +196,7 @@ def test_function_pointer_aggregate_and_direct_return_lowering(compiler: Compile
             }
 
             def hold() i32 {
-                var cb (Triple: Triple) = echo&<Triple>
+                var cb (Triple: Triple) = @echo
                 var triple = Triple(a = 1, b = 2, c = 3)
                 ret cb(triple).c
             }
@@ -163,34 +212,32 @@ def test_function_pointer_aggregate_and_direct_return_lowering(compiler: Compile
 def test_function_pointer_related_diagnostics(compiler: CompilerHarness) -> None:
     cases = [
         (
-            "func_ptr_ref_bad.lo",
+            "func_ptr_generic_instantiation_bad.lo",
             """
-            def set7(ref v i32) i32 {
-                v = 7
-                ret v
+            def id[T](value T) T {
+                ret value
             }
 
             def hold() i32 {
-                var cb = set7&<i32>
-                var x i32 = 1
-                ret cb(ref x)
-            }
-            """,
-            ["function reference parameter type mismatch at index 0 for `set7`: expected ref i32, got i32"],
-        ),
-        (
-            "func_ptr_bad.lo",
-            """
-            def foo(v i32) i32 {
-                ret v
-            }
-
-            def hold() i32 {
-                var cb = foo&<bool>
+                var cb = @id
                 ret 0
             }
             """,
-            ["function reference parameter type mismatch at index 0 for `foo`: expected i32, got bool"],
+            [
+                "generic function `id` cannot be used as a runtime value before instantiation",
+                "Call it directly, for example `id[T](...)`, or instantiate it first with `@id[T]` if you need a function pointer.",
+            ],
+        ),
+        (
+            "func_ptr_target_bad.lo",
+            """
+            def hold() i32 {
+                var foo i32 = 1
+                var cb = @foo
+                ret 0
+            }
+            """,
+            ["function reference target must name a top-level function: `foo`"],
         ),
         (
             "func_ptr_uninit.lo",
@@ -223,7 +270,7 @@ def test_function_pointer_related_diagnostics(compiler: CompilerHarness) -> None
             }
 
             def bad_table() i32 {
-                var table (: i32)[2] = {ping&<>}
+                var table (: i32)[2] = {@ping}
                 ret 0
             }
             """,

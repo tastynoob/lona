@@ -250,12 +250,6 @@ AstFuncRef::toJson(Json &root) {
             root["name"] = describeDotLikeSyntax(dotLike).c_str();
         }
     }
-    root["args"] = Json::array();
-    if (argTypes) {
-        for (auto *argType : *argTypes) {
-            root["args"].push_back(describeTypeNode(argType));
-        }
-    }
 }
 
 void

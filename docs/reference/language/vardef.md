@@ -85,9 +85,9 @@ IDENT ":" "=" expr
 ```lona
 var p i32*
 var grid i32[4, 4]
-var handler (i32, i32: i32) = add&<i32, i32>
-var allocator (: Ptr) = alloc&<>
-var cb (i32: i32) = foo&<i32>
+var handler (i32, i32: i32) = @add
+var allocator (: Ptr) = @alloc
+var cb (i32: i32) = @foo
 ```
 
 这些例子依赖的是 `var_decl ::= IDENT type-name`，其中 `type-name` 可以是指针、数组、函数指针等更复杂的类型写法。

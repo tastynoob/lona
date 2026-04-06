@@ -43,7 +43,7 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
             var erased any* = cast[any*](typed)
             var readonly any const* = cast[any const*](typed)
             id[i32](1)
-            var cb (i32: i32) = id[i32]&<>
+            var cb (i32: i32) = @id[i32]
         }
         """,
     )
@@ -493,7 +493,7 @@ def test_generic_v0_specialized_function_refs_use_concrete_signature_path(
         }
 
         def main() i32 {
-            var cb (i32: i32) = id[i32]&<>
+            var cb (i32: i32) = @id[i32]
             ret cb(1)
         }
         """,
@@ -560,7 +560,7 @@ def test_generic_v0_reports_type_arg_arity_and_inference_diagnostics(
             """,
             [
                 "generic function `id` cannot be used as a runtime value before instantiation",
-                "Call it directly, for example `id[T](...)`, or instantiate it first with `id[T]&<>` if you need a function pointer.",
+                "Call it directly, for example `id[T](...)`, or instantiate it first with `@id[T]` if you need a function pointer.",
             ],
         ),
     ]

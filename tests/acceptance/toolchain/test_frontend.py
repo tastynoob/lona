@@ -502,7 +502,7 @@ def test_generic_v0_specialized_function_refs_lower_to_concrete_symbols(
         }
 
         def main() i32 {
-            var cb (i32: i32) = id[i32]&<>
+            var cb (i32: i32) = @id[i32]
             ret cb(3)
         }
         """,
@@ -533,7 +533,7 @@ def test_generic_v0_imported_calls_and_refs_emit_concrete_runtime_symbols(
         import dep
 
         def main() i32 {
-            var cb (i32: i32) = dep.id[i32]&<>
+            var cb (i32: i32) = @dep.id[i32]
             var left i32 = dep.id[i32](1)
             var right i32 = cb(2)
             ret left + right

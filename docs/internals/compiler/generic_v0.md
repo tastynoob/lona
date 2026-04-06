@@ -20,7 +20,7 @@
 - `struct Box[T]`
 - `def id[T](value T) T`
 - 类型位置的 `Box[i32]`
-- 表达式侧的 `id[i32](...)`、`id(...)`、`id[i32]&<>`、`Box[i32](...)`
+- 表达式侧的 `id[i32](...)`、`id(...)`、`@id[i32]`、`Box[i32](...)`
 - same-module generic function / applied generic struct concrete instantiation
 - imported generic function / applied generic struct 的 importer-owned instantiation
 - structured generic instance key、同图 dedup、artifact 级 cache metadata 与 invalidation
@@ -64,7 +64,7 @@ generic v0 相关入口主要在：
 - 声明语法写 `[T]`
 - `impl` header 的 self type 写 `Box[T]`
 - 类型位置的 generic apply 也写 `Box[i32]`
-- 表达式侧 generic apply 写 `id[i32](...)`、`id[i32]&<>`、`Box[i32](...)`
+- 表达式侧 generic apply 写 `id[i32](...)`、`@id[i32]`、`Box[i32](...)`
 
 类型位置现在与数组共用 `[]`，内部按 bracket item 形状分流：
 
@@ -124,8 +124,8 @@ generic function 现在支持：
 
 - explicit instantiation：`id[i32](1)`
 - inferred instantiation：`id(1)`
-- specialized function ref：`id[i32]&<>`
-- imported 同构路径：`dep.id[i32](...)`、`dep.id(...)`、`dep.id[i32]&<>`
+- specialized function ref：`@id[i32]`
+- imported 同构路径：`dep.id[i32](...)`、`dep.id(...)`、`@dep.id[i32]`
 
 实例生成流程大致是：
 

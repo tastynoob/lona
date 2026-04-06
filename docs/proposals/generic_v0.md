@@ -423,7 +423,7 @@ var b = id[i32](1)
 
 另外这里要区分两件事：
 
-- `id[i32]&<>` 这种写法表示“先选定 concrete type args，再取得该具体实例函数的指针”
+- `@id[i32]` 这种写法表示“先选定 concrete type args，再取得该具体实例函数的指针”
 - 但 v0 不引入“泛型函数指针类型”这个概念
 
 也就是说：
@@ -738,7 +738,7 @@ def id[T](value T) T {
 
 因此函数取指针也只发生在实例化之后：
 
-- `id[i32]&<>` 指向的是 `id[i32]` 对应的 concrete function symbol
+- `@id[i32]` 指向的是 `id[i32]` 对应的 concrete function symbol
 - 它的类型就是普通的 `(i32: i32)` 函数指针
 - 不存在额外的“generic function pointer” runtime kind
 

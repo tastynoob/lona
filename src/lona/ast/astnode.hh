@@ -363,11 +363,9 @@ public:
 class AstFuncRef : public AstNode {
 public:
     AstNode *const value;
-    std::vector<TypeNode *> *const argTypes;
 
-    AstFuncRef(AstNode *value, std::vector<TypeNode *> *argTypes,
-               const location &loc = location())
-        : AstNode(loc), value(value), argTypes(argTypes) {}
+    AstFuncRef(AstNode *value, const location &loc = location())
+        : AstNode(loc), value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;

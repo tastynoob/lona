@@ -271,7 +271,7 @@ def apply_{case_id}(v i32, cb (i32: i32)) i32 {{
 }}
 """
         )
-        main_body.append(f"    score = apply_{case_id}(score, callback_{case_id}&<i32>)")
+        main_body.append(f"    score = apply_{case_id}(score, @callback_{case_id})")
         expected_ir.extend([f"@callback_{case_id}", f"@apply_{case_id}"])
 
     if "import" in chosen:

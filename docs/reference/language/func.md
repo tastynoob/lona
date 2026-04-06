@@ -77,7 +77,7 @@ inc(ref x)
 函数指针或函数引用如果涉及 `ref` 参数，也必须把这点写进签名：
 
 ```lona
-var cb (ref i32: i32) = inc&<ref i32>
+var cb (ref i32: i32) = @inc
 ```
 
 ## 6. 函数体总是块语句

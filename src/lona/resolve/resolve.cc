@@ -1600,8 +1600,8 @@ class FunctionResolver {
             error(funcRef->loc,
                   "function reference target must name a top-level function: `" +
                       describeFuncRefTarget(funcRef) + "`",
-                  "Use `name&<...>` or `module.name&<...>` with a visible top-level "
-                  "function.");
+                  "Use `@name`, `@module.name`, or `@name[T]` with a visible "
+                  "top-level function.");
             return;
         }
         if (auto *assign = dynamic_cast<const AstAssign *>(node)) {

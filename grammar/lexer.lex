@@ -221,10 +221,6 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
     return token::FIELD;
 }
 
-(&<) {
-    RETURN_PLAIN_TOKEN(token::FUNC_PTR_OPEN);
-}
-
 (\+=) {
     RETURN_PLAIN_TOKEN(token::ASSIGN_ADD);
 }

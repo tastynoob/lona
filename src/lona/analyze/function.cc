@@ -1917,8 +1917,8 @@ class FunctionAnalyzer {
               "generic function `" + functionName +
                   "` cannot be used as a runtime value before instantiation",
               "Call it directly, for example `" + functionName +
-                  "[T](...)`, or instantiate it first with `" + functionName +
-                  "[T]&<>` if you need a function pointer.");
+                  "[T](...)`, or instantiate it first with `@" + functionName +
+                  "[T]` if you need a function pointer.");
     }
 
     [[noreturn]] void diagnoseGenericTypeApplyTarget(const location &loc) {
@@ -1976,6 +1976,26 @@ class FunctionAnalyzer {
         }
         if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
             return resolved.functionRef(funcRef);
+        }
+        return nullptr;
+    }
+
+    const AstNode *callTargetNode(const AstFieldCall *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->value;
+        }
+        return node->value;
+    }
+
+    std::vector<TypeNode *> *callExplicitTypeArgs(const AstFieldCall *node) const {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
+            return typeApply->typeArgs;
         }
         return nullptr;
     }
@@ -4884,57 +4904,6 @@ class FunctionAnalyzer {
                 functionDecl->typeParams, genericArgs, node->loc,
                 "generic function reference `" + functionName + "`");
 
-            std::vector<TypeClass *> expectedArgTypes;
-            expectedArgTypes.reserve(functionDecl->paramTypeNodes.size());
-            std::vector<BindingKind> expectedBindingKinds;
-            expectedBindingKinds.reserve(functionDecl->paramTypeNodes.size());
-            for (std::size_t i = 0; i < functionDecl->paramTypeNodes.size();
-                 ++i) {
-                expectedBindingKinds.push_back(functionDecl->paramBindingKinds[i]);
-                expectedArgTypes.push_back(substituteGenericSignatureType(
-                    functionDecl->paramTypeNodes[i], genericArgs, node->loc,
-                    functionName, binding->ownerInterface()));
-            }
-
-            const auto actualArgCount = node->argTypes ? node->argTypes->size() : 0;
-            const bool omittedExplicitSignature = actualArgCount == 0;
-            if (!omittedExplicitSignature &&
-                expectedArgTypes.size() != actualArgCount) {
-                error(node->loc,
-                      "function reference parameter count mismatch for `" +
-                          functionName + "`: expected " +
-                          std::to_string(expectedArgTypes.size()) + ", got " +
-                          std::to_string(actualArgCount));
-            }
-
-            for (size_t i = 0; i < actualArgCount; ++i) {
-                auto actualBindingKind =
-                    funcParamBindingKind(node->argTypes->at(i));
-                auto *actualType = requireType(
-                    unwrapFuncParamType(node->argTypes->at(i)),
-                    node->argTypes->at(i)->loc,
-                    "unknown function reference parameter type at index " +
-                        std::to_string(i) + " for `" + functionName + "`: " +
-                        describeTypeNode(node->argTypes->at(i)));
-                auto *expectedType = expectedArgTypes[i];
-                auto expectedBindingKind = expectedBindingKinds[i];
-                if (actualBindingKind != expectedBindingKind ||
-                    actualType != expectedType) {
-                    auto expectedDescription =
-                        (expectedBindingKind == BindingKind::Ref ? "ref " : "") +
-                        describeResolvedType(expectedType);
-                    auto actualDescription =
-                        (actualBindingKind == BindingKind::Ref ? "ref " : "") +
-                        describeResolvedType(actualType);
-                    error(node->argTypes->at(i)->loc,
-                          "function reference parameter type mismatch at index " +
-                              std::to_string(i) + " for `" +
-                              functionName + "`: expected " +
-                              expectedDescription + ", got " +
-                              actualDescription);
-                }
-            }
-
             if (ownerContextUnit(binding->ownerInterface())) {
                 auto *func = instantiateGenericFunction(
                     *functionDecl, genericArgs, node->loc,
@@ -4967,43 +4936,6 @@ class FunctionAnalyzer {
                           "invalid resolved function reference target `" +
                               functionName + "`",
                           "This looks like a compiler pipeline bug.");
-        }
-
-        const auto &expectedArgTypes = funcType->getArgTypes();
-        const auto actualArgCount = node->argTypes ? node->argTypes->size() : 0;
-        if (expectedArgTypes.size() != actualArgCount) {
-            error(node->loc,
-                  "function reference parameter count mismatch for `" +
-                      functionName + "`: expected " +
-                      std::to_string(expectedArgTypes.size()) + ", got " +
-                      std::to_string(actualArgCount));
-        }
-
-        for (size_t i = 0; i < actualArgCount; ++i) {
-            auto actualBindingKind =
-                funcParamBindingKind(node->argTypes->at(i));
-            auto *actualType = requireType(
-                unwrapFuncParamType(node->argTypes->at(i)),
-                node->argTypes->at(i)->loc,
-                "unknown function reference parameter type at index " +
-                    std::to_string(i) + " for `" + functionName +
-                    "`: " + describeTypeNode(node->argTypes->at(i)));
-            auto *expectedType = expectedArgTypes[i];
-            auto expectedBindingKind = funcType->getArgBindingKind(i);
-            if (actualBindingKind != expectedBindingKind ||
-                actualType != expectedType) {
-                auto expectedDescription =
-                    (expectedBindingKind == BindingKind::Ref ? "ref " : "") +
-                    describeResolvedType(expectedType);
-                auto actualDescription =
-                    (actualBindingKind == BindingKind::Ref ? "ref " : "") +
-                    describeResolvedType(actualType);
-                error(node->argTypes->at(i)->loc,
-                      "function reference parameter type mismatch at index " +
-                          std::to_string(i) + " for `" +
-                          functionName + "`: expected " +
-                          expectedDescription + ", got " + actualDescription);
-            }
         }
 
         auto *pointerType = typeMgr->createPointerType(funcType);
