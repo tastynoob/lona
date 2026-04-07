@@ -1861,7 +1861,7 @@ class FunctionAnalyzer {
                     const bool isCurrentModuleTrait =
                         unit && dotPos != std::string::npos &&
                         traitName.substr(0, dotPos) ==
-                            toStdString(unit->moduleName());
+                            toStdString(unit->exportNamespacePrefix());
                     const bool useReceiverPath =
                         dotPos == std::string::npos || isCurrentModuleTrait;
                     if (i != 0) {
@@ -3800,7 +3800,8 @@ class FunctionAnalyzer {
         }
 
         if (ownerInterface) {
-            if (moduleName == ownerInterface->moduleName()) {
+            if (moduleName == ownerInterface->moduleName() ||
+                moduleName == toStdString(ownerInterface->exportNamespacePrefix())) {
                 auto ownerLookup = ownerInterface->lookupTopLevelName(memberName);
                 if (ownerLookup.isType()) {
                     return ownerLookup.typeDecl;

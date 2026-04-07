@@ -1726,8 +1726,169 @@ def test_import_supports_nested_module_paths_from_include_root(
         """,
     )
     ir = compiler.emit_ir(main_path, include_paths=[include_root]).expect_ok().stdout
-    assert_contains(ir, "define i32 @ops.answer()", label="nested include path ir")
+    assert_contains(
+        ir, "define i32 @math.ops.answer()", label="nested include path ir"
+    )
     assert_contains(ir, "store i32 64", label="nested include path ir")
+
+
+def test_imported_nested_module_types_resolve_by_alias_in_type_positions(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "nested_type_positions" / "include"
+    compiler.write_source(
+        "nested_type_positions/include/math/ops.lo",
+        """
+        struct Answer {
+            value i32
+        }
+
+        def make() Answer {
+            ret Answer(value = 7)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "nested_type_positions/app/main.lo",
+        """
+        import math/ops
+
+        def take(value ops.Answer) i32 {
+            ret value.value
+        }
+
+        ret take(ops.make())
+        """,
+    )
+
+    build_result, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="nested_type_positions.bin",
+        include_paths=[include_root],
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(7)
+
+
+def test_same_basename_modules_use_include_root_relative_symbol_prefixes(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "same_basename_symbols" / "src"
+    compiler.write_source(
+        "same_basename_symbols/src/string/result.lo",
+        """
+        global OK i32 = 6
+
+        struct Status {
+            value i32
+
+            def ok() i32 {
+                ret self.value
+            }
+        }
+
+        def success() i32 {
+            var status = Status(value = OK)
+            ret status.ok()
+        }
+        """,
+    )
+    compiler.write_source(
+        "same_basename_symbols/src/string/one.lo",
+        """
+        import result
+
+        def value() i32 {
+            ret result.success()
+        }
+        """,
+    )
+    compiler.write_source(
+        "same_basename_symbols/src/ios/result.lo",
+        """
+        global OK i32 = 60
+
+        struct Status {
+            value i32
+
+            def ok() i32 {
+                ret self.value
+            }
+        }
+
+        def success() i32 {
+            var status = Status(value = OK)
+            ret status.ok()
+        }
+        """,
+    )
+    compiler.write_source(
+        "same_basename_symbols/src/ios/two.lo",
+        """
+        import result
+
+        def value() i32 {
+            ret result.success()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "same_basename_symbols/src/main.lo",
+        """
+        import string/one
+        import ios/two
+
+        ret one.value() + two.value()
+        """,
+    )
+
+    result, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="same_basename_symbols.bin",
+        include_paths=[include_root],
+    )
+    result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(66)
+
+
+def test_ambiguous_same_basename_imports_across_include_roots_are_rejected(
+    compiler: CompilerHarness,
+) -> None:
+    first_include = compiler.tmp_path / "ambiguous_same_basename" / "first"
+    second_include = compiler.tmp_path / "ambiguous_same_basename" / "second"
+    compiler.write_source(
+        "ambiguous_same_basename/first/result.lo",
+        """
+        def value() i32 {
+            ret 1
+        }
+        """,
+    )
+    compiler.write_source(
+        "ambiguous_same_basename/second/result.lo",
+        """
+        def value() i32 {
+            ret 2
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "ambiguous_same_basename/app/main.lo",
+        """
+        import result
+
+        ret result.value()
+        """,
+    )
+
+    result = compiler.emit_ir(
+        main_path, include_paths=[first_include, second_include]
+    ).expect_failed()
+    assert_contains(
+        result.stderr,
+        "found conflicting modules for import `result`",
+        label="ambiguous same-basename import diagnostic",
+    )
 
 
 def test_unreadable_include_path_reports_driver_error(

@@ -155,6 +155,36 @@ def test_function_reference_inline_call_json_wraps_func_ref_before_call(
     assert ret_value["value"]["value"]["name"] == "foo"
 
 
+def test_top_level_functions_allow_forward_references(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "forward_top_level_functions.lo",
+        """
+        def first() i32 {
+            ret second()
+        }
+
+        var top = later()
+
+        def second() i32 {
+            ret 4
+        }
+
+        def later() i32 {
+            ret 9
+        }
+
+        ret first() + top
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="forward_top_level_functions"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(13)
+
+
 def test_function_pointer_aggregate_and_direct_return_lowering(compiler: CompilerHarness) -> None:
     packed_ir = compiler.emit_ir(
         compiler.write_source(

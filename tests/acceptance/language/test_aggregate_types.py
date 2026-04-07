@@ -216,6 +216,51 @@ def test_tuples_small_aggregates_and_method_abi_shapes(compiler: CompilerHarness
         ["unknown tuple field `_3`", "Tuple fields are named `_1`, `_2` in declaration order."],
     )
 
+
+def test_struct_fields_allow_forward_local_types_but_reject_by_value_cycles(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "forward_struct_field.lo",
+        """
+        struct Outer {
+            inner Inner
+        }
+
+        struct Inner {
+            value i32
+        }
+
+        def make() Outer {
+            ret Outer(inner = Inner(value = 7))
+        }
+
+        ret make().inner.value
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="forward_struct_field"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(7)
+
+    _expect_ir_failure(
+        compiler,
+        "recursive_struct_cycle.lo",
+        """
+        struct Node {
+            next Node
+        }
+
+        ret 0
+        """,
+        [
+            "struct `Node` forms a recursive by-value cycle through field `next`",
+            "Use pointers for recursive links instead of embedding the recursive struct by value.",
+        ],
+    )
+
+
 def test_array_forms_views_and_array_diagnostics(compiler: CompilerHarness) -> None:
     success_cases = [
         (

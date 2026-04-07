@@ -109,7 +109,7 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
     if (!unit || !exportNamespace) {
         return resolved;
     }
-    return toStdString(unit->moduleName() + "." + name);
+    return toStdString(unit->exportNamespacePrefix() + "." + name);
 }
 
 }  // namespace

@@ -5,21 +5,58 @@
 
 namespace lona {
 
+namespace {
+
+std::string
+normalizeExportNamespace(const string &modulePath, const string &moduleName) {
+    auto path = toStdString(modulePath);
+    if (path.empty()) {
+        path = toStdString(moduleName);
+    }
+    if (path.empty()) {
+        return {};
+    }
+
+    std::string normalized;
+    normalized.reserve(path.size());
+    bool lastWasSeparator = true;
+    for (char ch : path) {
+        if (ch == '/' || ch == '\\' || ch == '.') {
+            if (!lastWasSeparator && !normalized.empty()) {
+                normalized.push_back('.');
+            }
+            lastWasSeparator = true;
+            continue;
+        }
+        normalized.push_back(ch);
+        lastWasSeparator = false;
+    }
+    while (!normalized.empty() && normalized.back() == '.') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+}  // namespace
+
 ModuleInterface::ModuleInterface(string sourcePath, string moduleKey,
-                                 string moduleName, std::uint64_t sourceHash)
+                                 string moduleName, string modulePath,
+                                 std::uint64_t sourceHash)
     : sourcePath_(std::move(sourcePath)),
       moduleKey_(std::move(moduleKey)),
       moduleName_(std::move(moduleName)),
+      modulePath_(std::move(modulePath)),
       sourceHash_(sourceHash) {}
 
 ModuleInterface::~ModuleInterface() = default;
 
 string
 ModuleInterface::exportedNameFor(const ::string &localName) const {
-    if (moduleName_.empty()) {
+    auto prefix = exportNamespacePrefix();
+    if (prefix.empty()) {
         return localName;
     }
-    return moduleName_ + "." + localName;
+    return prefix + "." + localName;
 }
 
 string
@@ -39,16 +76,23 @@ ModuleInterface::globalSymbolNameFor(const ::string &localName,
 
 void
 ModuleInterface::refresh(string sourcePath, string moduleKey, string moduleName,
-                         std::uint64_t sourceHash) {
+                         string modulePath, std::uint64_t sourceHash) {
     const bool changed = sourcePath_ != sourcePath || moduleKey_ != moduleKey ||
-                         moduleName_ != moduleName || sourceHash_ != sourceHash;
+                         moduleName_ != moduleName ||
+                         modulePath_ != modulePath || sourceHash_ != sourceHash;
     sourcePath_ = std::move(sourcePath);
     moduleKey_ = std::move(moduleKey);
     moduleName_ = std::move(moduleName);
+    modulePath_ = std::move(modulePath);
     sourceHash_ = sourceHash;
     if (changed) {
         clear();
     }
+}
+
+string
+ModuleInterface::exportNamespacePrefix() const {
+    return string(normalizeExportNamespace(modulePath_, moduleName_).c_str());
 }
 
 void

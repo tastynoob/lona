@@ -24,6 +24,62 @@ requireWorkspaceTopLevelBody(const CompilationUnit &unit) {
 }
 
 std::string
+defaultWorkspaceModulePath(const std::string &path) {
+    auto normalized = std::filesystem::path(path).lexically_normal();
+    normalized.replace_extension();
+    auto modulePath = normalized.filename().string();
+    if (!modulePath.empty()) {
+        return modulePath;
+    }
+    return normalized.string();
+}
+
+bool
+isPathUnderRoot(const std::filesystem::path &path,
+                const std::filesystem::path &root) {
+    if (root.empty()) {
+        return false;
+    }
+    auto relative = path.lexically_relative(root);
+    return !relative.empty() && !relative.is_absolute() &&
+           relative.native().find("..") != 0;
+}
+
+std::string
+canonicalWorkspaceModulePath(const std::string &path,
+                             const std::vector<std::string> &includePaths) {
+    namespace fs = std::filesystem;
+    auto normalized = fs::path(path).lexically_normal();
+    for (const auto &includePath : includePaths) {
+        auto includeRoot = fs::path(includePath).lexically_normal();
+        if (!isPathUnderRoot(normalized, includeRoot)) {
+            continue;
+        }
+        auto relative = normalized.lexically_relative(includeRoot);
+        relative.replace_extension();
+        auto modulePath = relative.string();
+        if (!modulePath.empty() && modulePath != ".") {
+            return modulePath;
+        }
+    }
+    return defaultWorkspaceModulePath(path);
+}
+
+std::string
+describeConflictingImportCandidates(const std::vector<std::string> &paths) {
+    std::string help = "This import matches multiple modules: ";
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        if (i != 0) {
+            help += "; ";
+        }
+        help += "`" + paths[i] + "`";
+    }
+    help += ". Use a more specific import path or remove the conflicting "
+            "include root.";
+    return help;
+}
+
+std::string
 resolveWorkspaceImportPath(const CompilationUnit &unit,
                            const AstImport &importNode,
                            const std::vector<std::string> &includePaths) {
@@ -40,24 +96,43 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
         return importPath.lexically_normal().string();
     }
 
+    auto localCandidate =
+        (fs::path(toStdString(unit.path())).parent_path() / importPath)
+            .lexically_normal();
+    std::error_code error;
+    if (fs::exists(localCandidate, error)) {
+        return localCandidate.string();
+    }
+    if (error) {
+        auto searchedPath = localCandidate.string();
+        auto includeRoot = localCandidate.parent_path().lexically_normal().string();
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver, importNode.loc,
+            "I couldn't inspect include path `" + includeRoot +
+                "` while resolving import `" + importNode.path + "`.",
+            "Check that the include directory exists and that you have "
+            "search permission for `" +
+                searchedPath + "`.");
+    }
+
+    std::vector<std::string> matches;
     std::vector<fs::path> candidates;
-    candidates.reserve(includePaths.size() + 1);
-    candidates.push_back(fs::path(toStdString(unit.path())).parent_path() /
-                         importPath);
+    candidates.reserve(includePaths.size());
     for (const auto &includePath : includePaths) {
-        candidates.push_back(fs::path(includePath) / importPath);
+        candidates.push_back(
+            (fs::path(includePath) / importPath).lexically_normal());
     }
 
     for (const auto &candidate : candidates) {
-        auto normalized = candidate.lexically_normal();
-        std::error_code error;
-        if (fs::exists(normalized, error)) {
-            return normalized.string();
+        std::error_code includeError;
+        if (fs::exists(candidate, includeError)) {
+            matches.push_back(candidate.string());
+            continue;
         }
-        if (error) {
-            auto searchedPath = normalized.string();
+        if (includeError) {
+            auto searchedPath = candidate.string();
             auto includeRoot =
-                normalized.parent_path().lexically_normal().string();
+                candidate.parent_path().lexically_normal().string();
             throw DiagnosticError(
                 DiagnosticError::Category::Driver, importNode.loc,
                 "I couldn't inspect include path `" + includeRoot +
@@ -68,7 +143,21 @@ resolveWorkspaceImportPath(const CompilationUnit &unit,
         }
     }
 
-    return candidates.front().lexically_normal().string();
+    if (matches.size() > 1) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Semantic, importNode.loc,
+            "found conflicting modules for import `" + importNode.path + "`",
+            describeConflictingImportCandidates(matches));
+    }
+
+    if (!matches.empty()) {
+        return matches.front();
+    }
+
+    if (!candidates.empty()) {
+        return candidates.front().string();
+    }
+    return localCandidate.string();
 }
 
 bool
@@ -125,7 +214,9 @@ WorkspaceLoader::setIncludePaths(std::vector<std::string> includePaths) {
 
 CompilationUnit &
 WorkspaceLoader::loadRootUnit(const std::string &path) const {
-    return workspace_.loadRootUnit(path);
+    auto &unit = workspace_.loadRootUnit(path);
+    unit.setModulePath(canonicalWorkspaceModulePath(path, includePaths_));
+    return unit;
 }
 
 AstNode *
@@ -157,6 +248,8 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
         auto importPath =
             resolveWorkspaceImportPath(unit, *importNode, includePaths_);
         auto &dependencyUnit = workspace_.loadUnit(importPath);
+        dependencyUnit.setModulePath(
+            canonicalWorkspaceModulePath(importPath, includePaths_));
         if (!isValidWorkspaceModuleName(dependencyUnit.moduleName())) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, importNode->loc,

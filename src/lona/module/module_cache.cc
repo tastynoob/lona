@@ -5,13 +5,15 @@ namespace lona {
 
 std::shared_ptr<ModuleInterface>
 ModuleCache::getOrCreate(const SourceBuffer &source, const string &moduleKey,
-                         const string &moduleName) {
+                         const string &moduleName, const string &modulePath) {
     auto inserted = interfaces_.emplace(
         source.path(),
-        std::make_shared<ModuleInterface>(source.path(), moduleKey, moduleName,
-                                          hashModuleSource(source.content())));
+        std::make_shared<ModuleInterface>(
+            source.path(), moduleKey, moduleName, modulePath,
+            hashModuleSource(source.content())));
     if (!inserted.second) {
         inserted.first->second->refresh(source.path(), moduleKey, moduleName,
+                                        modulePath,
                                         hashModuleSource(source.content()));
     }
     return inserted.first->second;

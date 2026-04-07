@@ -144,6 +144,7 @@ private:
     string sourcePath_;
     string moduleKey_;
     string moduleName_;
+    string modulePath_;
     std::uint64_t sourceHash_ = 0;
     bool collected_ = false;
     std::vector<std::unique_ptr<TypeClass>> ownedTypes_;
@@ -162,25 +163,31 @@ private:
 
 public:
     ModuleInterface(string sourcePath, string moduleKey, string moduleName,
-                    std::uint64_t sourceHash);
+                    string modulePath, std::uint64_t sourceHash);
     ModuleInterface(std::string sourcePath, std::string moduleKey,
-                    std::string moduleName, std::uint64_t sourceHash)
+                    std::string moduleName, std::string modulePath,
+                    std::uint64_t sourceHash)
         : ModuleInterface(string(std::move(sourcePath)),
                           string(std::move(moduleKey)),
-                          string(std::move(moduleName)), sourceHash) {}
+                          string(std::move(moduleName)),
+                          string(std::move(modulePath)), sourceHash) {}
     ~ModuleInterface();
 
     const string &sourcePath() const { return sourcePath_; }
     const string &moduleKey() const { return moduleKey_; }
     const string &moduleName() const { return moduleName_; }
+    const string &modulePath() const { return modulePath_; }
+    string exportNamespacePrefix() const;
     std::uint64_t sourceHash() const { return sourceHash_; }
 
     void refresh(string sourcePath, string moduleKey, string moduleName,
-                 std::uint64_t sourceHash);
+                 string modulePath, std::uint64_t sourceHash);
     void refresh(std::string sourcePath, std::string moduleKey,
-                 std::string moduleName, std::uint64_t sourceHash) {
+                 std::string moduleName, std::string modulePath,
+                 std::uint64_t sourceHash) {
         refresh(string(std::move(sourcePath)), string(std::move(moduleKey)),
-                string(std::move(moduleName)), sourceHash);
+                string(std::move(moduleName)), string(std::move(modulePath)),
+                sourceHash);
     }
 
     bool collected() const { return collected_; }

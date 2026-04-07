@@ -114,6 +114,14 @@ class InterfaceCollector {
     std::vector<AstFuncDecl *> funcDecls_;
     std::vector<AstGlobalDecl *> globalDecls_;
     std::unordered_set<std::string> materializingAppliedStructs_;
+    enum class StructCompletionState {
+        Pending,
+        Completing,
+        Completed,
+    };
+    std::unordered_map<const AstStructDecl *, StructCompletionState>
+        structCompletionStates_;
+    std::unordered_map<const StructType *, AstStructDecl *> localStructDecls_;
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
@@ -1721,11 +1729,15 @@ class InterfaceCollector {
 
     void declareStructs() {
         for (auto *structDecl : structDecls_) {
-            interface_->declareStructType(toStdString(structDecl->name),
-                                          structDecl->declKind,
-                                          collectGenericParams(
-                                              structDecl->typeParams,
-                                              GenericParamContext::StructDecl));
+            auto *structType = interface_->declareStructType(
+                toStdString(structDecl->name), structDecl->declKind,
+                collectGenericParams(structDecl->typeParams,
+                                     GenericParamContext::StructDecl));
+            if (structType) {
+                localStructDecls_[structType] = structDecl;
+                structCompletionStates_[structDecl] =
+                    StructCompletionState::Pending;
+            }
         }
     }
 
@@ -1850,78 +1862,188 @@ class InterfaceCollector {
         }
     }
 
-    void completeStructs() {
-        for (auto *structDecl : structDecls_) {
-            auto *typeDecl =
-                interface_->findType(toStdString(structDecl->name));
-            auto *structType =
-                typeDecl ? typeDecl->type->as<StructType>() : nullptr;
-            if (!structType) {
-                error(structDecl->loc, "failed to declare struct interface");
-            }
-            if (structType->isOpaque() == false) {
-                continue;
-            }
+    const ModuleInterface::TypeDecl *requireStructTypeDecl(
+        AstStructDecl *structDecl) {
+        auto *typeDecl =
+            structDecl ? interface_->findType(toStdString(structDecl->name))
+                       : nullptr;
+        if (!typeDecl || !typeDecl->type || !typeDecl->type->as<StructType>()) {
+            error(structDecl ? structDecl->loc : location(),
+                  "failed to declare struct interface");
+        }
+        return typeDecl;
+    }
 
-            auto *body = dynamic_cast<AstStatList *>(structDecl->body);
-            if (!body) {
-                continue;
-            }
+    [[noreturn]] void errorRecursiveByValueStructCycle(AstStructDecl *structDecl,
+                                                       AstVarDecl *fieldDecl) {
+        auto structName =
+            structDecl ? toStdString(structDecl->name) : std::string("<struct>");
+        error(fieldDecl ? fieldDecl->loc : location(),
+              "struct `" + structName +
+                  "` forms a recursive by-value cycle through field `" +
+                  describeStructFieldSyntax(fieldDecl) + "`",
+              "Use pointers for recursive links instead of embedding the "
+              "recursive struct by value.");
+    }
 
-            auto genericParams = collectGenericParams(
-                structDecl->typeParams, GenericParamContext::StructDecl);
-            if (!genericParams.empty()) {
-                auto genericParamNames = collectGenericParamNames(genericParams);
-                for (auto *stmt : body->getBody()) {
-                    auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
-                    if (!varDecl) {
-                        continue;
-                    }
-                    validateGenericTypeNode(
-                        varDecl->typeNode, genericParamNames, varDecl->loc,
-                        "struct field `" + describeStructFieldSyntax(varDecl) +
-                            "`");
-                }
-                continue;
+    void ensureStructFieldDependenciesCompleted(TypeClass *fieldType,
+                                                AstStructDecl *structDecl,
+                                                AstVarDecl *fieldDecl) {
+        if (!fieldType) {
+            return;
+        }
+        if (auto *qualified = fieldType->as<ConstType>()) {
+            ensureStructFieldDependenciesCompleted(qualified->getBaseType(),
+                                                   structDecl, fieldDecl);
+            return;
+        }
+        if (auto *structType = fieldType->as<StructType>()) {
+            if (structType->isOpaqueDecl()) {
+                auto typeName = describeTypeNode(fieldDecl ? fieldDecl->typeNode
+                                                           : nullptr,
+                                                 "void");
+                error(fieldDecl ? fieldDecl->loc : location(),
+                      "opaque struct `" + typeName +
+                          "` cannot be used by value in struct field `" +
+                          describeStructFieldSyntax(fieldDecl) + "`",
+                      "Use `" + typeName +
+                          "*` instead. Opaque structs are only supported "
+                          "behind pointers.");
             }
+            if (!structType->isOpaque()) {
+                return;
+            }
+            auto found = localStructDecls_.find(structType);
+            if (found == localStructDecls_.end()) {
+                return;
+            }
+            auto *dependencyDecl = found->second;
+            auto state =
+                structCompletionStates_[dependencyDecl];
+            if (state == StructCompletionState::Completed) {
+                return;
+            }
+            if (state == StructCompletionState::Completing) {
+                errorRecursiveByValueStructCycle(structDecl, fieldDecl);
+            }
+            completeStruct(dependencyDecl);
+            return;
+        }
+        if (fieldType->as<PointerType>() || fieldType->as<IndexablePointerType>() ||
+            fieldType->as<FuncType>() || fieldType->as<DynTraitType>() ||
+            fieldType->as<BaseType>() || fieldType->as<AnyType>()) {
+            return;
+        }
+        if (auto *arrayType = fieldType->as<ArrayType>()) {
+            ensureStructFieldDependenciesCompleted(arrayType->getElementType(),
+                                                   structDecl, fieldDecl);
+            return;
+        }
+        if (auto *tupleType = fieldType->as<TupleType>()) {
+            for (auto *itemType : tupleType->getItemTypes()) {
+                ensureStructFieldDependenciesCompleted(itemType, structDecl,
+                                                       fieldDecl);
+            }
+        }
+    }
 
-            llvm::StringMap<StructType::ValueTy> members;
-            llvm::StringMap<AccessKind> memberAccess;
-            llvm::StringSet<> embeddedMembers;
-            std::unordered_map<std::string, location> seenMembers;
-            int index = 0;
+    void completeStruct(AstStructDecl *structDecl) {
+        if (!structDecl) {
+            return;
+        }
+
+        auto state = structCompletionStates_[structDecl];
+        if (state == StructCompletionState::Completed) {
+            return;
+        }
+        if (state == StructCompletionState::Completing) {
+            internalError(structDecl->loc,
+                          "recursive struct completion escaped dependency "
+                          "validation",
+                          "This looks like a struct completion ordering bug.");
+        }
+
+        auto *typeDecl = requireStructTypeDecl(structDecl);
+        auto *structType = typeDecl->type->as<StructType>();
+        if (!structType || !structType->isOpaque()) {
+            structCompletionStates_[structDecl] =
+                StructCompletionState::Completed;
+            return;
+        }
+
+        auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+        if (!body) {
+            structCompletionStates_[structDecl] =
+                StructCompletionState::Completed;
+            return;
+        }
+
+        structCompletionStates_[structDecl] = StructCompletionState::Completing;
+
+        auto genericParams = collectGenericParams(
+            structDecl->typeParams, GenericParamContext::StructDecl);
+        if (!genericParams.empty()) {
+            auto genericParamNames = collectGenericParamNames(genericParams);
             for (auto *stmt : body->getBody()) {
                 auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
                 if (!varDecl) {
                     continue;
                 }
-                if (varDecl->bindingKind == BindingKind::Ref) {
-                    error(varDecl->loc,
-                          "struct fields cannot use `ref` binding for `" +
-                              describeStructFieldSyntax(varDecl) + "`",
-                          "Store an explicit pointer type instead. Struct "
-                          "fields must be value or pointer-like storage.");
-                }
-                auto *fieldType = resolveType(varDecl->typeNode);
-                if (!fieldType) {
-                    error(varDecl->loc,
-                          "unknown struct field type for `" +
-                              describeStructFieldSyntax(varDecl) + "`: " +
-                              describeTypeNode(varDecl->typeNode, "void"));
-                }
-                rejectBareFunctionType(
-                    fieldType, varDecl->typeNode,
-                    "unsupported bare function struct field type for `" +
-                        describeStructFieldSyntax(varDecl) + "`",
-                    varDecl->loc);
-                validateStructFieldType(structDecl, varDecl, fieldType);
-                validateEmbeddedStructField(structDecl, varDecl, fieldType);
-                insertStructMember(structDecl, varDecl, fieldType, members,
-                                   memberAccess, embeddedMembers, seenMembers,
-                                   index);
+                validateGenericTypeNode(
+                    varDecl->typeNode, genericParamNames, varDecl->loc,
+                    "struct field `" + describeStructFieldSyntax(varDecl) +
+                        "`");
             }
+            structCompletionStates_[structDecl] =
+                StructCompletionState::Completed;
+            return;
+        }
 
-            structType->complete(members, memberAccess, embeddedMembers);
+        llvm::StringMap<StructType::ValueTy> members;
+        llvm::StringMap<AccessKind> memberAccess;
+        llvm::StringSet<> embeddedMembers;
+        std::unordered_map<std::string, location> seenMembers;
+        int index = 0;
+        for (auto *stmt : body->getBody()) {
+            auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
+            if (!varDecl) {
+                continue;
+            }
+            if (varDecl->bindingKind == BindingKind::Ref) {
+                error(varDecl->loc,
+                      "struct fields cannot use `ref` binding for `" +
+                          describeStructFieldSyntax(varDecl) + "`",
+                      "Store an explicit pointer type instead. Struct "
+                      "fields must be value or pointer-like storage.");
+            }
+            auto *fieldType = resolveType(varDecl->typeNode);
+            if (!fieldType) {
+                error(varDecl->loc,
+                      "unknown struct field type for `" +
+                          describeStructFieldSyntax(varDecl) + "`: " +
+                          describeTypeNode(varDecl->typeNode, "void"));
+            }
+            ensureStructFieldDependenciesCompleted(fieldType, structDecl,
+                                                   varDecl);
+            rejectBareFunctionType(
+                fieldType, varDecl->typeNode,
+                "unsupported bare function struct field type for `" +
+                    describeStructFieldSyntax(varDecl) + "`",
+                varDecl->loc);
+            validateStructFieldType(structDecl, varDecl, fieldType);
+            validateEmbeddedStructField(structDecl, varDecl, fieldType);
+            insertStructMember(structDecl, varDecl, fieldType, members,
+                               memberAccess, embeddedMembers, seenMembers,
+                               index);
+        }
+
+        structType->complete(members, memberAccess, embeddedMembers);
+        structCompletionStates_[structDecl] = StructCompletionState::Completed;
+    }
+
+    void completeStructs() {
+        for (auto *structDecl : structDecls_) {
+            completeStruct(structDecl);
         }
     }
 

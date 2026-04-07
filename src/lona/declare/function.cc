@@ -198,7 +198,7 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
     if (!unit || !exportNamespace) {
         return resolved;
     }
-    return toStdString(unit->moduleName() + "." + name);
+    return toStdString(unit->exportNamespacePrefix() + "." + name);
 }
 
 std::string
@@ -211,7 +211,7 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
     auto resolved = resolveTopLevelName(unit, name, exportNamespace);
     if (scope && unit && !exportNamespace &&
         scope->getObj(llvm::StringRef(resolved))) {
-        return toStdString(unit->moduleName() + "." + name);
+        return toStdString(unit->exportNamespacePrefix() + "." + name);
     }
     return resolved;
 }

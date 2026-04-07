@@ -25,7 +25,8 @@ CompilerWorkspace::loadUnit(const string &path) {
     const auto &source = loadSource(path);
     auto &unit = moduleGraph_.getOrCreate(source);
     unit.attachInterface(
-        moduleCache_.getOrCreate(source, unit.moduleKey(), unit.moduleName()));
+        moduleCache_.getOrCreate(source, unit.moduleKey(), unit.moduleName(),
+                                 unit.modulePath()));
     return unit;
 }
 

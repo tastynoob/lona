@@ -14,11 +14,13 @@ class ModuleCache {
 public:
     std::shared_ptr<ModuleInterface> getOrCreate(const SourceBuffer &source,
                                                  const string &moduleKey,
-                                                 const string &moduleName);
+                                                 const string &moduleName,
+                                                 const string &modulePath);
     std::shared_ptr<ModuleInterface> getOrCreate(
         const SourceBuffer &source, const std::string &moduleKey,
-        const std::string &moduleName) {
-        return getOrCreate(source, string(moduleKey), string(moduleName));
+        const std::string &moduleName, const std::string &modulePath) {
+        return getOrCreate(source, string(moduleKey), string(moduleName),
+                           string(modulePath));
     }
     const ModuleInterface *find(const string &path) const;
     const ModuleInterface *find(const std::string &path) const {

@@ -71,6 +71,36 @@ deriveModuleName(const std::string &path) {
 }
 
 std::string
+normalizeExportNamespacePath(const string &modulePath, const string &moduleName) {
+    auto path = toStdString(modulePath);
+    if (path.empty()) {
+        path = toStdString(moduleName);
+    }
+    if (path.empty()) {
+        return {};
+    }
+
+    std::string normalized;
+    normalized.reserve(path.size());
+    bool lastWasSeparator = true;
+    for (char ch : path) {
+        if (ch == '/' || ch == '\\' || ch == '.') {
+            if (!lastWasSeparator && !normalized.empty()) {
+                normalized.push_back('.');
+            }
+            lastWasSeparator = true;
+            continue;
+        }
+        normalized.push_back(ch);
+        lastWasSeparator = false;
+    }
+    while (!normalized.empty() && normalized.back() == '.') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+std::string
 deriveModuleKey(const std::string &path) {
     namespace fs = std::filesystem;
     auto normalized = fs::path(path).lexically_normal();
@@ -1189,7 +1219,9 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
                 if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
                     errorBareGenericTemplateType(base->loc, rawName);
                 }
-                auto *type = typeTable->getType(lookup.resolvedName);
+                auto *type = lookup.typeDecl
+                                 ? typeTable->internType(lookup.typeDecl->type)
+                                 : typeTable->getType(lookup.resolvedName);
                 unit.cacheResolvedType(node, type);
                 return type;
             }
@@ -1208,6 +1240,11 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
                 errorBareGenericTemplateType(base->loc,
                                              moduleName + "." + memberName);
             }
+            resolved = lookup.typeDecl
+                           ? typeTable->internType(lookup.typeDecl->type)
+                           : typeTable->getType(lookup.resolvedName);
+            unit.cacheResolvedType(node, resolved);
+            return resolved;
         }
         resolved = typeTable->getType(llvm::StringRef(rawName));
         unit.cacheResolvedType(node, resolved);
@@ -1362,13 +1399,14 @@ CompilationUnit::attachInterface(
     std::shared_ptr<ModuleInterface> moduleInterface) {
     moduleInterface_ = std::move(moduleInterface);
     if (moduleInterface_) {
-        moduleInterface_->refresh(path_, moduleKey_, moduleName_,
+        moduleInterface_->refresh(path_, moduleKey_, moduleName_, modulePath_,
                                   hashModuleSource(source().content()));
     }
 }
 
 void
 CompilationUnit::refreshSource(const SourceBuffer &source) {
+    const auto oldPath = toStdString(path_);
     const auto newPath = source.path();
     const auto newKey = compilation_unit_impl::deriveModuleKey(newPath);
     const auto newName = compilation_unit_impl::deriveModuleName(newPath);
@@ -1379,9 +1417,13 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
     path_ = source.path();
     moduleKey_ = std::move(newKey);
     moduleName_ = std::move(newName);
+    if (modulePath_.empty() || oldPath != newPath) {
+        modulePath_ = moduleName_;
+    }
     source_ = &source;
     if (moduleInterface_) {
-        moduleInterface_->refresh(path_, moduleKey_, moduleName_, newHash);
+        moduleInterface_->refresh(path_, moduleKey_, moduleName_, modulePath_,
+                                  newHash);
     }
     if (changed) {
         syntaxTree_ = nullptr;
@@ -1390,6 +1432,38 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
         clearLocalBindings();
         invalidateCaches();
         clearInterface();
+    }
+}
+
+string
+CompilationUnit::exportNamespacePrefix() const {
+    return string(compilation_unit_impl::normalizeExportNamespacePath(
+                      modulePath_, moduleName_)
+                      .c_str());
+}
+
+void
+CompilationUnit::setModulePath(string modulePath) {
+    if (modulePath.empty()) {
+        modulePath = moduleName_;
+    }
+    if (modulePath_ == modulePath) {
+        return;
+    }
+
+    modulePath_ = std::move(modulePath);
+    if (moduleInterface_) {
+        moduleInterface_->refresh(path_, moduleKey_, moduleName_, modulePath_,
+                                  hashModuleSource(source().content()));
+    }
+    clearLocalBindings();
+    clearResolvedTypes();
+    invalidateCaches();
+    clearInterface();
+    if (syntaxTree_ != nullptr &&
+        static_cast<int>(stage_) >
+            static_cast<int>(CompilationUnitStage::DependenciesScanned)) {
+        stage_ = CompilationUnitStage::DependenciesScanned;
     }
 }
 
@@ -1442,7 +1516,7 @@ CompilationUnit::clearLocalBindings() {
 bool
 CompilationUnit::addImportedModule(string alias, const CompilationUnit &unit) {
     ImportedModule imported = {unit.path(), unit.moduleKey(), unit.moduleName(),
-                               unit.interface(), &unit};
+                               unit.modulePath(), unit.interface(), &unit};
     return importedModules_.emplace(std::move(alias), std::move(imported))
         .second;
 }

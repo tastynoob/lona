@@ -1053,7 +1053,7 @@ class FunctionResolver {
             return interface->findTrait(localName);
         };
 
-        auto dotPos = rawName.find('.');
+        auto dotPos = rawName.rfind('.');
         if (dotPos == std::string::npos) {
             if (auto *traitDecl = lookupLocalTrait(ownerInterface, rawName)) {
                 return traitDecl;
@@ -1067,7 +1067,9 @@ class FunctionResolver {
         auto moduleName = rawName.substr(0, dotPos);
         auto memberName = rawName.substr(dotPos + 1);
         if (ownerInterface) {
-            if (moduleName == toStdString(ownerInterface->moduleName())) {
+            if (moduleName == toStdString(ownerInterface->moduleName()) ||
+                moduleName ==
+                    toStdString(ownerInterface->exportNamespacePrefix())) {
                 if (auto *traitDecl =
                         lookupLocalTrait(ownerInterface, memberName)) {
                     return traitDecl;
@@ -1081,19 +1083,42 @@ class FunctionResolver {
                     return traitDecl;
                 }
             }
+            for (const auto &entry : ownerInterface->importedModules()) {
+                const auto &imported = entry.second;
+                if (!imported.interface ||
+                    moduleName !=
+                        toStdString(imported.interface->exportNamespacePrefix())) {
+                    continue;
+                }
+                if (auto *traitDecl =
+                        lookupLocalTrait(imported.interface, memberName)) {
+                    return traitDecl;
+                }
+            }
         }
 
         if (!unit_ || !unit_->interface()) {
             return nullptr;
         }
-        if (moduleName == toStdString(unit_->moduleName())) {
+        if (moduleName == toStdString(unit_->moduleName()) ||
+            moduleName == toStdString(unit_->exportNamespacePrefix())) {
             return unit_->interface()->findTrait(memberName);
         }
         const auto *imported = unit_->findImportedModule(moduleName);
-        if (!imported || !imported->interface) {
-            return nullptr;
+        if (imported && imported->interface) {
+            return imported->interface->findTrait(memberName);
         }
-        return imported->interface->findTrait(memberName);
+        for (const auto &entry : unit_->importedModules()) {
+            const auto &visibleImported = entry.second;
+            if (!visibleImported.interface ||
+                moduleName !=
+                    toStdString(
+                        visibleImported.interface->exportNamespacePrefix())) {
+                continue;
+            }
+            return visibleImported.interface->findTrait(memberName);
+        }
+        return nullptr;
     }
 
     std::string methodParentTypeParamBoundName(

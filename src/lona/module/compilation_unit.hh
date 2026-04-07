@@ -38,6 +38,7 @@ public:
         string path;
         string moduleKey;
         string moduleName;
+        string modulePath;
         const ModuleInterface *interface = nullptr;
         const CompilationUnit *unit = nullptr;
     };
@@ -70,6 +71,7 @@ private:
     string path_;
     string moduleKey_;
     string moduleName_;
+    string modulePath_;
     const SourceBuffer *source_ = nullptr;
     AstNode *syntaxTree_ = nullptr;
     CompilationUnitStage stage_ = CompilationUnitStage::Discovered;
@@ -97,6 +99,8 @@ public:
     const string &path() const { return path_; }
     const string &moduleKey() const { return moduleKey_; }
     const string &moduleName() const { return moduleName_; }
+    const string &modulePath() const { return modulePath_; }
+    string exportNamespacePrefix() const;
     const SourceBuffer &source() const;
     std::uint64_t sourceHash() const;
     std::uint64_t interfaceHash() const;
@@ -117,6 +121,10 @@ public:
 
     void attachInterface(std::shared_ptr<ModuleInterface> moduleInterface);
     void refreshSource(const SourceBuffer &source);
+    void setModulePath(string modulePath);
+    void setModulePath(std::string modulePath) {
+        setModulePath(string(std::move(modulePath)));
+    }
     void setSyntaxTree(AstNode *tree);
     void markDependenciesScanned();
     void markInterfaceCollected();
