@@ -787,6 +787,501 @@ def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     )
 
 
+def test_imported_generic_structs_work_by_value_in_function_signatures(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_struct_signature/dep.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_struct_signature/main.lo",
+        """
+        import dep
+
+        def make_box() dep.Box[i32] {
+            ret dep.Box[i32](value = 1)
+        }
+
+        ret make_box().value
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(
+        ir,
+        '%"dep.Box[i32]" = type { i32 }',
+        label="imported generic struct signature ir",
+    )
+    assert_contains(
+        ir,
+        "@make_box()",
+        label="imported generic struct signature ir",
+    )
+
+
+def test_imported_generic_structs_with_nested_owner_local_fields_build_in_object_path(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_import_struct_nested_local_field/dep.lo",
+        """
+        struct Status {
+            code i32
+        }
+
+        struct Result[T] {
+            value T
+            status Status
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_import_struct_nested_local_field/main.lo",
+        """
+        import dep
+
+        def make() dep.Result[i32] {
+            ret dep.Result[i32](value = 1, status = dep.Status(code = 0))
+        }
+
+        var x = make()
+        ret x.value
+        """,
+    )
+    result, manifest_path = compiler.emit_obj_bundle(
+        main_path,
+        output_name="generic-import-struct-nested-local-field.manifest",
+    )
+    result.expect_ok()
+    assert manifest_path.is_file(), f"expected emitted manifest: {manifest_path}"
+
+
+def test_struct_methods_resolve_on_imported_values_returned_through_intermediary_modules(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "imported_method_chain/result_mod.lo",
+        """
+        struct Status {
+            code i32
+
+            def failed() bool {
+                ret self.code != 0
+            }
+        }
+        """,
+    )
+    compiler.write_source(
+        "imported_method_chain/wrap_mod.lo",
+        """
+        import result_mod
+
+        def make() result_mod.Status {
+            ret result_mod.Status(code = 1)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "imported_method_chain/main.lo",
+        """
+        import wrap_mod
+
+        var status = wrap_mod.make()
+        if status.failed() {
+            ret 1
+        }
+        ret 0
+        """,
+    )
+    result, manifest_path = compiler.emit_obj_bundle(
+        main_path,
+        output_name="imported-method-chain.manifest",
+    )
+    result.expect_ok()
+    assert manifest_path.is_file(), f"expected emitted manifest: {manifest_path}"
+
+
+def test_imported_generic_helpers_keep_owner_context_through_intermediary_modules(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_owner_chain/result_mod.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def ok_value[T](value T) Box[T] {
+            ret Box[T](value = value)
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_owner_chain/wrap_mod.lo",
+        """
+        import result_mod
+
+        def outer[T](value T) result_mod.Box[T] {
+            ret result_mod.ok_value[T](value)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_owner_chain/main.lo",
+        """
+        import wrap_mod
+
+        var x = wrap_mod.outer[i32](1)
+        ret x.value
+        """,
+    )
+    result, manifest_path = compiler.emit_obj_bundle(
+        main_path,
+        output_name="generic-owner-chain.manifest",
+    )
+    result.expect_ok()
+    assert manifest_path.is_file(), f"expected emitted manifest: {manifest_path}"
+
+
+def test_imported_generic_functions_keep_local_helper_templates(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_template_chain/chain_mod.lo",
+        """
+        def inner[T](value T) T {
+            ret value
+        }
+
+        def outer[T](value T) T {
+            ret inner[T](value)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_template_chain/main.lo",
+        """
+        import chain_mod
+
+        var x = chain_mod.outer[i32](1)
+        ret x
+        """,
+    )
+    result, manifest_path = compiler.emit_obj_bundle(
+        main_path,
+        output_name="generic-template-chain.manifest",
+    )
+    result.expect_ok()
+    assert manifest_path.is_file(), f"expected emitted manifest: {manifest_path}"
+
+
+def test_imported_generic_struct_methods_link_through_concrete_instantiations(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_method_link/result_mod.lo",
+        """
+        struct Status {
+            code i32
+
+            def failed() bool {
+                ret self.code != 0
+            }
+        }
+
+        struct Result[T] {
+            value T
+            status Status
+
+            def failed() bool {
+                ret self.status.failed()
+            }
+
+            def code() i32 {
+                ret self.status.code
+            }
+        }
+
+        def make() Result[i32] {
+            ret Result[i32](value = 1, status = Status(code = 0))
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_method_link/main.lo",
+        """
+        import result_mod
+
+        var x = result_mod.make()
+        if x.failed() {
+            ret x.code()
+        }
+        ret x.value
+        """,
+    )
+    result, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="generic-method-link.bin",
+    )
+    result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(1)
+
+
+def test_imported_generic_function_instantiations_reuse_one_emitter_across_modules(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_instance_reuse/box_mod.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def make[T](value T) Box[T] {
+            ret Box[T](value = value)
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_instance_reuse/wrap_mod.lo",
+        """
+        import box_mod
+
+        def via_wrap() box_mod.Box[i32] {
+            ret box_mod.make[i32](1)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_instance_reuse/main.lo",
+        """
+        import box_mod
+        import wrap_mod
+
+        var a = wrap_mod.via_wrap()
+        var b = box_mod.make[i32](2)
+        ret a.value + b.value
+        """,
+    )
+    result, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="generic-instance-reuse.bin",
+    )
+    result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(3)
+
+
+def test_generic_instance_emitter_handoffs_recompile_cached_requesters(
+    compiler: CompilerHarness,
+) -> None:
+    cache_dir = compiler.output_path("generic-instance-handoff-cache")
+    compiler.write_source(
+        "generic_instance_handoff/box_mod.lo",
+        """
+        struct Box[T] {
+            value T
+        }
+
+        def make[T](value T) Box[T] {
+            ret Box[T](value = value)
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_instance_handoff/wrap_mod.lo",
+        """
+        import box_mod
+
+        def via_wrap() box_mod.Box[i32] {
+            ret box_mod.make[i32](1)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_instance_handoff/main.lo",
+        """
+        import box_mod
+        import wrap_mod
+
+        var a = wrap_mod.via_wrap()
+        var b = box_mod.make[i32](2)
+        ret a.value + b.value
+        """,
+    )
+
+    first, _ = compiler.build_system_executable(
+        main_path,
+        output_name="generic-instance-handoff-first.bin",
+        cache_dir=cache_dir,
+    )
+    first.expect_ok()
+
+    compiler.write_source(
+        "generic_instance_handoff/wrap_mod.lo",
+        """
+        import box_mod
+
+        def via_wrap() box_mod.Box[i32] {
+            ret box_mod.Box[i32](value = 1)
+        }
+        """,
+    )
+
+    second, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="generic-instance-handoff-second.bin",
+        cache_dir=cache_dir,
+    )
+    second.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(3)
+
+
+def test_import_only_root_does_not_crash_on_generic_method_self_cycles(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "generic_method_self_cycle/result.lo",
+        """
+        global OK i32 = 0
+
+        struct Status {
+            code i32
+
+            def ok() bool {
+                ret self.code == OK
+            }
+        }
+
+        struct Result[T] {
+            set value T
+            status Status
+
+            def ok() bool {
+                ret self.status.ok()
+            }
+        }
+
+        def success() Status {
+            ret Status(code = OK)
+        }
+
+        def ok_value[T](value T) Result[T] {
+            ret Result[T](value = value, status = success())
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_method_self_cycle/view.lo",
+        """
+        struct View {
+            size usize
+
+            def is_empty() bool {
+                ret self.size == 0
+            }
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_method_self_cycle/probe.lo",
+        """
+        import result
+        import view
+
+        struct Plain {
+            def size_result() result.Result[usize] {
+                ret result.ok_value[usize](0)
+            }
+        }
+
+        def make() Plain {
+            ret Plain()
+        }
+
+        def touch(source view.View) result.Status {
+            if source.is_empty() {
+                ret result.success()
+            }
+
+            ret result.success()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_method_self_cycle/main.lo",
+        """
+        import probe
+
+        ret 0
+        """,
+    )
+    result, manifest_path = compiler.emit_obj_bundle(
+        main_path,
+        output_name="generic-method-self-cycle.manifest",
+    )
+    result.expect_ok()
+    assert manifest_path.is_file(), f"expected emitted manifest: {manifest_path}"
+
+
+def test_local_functions_can_shadow_imported_c_symbols_without_reusing_their_signature(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "imported_c_symbol_shadow/capi.lo",
+        """
+        #[extern "C"]
+        def remove(path u8 const[*]) i32
+        """,
+    )
+    compiler.write_source(
+        "imported_c_symbol_shadow/result.lo",
+        """
+        struct Status {
+            code i32
+        }
+
+        def success() Status {
+            ret Status(code = 0)
+        }
+
+        def failure(code i32) Status {
+            ret Status(code = code)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "imported_c_symbol_shadow/main.lo",
+        """
+        import capi
+        import result
+
+        def remove(path u8 const[*]) result.Status {
+            if capi.remove(path) != 0 {
+                ret result.failure(1)
+            }
+            ret result.success()
+        }
+
+        ret 0
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"declare .* @remove\(ptr",
+        label="imported c symbol shadow ir",
+    )
+    assert_contains(
+        ir,
+        "define i32 @main.remove(ptr",
+        label="imported c symbol shadow ir",
+    )
+
+
 def test_imported_struct_decl_bounds_and_generic_methods_lower_in_requester(
     compiler: CompilerHarness,
 ) -> None:
@@ -1637,6 +2132,99 @@ def test_imported_c_abi_symbols_keep_global_names(compiler: CompilerHarness) -> 
     assert_not_contains(ir, "@dep.c_inc", label="import c abi ir")
 
 
+def test_transitive_imported_c_abi_signatures_conflict_with_mismatched_local_redeclarations(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "import_c_abi_transitive_conflict/dep.lo",
+        """
+        #[extern "C"]
+        def remove(path u8 const[*]) i32
+        """,
+    )
+    compiler.write_source(
+        "import_c_abi_transitive_conflict/wrap.lo",
+        """
+        import dep
+
+        def keep(v i32) i32 {
+            ret v
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "import_c_abi_transitive_conflict/main.lo",
+        """
+        import wrap
+
+        #[extern "C"]
+        def remove(fd i32) i32
+
+        def main() i32 {
+            ret remove(1)
+        }
+        """,
+    )
+    result = compiler.emit_ir(main_path).expect_failed()
+    assert_contains(
+        result.stderr,
+        "conflicting declarations for function `remove`",
+        label="transitive extern c conflict diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "`(u8 const[*]: i32)` vs `(i32: i32)`",
+        label="transitive extern c conflict diagnostic",
+    )
+    assert_not_contains(
+        result.stderr,
+        "expected u8 const[*], got i32",
+        label="transitive extern c conflict diagnostic",
+    )
+
+
+def test_indirect_module_names_do_not_leak_into_entry_scope(compiler: CompilerHarness) -> None:
+    compiler.write_source(
+        "transitive_import_namespace/leaf.lo",
+        """
+        def keep(v i32) i32 {
+            ret v
+        }
+        """,
+    )
+    compiler.write_source(
+        "transitive_import_namespace/wrap.lo",
+        """
+        import leaf
+
+        def pass(v i32) i32 {
+            ret leaf.keep(v)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "transitive_import_namespace/main.lo",
+        """
+        import wrap
+
+        #[extern "C"]
+        def leaf() i32
+
+        def main() i32 {
+            ret leaf() + wrap.pass(1)
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(ir, r"^declare .*i32 @leaf\(\)", label="indirect module alias ir")
+    assert_contains(ir, "call i32 @leaf()", label="indirect module alias ir")
+    assert_contains(
+        ir,
+        "call i32 @wrap.pass(i32 1)",
+        label="indirect module alias ir",
+    )
+
+
 def test_imported_c_repr_types_work_and_native_struct_pointer_is_rejected(compiler: CompilerHarness) -> None:
     compiler.write_source(
         "import_c_repr/dep.lo",
@@ -2023,7 +2611,11 @@ def test_transitive_imports_do_not_leak(compiler: CompilerHarness) -> None:
         """,
     )
     result = compiler.emit_ir(main_path).expect_failed()
-    assert_contains(result.stderr, "semantic error: undefined identifier `leaf`", label="transitive function access diagnostic")
+    assert_contains(
+        result.stderr,
+        "semantic error: module `leaf` is not directly imported here",
+        label="transitive function access diagnostic",
+    )
 
     main_path = compiler.write_source(
         "import_transitive/main.lo",
@@ -2053,7 +2645,7 @@ def test_transitive_imports_do_not_leak(compiler: CompilerHarness) -> None:
     result = compiler.emit_ir(main_path).expect_failed()
     assert_contains(
         result.stderr,
-        "semantic error: undefined identifier `leaf`",
+        "semantic error: module `leaf` is not directly imported here",
         label="transitive global access diagnostic",
     )
 

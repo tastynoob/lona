@@ -8,6 +8,7 @@
 namespace lona {
 
 class FuncEnv;
+class GenericInstanceRegistry;
 
 class Scope {
 protected:
@@ -69,11 +70,20 @@ public:
 };
 
 class GlobalScope : public Scope {
+    GenericInstanceRegistry *genericInstanceRegistry_ = nullptr;
+
 public:
     GlobalScope(llvm::IRBuilder<> &builder, llvm::Module &module)
         : Scope(builder, module) {}
 
     std::string getName() override { return module.getName().str(); }
+
+    void setGenericInstanceRegistry(GenericInstanceRegistry *registry) {
+        genericInstanceRegistry_ = registry;
+    }
+    GenericInstanceRegistry *genericInstanceRegistry() const {
+        return genericInstanceRegistry_;
+    }
 
     llvm::Value *allocate(TypeClass *type, bool is_extern = false) override;
 };

@@ -211,6 +211,43 @@ def test_continue_still_allows_eventual_for_else_execution(compiler: CompilerHar
     compiler.run_executable(exe_path).expect_exit_code(7)
 
 
+def test_nested_blocks_have_separate_local_scopes(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "block_scope_locals.lo",
+        """
+        def shadow_inner() i32 {
+            var value i32 = 1
+            if true {
+                var value i32 = 5
+                if value != 5 {
+                    ret 99
+                }
+            }
+            ret value
+        }
+
+        def redeclare_after_if() i32 {
+            if true {
+                var detached i32 = 7
+                if detached != 7 {
+                    ret 99
+                }
+            }
+
+            var detached i32 = 2
+            ret detached
+        }
+
+        ret shadow_inner() + redeclare_after_if()
+        """,
+    )
+    build_result, exe_path = compiler.build_system_executable(
+        input_path, output_name="block_scope_locals"
+    )
+    build_result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(3)
+
+
 def test_inner_break_only_skips_inner_else(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "nested_break.lo",

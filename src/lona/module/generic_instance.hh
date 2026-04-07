@@ -1,8 +1,11 @@
 #pragma once
 
 #include "lona/util/string.hh"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace lona {
@@ -36,8 +39,7 @@ struct GenericInstanceKey {
     std::vector<string> concreteTypeArgs;
 
     bool operator==(const GenericInstanceKey &other) const {
-        return requesterModuleKey == other.requesterModuleKey &&
-               ownerModuleKey == other.ownerModuleKey &&
+        return ownerModuleKey == other.ownerModuleKey &&
                kind == other.kind && templateName == other.templateName &&
                methodName == other.methodName &&
                concreteTypeArgs == other.concreteTypeArgs;
@@ -60,8 +62,6 @@ combineGenericInstanceHash(std::size_t seed, std::size_t value) {
 struct GenericInstanceKeyHash {
     std::size_t operator()(const GenericInstanceKey &key) const {
         std::size_t seed = 0;
-        seed = combineGenericInstanceHash(
-            seed, std::hash<string>{}(key.requesterModuleKey));
         seed = combineGenericInstanceHash(seed,
                                           std::hash<string>{}(key.ownerModuleKey));
         seed = combineGenericInstanceHash(
@@ -74,6 +74,68 @@ struct GenericInstanceKeyHash {
             seed = combineGenericInstanceHash(seed, std::hash<string>{}(arg));
         }
         return seed;
+    }
+};
+
+struct GenericInstanceEmissionOwner {
+    string moduleKey;
+    std::vector<string> symbolNames;
+};
+
+class GenericInstanceRegistry {
+    std::unordered_map<GenericInstanceKey, GenericInstanceEmissionOwner,
+                       GenericInstanceKeyHash>
+        owners_;
+
+public:
+    const GenericInstanceEmissionOwner *find(
+        const GenericInstanceKey &key) const {
+        auto found = owners_.find(key);
+        if (found == owners_.end()) {
+            return nullptr;
+        }
+        return &found->second;
+    }
+
+    const string *emitterModuleKey(const GenericInstanceKey &key) const {
+        auto *owner = find(key);
+        if (!owner || owner->moduleKey.empty()) {
+            return nullptr;
+        }
+        return &owner->moduleKey;
+    }
+
+    bool shouldEmitIn(const GenericInstanceKey &key,
+                      const string &moduleKey) const {
+        auto *emitter = emitterModuleKey(key);
+        return emitter == nullptr || *emitter == moduleKey;
+    }
+
+    void claim(const GenericInstanceKey &key, string moduleKey) {
+        auto [it, inserted] =
+            owners_.emplace(key,
+                            GenericInstanceEmissionOwner{moduleKey, {}});
+        if (!inserted && it->second.moduleKey.empty()) {
+            it->second.moduleKey = std::move(moduleKey);
+        }
+    }
+
+    void noteEmission(const GenericInstanceKey &key, string moduleKey,
+                      const std::vector<string> &symbolNames) {
+        auto [it, _] =
+            owners_.emplace(key,
+                            GenericInstanceEmissionOwner{moduleKey, {}});
+        if (it->second.moduleKey.empty()) {
+            it->second.moduleKey = std::move(moduleKey);
+        }
+        for (const auto &symbol : symbolNames) {
+            auto found =
+                std::find(it->second.symbolNames.begin(),
+                          it->second.symbolNames.end(), symbol);
+            if (found == it->second.symbolNames.end()) {
+                it->second.symbolNames.push_back(symbol);
+            }
+        }
     }
 };
 

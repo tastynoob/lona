@@ -587,6 +587,25 @@ class FunctionAnalyzer {
                 unit ? unit->visibleTraitImplHash() : 0};
     }
 
+    GenericInstanceRegistry *genericInstanceRegistry() const {
+        return global ? global->genericInstanceRegistry() : nullptr;
+    }
+
+    bool claimGenericInstanceEmission(const GenericInstanceKey &key) const {
+        if (!unit) {
+            return true;
+        }
+        auto *registry = genericInstanceRegistry();
+        if (!registry) {
+            return true;
+        }
+        if (const auto *emitter = registry->emitterModuleKey(key)) {
+            return *emitter == unit->moduleKey();
+        }
+        registry->claim(key, unit->moduleKey());
+        return true;
+    }
+
     GenericInstanceKey buildFunctionInstanceKey(
         const ModuleInterface::FunctionDecl &functionDecl,
         const std::unordered_map<std::string, TypeClass *> &genericArgs,
@@ -681,8 +700,21 @@ class FunctionAnalyzer {
         StructType *structType, llvm::StringRef methodName,
         const location &loc) {
         if (auto *existing = typeMgr->getMethodFunction(structType, methodName)) {
+            auto existingSymbolName =
+                existing->getllvmValue()
+                    ? llvm::cast<llvm::Function>(existing->getllvmValue())
+                          ->getName()
+                          .str()
+                    : buildLocalGenericStructMethodInstanceSymbolName(
+                          structType, methodName, {}, loc);
+            if (!global->getObj(string(existingSymbolName))) {
+                global->addObj(string(existingSymbolName), existing);
+            }
             return existing;
         }
+        auto symbolName =
+            buildLocalGenericStructMethodInstanceSymbolName(structType,
+                                                            methodName, {}, loc);
         auto *funcType = structType->getMethodType(methodName);
         if (!funcType) {
             internalError(
@@ -698,9 +730,6 @@ class FunctionAnalyzer {
                 structType->getMethodParamNames(methodName)) {
             paramNames = *storedParamNames;
         }
-        auto symbolName =
-            buildLocalGenericStructMethodInstanceSymbolName(structType,
-                                                            methodName, {}, loc);
         auto *llvmFunc = llvm::Function::Create(
             getFunctionAbiLLVMType(*typeMgr, funcType, true),
             llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
@@ -823,13 +852,19 @@ class FunctionAnalyzer {
         auto instanceKey =
             buildFunctionInstanceKey(functionDecl, genericArgs, loc,
                                      ownerInterface);
+        const bool shouldEmit =
+            claimGenericInstanceEmission(instanceKey);
+        recordGenericInstance(instanceKey, templateUnit,
+                              shouldEmit ? std::vector<string>{string(symbolName)}
+                                         : std::vector<string>{});
+        if (!shouldEmit) {
+            return func;
+        }
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
         if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
             runtimeState.inProgressInstances.count(instanceKey) != 0 ||
             findOwnerModuleFunction(symbolName)) {
-            recordGenericInstance(instanceKey, templateUnit,
-                                  {string(symbolName)});
             return func;
         }
 
@@ -852,8 +887,6 @@ class FunctionAnalyzer {
             ownerModule->addFunction(hirInstance);
         }
         guard.markCompleted();
-        recordGenericInstance(std::move(instanceKey), templateUnit,
-                              {string(symbolName)});
         return func;
     }
 
@@ -884,13 +917,19 @@ class FunctionAnalyzer {
                                     structType, methodName, {}, loc);
         auto instanceKey = buildStructMethodInstanceKey(
             *typeDecl, structType, templateUnit, methodName, {}, loc);
+        const bool shouldEmit =
+            claimGenericInstanceEmission(instanceKey);
+        recordGenericInstance(instanceKey, templateUnit,
+                              shouldEmit ? std::vector<string>{string(symbolName)}
+                                         : std::vector<string>{});
+        if (!shouldEmit) {
+            return func;
+        }
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
         if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
             runtimeState.inProgressInstances.count(instanceKey) != 0 ||
             findOwnerModuleFunction(symbolName)) {
-            recordGenericInstance(instanceKey, templateUnit,
-                                  {string(symbolName)});
             return func;
         }
 
@@ -931,8 +970,6 @@ class FunctionAnalyzer {
             ownerModule->addFunction(hirInstance);
         }
         guard.markCompleted();
-        recordGenericInstance(std::move(instanceKey), templateUnit,
-                              {string(symbolName)});
         return func;
     }
 
@@ -1171,13 +1208,19 @@ class FunctionAnalyzer {
         auto instanceKey = buildStructMethodInstanceKey(
             *lookup.typeDecl, structType, lookup.ownerUnit,
             toStringRef(lookup.methodTemplate->localName), methodTypeArgs, loc);
+        const bool shouldEmit =
+            claimGenericInstanceEmission(instanceKey);
+        recordGenericInstance(instanceKey, lookup.ownerUnit,
+                              shouldEmit ? std::vector<string>{string(symbolName)}
+                                         : std::vector<string>{});
+        if (!shouldEmit) {
+            return func;
+        }
 
         auto &runtimeState = genericRuntimeStateFor(ownerModule);
         if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
             runtimeState.inProgressInstances.count(instanceKey) != 0 ||
             findOwnerModuleFunction(symbolName)) {
-            recordGenericInstance(instanceKey, lookup.ownerUnit,
-                                  {string(symbolName)});
             return func;
         }
 
@@ -1226,8 +1269,6 @@ class FunctionAnalyzer {
             ownerModule->addFunction(hirInstance);
         }
         guard.markCompleted();
-        recordGenericInstance(std::move(instanceKey), lookup.ownerUnit,
-                              {string(symbolName)});
         return func;
     }
 
@@ -2366,7 +2407,7 @@ class FunctionAnalyzer {
             }
             auto methodName = toStringRef(selector->getFieldName());
             auto *methodFunc = typeMgr->getMethodFunction(structType, methodName);
-            if (!methodFunc && structType->isAppliedTemplateInstance() &&
+            if (structType->isAppliedTemplateInstance() &&
                 structType->getMethodType(methodName)) {
                 methodFunc =
                     instantiateGenericStructMethod(structType, methodName,
@@ -2486,6 +2527,14 @@ class FunctionAnalyzer {
                 structType, toStringRef(resolved.functionName()));
             if (func) {
                 return func;
+            }
+            if (resolved.decl() && !resolved.decl()->hasTypeParams() &&
+                toStdString(resolved.decl()->name) !=
+                    toStdString(resolved.functionName())) {
+                if (auto *instantiatedMethod = typeMgr->getMethodFunction(
+                        structType, toStringRef(resolved.decl()->name))) {
+                    return instantiatedMethod;
+                }
             }
             if (resolved.decl() &&
                 (resolved.decl()->hasTypeParams() ||

@@ -15,6 +15,7 @@ YACC_FILE = $(shell find $(ROOT)/grammar -name "*.yacc")
 GENERATED_PARSER_SOURCES = $(OUT_DIR)/parser.cc $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
 GENERATED_LEXER_SOURCE = $(OUT_DIR)/scanner.cc
 GENERATED_VERSION_SOURCE = $(OUT_DIR)/version.cc
+GENERATED_VERSION_STAMP = $(OUT_DIR)/version.stamp
 GENERATED_PARSER_HEADERS = $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
 GENERATED_SUPPORT_SOURCES = $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc $(GENERATED_VERSION_SOURCE)
 PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
@@ -29,7 +30,8 @@ SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") $(GENERATED_SUPPORT_SOURCE
 FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) $(GENERATED_SUPPORT_SOURCES)
 LIBRARY_SOURCE_FILES = $(filter-out $(ROOT)/src/main.cc,$(SOURCE_FILES))
 SESSION_RUNNER_SOURCES = $(ROOT)/tests/session_runner.cc
-VERSION_SOURCE_DEPS = $(ROOT)/src/lona/version.hh \
+VERSION_SOURCE_DEPS = $(ROOT)/makefile \
+	$(ROOT)/src/lona/version.hh \
 	$(wildcard $(ROOT)/.git/HEAD $(ROOT)/.git/refs/heads/* $(ROOT)/.git/packed-refs)
 
 LIBS = $(shell llvm-config-18 --libs core native asmparser linker)
@@ -127,7 +129,7 @@ $(GENERATED_LEXER_SOURCE): $(LEX_FILE) $(OUT_DIR)/parser.hh
 	echo "Generating scanner.cc"
 	flex -o $(GENERATED_LEXER_SOURCE) $(LEX_FILE)
 
-$(GENERATED_VERSION_SOURCE): $(VERSION_SOURCE_DEPS)
+$(GENERATED_VERSION_SOURCE) $(GENERATED_VERSION_STAMP) &: $(VERSION_SOURCE_DEPS)
 	mkdir -p $(OUT_DIR)
 	REVISION=$$(git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown); \
 	{ \
@@ -145,9 +147,10 @@ $(GENERATED_VERSION_SOURCE): $(VERSION_SOURCE_DEPS)
 		printf '%s\n' 'std::string_view revisionVersion() { return kRevisionVersion; }'; \
 		printf '%s\n' 'std::string_view versionString() { return kCompilerVersion; }'; \
 		printf '%s\n' '}  // namespace lona'; \
-	} > $@.tmp
-	cmp -s $@.tmp $@ || mv $@.tmp $@
-	rm -f $@.tmp
+	} > $(GENERATED_VERSION_SOURCE).tmp
+	cmp -s $(GENERATED_VERSION_SOURCE).tmp $(GENERATED_VERSION_SOURCE) || mv $(GENERATED_VERSION_SOURCE).tmp $(GENERATED_VERSION_SOURCE)
+	rm -f $(GENERATED_VERSION_SOURCE).tmp
+	touch $(GENERATED_VERSION_STAMP)
 
 $(GENERATED_PARSER_SOURCES) &: $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
 	mkdir -p $(OUT_DIR)

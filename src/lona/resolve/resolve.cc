@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace lona {
@@ -76,6 +77,40 @@ traitImplSelfTypeBase(TypeNode *node) {
     return nullptr;
 }
 
+bool
+hasTransitivelyImportedModuleNamed(const CompilationUnit &unit,
+                                   llvm::StringRef moduleAlias) {
+    auto *interface = unit.interface();
+    if (!interface) {
+        return false;
+    }
+
+    std::vector<const ModuleInterface *> worklist;
+    std::unordered_set<const ModuleInterface *> visited;
+    for (const auto &entry : interface->importedModules()) {
+        if (entry.second.interface) {
+            worklist.push_back(entry.second.interface);
+        }
+    }
+
+    while (!worklist.empty()) {
+        auto *current = worklist.back();
+        worklist.pop_back();
+        if (!current || !visited.insert(current).second) {
+            continue;
+        }
+        for (const auto &entry : current->importedModules()) {
+            if (toStringRef(entry.first) == moduleAlias) {
+                return true;
+            }
+            if (entry.second.interface) {
+                worklist.push_back(entry.second.interface);
+            }
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 class FunctionResolver {
@@ -84,7 +119,9 @@ class FunctionResolver {
     const CompilationUnit *unit_;
     ResolvedModule &module_;
     ResolvedFunction &resolved_;
-    std::unordered_map<string, const ResolvedLocalBinding *> locals_;
+    using LocalScope =
+        std::unordered_map<string, const ResolvedLocalBinding *>;
+    std::vector<LocalScope> localScopes_;
     struct GenericCapabilityInfo {
         string paramName;
         int pointerDepth = -1;
@@ -94,6 +131,55 @@ class FunctionResolver {
     };
     std::unordered_map<const ResolvedLocalBinding *, GenericCapabilityInfo>
         bindingGenericInfo_;
+
+    void pushLocalScope() { localScopes_.emplace_back(); }
+
+    void popLocalScope() {
+        assert(!localScopes_.empty());
+        localScopes_.pop_back();
+    }
+
+    LocalScope &currentLocalScope() {
+        if (localScopes_.empty()) {
+            pushLocalScope();
+        }
+        return localScopes_.back();
+    }
+
+    const ResolvedLocalBinding *lookupLocalBinding(const string &name) const {
+        for (auto it = localScopes_.rbegin(); it != localScopes_.rend(); ++it) {
+            auto found = it->find(name);
+            if (found != it->end()) {
+                return found->second;
+            }
+        }
+        return nullptr;
+    }
+
+    void resolveBlock(const AstStatList *list, bool introduceScope) {
+        if (!list) {
+            return;
+        }
+
+        struct ScopeGuard {
+            FunctionResolver *resolver = nullptr;
+            bool active = false;
+
+            ~ScopeGuard() {
+                if (active && resolver) {
+                    resolver->popLocalScope();
+                }
+            }
+        } guard{this, introduceScope};
+
+        if (introduceScope) {
+            pushLocalScope();
+        }
+
+        for (auto *stmt : list->body) {
+            resolveStmt(stmt);
+        }
+    }
 
     bool hasGenericTypeParam(llvm::StringRef name) const {
         for (const auto &paramName : resolved_.genericTypeParams()) {
@@ -1324,7 +1410,7 @@ class FunctionResolver {
                   "Rename the local binding so `" + bindingName +
                       ".xxx` continues to refer to the imported module.");
         }
-        auto inserted = locals_.emplace(binding->name(), binding);
+        auto inserted = currentLocalScope().emplace(binding->name(), binding);
         if (!inserted.second) {
             error(loc, duplicateMessage, duplicateHint);
         }
@@ -1434,9 +1520,7 @@ class FunctionResolver {
             return;
         }
         if (auto *list = dynamic_cast<const AstStatList *>(node)) {
-            for (auto *stmt : list->body) {
-                resolveStmt(stmt);
-            }
+            resolveBlock(list, true);
             return;
         }
         if (auto *varDef = dynamic_cast<const AstVarDef *>(node)) {
@@ -1506,10 +1590,9 @@ class FunctionResolver {
             return;
         }
         if (auto *field = dynamic_cast<const AstField *>(node)) {
-            auto local = locals_.find(field->name);
-            if (local != locals_.end()) {
+            if (auto *local = lookupLocalBinding(field->name)) {
                 resolved_.bindField(field,
-                                    ResolvedEntityRef::local(local->second));
+                                    ResolvedEntityRef::local(local));
                 return;
             }
 
@@ -1521,7 +1604,8 @@ class FunctionResolver {
                         resolved_.bindField(field,
                                             ResolvedEntityRef::genericFunction(
                                                 lookup.resolvedName,
-                                                lookup.functionDecl));
+                                                lookup.functionDecl,
+                                                unit_->interface()));
                     } else {
                         resolved_.bindField(
                             field, ResolvedEntityRef::globalValue(
@@ -1538,7 +1622,8 @@ class FunctionResolver {
                     if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
                         resolved_.bindField(
                             field, ResolvedEntityRef::genericType(
-                                       lookup.resolvedName, lookup.typeDecl));
+                                       lookup.resolvedName, lookup.typeDecl,
+                                       unit_->interface()));
                     } else {
                         resolved_.bindField(
                             field,
@@ -1569,6 +1654,18 @@ class FunctionResolver {
                         field, ResolvedEntityRef::type(
                                    toStdString(globalType->full_name)));
                     return;
+                }
+                if (unit_ &&
+                    hasTransitivelyImportedModuleNamed(
+                        *unit_, llvm::StringRef(field->name.tochara(),
+                                                field->name.size()))) {
+                    error(field->loc,
+                          "module `" + toStdString(field->name) +
+                              "` is not directly imported here",
+                          "Add an explicit `import " +
+                              toStdString(field->name) +
+                              "` in this file before using `" +
+                              toStdString(field->name) + ".xxx`.");
                 }
                 error(field->loc,
                       "undefined identifier `" + toStdString(field->name) + "`",
@@ -1744,6 +1841,16 @@ public:
           resolved_(resolved) {}
 
     void resolve() {
+        pushLocalScope();
+        struct ScopeGuard {
+            FunctionResolver *resolver = nullptr;
+            ~ScopeGuard() {
+                if (resolver) {
+                    resolver->popLocalScope();
+                }
+            }
+        } guard{this};
+
         if (resolved_.hasSelfBinding()) {
             declareBinding(resolved_.selfBinding(), resolved_.loc(),
                            "duplicate implicit `self` binding",
@@ -1759,6 +1866,10 @@ public:
             rememberBindingGenericInfo(binding, bindingDeclaredTypeNode(binding));
         }
 
+        if (auto *body = dynamic_cast<const AstStatList *>(resolved_.body())) {
+            resolveBlock(body, false);
+            return;
+        }
         resolveStmt(resolved_.body());
     }
 };

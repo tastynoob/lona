@@ -48,10 +48,12 @@ class WorkspaceBuilder {
     bool matchesArtifact(const CompilationUnit &unit,
                          const ModuleArtifact &artifact,
                          const CompileOptions &options,
-                         ModuleEntryRole entryRole) const;
+                         ModuleEntryRole entryRole,
+                         const GenericInstanceRegistry &instanceRegistry) const;
     ModuleArtifact *reusableArtifactFor(const CompilationUnit &unit,
                                         const CompileOptions &options,
-                                        const CompilationUnit &rootUnit) const;
+                                        const CompilationUnit &rootUnit,
+                                        const GenericInstanceRegistry &instanceRegistry) const;
     ModuleArtifact createArtifact(const CompilationUnit &unit,
                                   const CompileOptions &options,
                                   const CompilationUnit &rootUnit) const;
@@ -65,7 +67,9 @@ class WorkspaceBuilder {
                        SessionStats &stats, std::ostream &out) const;
     int compileModule(CompilationUnit &unit, const CompileOptions &options,
                       ModuleArtifact &artifact, bool emitObject,
-                      bool emitBitcode, SessionStats &stats,
+                      bool emitBitcode,
+                      GenericInstanceRegistry &instanceRegistry,
+                      SessionStats &stats,
                       std::ostream &out) const;
     LinkedModule linkArtifacts(const CompilationUnit &rootUnit,
                                bool hostedEntry, bool verifyIR,

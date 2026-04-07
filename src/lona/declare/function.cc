@@ -3,12 +3,27 @@
 #include "lona/abi/abi.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/err/err.hh"
+#include "lona/sema/initializer.hh"
 #include "lona/sema/moduleentry.hh"
 
 namespace lona {
 namespace declarationsupport_impl {
 
 namespace {
+
+[[noreturn]] void
+reportLocalFunctionConflict(AstFuncDecl *node, llvm::StringRef functionName,
+                            FuncType *existingType, FuncType *incomingType) {
+    std::string message =
+        "conflicting declarations for function `" + functionName.str() + "`";
+    if (existingType && incomingType) {
+        message += ": `" + describeResolvedType(existingType) + "` vs `" +
+                   describeResolvedType(incomingType) + "`";
+    }
+    error(node ? node->loc : location(), std::move(message),
+          "Make duplicated `#[extern \"C\"]` function declarations use the "
+          "same signature in every module.");
+}
 
 std::string
 describeExternCFunctionName(AstFuncDecl *node, StructType *methodParent) {
@@ -188,11 +203,17 @@ resolveTopLevelName(const CompilationUnit *unit, const string &name,
 
 std::string
 resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
-                          AbiKind abiKind, bool exportNamespace) {
+                          AbiKind abiKind, bool exportNamespace,
+                          Scope *scope = nullptr) {
     if (abiKind == AbiKind::C) {
         return toStdString(name);
     }
-    return resolveTopLevelName(unit, name, exportNamespace);
+    auto resolved = resolveTopLevelName(unit, name, exportNamespace);
+    if (scope && unit && !exportNamespace &&
+        scope->getObj(llvm::StringRef(resolved))) {
+        return toStdString(unit->moduleName() + "." + name);
+    }
+    return resolved;
 }
 
 }  // namespace
@@ -337,7 +358,8 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     auto &funcName = node->name;
     auto resolvedFunctionName = resolveFunctionSymbolName(
         unit, funcName, node ? node->abiKind : AbiKind::Native,
-        exportNamespace);
+        exportNamespace, &scope);
+    Function *existingFunction = nullptr;
     if (methodParent) {
         if (auto *existing = typeMgr->getMethodFunction(
                 methodParent,
@@ -369,14 +391,13 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         }
         if (auto *existing =
                 scope.getObj(llvm::StringRef(resolvedFunctionName))) {
-            auto *func = existing->as<Function>();
-            if (!func) {
+            existingFunction = existing->as<Function>();
+            if (!existingFunction) {
                 error(node->loc, "top-level function `" +
                                      toStdString(funcName) +
                                      "` conflicts with module namespace `" +
                                      resolvedFunctionName + "`");
             }
-            return func;
         }
     }
 
@@ -388,28 +409,32 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
         retType = resolveTypeNode(typeMgr, unit, node->retType);
         if (!retType) {
             error(node->loc,
-                  "unknown return type for function `" + toStdString(funcName) +
+                  "unknown return type for function `" +
+                      toStdString(funcName) +
                       "`: " + describeTypeNode(node->retType, "void"));
         }
-        rejectBareFunctionType(retType, node->retType,
-                               "unsupported bare function return type for `" +
-                                   toStdString(funcName) + "`",
-                               node->loc);
+        rejectBareFunctionType(
+            retType, node->retType,
+            "unsupported bare function return type for `" +
+                toStdString(funcName) + "`",
+            node->loc);
         rejectOpaqueStructByValue(
             retType, node->retType, node->loc,
             "return type of function `" + toStdString(funcName) + "`");
     }
 
     if (methodParent) {
-        argTypes.push_back(typeMgr->createPointerType(methodReceiverPointeeType(
-            typeMgr, methodParent, node->receiverAccess)));
+        argTypes.push_back(typeMgr->createPointerType(
+            methodReceiverPointeeType(typeMgr, methodParent,
+                                      node->receiverAccess)));
     }
 
     if (node->args) {
         for (auto *arg : *node->args) {
             if (!arg->is<AstVarDecl>()) {
-                error(node->loc, "invalid function parameter declaration in `" +
-                                     toStdString(funcName) + "`");
+                error(node->loc,
+                      "invalid function parameter declaration in `" +
+                          toStdString(funcName) + "`");
             }
             auto *varDecl = arg->as<AstVarDecl>();
             auto *type = resolveTypeNode(typeMgr, unit, varDecl->typeNode);
@@ -437,6 +462,15 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     validateExternCFunctionSignature(node, methodParent, argTypes, retType);
     auto *funcType = typeMgr->getOrCreateFunctionType(
         argTypes, retType, std::move(argBindingKinds), node->abiKind);
+    if (existingFunction) {
+        auto *existingType = existingFunction->getType()->as<FuncType>();
+        if (existingType != funcType ||
+            existingFunction->hasImplicitSelf() != (methodParent != nullptr)) {
+            reportLocalFunctionConflict(node, resolvedFunctionName,
+                                        existingType, funcType);
+        }
+        return existingFunction;
+    }
     if (methodParent && !methodParent->getMethodType(llvm::StringRef(
                             funcName.tochara(), funcName.size()))) {
         methodParent->addMethodType(

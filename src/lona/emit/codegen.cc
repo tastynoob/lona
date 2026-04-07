@@ -93,7 +93,8 @@ class FunctionCompiler {
 
     TypeTable *typeMgr;
     GlobalScope *global;
-    FuncScope *scope;
+    Scope *scope;
+    FuncScope *funcScope;
     llvm::LLVMContext &context;
     DebugInfoContext *debug;
     const CompilationUnit *unit;
@@ -833,14 +834,14 @@ class FunctionCompiler {
             }
             auto *obj = materializeBinding(varDef->getObject(), initVal);
             scope->addObj(varDef->getName(), obj);
-            emitDebugDeclare(debug, scope, debugSubprogram, obj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, obj,
                              toStringRef(varDef->getName()), obj->getType(),
                              varDef->getLocation());
             return obj;
         }
         if (auto *ret = dynamic_cast<HIRRet *>(node)) {
             setLocation(ret);
-            auto *retSlot = scope->retVal();
+            auto *retSlot = funcScope->retVal();
             if (ret->getExpr()) {
                 auto *value = compileExpr(ret->getExpr());
                 if (!retSlot) {
@@ -852,14 +853,14 @@ class FunctionCompiler {
                 error(ret->getLocation(), "missing return value");
             }
 
-            if (scope->retBlock()) {
-                scope->builder.CreateBr(scope->retBlock());
+            if (funcScope->retBlock()) {
+                scope->builder.CreateBr(funcScope->retBlock());
             } else if (retSlot) {
                 scope->builder.CreateRet(retSlot->get(scope));
             } else {
                 scope->builder.CreateRetVoid();
             }
-            scope->setReturned();
+            funcScope->setReturned();
             return retSlot;
         }
         if (auto *breakNode = dynamic_cast<HIRBreak *>(node)) {
@@ -950,10 +951,21 @@ class FunctionCompiler {
         error("unsupported HIR node");
     }
 
-    Object *compileBlock(HIRBlock *block) {
+    Object *compileBlock(HIRBlock *block, bool introduceScope = true) {
         Object *last = nullptr;
         if (!block) {
             return last;
+        }
+
+        auto *savedScope = scope;
+        std::unique_ptr<LocalScope> nestedScope;
+        if (introduceScope) {
+            if (auto *parentLocal = dynamic_cast<LocalScope *>(scope)) {
+                nestedScope = std::make_unique<LocalScope>(parentLocal);
+            } else {
+                nestedScope = std::make_unique<LocalScope>(funcScope);
+            }
+            scope = nestedScope.get();
         }
         for (auto *stmt : block->getBody()) {
             auto *insertBlock = scope->builder.GetInsertBlock();
@@ -962,6 +974,7 @@ class FunctionCompiler {
             }
             last = compileNode(stmt);
         }
+        scope = savedScope;
         return last;
     }
 
@@ -1407,15 +1420,15 @@ class FunctionCompiler {
         if (!block || block->getTerminator()) {
             return;
         }
-        if (scope->retBlock() && block != scope->retBlock()) {
-            scope->builder.CreateBr(scope->retBlock());
+        if (funcScope->retBlock() && block != funcScope->retBlock()) {
+            scope->builder.CreateBr(funcScope->retBlock());
             return;
         }
-        if (scope->retVal()) {
+        if (funcScope->retVal()) {
             if (returnByPointer) {
                 scope->builder.CreateRetVoid();
             } else if (abiSignature.resultInfo.packedRegisterAggregate) {
-                auto *retSlot = scope->retVal();
+                auto *retSlot = funcScope->retVal();
                 llvm::Value *retValue = nullptr;
                 if (retSlot->isVariable() && !retSlot->isRegVal() &&
                     retSlot->getllvmValue()) {
@@ -1429,7 +1442,7 @@ class FunctionCompiler {
                 }
                 scope->builder.CreateRet(retValue);
             } else {
-                scope->builder.CreateRet(scope->retVal()->get(scope));
+                scope->builder.CreateRet(funcScope->retVal()->get(scope));
             }
         } else {
             scope->builder.CreateRetVoid();
@@ -1438,10 +1451,10 @@ class FunctionCompiler {
 
     void finalizeModuleEntryResult() {
         if (!moduleInitState || !moduleInitResult || !scope ||
-            !scope->retVal()) {
+            !funcScope->retVal()) {
             return;
         }
-        auto *resultValue = scope->retVal()->get(scope);
+        auto *resultValue = funcScope->retVal()->get(scope);
         scope->builder.CreateStore(resultValue, moduleInitResult);
         scope->builder.CreateStore(scope->builder.getInt32(2), moduleInitState);
     }
@@ -1546,6 +1559,7 @@ public:
         : typeMgr(typeMgr),
           global(global),
           scope(nullptr),
+          funcScope(nullptr),
           context(global->module.getContext()),
           debug(debug),
           unit(unit),
@@ -1567,7 +1581,8 @@ public:
 
         auto *entry = llvm::BasicBlock::Create(context, "entry", llvmFunc);
         global->builder.SetInsertPoint(entry);
-        scope = new FuncScope(global);
+        funcScope = new FuncScope(global);
+        scope = funcScope;
 
         auto *funcType = hirFunc->getFuncType();
         if (!funcType) {
@@ -1578,7 +1593,7 @@ public:
         returnByPointer = abiSignature.hasIndirectResult;
 
         if (hirFunc->hasSelfBinding()) {
-            scope->structTy =
+            funcScope->structTy =
                 asUnqualified<StructType>(getRawPointerPointeeType(
                     hirFunc->getSelfBinding().object->getType()));
         }
@@ -1619,7 +1634,7 @@ public:
                     binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, selfObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, selfObj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, selfObj,
                              toStringRef(binding.name), selfObj->getType(),
                              binding.loc, 1);
             ++llvmArgIndex;
@@ -1641,12 +1656,12 @@ public:
             } else {
                 retSlot = materializeLocal(retType, nullptr);
             }
-            scope->initRetVal(retSlot);
+            funcScope->initRetVal(retSlot);
             if (hirFunc->isTopLevelEntry() && retType == i32Ty) {
                 retSlot->set(scope, new ConstVar(i32Ty, int32_t(0)));
             }
             auto *retBB = llvm::BasicBlock::Create(context, "return", llvmFunc);
-            scope->initRetBlock(retBB);
+            funcScope->initRetBlock(retBB);
         }
 
         emitModuleEntryPrologue(hirFunc, llvmFunc);
@@ -1679,7 +1694,7 @@ public:
                     binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, argObj);
-            emitDebugDeclare(debug, scope, debugSubprogram, argObj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, argObj,
                              toStringRef(binding.name), argObj->getType(),
                              binding.loc, debugArgIndex);
             ++llvmArgIndex;
@@ -1687,14 +1702,14 @@ public:
             ++sourceParamIndex;
         }
 
-        compileBlock(hirFunc->getBody());
+        compileBlock(hirFunc->getBody(), false);
 
-        if (scope->retBlock()) {
+        if (funcScope->retBlock()) {
             auto *insertBlock = scope->builder.GetInsertBlock();
             if (insertBlock && !insertBlock->getTerminator()) {
-                scope->builder.CreateBr(scope->retBlock());
+                scope->builder.CreateBr(funcScope->retBlock());
             }
-            scope->builder.SetInsertPoint(scope->retBlock());
+            scope->builder.SetInsertPoint(funcScope->retBlock());
             if (debugSubprogram) {
                 scope->builder.SetCurrentDebugLocation(llvm::DILocation::get(
                     context, sourceLine(hirFunc->getLocation()),

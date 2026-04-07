@@ -35,6 +35,7 @@
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <optional>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace lona {
@@ -633,7 +634,8 @@ findUnitByModuleKey(const ModuleGraph &moduleGraph, const string &moduleKey) {
 bool
 matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
                               const CompilationUnit &requesterUnit,
-                              const ModuleArtifact &artifact) {
+                              const ModuleArtifact &artifact,
+                              const GenericInstanceRegistry &instanceRegistry) {
     for (const auto &record : artifact.genericInstanceRecords()) {
         if (record.key.requesterModuleKey != requesterUnit.moduleKey()) {
             return false;
@@ -650,8 +652,31 @@ matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
         if (!(record.revision == currentRevision)) {
             return false;
         }
+        if (record.key.kind == GenericInstanceKind::Struct) {
+            continue;
+        }
+        const bool artifactEmits = !record.emittedSymbolNames.empty();
+        const bool shouldEmit =
+            instanceRegistry.shouldEmitIn(record.key, requesterUnit.moduleKey());
+        if (artifactEmits != shouldEmit) {
+            return false;
+        }
     }
     return true;
+}
+
+void
+registerArtifactGenericEmissions(GenericInstanceRegistry &instanceRegistry,
+                                 const ModuleArtifact &artifact) {
+    for (const auto &record : artifact.genericInstanceRecords()) {
+        if (record.key.kind == GenericInstanceKind::Struct ||
+            record.emittedSymbolNames.empty()) {
+            continue;
+        }
+        instanceRegistry.claim(record.key, artifact.moduleKey());
+        instanceRegistry.noteEmission(record.key, artifact.moduleKey(),
+                                      record.emittedSymbolNames);
+    }
 }
 
 void
@@ -695,6 +720,7 @@ using workspace_builder_impl::optimizeModule;
 using workspace_builder_impl::parseArtifactBitcodeModule;
 using workspace_builder_impl::readBinaryFileIfPresent;
 using workspace_builder_impl::readArtifactMetadataIfPresent;
+using workspace_builder_impl::registerArtifactGenericEmissions;
 using workspace_builder_impl::verifyCompiledModule;
 using workspace_builder_impl::writeArtifactMetadata;
 using workspace_builder_impl::writeBinaryFile;
@@ -718,9 +744,17 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
         const bool exportEntryNamespace =
             context.rootUnit &&
             context.rootUnit->path() != context.entryUnit.path();
-        auto dependencyStart = Clock::now();
+        std::unordered_set<string> directDependencyPaths;
         for (const auto &dependencyPath :
              context.moduleGraph.dependenciesOf(context.entryUnit.path())) {
+            directDependencyPaths.insert(dependencyPath);
+        }
+        auto dependencyStart = Clock::now();
+        for (const auto &dependencyPath :
+             context.moduleGraph.postOrderFrom(context.entryUnit.path())) {
+            if (dependencyPath == context.entryUnit.path()) {
+                continue;
+            }
             auto *loadedUnit = workspace_.moduleGraph().find(dependencyPath);
             if (loadedUnit == nullptr) {
                 throw DiagnosticError(
@@ -729,13 +763,15 @@ WorkspaceBuilder::WorkspaceBuilder(CompilerWorkspace &workspace,
                     "This looks like a compiler module graph bug.");
             }
             loader_.validateImportedUnit(*loadedUnit);
-            collectUnitDeclarations(&context.build.global, *loadedUnit, true);
+            collectUnitDeclarations(
+                &context.build.global, *loadedUnit, true,
+                directDependencyPaths.contains(dependencyPath));
         }
         context.stats.dependencyDeclarationMs +=
             elapsedMillis(dependencyStart, Clock::now());
         auto entryStart = Clock::now();
         collectUnitDeclarations(&context.build.global, context.entryUnit,
-                                exportEntryNamespace);
+                                exportEntryNamespace, exportEntryNamespace);
         context.stats.entryDeclarationMs +=
             elapsedMillis(entryStart, Clock::now());
         context.stats.declarationMs += elapsedMillis(start, Clock::now());
@@ -915,7 +951,8 @@ bool
 WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
                                   const ModuleArtifact &artifact,
                                   const CompileOptions &options,
-                                  ModuleEntryRole entryRole) const {
+                                  ModuleEntryRole entryRole,
+                                  const GenericInstanceRegistry &instanceRegistry) const {
     if (artifact.sourceHash() != unit.sourceHash() ||
         artifact.interfaceHash() != unit.interfaceHash() ||
         artifact.implementationHash() != unit.implementationHash()) {
@@ -933,13 +970,14 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
         return false;
     }
     return matchesGenericInstanceRecords(workspace_.moduleGraph(), unit,
-                                         artifact);
+                                         artifact, instanceRegistry);
 }
 
 ModuleArtifact *
 WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
                                       const CompileOptions &options,
-                                      const CompilationUnit &rootUnit) const {
+                                      const CompilationUnit &rootUnit,
+                                      const GenericInstanceRegistry &instanceRegistry) const {
     if (options.noCache) {
         return nullptr;
     }
@@ -949,7 +987,8 @@ WorkspaceBuilder::reusableArtifactFor(const CompilationUnit &unit,
         return nullptr;
     }
     return matchesArtifact(unit, *artifact, options,
-                           artifactEntryRoleFor(unit, rootUnit))
+                           artifactEntryRoleFor(unit, rootUnit),
+                           instanceRegistry)
                ? artifact
                : nullptr;
 }
@@ -1014,6 +1053,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                                  bool requireObjects, bool requireBitcode,
                                  const std::filesystem::path *artifactCacheDir,
                                  SessionStats &stats, std::ostream &out) const {
+    GenericInstanceRegistry instanceRegistry;
     workspace_.buildQueue().reset(workspace_.moduleGraph(), rootUnit.path());
     return executor_->execute(
         workspace_.buildQueue(), [&](const string &path) -> int {
@@ -1027,7 +1067,8 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
 
             auto cacheLookupStart = Clock::now();
             auto *cachedArtifact =
-                reusableArtifactFor(*queuedUnit, options, rootUnit);
+                reusableArtifactFor(*queuedUnit, options, rootUnit,
+                                    instanceRegistry);
             stats.cacheLookupMs +=
                 elapsedMillis(cacheLookupStart, Clock::now());
             if (cachedArtifact != nullptr && requireBitcode &&
@@ -1055,6 +1096,8 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                         requireObjects ? BundleArtifactKind::Object
                                        : BundleArtifactKind::Bitcode);
                 }
+                registerArtifactGenericEmissions(instanceRegistry,
+                                                *cachedArtifact);
                 return 0;
             }
 
@@ -1077,7 +1120,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                     elapsedMillis(cacheRestoreStart, Clock::now());
                 if (cachedMetadata.has_value() &&
                     matchesArtifact(*queuedUnit, *cachedMetadata, options,
-                                    artifact.entryRole())) {
+                                    artifact.entryRole(), instanceRegistry)) {
                     auto cachedBytes = readBinaryFileIfPresent(memberPath);
                     if (cachedBytes.has_value()) {
                         if (bundleKind == BundleArtifactKind::Object) {
@@ -1086,7 +1129,10 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                         } else {
                             cachedMetadata->setBitcode(std::move(*cachedBytes));
                         }
-                        workspace_.storeArtifact(std::move(*cachedMetadata));
+                        auto restoredArtifact = std::move(*cachedMetadata);
+                        registerArtifactGenericEmissions(instanceRegistry,
+                                                        restoredArtifact);
+                        workspace_.storeArtifact(std::move(restoredArtifact));
                         queuedUnit->markCompiled();
                         ++stats.reusedModules;
                         if (bundleKind == BundleArtifactKind::Object) {
@@ -1100,7 +1146,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
             }
             int moduleExitCode =
                 compileModule(*queuedUnit, options, artifact, requireObjects,
-                              requireBitcode, stats, out);
+                              requireBitcode, instanceRegistry, stats, out);
             if (moduleExitCode != 0) {
                 return moduleExitCode;
             }
@@ -1110,6 +1156,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                     requireObjects ? BundleArtifactKind::Object
                                    : BundleArtifactKind::Bitcode);
             }
+            registerArtifactGenericEmissions(instanceRegistry, artifact);
             workspace_.storeArtifact(std::move(artifact));
             return 0;
         });
@@ -1119,7 +1166,9 @@ int
 WorkspaceBuilder::compileModule(CompilationUnit &unit,
                                 const CompileOptions &options,
                                 ModuleArtifact &artifact, bool emitObject,
-                                bool emitBitcode, SessionStats &stats,
+                                bool emitBitcode,
+                                GenericInstanceRegistry &instanceRegistry,
+                                SessionStats &stats,
                                 std::ostream &out) const {
     unit.clearResolvedTypes();
     std::ostringstream ir;
@@ -1127,6 +1176,7 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit,
                               stats);
     context.rootUnit = workspace_.moduleGraph().root();
     context.captureIRText = false;
+    context.build.global.setGenericInstanceRegistry(&instanceRegistry);
     int exitCode = pipeline_.run(context);
     if (exitCode == 0) {
         unit.markCompiled();

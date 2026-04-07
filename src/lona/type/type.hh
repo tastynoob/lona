@@ -651,6 +651,7 @@ class TypeTable {
     std::unordered_map<MethodBindingKey, Function *, MethodBindingKeyHash>
         methodFunctions_;
     std::unordered_set<llvm::StructType *> materializingStructBodies_;
+    std::unordered_set<const StructType *> interningStructContents_;
 
     void completeStructBodyIfNeeded(StructType *structType,
                                     llvm::StructType *llvmStruct) {
@@ -951,6 +952,22 @@ public:
         if (auto *structType = type->as<StructType>()) {
             auto internStructContents =
                 [&](StructType *targetStruct) -> StructType * {
+                auto [_, inserted] =
+                    interningStructContents_.insert(targetStruct);
+                if (!inserted) {
+                    return targetStruct;
+                }
+
+                struct Guard {
+                    std::unordered_set<const StructType *> &active;
+                    const StructType *type;
+                    ~Guard() { active.erase(type); }
+                } guard{interningStructContents_, targetStruct};
+
+                // Applied/generic struct methods often carry a receiver that
+                // points back to an equivalent struct instance from another
+                // type table. Re-entering content interning for the canonical
+                // target struct must reuse the in-progress placeholder.
                 llvm::StringMap<StructType::ValueTy> internedMembers;
                 llvm::StringMap<AccessKind> internedMemberAccess;
                 llvm::StringSet<> internedEmbeddedMembers;

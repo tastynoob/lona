@@ -6,6 +6,7 @@
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/module/module_interface.hh"
+#include "lona/sema/moduleentry.hh"
 #include "lona/sema/initializer.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
@@ -54,6 +55,28 @@ reportGlobalConflict(const CompilationUnit *unit, llvm::StringRef globalName,
     std::string hint =
         "Make duplicated `#[extern] global` declarations use the same type in "
         "every module.";
+    if (unit && unit->syntaxTree()) {
+        throw DiagnosticError(DiagnosticError::Category::Semantic,
+                              unit->syntaxTree()->loc, std::move(message),
+                              std::move(hint));
+    }
+    throw DiagnosticError(DiagnosticError::Category::Semantic,
+                          std::move(message), std::move(hint));
+}
+
+[[noreturn]] void
+reportFunctionConflict(const CompilationUnit *unit, llvm::StringRef functionName,
+                       FuncType *existingType, FuncType *incomingType) {
+    std::string message =
+        "conflicting declarations for function `" + functionName.str() + "`";
+    if (existingType && incomingType) {
+        message += ": `" + describeResolvedType(existingType) + "` vs `" +
+                   describeResolvedType(incomingType) + "`";
+    }
+
+    std::string hint =
+        "Make duplicated exported or `#[extern \"C\"]` function declarations "
+        "use the same signature in every module.";
     if (unit && unit->syntaxTree()) {
         throw DiagnosticError(DiagnosticError::Category::Semantic,
                               unit->syntaxTree()->loc, std::move(message),
@@ -215,24 +238,199 @@ class InterfaceCollector {
     }
 
     const ModuleInterface::TypeDecl *
-    resolveVisibleTypeDecl(BaseTypeNode *base) {
-        if (!base) {
+    resolveVisibleTypeDecl(BaseTypeNode *base,
+                           const CompilationUnit &lookupUnit,
+                           const ModuleInterface *lookupInterface) const {
+        if (!base || !lookupInterface) {
             return nullptr;
         }
         auto rawName = baseTypeName(base);
         std::string moduleName;
         std::string typeName;
         if (!splitBaseTypeName(base, moduleName, typeName)) {
-            auto lookup = interface_->lookupTopLevelName(rawName);
+            auto lookup = lookupInterface->lookupTopLevelName(rawName);
             return lookup.isType() ? lookup.typeDecl : nullptr;
         }
 
-        const auto *imported = interface_->findImportedModule(moduleName);
+        const auto *imported = findImportedModuleForLookup(lookupUnit, moduleName);
         if (!imported || !imported->interface) {
             return nullptr;
         }
-        auto lookup = imported->interface->lookupTopLevelName(typeName);
+        auto lookup = lookupUnit.lookupTopLevelName(*imported, typeName);
         return lookup.isType() ? lookup.typeDecl : nullptr;
+    }
+
+    const ModuleInterface::TypeDecl *
+    resolveVisibleTypeDecl(BaseTypeNode *base) {
+        return resolveVisibleTypeDecl(base, unit_, interface_);
+    }
+
+    const ModuleInterface *
+    interfaceForLookupUnit(const CompilationUnit &lookupUnit) const {
+        if (&lookupUnit == &unit_) {
+            return interface_;
+        }
+        return lookupUnit.interface();
+    }
+
+    const CompilationUnit::ImportedModule *findImportedModuleForLookup(
+        const CompilationUnit &lookupUnit, llvm::StringRef moduleName) const {
+        const auto *imported = lookupUnit.findImportedModule(moduleName.str());
+        if (!imported) {
+            return nullptr;
+        }
+        if (imported->unit && !imported->unit->interfaceCollected()) {
+            ensureUnitInterfaceCollected(
+                *const_cast<CompilationUnit *>(imported->unit));
+        }
+        return imported;
+    }
+
+    TypeClass *resolveType(TypeNode *node, const CompilationUnit &lookupUnit,
+                           bool validateLayout = true) {
+        auto *lookupInterface = interfaceForLookupUnit(lookupUnit);
+        if (!node || !lookupInterface) {
+            return nullptr;
+        }
+        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
+            return resolveType(param->type, lookupUnit, false);
+        }
+        if (validateLayout) {
+            validateTypeNodeLayout(node);
+        }
+        if (dynamic_cast<AnyTypeNode *>(node)) {
+            return interface_->getOrCreateAnyType();
+        }
+        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
+            return resolveAppliedType(applied, lookupUnit);
+        }
+        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
+            auto *baseType = resolveType(qualified->base, lookupUnit, false);
+            return baseType ? interface_->getOrCreateConstType(baseType)
+                            : nullptr;
+        }
+        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
+            bool readOnlyDataPtr = false;
+            auto *base = getDynTraitBaseNode(dynType, &readOnlyDataPtr);
+            if (!base) {
+                return nullptr;
+            }
+
+            auto rawName = baseTypeName(base);
+            std::string moduleName;
+            std::string traitName;
+            if (!splitBaseTypeName(base, moduleName, traitName)) {
+                auto lookup = lookupInterface->lookupTopLevelName(rawName);
+                if (!lookup.isTrait() || !lookup.traitDecl) {
+                    return nullptr;
+                }
+                return interface_->getOrCreateDynTraitType(
+                    lookup.traitDecl->exportedName, readOnlyDataPtr);
+            }
+
+            const auto *imported =
+                findImportedModuleForLookup(lookupUnit, moduleName);
+            if (!imported || !imported->interface) {
+                return nullptr;
+            }
+            auto lookup = lookupUnit.lookupTopLevelName(*imported, traitName);
+            if (!lookup.isTrait() || !lookup.traitDecl) {
+                return nullptr;
+            }
+            return interface_->getOrCreateDynTraitType(
+                lookup.traitDecl->exportedName, readOnlyDataPtr);
+        }
+        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
+            auto rawName = baseTypeName(base);
+            std::string moduleName;
+            std::string typeName;
+            if (!splitBaseTypeName(base, moduleName, typeName)) {
+                if (isReservedInitialListTypeName(
+                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
+                    errorReservedInitialListType(base->loc);
+                }
+                if (auto *builtin = lookupBuiltinType(
+                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
+                    return builtin;
+                }
+                auto lookup = lookupInterface->lookupTopLevelName(rawName);
+                if (lookup.isType() && lookup.typeDecl) {
+                    if (lookup.typeDecl->isGeneric()) {
+                        errorBareGenericTemplateType(base->loc, rawName);
+                    }
+                    return lookup.typeDecl->type;
+                }
+                return nullptr;
+            }
+
+            const auto *imported =
+                findImportedModuleForLookup(lookupUnit, moduleName);
+            if (!imported || !imported->interface) {
+                return nullptr;
+            }
+            auto lookup = lookupUnit.lookupTopLevelName(*imported, typeName);
+            if (lookup.isType() && lookup.typeDecl) {
+                if (lookup.typeDecl->isGeneric()) {
+                    errorBareGenericTemplateType(base->loc,
+                                                 moduleName + "." + typeName);
+                }
+                return lookup.typeDecl->type;
+            }
+            return nullptr;
+        }
+        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
+            auto *baseType = resolveType(pointer->base, lookupUnit, false);
+            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
+                baseType = interface_->getOrCreatePointerType(baseType);
+            }
+            return baseType;
+        }
+        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
+            auto *elementType = resolveType(indexable->base, lookupUnit, false);
+            return elementType ? interface_->getOrCreateIndexablePointerType(
+                                     elementType)
+                               : nullptr;
+        }
+        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
+            auto *elementType = resolveType(array->base, lookupUnit, false);
+            if (!elementType) {
+                return nullptr;
+            }
+            return interface_->getOrCreateArrayType(elementType, array->dim);
+        }
+        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
+            std::vector<TypeClass *> itemTypes;
+            itemTypes.reserve(tuple->items.size());
+            for (auto *item : tuple->items) {
+                auto *itemType = resolveType(item, lookupUnit, false);
+                if (!itemType) {
+                    return nullptr;
+                }
+                itemTypes.push_back(itemType);
+            }
+            return interface_->getOrCreateTupleType(itemTypes);
+        }
+        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
+            std::vector<TypeClass *> argTypes;
+            std::vector<BindingKind> argBindingKinds;
+            argTypes.reserve(func->args.size());
+            argBindingKinds.reserve(func->args.size());
+            for (auto *arg : func->args) {
+                argBindingKinds.push_back(funcParamBindingKind(arg));
+                auto *argType =
+                    resolveType(unwrapFuncParamType(arg), lookupUnit, false);
+                if (!argType) {
+                    return nullptr;
+                }
+                argTypes.push_back(argType);
+            }
+            auto *retType = resolveType(func->ret, lookupUnit, false);
+            auto *funcType = interface_->getOrCreateFunctionType(
+                argTypes, retType, std::move(argBindingKinds));
+            return funcType ? interface_->getOrCreatePointerType(funcType)
+                            : nullptr;
+        }
+        return nullptr;
     }
 
     bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const {
@@ -241,26 +439,72 @@ class InterfaceCollector {
                    typeDecl;
     }
 
-    AstStructDecl *findLocalStructDecl(const ModuleInterface::TypeDecl &typeDecl) {
-        for (auto *structDecl : structDecls_) {
-            if (structDecl &&
-                toStdString(structDecl->name) ==
-                    toStdString(typeDecl.localName)) {
-                return structDecl;
+    static const ModuleInterface::TypeDecl *
+    findTypeDeclByTemplateName(const ModuleInterface *interface,
+                               llvm::StringRef templateName) {
+        if (!interface || templateName.empty()) {
+            return nullptr;
+        }
+        for (const auto &entry : interface->types()) {
+            if (toStringRef(entry.second.localName) == templateName ||
+                toStringRef(entry.second.exportedName) == templateName) {
+                return &entry.second;
             }
         }
         return nullptr;
     }
 
     const ModuleInterface::TypeDecl *
-    findOwnedTypeDeclByTemplateName(llvm::StringRef templateName) const {
+    findVisibleTypeDeclByTemplateName(
+        llvm::StringRef templateName,
+        const CompilationUnit **ownerUnitOut = nullptr) const {
+        if (ownerUnitOut) {
+            *ownerUnitOut = nullptr;
+        }
         if (templateName.empty()) {
             return nullptr;
         }
-        for (const auto &entry : interface_->types()) {
-            if (toStringRef(entry.second.localName) == templateName ||
-                toStringRef(entry.second.exportedName) == templateName) {
-                return &entry.second;
+        if (auto *typeDecl = findTypeDeclByTemplateName(interface_, templateName)) {
+            if (ownerUnitOut) {
+                *ownerUnitOut = &unit_;
+            }
+            return typeDecl;
+        }
+        for (const auto &entry : unit_.importedModules()) {
+            const auto &imported = entry.second;
+            if (!imported.interface) {
+                continue;
+            }
+            if (auto *typeDecl =
+                    findTypeDeclByTemplateName(imported.interface, templateName)) {
+                if (ownerUnitOut) {
+                    *ownerUnitOut = imported.unit;
+                }
+                return typeDecl;
+            }
+        }
+        return nullptr;
+    }
+
+    static AstStructDecl *findStructDeclInUnit(const CompilationUnit *unit,
+                                               llvm::StringRef localName) {
+        if (!unit) {
+            return nullptr;
+        }
+        auto *root = unit->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (!body) {
+            return nullptr;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+            if (!structDecl) {
+                continue;
+            }
+            if (toStringRef(structDecl->name) == localName) {
+                return structDecl;
             }
         }
         return nullptr;
@@ -283,13 +527,14 @@ class InterfaceCollector {
     TypeClass *substituteAppliedStructTemplateType(
         TypeNode *node,
         const std::unordered_map<std::string, TypeClass *> &genericArgs,
-        const location &loc, const std::string &context) {
+        const location &loc, const std::string &context,
+        const CompilationUnit &lookupUnit) {
         if (!node) {
             return nullptr;
         }
         if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
             return substituteAppliedStructTemplateType(param->type, genericArgs,
-                                                       loc, context);
+                                                       loc, context, lookupUnit);
         }
         if (dynamic_cast<AnyTypeNode *>(node)) {
             return interface_->getOrCreateAnyType();
@@ -299,13 +544,15 @@ class InterfaceCollector {
             if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
                 return found->second;
             }
-            return resolveType(node, false);
+            return resolveType(node, lookupUnit, false);
         }
         if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
             auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
-            const auto *typeDecl = resolveVisibleTypeDecl(base);
+            const auto *typeDecl =
+                resolveVisibleTypeDecl(base, lookupUnit,
+                                       interfaceForLookupUnit(lookupUnit));
             if (!typeDecl) {
-                return resolveType(node, false);
+                return resolveType(node, lookupUnit, false);
             }
             if (!typeDecl->isGeneric()) {
                 error(applied->loc,
@@ -327,7 +574,7 @@ class InterfaceCollector {
             argTypes.reserve(applied->args.size());
             for (auto *arg : applied->args) {
                 auto *argType = substituteAppliedStructTemplateType(
-                    arg, genericArgs, arg ? arg->loc : loc, context);
+                    arg, genericArgs, arg ? arg->loc : loc, context, lookupUnit);
                 if (!argType) {
                     error(arg ? arg->loc : loc,
                           "unknown type argument for `" +
@@ -336,27 +583,34 @@ class InterfaceCollector {
                 }
                 argTypes.push_back(argType);
             }
-            if (ownsTypeDecl(typeDecl)) {
-                return materializeLocalAppliedStructType(*typeDecl,
-                                                         std::move(argTypes));
+            if (auto *templateOwnerUnit =
+                    lookupUnit.ownerUnitForTypeDecl(typeDecl)) {
+                return materializeVisibleAppliedStructType(
+                    *typeDecl, std::move(argTypes), templateOwnerUnit);
             }
-            auto appliedName = buildAppliedTypeName(baseTypeName(base), argTypes);
-            return interface_->getOrCreateAppliedStructType(
+            auto appliedName =
+                buildAppliedTypeName(toStdString(typeDecl->exportedName), argTypes);
+            auto *structType = interface_->getOrCreateAppliedStructType(
                 appliedName, typeDecl->declKind, typeDecl->exportedName,
-                std::move(argTypes));
+                argTypes);
+            if (structType) {
+                structType->setAppliedTemplateInfo(typeDecl->exportedName,
+                                                   argTypes, nullptr);
+            }
+            return structType;
         }
         if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
             auto *baseType = substituteAppliedStructTemplateType(
-                qualified->base, genericArgs, loc, context);
+                qualified->base, genericArgs, loc, context, lookupUnit);
             return baseType ? interface_->getOrCreateConstType(baseType)
                             : nullptr;
         }
         if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-            return resolveType(dynType, false);
+            return resolveType(dynType, lookupUnit, false);
         }
         if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
             auto *baseType = substituteAppliedStructTemplateType(
-                pointer->base, genericArgs, loc, context);
+                pointer->base, genericArgs, loc, context, lookupUnit);
             for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
                 baseType = interface_->getOrCreatePointerType(baseType);
             }
@@ -364,14 +618,14 @@ class InterfaceCollector {
         }
         if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
             auto *elementType = substituteAppliedStructTemplateType(
-                indexable->base, genericArgs, loc, context);
+                indexable->base, genericArgs, loc, context, lookupUnit);
             return elementType ? interface_->getOrCreateIndexablePointerType(
                                      elementType)
                                : nullptr;
         }
         if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
             auto *elementType = substituteAppliedStructTemplateType(
-                array->base, genericArgs, loc, context);
+                array->base, genericArgs, loc, context, lookupUnit);
             return elementType ? interface_->getOrCreateArrayType(
                                      elementType, array->dim)
                                : nullptr;
@@ -381,7 +635,8 @@ class InterfaceCollector {
             itemTypes.reserve(tuple->items.size());
             for (auto *item : tuple->items) {
                 itemTypes.push_back(substituteAppliedStructTemplateType(
-                    item, genericArgs, item ? item->loc : loc, context));
+                    item, genericArgs, item ? item->loc : loc, context,
+                    lookupUnit));
             }
             return interface_->getOrCreateTupleType(itemTypes);
         }
@@ -394,28 +649,38 @@ class InterfaceCollector {
                 argBindingKinds.push_back(funcParamBindingKind(arg));
                 argTypes.push_back(substituteAppliedStructTemplateType(
                     unwrapFuncParamType(arg), genericArgs,
-                    arg ? arg->loc : loc, context));
+                    arg ? arg->loc : loc, context, lookupUnit));
             }
             auto *retType = substituteAppliedStructTemplateType(
-                func->ret, genericArgs, loc, context);
+                func->ret, genericArgs, loc, context, lookupUnit);
             return interface_->getOrCreatePointerType(
                 interface_->getOrCreateFunctionType(argTypes, retType,
                                                     std::move(argBindingKinds)));
         }
-        return resolveType(node, false);
+        return resolveType(node, lookupUnit, false);
     }
 
-    StructType *materializeLocalAppliedStructType(
+    StructType *materializeVisibleAppliedStructType(
         const ModuleInterface::TypeDecl &typeDecl,
-        std::vector<TypeClass *> appliedTypeArgs) {
-        auto appliedName =
-            buildAppliedTypeName(toStdString(typeDecl.localName), appliedTypeArgs);
+        std::vector<TypeClass *> appliedTypeArgs,
+        const CompilationUnit *templateOwnerUnit = nullptr) {
+        if (!templateOwnerUnit) {
+            templateOwnerUnit = unit_.ownerUnitForTypeDecl(&typeDecl);
+        }
+
+        const auto baseAppliedName =
+            templateOwnerUnit == &unit_ ? toStdString(typeDecl.localName)
+                                        : toStdString(typeDecl.exportedName);
+        auto appliedName = buildAppliedTypeName(baseAppliedName, appliedTypeArgs);
         auto *structType = interface_->getOrCreateAppliedStructType(
             appliedName, typeDecl.declKind, typeDecl.exportedName,
             appliedTypeArgs);
         if (!structType) {
             return nullptr;
         }
+        structType->setAppliedTemplateInfo(typeDecl.exportedName,
+                                           appliedTypeArgs,
+                                           templateOwnerUnit);
 
         auto [_, inserted] = materializingAppliedStructs_.insert(appliedName);
         if (!inserted) {
@@ -443,12 +708,12 @@ class InterfaceCollector {
         }
 
         if (structType->isOpaque()) {
-            auto *structDecl = findLocalStructDecl(typeDecl);
+            auto *structDecl = findStructDeclInUnit(
+                templateOwnerUnit, toStringRef(typeDecl.localName));
             if (!structDecl) {
                 throw DiagnosticError(
                     DiagnosticError::Category::Internal,
-                    "same-module generic struct `" +
-                        toStdString(typeDecl.localName) +
+                    "generic struct `" + toStdString(typeDecl.localName) +
                         "` is missing its template AST",
                     "This looks like a generic template registration bug.");
             }
@@ -469,7 +734,8 @@ class InterfaceCollector {
                     auto *fieldType = substituteAppliedStructTemplateType(
                         varDecl->typeNode, genericArgs, varDecl->loc,
                         "struct field `" + describeStructFieldSyntax(varDecl) +
-                            "`");
+                            "`",
+                        *templateOwnerUnit);
                     if (!fieldType) {
                         error(varDecl->loc,
                               "unknown struct field type for `" +
@@ -508,7 +774,7 @@ class InterfaceCollector {
                     method.paramTypeNodes[i], genericArgs,
                     method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
                                              : location(),
-                    "method parameter");
+                    "method parameter", *templateOwnerUnit);
                 rejectBareFunctionType(
                     paramType, method.paramTypeNodes[i],
                     "unsupported bare function parameter type in `" +
@@ -532,7 +798,8 @@ class InterfaceCollector {
             if (method.returnTypeNode) {
                 retType = substituteAppliedStructTemplateType(
                     method.returnTypeNode, genericArgs,
-                    method.returnTypeNode->loc, "method return type");
+                    method.returnTypeNode->loc, "method return type",
+                    *templateOwnerUnit);
                 rejectBareFunctionType(
                     retType, method.returnTypeNode,
                     "unsupported bare function return type for `" +
@@ -557,7 +824,7 @@ class InterfaceCollector {
         return structType;
     }
 
-    TypeClass *materializeOpaqueLocalAppliedStructIfNeeded(TypeClass *type) {
+    TypeClass *materializeOpaqueAppliedStructIfNeeded(TypeClass *type) {
         if (!type) {
             return nullptr;
         }
@@ -569,14 +836,17 @@ class InterfaceCollector {
             return type;
         }
 
-        const auto *typeDecl = findOwnedTypeDeclByTemplateName(
-            toStringRef(structType->getAppliedTemplateName()));
-        if (!typeDecl || !typeDecl->isGeneric() || !ownsTypeDecl(typeDecl)) {
+        const CompilationUnit *templateOwnerUnit =
+            structType->getAppliedTemplateOwnerUnit();
+        const auto *typeDecl = findVisibleTypeDeclByTemplateName(
+            toStringRef(structType->getAppliedTemplateName()),
+            &templateOwnerUnit);
+        if (!typeDecl || !typeDecl->isGeneric()) {
             return type;
         }
 
-        auto *materialized = materializeLocalAppliedStructType(
-            *typeDecl, structType->getAppliedTypeArgs());
+        auto *materialized = materializeVisibleAppliedStructType(
+            *typeDecl, structType->getAppliedTypeArgs(), templateOwnerUnit);
         if (!qualified) {
             return materialized;
         }
@@ -584,17 +854,19 @@ class InterfaceCollector {
                             : nullptr;
     }
 
-    TypeClass *resolveAppliedType(AppliedTypeNode *applied) {
+    TypeClass *resolveAppliedType(AppliedTypeNode *applied,
+                                  const CompilationUnit &lookupUnit) {
         auto *base = dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
         auto appliedName = describeTypeNode(applied, "<unknown type>");
         if (!base) {
-            return materializeOpaqueLocalAppliedStructIfNeeded(
+            return materializeOpaqueAppliedStructIfNeeded(
                 interface_->findDerivedType(appliedName));
         }
 
-        const auto *typeDecl = resolveVisibleTypeDecl(base);
+        const auto *typeDecl = resolveVisibleTypeDecl(
+            base, lookupUnit, interfaceForLookupUnit(lookupUnit));
         if (!typeDecl) {
-            return materializeOpaqueLocalAppliedStructIfNeeded(
+            return materializeOpaqueAppliedStructIfNeeded(
                 interface_->findDerivedType(appliedName));
         }
         if (!typeDecl->isGeneric()) {
@@ -616,7 +888,7 @@ class InterfaceCollector {
         std::vector<TypeClass *> argTypes;
         argTypes.reserve(applied->args.size());
         for (auto *arg : applied->args) {
-            auto *argType = resolveType(arg);
+            auto *argType = resolveType(arg, lookupUnit, false);
             if (!argType) {
                 error(arg ? arg->loc : applied->loc,
                       "unknown type argument for `" + appliedName + "`: " +
@@ -624,15 +896,24 @@ class InterfaceCollector {
             }
             argTypes.push_back(argType);
         }
-        if (ownsTypeDecl(typeDecl)) {
-            return materializeOpaqueLocalAppliedStructIfNeeded(
-                materializeLocalAppliedStructType(*typeDecl,
-                                                 std::move(argTypes)));
+        if (auto *templateOwnerUnit =
+                lookupUnit.ownerUnitForTypeDecl(typeDecl)) {
+            return materializeOpaqueAppliedStructIfNeeded(
+                materializeVisibleAppliedStructType(*typeDecl,
+                                                   std::move(argTypes),
+                                                   templateOwnerUnit));
         }
-        return materializeOpaqueLocalAppliedStructIfNeeded(
-            interface_->getOrCreateAppliedStructType(
-            appliedName, typeDecl->declKind, typeDecl->exportedName,
-            std::move(argTypes)));
+        auto *structType = interface_->getOrCreateAppliedStructType(
+            appliedName, typeDecl->declKind, typeDecl->exportedName, argTypes);
+        if (structType) {
+            structType->setAppliedTemplateInfo(typeDecl->exportedName,
+                                               argTypes, nullptr);
+        }
+        return materializeOpaqueAppliedStructIfNeeded(structType);
+    }
+
+    TypeClass *resolveAppliedType(AppliedTypeNode *applied) {
+        return resolveAppliedType(applied, unit_);
     }
 
     void validateAppliedTypeNode(
@@ -797,145 +1078,7 @@ class InterfaceCollector {
     }
 
     TypeClass *resolveType(TypeNode *node, bool validateLayout = true) {
-        if (!node) {
-            return nullptr;
-        }
-        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-            return resolveType(param->type, false);
-        }
-        if (validateLayout) {
-            validateTypeNodeLayout(node);
-        }
-        if (dynamic_cast<AnyTypeNode *>(node)) {
-            return interface_->getOrCreateAnyType();
-        }
-        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
-            return resolveAppliedType(applied);
-        }
-        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
-            auto *baseType = resolveType(qualified->base, false);
-            return baseType ? interface_->getOrCreateConstType(baseType)
-                            : nullptr;
-        }
-        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-            bool readOnlyDataPtr = false;
-            auto *base = getDynTraitBaseNode(dynType, &readOnlyDataPtr);
-            if (!base) {
-                return nullptr;
-            }
-
-            auto rawName = baseTypeName(base);
-            std::string moduleName;
-            std::string traitName;
-            if (!splitBaseTypeName(base, moduleName, traitName)) {
-                auto lookup = interface_->lookupTopLevelName(rawName);
-                if (!lookup.isTrait() || !lookup.traitDecl) {
-                    return nullptr;
-                }
-                return interface_->getOrCreateDynTraitType(
-                    lookup.traitDecl->exportedName, readOnlyDataPtr);
-            }
-
-            const auto *imported = unit_.findImportedModule(moduleName);
-            if (!imported || !imported->interface) {
-                return nullptr;
-            }
-            auto lookup = imported->interface->lookupTopLevelName(traitName);
-            if (!lookup.isTrait() || !lookup.traitDecl) {
-                return nullptr;
-            }
-            return interface_->getOrCreateDynTraitType(
-                lookup.traitDecl->exportedName, readOnlyDataPtr);
-        }
-        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-            auto rawName = baseTypeName(base);
-            std::string moduleName;
-            std::string typeName;
-            if (!splitBaseTypeName(base, moduleName, typeName)) {
-                if (isReservedInitialListTypeName(
-                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
-                    errorReservedInitialListType(base->loc);
-                }
-                if (auto *builtin = lookupBuiltinType(
-                        llvm::StringRef(rawName.c_str(), rawName.size()))) {
-                    return builtin;
-                }
-                auto lookup = interface_->lookupTopLevelName(rawName);
-                if (lookup.isType() && lookup.typeDecl) {
-                    if (lookup.typeDecl->isGeneric()) {
-                        errorBareGenericTemplateType(base->loc, rawName);
-                    }
-                    return lookup.typeDecl->type;
-                }
-                return nullptr;
-            }
-
-            const auto *imported = unit_.findImportedModule(moduleName);
-            if (!imported || !imported->interface) {
-                return nullptr;
-            }
-            auto lookup = imported->interface->lookupTopLevelName(typeName);
-            if (lookup.isType() && lookup.typeDecl) {
-                if (lookup.typeDecl->isGeneric()) {
-                    errorBareGenericTemplateType(base->loc,
-                                                 moduleName + "." + typeName);
-                }
-                return lookup.typeDecl->type;
-            }
-            return nullptr;
-        }
-        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-            auto *baseType = resolveType(pointer->base, false);
-            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
-                baseType = interface_->getOrCreatePointerType(baseType);
-            }
-            return baseType;
-        }
-        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-            auto *elementType = resolveType(indexable->base, false);
-            return elementType ? interface_->getOrCreateIndexablePointerType(
-                                     elementType)
-                               : nullptr;
-        }
-        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-            auto *elementType = resolveType(array->base, false);
-            if (!elementType) {
-                return nullptr;
-            }
-            return interface_->getOrCreateArrayType(elementType, array->dim);
-        }
-        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-            std::vector<TypeClass *> itemTypes;
-            itemTypes.reserve(tuple->items.size());
-            for (auto *item : tuple->items) {
-                auto *itemType = resolveType(item, false);
-                if (!itemType) {
-                    return nullptr;
-                }
-                itemTypes.push_back(itemType);
-            }
-            return interface_->getOrCreateTupleType(itemTypes);
-        }
-        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
-            std::vector<TypeClass *> argTypes;
-            std::vector<BindingKind> argBindingKinds;
-            argTypes.reserve(func->args.size());
-            argBindingKinds.reserve(func->args.size());
-            for (auto *arg : func->args) {
-                argBindingKinds.push_back(funcParamBindingKind(arg));
-                auto *argType = resolveType(unwrapFuncParamType(arg), false);
-                if (!argType) {
-                    return nullptr;
-                }
-                argTypes.push_back(argType);
-            }
-            auto *retType = resolveType(func->ret, false);
-            auto *funcType = interface_->getOrCreateFunctionType(
-                argTypes, retType, std::move(argBindingKinds));
-            return funcType ? interface_->getOrCreatePointerType(funcType)
-                            : nullptr;
-        }
-        return nullptr;
+        return resolveType(node, unit_, validateLayout);
     }
 
     static std::string describeResolvedTypeName(TypeClass *type) {
@@ -1086,7 +1229,7 @@ class InterfaceCollector {
                   "paths are not supported yet.");
         }
 
-        const auto *imported = unit_.findImportedModule(segments[0]);
+        const auto *imported = findImportedModuleForLookup(unit_, segments[0]);
         if (!imported || !imported->interface) {
             error(loc, "unknown imported module alias `" + segments[0] + "`",
                   "Add an explicit `import " + segments[0] +
@@ -2098,13 +2241,26 @@ Function *
 materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr,
                             FuncType *funcType, llvm::StringRef llvmName,
                             std::vector<string> paramNames = {},
-                            bool hasImplicitSelf = false) {
+                            bool hasImplicitSelf = false,
+                            const CompilationUnit *unit = nullptr) {
     auto *existing = scope.getObj(llvmName);
     if (existing) {
-        return existing->as<Function>();
+        auto *func = existing->as<Function>();
+        auto *existingType = func ? func->getType()->as<FuncType>() : nullptr;
+        if (!func || existingType != funcType ||
+            func->hasImplicitSelf() != hasImplicitSelf) {
+            reportFunctionConflict(unit, llvmName, existingType, funcType);
+        }
+        return func;
+    }
+    auto *expectedLLVMType =
+        getFunctionAbiLLVMType(*typeMgr, funcType, hasImplicitSelf);
+    if (auto *existingLLVM = typeMgr->getModule().getFunction(llvmName);
+        existingLLVM && existingLLVM->getFunctionType() != expectedLLVMType) {
+        reportFunctionConflict(unit, llvmName, nullptr, funcType);
     }
     auto *llvmFunc = llvm::Function::Create(
-        getFunctionAbiLLVMType(*typeMgr, funcType, hasImplicitSelf),
+        expectedLLVMType,
         llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
         typeMgr->getModule());
     annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
@@ -2112,6 +2268,39 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr,
                               hasImplicitSelf);
     scope.addObj(llvmName, func);
     return func;
+}
+
+std::string
+chooseFunctionRuntimeName(Scope &scope,
+                          const ModuleInterface::FunctionDecl &functionDecl,
+                          bool exportNamespace) {
+    auto runtimeName =
+        exportNamespace ? toStdString(functionDecl.symbolName)
+                        : toStdString(functionDecl.localName);
+    if (exportNamespace || functionDecl.abiKind == AbiKind::C) {
+        return runtimeName;
+    }
+
+    auto *existing = scope.getObj(llvm::StringRef(runtimeName));
+    if (!existing) {
+        return runtimeName;
+    }
+
+    auto *existingFunc = dynamic_cast<Function *>(existing);
+    auto *existingType =
+        existingFunc ? dynamic_cast<FuncType *>(existingFunc->getType())
+                     : nullptr;
+    auto *llvmFunc = existingFunc
+                         ? llvm::dyn_cast_or_null<llvm::Function>(
+                               existingFunc->getllvmValue())
+                         : nullptr;
+    if (existingFunc && existingType &&
+        existingType->getAbiKind() == functionDecl.abiKind && llvmFunc &&
+        llvmFunc->getName() == llvm::StringRef(runtimeName)) {
+        return runtimeName;
+    }
+
+    return toStdString(functionDecl.symbolName);
 }
 
 Object *
@@ -2164,7 +2353,11 @@ materializeStructMethodBindings(TypeTable *typeMgr, StructType *structType) {
             continue;
         }
         auto methodName =
-            toStdString(structType->full_name) + "." + method.first().str();
+            structType->isAppliedTemplateInstance()
+                ? mangleModuleEntryComponent(structType->full_name) + "." +
+                      method.first().str()
+                : toStdString(structType->full_name) + "." +
+                      method.first().str();
         auto *llvmFunc = llvm::Function::Create(
             getFunctionAbiLLVMType(*typeMgr, methodType, true),
             llvm::Function::ExternalLinkage, llvm::Twine(methodName),
@@ -2221,17 +2414,80 @@ materializeStructTraitMethodBindings(TypeTable *typeMgr,
 }
 
 void
+materializeReachableMethodBindings(
+    TypeTable *typeMgr, TypeClass *type,
+    std::unordered_set<const TypeClass *> &visitedTypes) {
+    if (!typeMgr || !type || !visitedTypes.insert(type).second) {
+        return;
+    }
+
+    if (auto *qualified = type->as<ConstType>()) {
+        materializeReachableMethodBindings(typeMgr, qualified->getBaseType(),
+                                           visitedTypes);
+        return;
+    }
+    if (auto *pointer = type->as<PointerType>()) {
+        materializeReachableMethodBindings(typeMgr, pointer->getPointeeType(),
+                                           visitedTypes);
+        return;
+    }
+    if (auto *indexable = type->as<IndexablePointerType>()) {
+        materializeReachableMethodBindings(typeMgr, indexable->getElementType(),
+                                           visitedTypes);
+        return;
+    }
+    if (auto *array = type->as<ArrayType>()) {
+        materializeReachableMethodBindings(typeMgr, array->getElementType(),
+                                           visitedTypes);
+        return;
+    }
+    if (auto *tuple = type->as<TupleType>()) {
+        for (auto *itemType : tuple->getItemTypes()) {
+            materializeReachableMethodBindings(typeMgr, itemType,
+                                               visitedTypes);
+        }
+        return;
+    }
+    if (auto *funcType = type->as<FuncType>()) {
+        for (auto *argType : funcType->getArgTypes()) {
+            materializeReachableMethodBindings(typeMgr, argType, visitedTypes);
+        }
+        materializeReachableMethodBindings(typeMgr, funcType->getRetType(),
+                                           visitedTypes);
+        return;
+    }
+    if (auto *structType = type->as<StructType>()) {
+        materializeStructMethodBindings(typeMgr, structType);
+        materializeStructTraitMethodBindings(typeMgr, structType);
+        for (const auto &member : structType->getMembers()) {
+            materializeReachableMethodBindings(typeMgr, member.second.first,
+                                               visitedTypes);
+        }
+        for (const auto &method : structType->getMethodTypes()) {
+            materializeReachableMethodBindings(typeMgr, method.second,
+                                               visitedTypes);
+        }
+        for (const auto &method : structType->getTraitMethodTypes()) {
+            materializeReachableMethodBindings(typeMgr, method.second.funcType,
+                                               visitedTypes);
+        }
+    }
+}
+
+void
 materializeUnitInterface(Scope *global, CompilationUnit &unit,
-                         bool exportNamespace) {
+                         bool exportNamespace, bool declareNamespace) {
     initBuildinType(global);
     ensureUnitInterfaceCollected(unit);
     auto *interface = unit.interface();
     auto *typeMgr = requireTypeTable(global);
     unit.clearLocalBindings();
 
-    if (exportNamespace) {
+    if (declareNamespace) {
         declareModuleNamespace(*global, unit);
     }
+
+    std::unordered_set<const TypeClass *> reachableMethodTypes;
 
     for (const auto &entry : interface->types()) {
         auto *type = typeMgr->internType(entry.second.type);
@@ -2244,6 +2500,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
                 "successfully collected from the defining module.");
         }
         unit.bindLocalType(entry.first, toStdString(type->full_name));
+        materializeReachableMethodBindings(typeMgr, type, reachableMethodTypes);
     }
 
     for (const auto &entry : interface->traits()) {
@@ -2252,7 +2509,7 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
 
     for (const auto &entry : interface->functions()) {
         auto runtimeName =
-            exportNamespace ? entry.second.symbolName : entry.first;
+            chooseFunctionRuntimeName(*global, entry.second, exportNamespace);
         unit.bindLocalFunction(entry.first, runtimeName);
         if (entry.second.isGeneric()) {
             continue;
@@ -2269,7 +2526,9 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         }
         materializeDeclaredFunction(*global, typeMgr, funcType,
                                     toStringRef(runtimeName),
-                                    entry.second.paramNames);
+                                    entry.second.paramNames, false, &unit);
+        materializeReachableMethodBindings(typeMgr, storedType,
+                                           reachableMethodTypes);
     }
 
     for (const auto &entry : interface->globals()) {
@@ -2286,26 +2545,14 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         unit.bindLocalGlobal(entry.first, runtimeName);
         materializeDeclaredGlobal(*global, typeMgr, storedType,
                                   toStringRef(runtimeName), &unit);
-    }
-
-    for (const auto &entry : interface->types()) {
-        auto *storedType = typeMgr->internType(entry.second.type);
-        auto *structType = storedType ? storedType->as<StructType>() : nullptr;
-        if (!structType) {
-            continue;
-        }
-        materializeStructMethodBindings(typeMgr, structType);
-        materializeStructTraitMethodBindings(typeMgr, structType);
+        materializeReachableMethodBindings(typeMgr, storedType,
+                                           reachableMethodTypes);
     }
 
     for (const auto &implDecl : interface->traitImpls()) {
         auto *selfType = typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
-        auto *structType = selfType ? selfType->as<StructType>() : nullptr;
-        if (!structType) {
-            continue;
-        }
-        materializeStructMethodBindings(typeMgr, structType);
-        materializeStructTraitMethodBindings(typeMgr, structType);
+        materializeReachableMethodBindings(typeMgr, selfType,
+                                           reachableMethodTypes);
     }
 
     unit.markInterfaceCollected();
@@ -2315,9 +2562,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit,
-                        bool exportNamespace) {
+                        bool exportNamespace, bool declareNamespace) {
     moduleinterface_impl::materializeUnitInterface(global, unit,
-                                                   exportNamespace);
+                                                   exportNamespace,
+                                                   declareNamespace);
 }
 
 }  // namespace lona

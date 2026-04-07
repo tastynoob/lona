@@ -108,7 +108,7 @@ scanningType(Scope *global, AstNode *root);
 
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit,
-                        bool exportNamespace);
+                        bool exportNamespace, bool declareNamespace);
 
 void
 defineUnitGlobals(Scope *global, CompilationUnit &unit);

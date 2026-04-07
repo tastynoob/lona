@@ -19,6 +19,17 @@ namespace lona {
 
 namespace compilation_unit_impl {
 
+bool
+sameInterfaceIdentity(const ModuleInterface *lhs, const ModuleInterface *rhs) {
+    if (lhs == rhs) {
+        return true;
+    }
+    if (!lhs || !rhs) {
+        return false;
+    }
+    return lhs->moduleKey() == rhs->moduleKey();
+}
+
 TypeClass *
 resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
                 TypeNode *node, bool validateLayout);
@@ -449,20 +460,7 @@ resolveVisibleTypeDecl(const CompilationUnit &unit, BaseTypeNode *base) {
 const CompilationUnit *
 findTemplateOwnerUnit(const CompilationUnit &contextUnit,
                       const ModuleInterface::TypeDecl &typeDecl) {
-    if (contextUnit.ownsTypeDecl(&typeDecl)) {
-        return &contextUnit;
-    }
-    for (const auto &entry : contextUnit.importedModules()) {
-        const auto &imported = entry.second;
-        if (!imported.unit || !imported.interface) {
-            continue;
-        }
-        if (imported.interface->findType(toStdString(typeDecl.localName)) ==
-            &typeDecl) {
-            return imported.unit;
-        }
-    }
-    return nullptr;
+    return contextUnit.ownerUnitForTypeDecl(&typeDecl);
 }
 
 std::uint64_t
@@ -987,13 +985,13 @@ substituteAppliedStructTemplateType(
         if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
             return found->second;
         }
-        return resolveTypeNode(typeTable, requesterUnit, node, false);
+        return resolveTypeNode(typeTable, contextUnit, node, false);
     }
     if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
         auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
         auto *typeDecl = resolveVisibleTypeDecl(contextUnit, base);
         if (!typeDecl) {
-            return resolveTypeNode(typeTable, requesterUnit, node, false);
+            return resolveTypeNode(typeTable, contextUnit, node, false);
         }
         if (!typeDecl->isGeneric()) {
             error(applied->loc,
@@ -1041,7 +1039,7 @@ substituteAppliedStructTemplateType(
         return baseType ? typeTable->createConstType(baseType) : nullptr;
     }
     if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-        return resolveTypeNode(typeTable, requesterUnit, dynType, false);
+        return resolveTypeNode(typeTable, contextUnit, dynType, false);
     }
     if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
         auto *baseType = substituteAppliedStructTemplateType(
@@ -1096,7 +1094,7 @@ substituteAppliedStructTemplateType(
         return funcType ? typeTable->createPointerType(funcType) : nullptr;
     }
 
-    return resolveTypeNode(typeTable, requesterUnit, node, false);
+    return resolveTypeNode(typeTable, contextUnit, node, false);
 }
 
 TypeClass *
@@ -1465,7 +1463,8 @@ CompilationUnit::findImportedModuleByInterface(
         return nullptr;
     }
     for (const auto &entry : importedModules_) {
-        if (entry.second.interface == interface) {
+        if (compilation_unit_impl::sameInterfaceIdentity(
+                entry.second.interface, interface)) {
             return &entry.second;
         }
     }
@@ -1820,35 +1819,59 @@ CompilationUnit::ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const {
 const CompilationUnit *
 CompilationUnit::ownerUnitForTypeDecl(
     const ModuleInterface::TypeDecl *typeDecl) const {
-    if (!typeDecl) {
+    std::unordered_set<const CompilationUnit *> visited;
+    std::function<const CompilationUnit *(const CompilationUnit *)> search =
+        [&](const CompilationUnit *current) -> const CompilationUnit * {
+        if (!current || !typeDecl || !visited.insert(current).second) {
+            return nullptr;
+        }
+        if (current->ownsTypeDecl(typeDecl)) {
+            return current;
+        }
+        for (const auto &entry : current->importedModules_) {
+            const auto &imported = entry.second;
+            if (!imported.unit || !imported.interface) {
+                continue;
+            }
+            if (imported.interface->findType(toStdString(typeDecl->localName)) ==
+                typeDecl) {
+                return imported.unit;
+            }
+            if (auto *owner = search(imported.unit)) {
+                return owner;
+            }
+        }
         return nullptr;
-    }
-    if (ownsTypeDecl(typeDecl)) {
-        return this;
-    }
-    for (const auto &entry : importedModules_) {
-        const auto &imported = entry.second;
-        if (!imported.unit || !imported.interface) {
-            continue;
-        }
-        if (imported.interface->findType(toStdString(typeDecl->localName)) ==
-            typeDecl) {
-            return imported.unit;
-        }
-    }
-    return nullptr;
+    };
+    return search(this);
 }
 
 const CompilationUnit *
 CompilationUnit::contextUnitForInterface(
     const ModuleInterface *ownerInterface) const {
-    if (!ownerInterface || ownerInterface == interface()) {
-        return this;
-    }
-    if (const auto *imported = findImportedModuleByInterface(ownerInterface)) {
-        return imported->unit;
-    }
-    return nullptr;
+    std::unordered_set<const CompilationUnit *> visited;
+    std::function<const CompilationUnit *(const CompilationUnit *)> search =
+        [&](const CompilationUnit *current) -> const CompilationUnit * {
+        if (!current || !visited.insert(current).second) {
+            return nullptr;
+        }
+        if (!ownerInterface ||
+            compilation_unit_impl::sameInterfaceIdentity(ownerInterface,
+                                                         current->interface())) {
+            return current;
+        }
+        if (const auto *imported =
+                current->findImportedModuleByInterface(ownerInterface)) {
+            return imported->unit;
+        }
+        for (const auto &entry : current->importedModules_) {
+            if (auto *owner = search(entry.second.unit)) {
+                return owner;
+            }
+        }
+        return nullptr;
+    };
+    return search(this);
 }
 
 std::uint64_t
