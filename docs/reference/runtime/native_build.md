@@ -147,7 +147,8 @@ lac-native --target x86_64-none-elf input.lo output/program
 - 如果显式传 `lac --cache-dir <dir>` 或 `lac-native --cache-dir <dir>`，则改用该目录作为持久 cache root
 - `--emit entry` 会单独生成 hosted `main(argc, argv) -> __lona_main__` object
 - `--emit entry` 只支持 hosted target；bare target 会直接报错
-- `-I` / `--include-dir` 可以传给 `lona-ir`、`lac` 和 `lac-native`，用于追加模块 include 搜索目录
+- `-I` / `--include-dir` 可以传给 `lona-ir`、`lac` 和 `lac-native`，用于追加模块 root 搜索目录
+- 模块搜索根始终包含 root 源文件所在目录；额外 `-I` roots 不能彼此重叠，也不能共同导出同一个 canonical 模块路径
 
 带优化级别：
 

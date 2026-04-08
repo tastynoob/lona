@@ -29,6 +29,8 @@ public:
 
 private:
     void discoverUnitDependencies(CompilationUnit &unit) const;
+    std::vector<std::string> moduleRoots() const;
+    std::vector<std::string> moduleRootsFor(const std::string &rootPath) const;
 };
 
 }  // namespace lona

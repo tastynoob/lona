@@ -113,7 +113,9 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 打印当前版本号，格式为 `语言版本 + 修订版本`
   - 当前语言版本固定为 `0.1 beta`
 - `-I <dir>` / `--include-dir <dir>`
-  - 追加模块 include 搜索目录；解析 `import` 时会排在 importing 文件目录之后
+  - 追加模块 root 搜索目录
+  - 解析 `import` 时，搜索根是“root 源文件所在目录 + 所有 `-I` roots”
+  - `-I` roots 不能彼此重叠；不同 roots 也不能导出同一个 canonical 模块路径
 - `-O <0-3>`
   - 指定 LLVM 优化级别
 - `--verify-ir`
@@ -183,7 +185,7 @@ lac --target x86_64-unknown-linux-gnu input.lo output/program
 - `-O <0-3>`
   - 转发给 `lona-ir`
 - `-I <dir>` / `--include-dir <dir>`
-  - 转发给 `lona-ir`，追加模块 include 搜索目录
+  - 转发给 `lona-ir`，追加模块 root 搜索目录
 - `--target <triple>`
   - 指定 hosted target
 - `--lto <off|full>`
@@ -254,7 +256,7 @@ lac-native --target x86_64-none-elf input.lo output/program
 - `-O <0-3>`
   - 转发给 `lona-ir`
 - `-I <dir>` / `--include-dir <dir>`
-  - 转发给 `lona-ir`，追加模块 include 搜索目录
+  - 转发给 `lona-ir`，追加模块 root 搜索目录
 - `--target <triple>`
   - 指定 bare target
 - `--lto <off|full>`

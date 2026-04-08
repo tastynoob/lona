@@ -329,7 +329,10 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 
 - 只能出现在顶层
 - 写成无引号、无后缀的形式
+- 必须写成 canonical 模块路径，而不是 importer-relative 文件路径
 - imported 模块的顶层成员通过 `file.xxx` 访问
+- 模块搜索根是“root 文件所在目录 + 显式 `-I` roots”
+- 所有搜索根共享一个扁平 canonical 模块命名空间；roots 不能重叠，也不能产生重复模块路径
 - imported 模块也允许顶层可执行语句；这些语句通过模块初始化入口链执行
 
 ### 4.4 进入 Builder

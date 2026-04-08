@@ -5,7 +5,7 @@ import os
 import re
 
 from tests.harness import assert_contains, assert_not_contains, assert_regex
-from tests.harness.compiler import CompilerHarness
+from tests.harness.compiler import CompilerHarness, run_command
 
 
 def test_method_self_lowering_uses_struct_gep(compiler: CompilerHarness) -> None:
@@ -198,7 +198,7 @@ def test_conflicting_imported_extern_globals_report_semantic_error(
     )
 
 
-def test_import_searches_repeated_include_paths_after_current_directory(
+def test_import_searches_include_roots_after_root_directory(
     compiler: CompilerHarness,
 ) -> None:
     first_include = compiler.tmp_path / "include_search" / "first"
@@ -228,7 +228,81 @@ def test_import_searches_repeated_include_paths_after_current_directory(
     assert_contains(ir, "store i32 42", label="include path ir")
 
 
-def test_import_prefers_current_directory_over_include_paths(
+def test_bare_relative_entry_uses_current_directory_as_implicit_root(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "relative_entry_main/dep.lo",
+        """
+        def answer() i32 {
+            ret 17
+        }
+        """,
+    )
+    project_dir = compiler.tmp_path / "relative_entry_main"
+    compiler.write_source(
+        "relative_entry_main/main.lo",
+        """
+        import dep
+
+        ret dep.answer()
+        """,
+    )
+
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    result = run_command(
+        [str(compiler.compiler_bin), "--emit", "ir", "--verify-ir", "main.lo"],
+        cwd=project_dir,
+        env=env,
+    ).expect_ok()
+    assert_contains(result.stdout, "define i32 @dep.answer()", label="bare relative entry ir")
+
+
+def test_relative_entry_and_absolute_include_root_share_one_module_root(
+    compiler: CompilerHarness,
+) -> None:
+    src_dir = compiler.tmp_path / "mixed_root_spellings" / "src"
+    compiler.write_source(
+        "mixed_root_spellings/src/dep.lo",
+        """
+        def answer() i32 {
+            ret 21
+        }
+        """,
+    )
+    compiler.write_source(
+        "mixed_root_spellings/src/main.lo",
+        """
+        import dep
+
+        ret dep.answer()
+        """,
+    )
+
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    result = run_command(
+        [
+            str(compiler.compiler_bin),
+            "--emit",
+            "ir",
+            "--verify-ir",
+            "-I",
+            str(src_dir),
+            "src/main.lo",
+        ],
+        cwd=src_dir.parent,
+        env=env,
+    ).expect_ok()
+    assert_contains(
+        result.stdout,
+        "define i32 @dep.answer()",
+        label="mixed root spelling ir",
+    )
+
+
+def test_import_rejects_conflicting_canonical_paths_across_roots(
     compiler: CompilerHarness,
 ) -> None:
     include_dir = compiler.tmp_path / "include_shadow" / "include"
@@ -258,8 +332,12 @@ def test_import_prefers_current_directory_over_include_paths(
         }
         """,
     )
-    ir = compiler.emit_ir(main_path, include_paths=[include_dir]).expect_ok().stdout
-    assert_contains(ir, "store i32 13", label="local import precedence ir")
+    result = compiler.emit_ir(main_path, include_paths=[include_dir]).expect_failed()
+    assert_contains(
+        result.stderr,
+        "found conflicting modules for import `util`",
+        label="canonical path conflict diagnostic",
+    )
 
 
 def test_imported_trait_supports_local_impl_static_dispatch(
@@ -2028,7 +2106,7 @@ def test_same_basename_modules_use_include_root_relative_symbol_prefixes(
     compiler.write_source(
         "same_basename_symbols/src/string/one.lo",
         """
-        import result
+        import string/result
 
         def value() i32 {
             ret result.success()
@@ -2057,7 +2135,7 @@ def test_same_basename_modules_use_include_root_relative_symbol_prefixes(
     compiler.write_source(
         "same_basename_symbols/src/ios/two.lo",
         """
-        import result
+        import ios/result
 
         def value() i32 {
             ret result.success()
@@ -2120,6 +2198,72 @@ def test_ambiguous_same_basename_imports_across_include_roots_are_rejected(
         result.stderr,
         "found conflicting modules for import `result`",
         label="ambiguous same-basename import diagnostic",
+    )
+
+
+def test_nested_modules_must_import_by_canonical_module_path(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "canonical_imports_only" / "src"
+    compiler.write_source(
+        "canonical_imports_only/src/B/C/c.lo",
+        """
+        def value() i32 {
+            ret 9
+        }
+        """,
+    )
+    compiler.write_source(
+        "canonical_imports_only/src/B/b.lo",
+        """
+        import C/c
+
+        def value() i32 {
+            ret c.value()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "canonical_imports_only/src/A/a.lo",
+        """
+        import B/b
+
+        ret b.value()
+        """,
+    )
+
+    result = compiler.emit_ir(main_path, include_paths=[include_root]).expect_failed()
+    assert_contains(
+        result.stderr,
+        "cannot resolve import `C/c`",
+        label="canonical import path diagnostic",
+    )
+    assert_contains(
+        result.stderr,
+        "canonical module paths",
+        label="canonical import path help",
+    )
+
+
+def test_overlapping_include_roots_are_rejected(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "overlapping_roots" / "src"
+    nested_root = include_root / "pkg"
+    main_path = compiler.write_source(
+        "overlapping_roots/src/main.lo",
+        """
+        ret 0
+        """,
+    )
+
+    result = compiler.emit_ir(
+        main_path, include_paths=[include_root, nested_root]
+    ).expect_failed()
+    assert_contains(
+        result.stderr,
+        "module roots must not overlap",
+        label="overlapping module roots diagnostic",
     )
 
 
