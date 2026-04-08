@@ -13,6 +13,10 @@
 - [../../reference/language/type.md](../../reference/language/type.md)
 - [../../reference/language/trait.md](../../reference/language/trait.md)
 
+generic 与 trait 打开后的符号表分层，见：
+
+- [symbol_table.md](symbol_table.md)
+
 ## 1. 当前范围
 
 当前 generic v0 已经覆盖：
@@ -22,7 +26,7 @@
 - 类型位置的 `Box[i32]`
 - 表达式侧的 `id[i32](...)`、`id(...)`、`@id[i32]`、`Box[i32](...)`
 - same-module generic function / applied generic struct concrete instantiation
-- imported generic function / applied generic struct 的 importer-owned instantiation
+- imported generic function / applied generic struct 的跨模块 concrete instantiation
 - structured generic instance key、同图 dedup、artifact 级 cache metadata 与 invalidation
 - unconstrained `T` 的模板校验约束
 - single trait bound `T Trait`
@@ -146,9 +150,9 @@ applied generic struct 现在支持：
 
 generic struct method 仍然不是“模板阶段直接发射”；它们是随着具体 applied instance 一起 concrete 化。
 
-## 6. Imported Ownership, Dedup, Reuse, Invalidation
+## 6. Emission Ownership, Dedup, Reuse, Invalidation
 
-imported generic runtime 现在采用 importer-owned instance 模型。
+generic runtime 现在采用“structured key 去重 + 单一 emitter + requester 记录使用”的模型。
 
 相关文件主要包括：
 
@@ -156,20 +160,31 @@ imported generic runtime 现在采用 importer-owned instance 模型。
 - `src/lona/module/module_artifact.hh`
 - `src/lona/workspace/workspace_builder.cc`
 
-当前已经有三层一致的身份模型：
+当前已经有三层相互对齐的模型：
 
 - in-memory same-session instance key
-- recursion / in-flight guard
+- build graph 级 emission owner registry
 - persisted artifact metadata
 
-key 至少覆盖：
+其中实例身份至少覆盖：
 
 - template owner identity
-- exported template name
-- decl kind
+- instance kind
+- template identity
 - concrete type arguments
+- method name（若适用）
+
+而 artifact record 还会额外记录：
+
+- requester module identity
 - template revision
 - owner 可见 import 状态
+- requester 可见 trait-impl 状态
+
+这里有一个关键约束：
+
+- `requester` 参与 artifact 记录和缓存复用判断
+- 但不参与“这是不是同一个 concrete instance”的 identity
 
 这让 local / imported 的实例请求都能归一到同一种 key，而不是依赖 mangled symbol display string 或 `Box[i32]` 这类纯显示名。
 
@@ -178,8 +193,9 @@ artifact reuse 现在会验证 generic instance record 的 revision 是否仍然
 - owner body change
 - owner interface change
 - owner-visible import state change
+- requester-visible trait impl state change
 
-都会让 importer 侧的旧 concrete instance 失效。
+都会让旧 concrete instance 记录失效。
 
 ## 7. Template Validation 与 Unconstrained `T`
 

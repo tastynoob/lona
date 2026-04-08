@@ -213,6 +213,9 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `InterfaceCollected`
 - `Compiled`
 
+`CompilationUnit` 与 `ModuleInterface` 一起构成当前模块级名字和接口边界；更细的“符号表分层”见
+`docs/internals/compiler/symbol_table.md`。
+
 ### 3.2 `ModuleGraph`
 
 文件：

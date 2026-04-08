@@ -12,6 +12,7 @@
 generic v0 当前已经有单独的内部文档：
 
 - `docs/internals/compiler/generic_v0.md`
+- `docs/internals/compiler/symbol_table.md`
 
 因此本文只讨论 trait v0 自己的 lowering；generic template、applied type
 和当前未实现的 monomorphization 不在这里展开。
