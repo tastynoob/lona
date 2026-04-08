@@ -17,7 +17,7 @@ generic v0 当前已经支持：
 - 泛型函数实体引用，例如 `@id[i32]`
 - 单 trait bound，例如 `[T Hash]`
 - generic struct declaration 上的单 trait bound，例如 `struct Box[T Hash]`
-- generic impl header，例如 `impl[T Hash] Box[T]: Hash`
+- generic impl body，例如 `impl[T Hash] Hash for Box[T] { ... }`
 
 不在这版稳定范围里的内容见本文最后一节。
 
@@ -191,19 +191,20 @@ def hash_one[T Hash](value T) i32 {
 struct Box[T Hash] {
     value T
 
+}
+
+impl[T Hash] Hash for Box[T] {
     def hash() i32 {
         ret Hash.hash(&self.value)
     }
 }
-
-impl[T Hash] Box[T]: Hash
 ```
 
 规则：
 
 - 结构体声明本身也可以带单 bound。
 - `Box[Point]` 这类具体 applied type 被物化时，会检查 `Point` 是否满足 `Hash`。
-- generic impl header 也使用同一套参数列表和同一套 bound 规则。
+- generic impl body 也使用同一套参数列表和同一套 bound 规则。
 
 ## 7. unconstrained 与 bounded 参数能做什么
 
@@ -273,9 +274,8 @@ generic v0 当前有这些明确边界：
 - multi-bound generic constraints
 - generic trait
 - trait method 自己再带 generic parameter
-- generic impl body for generic/imported self type
 - 值级模板参数
 - 默认模板实参
 - specialization / partial specialization
 
-如果需要具体的 trait-bound 运行语义、`impl[T Trait] Box[T]: Trait` 的约束，继续看 [trait.md](trait.md)。
+如果需要具体的 trait-bound 运行语义、`impl[T Trait] Trait for Box[T]` 的约束，继续看 [trait.md](trait.md)。

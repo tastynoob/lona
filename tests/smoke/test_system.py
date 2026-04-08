@@ -264,7 +264,11 @@ def test_system_trait_dyn_dispatch_runtime(compiler: CompilerHarness) -> None:
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         var point = Point(value = 41)
         var h Hash dyn = cast[Hash dyn](&point)
@@ -302,7 +306,11 @@ def test_system_trait_dyn_dispatch_runtime_from_pointer_backed_sources(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def invoke(value Hash dyn) i32 {
             ret value.hash()
@@ -351,7 +359,11 @@ def test_system_trait_dyn_dispatch_runtime_with_indirect_result_aggregate(
             }
         }
 
-        impl Maker: Factory
+        impl Factory for Maker {
+            def make() Big {
+                ret self.make()
+            }
+        }
         """,
     )
     program = compiler.write_source(
@@ -400,7 +412,14 @@ def test_system_trait_dyn_mutability_runtime(compiler: CompilerHarness) -> None:
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+            set def bump(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
 
         def read_value(view CounterLike const dyn) i32 {
             ret view.read()

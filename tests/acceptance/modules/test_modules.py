@@ -286,7 +286,11 @@ def test_imported_trait_supports_local_impl_static_dispatch(
             }
         }
 
-        impl Point: dep.Hash
+        impl dep.Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -317,7 +321,11 @@ def test_imported_trait_uses_imported_impl_for_static_dispatch(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def make() Point {
             ret Point(value = 40)
@@ -653,7 +661,11 @@ def test_imported_bounded_generic_functions_check_bounds_and_lower_plain_dot_cal
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def hash_one[T Hash](value T) i32 {
             ret value.hash()
@@ -687,11 +699,11 @@ def test_imported_bounded_generic_functions_check_bounds_and_lower_plain_dot_cal
     )
 
 
-def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_applied_receivers(
+def test_imported_generic_trait_impl_bodies_enable_trait_qualified_calls_for_applied_receivers(
     compiler: CompilerHarness,
 ) -> None:
     compiler.write_source(
-        "generic_import_trait_impl_header/dep.lo",
+        "generic_import_trait_impl_body/dep.lo",
         """
         trait Hash {
             def hash() i32
@@ -705,7 +717,11 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         struct Box[T] {
             value T
@@ -715,7 +731,11 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
             }
         }
 
-        impl[T Hash] Box[T]: Hash
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def make() Box[Point] {
             ret Box[Point](value = Point(value = 41))
@@ -723,7 +743,7 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
         """,
     )
     main_path = compiler.write_source(
-        "generic_import_trait_impl_header/main.lo",
+        "generic_import_trait_impl_body/main.lo",
         """
         import dep
 
@@ -738,12 +758,12 @@ def test_imported_generic_trait_impl_headers_enable_trait_qualified_calls_for_ap
     assert_regex(
         ir,
         r"define i32 @dep_2eBox_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
-        label="imported generic trait impl header ir",
+        label="imported generic trait impl body ir",
     )
     assert_regex(
         ir,
         r"call i32 @dep_2eBox_5b.*dep_2ePoint.*_5d\.hash\(ptr ",
-        label="imported generic trait impl header ir",
+        label="imported generic trait impl body ir",
     )
 
 
@@ -1308,8 +1328,16 @@ def test_imported_struct_decl_bounds_and_generic_methods_lower_in_requester(
             }
         }
 
-        impl Point: Hash
-        impl Other: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
+        impl Hash for Other {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         struct Box[T Hash] {
             value T
@@ -1394,7 +1422,11 @@ def test_imported_trait_supports_local_impl_dynamic_dispatch(
             }
         }
 
-        impl Point: dep.Hash
+        impl dep.Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -1407,7 +1439,7 @@ def test_imported_trait_supports_local_impl_dynamic_dispatch(
     assert_contains(ir, "@__lona_trait_witness__", label="imported trait local dyn ir")
     assert_regex(
         ir,
-        r"@__lona_trait_witness__.*\[ptr @.*Point\.hash\]",
+        r"@__lona_trait_witness__.*\[ptr @.*Point\.__trait__\..*Hash\.hash\]",
         label="imported trait local dyn ir",
     )
     assert_contains(
@@ -1435,7 +1467,11 @@ def test_imported_trait_uses_imported_impl_for_dynamic_dispatch(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def make() Point {
             ret Point(value = 40)
@@ -1457,7 +1493,7 @@ def test_imported_trait_uses_imported_impl_for_dynamic_dispatch(
     ir = compiler.emit_ir(main_path).expect_ok().stdout
     assert_regex(
         ir,
-        r"@__lona_trait_witness__.*\[ptr @dep\.Point\.hash\]",
+        r"@__lona_trait_witness__.*\[ptr @dep\.Point\.__trait__\..*Hash\.hash\]",
         label="imported trait imported dyn ir",
     )
     assert_contains(
@@ -1495,7 +1531,11 @@ def test_wrapper_trait_impl_on_imported_self_type_carries_methods_downstream(
             def hash() i32
         }
 
-        impl other.Point: Hash
+        impl Hash for other.Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def make() other.Point {
             ret other.make()
@@ -1522,13 +1562,201 @@ def test_wrapper_trait_impl_on_imported_self_type_carries_methods_downstream(
     )
     assert_regex(
         ir,
-        r"@__lona_trait_witness__.*\[ptr @other\.Point\.hash\]",
+        r"@__lona_trait_witness__.*\[ptr @other\.Point\.__trait__\..*Hash\.hash\]",
         label="wrapper imported-self impl ir",
     )
     assert_contains(
         ir,
         "call i32 %trait.slot(ptr %trait.data)",
         label="wrapper imported-self impl ir",
+    )
+
+
+def test_imported_trait_impl_body_materializes_pointer_and_dyn_signatures(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_import_signature_materialization/dep.lo",
+        """
+        trait Score {
+            def score(other Point*) i32
+        }
+
+        trait Later {
+            def hash() i32
+        }
+
+        trait Link {
+            def connect(other Later dyn) i32
+        }
+
+        struct Point {
+            value i32
+        }
+
+        impl Score for Point {
+            def score(other Point*) i32 {
+                ret self.value + other.value
+            }
+        }
+
+        impl Later for Point {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Link for Point {
+            def connect(other Later dyn) i32 {
+                ret self.value + other.hash()
+            }
+        }
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_import_signature_materialization/main.lo",
+        """
+        import dep
+
+        def main() i32 {
+            var point dep.Point = dep.make()
+            var ptr dep.Point* = &point
+            var later dep.Later dyn = cast[dep.Later dyn](&point)
+            ret dep.Score.score(&point, ptr) + dep.Link.connect(&point, later) - 121
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"call i32 @dep\.Point\.__trait__\..*Score\.score\(ptr ",
+        label="imported trait signature materialization ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="imported trait signature materialization ir",
+    )
+
+
+def test_impl_for_body_on_imported_self_type_carries_methods_downstream(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_impl_for_imported_self/other.lo",
+        """
+        struct Point {
+            value i32
+        }
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    compiler.write_source(
+        "trait_impl_for_imported_self/wrap.lo",
+        """
+        import other
+
+        trait Hash {
+            def hash() i32
+        }
+
+        impl Hash for other.Point {
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def make() other.Point {
+            ret other.make()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_impl_for_imported_self/main.lo",
+        """
+        import wrap
+
+        def main() i32 {
+            var point = wrap.make()
+            var h wrap.Hash dyn = cast[wrap.Hash dyn](&point)
+            ret point.hash() + wrap.Hash.hash(&point) + h.hash() - 126
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"call i32 @other\.Point\.__trait__\..*wrap(?:\.|_2e)Hash\.hash\(ptr ",
+        label="impl-for imported self ir",
+    )
+    assert_contains(
+        ir,
+        "@__lona_trait_witness__",
+        label="impl-for imported self ir",
+    )
+
+
+def test_impl_for_body_on_imported_trait_type_carries_methods_downstream(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "trait_impl_for_imported_trait/dep.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+        """,
+    )
+    compiler.write_source(
+        "trait_impl_for_imported_trait/wrap.lo",
+        """
+        import dep
+
+        struct Point {
+            value i32
+        }
+
+        impl dep.Hash for Point {
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        def make() Point {
+            ret Point(value = 40)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "trait_impl_for_imported_trait/main.lo",
+        """
+        import dep
+        import wrap
+
+        def main() i32 {
+            var point = wrap.make()
+            var h dep.Hash dyn = cast[dep.Hash dyn](&point)
+            ret point.hash() + dep.Hash.hash(&point) + h.hash() - 126
+        }
+        """,
+    )
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_regex(
+        ir,
+        r"call i32 @wrap\.Point\.__trait__\..*dep(?:\.|_2e)Hash\.hash\(ptr ",
+        label="impl-for imported trait ir",
+    )
+    assert_contains(
+        ir,
+        "@__lona_trait_witness__",
+        label="impl-for imported trait ir",
     )
 
 
@@ -1560,7 +1788,11 @@ def test_imported_trait_readonly_dyn_signatures_work_across_module_boundaries(
             }
         }
 
-        impl Point: dep.Hash
+        impl dep.Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             const point = Point(value = 41)

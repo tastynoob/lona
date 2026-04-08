@@ -27,7 +27,7 @@
 - unconstrained `T` 的模板校验约束
 - single trait bound `T Trait`
 - declaration-site struct bound `struct Box[T Trait]`
-- `impl[T Trait] Box[T]: Trait`
+- `impl[T Trait] Trait for Box[T] { ... }`
 - generic struct method template 与实例化
 - generic body 中的 trait-qualified static call，例如 `Hash.hash(&value)`
 - bounded generic value 上的普通 bound method dot lookup，例如 `value.hash()`
@@ -207,7 +207,7 @@ single bound 相关逻辑现在已经接通：
 
 - `T Trait`
 - `struct Box[T Trait]`
-- `impl[T Trait] Box[T]: Trait`
+- `impl[T Trait] Trait for Box[T] { ... }`
 - `def method[U Trait](...)` 这类 generic struct method
 - instantiation-site bound satisfaction
 - generic body 中的 direct bound method call

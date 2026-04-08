@@ -25,7 +25,14 @@ def test_trait_surface_json_includes_trait_impl_and_dyn_type_nodes(
             value i32
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() u64 {
+                ret self.hash()
+            }
+            set def rewrite(value i32) {
+                self.rewrite(value)
+            }
+        }
 
         def show(ptr Point*) {
             var h Hash dyn = cast[Hash dyn](ptr)
@@ -43,12 +50,12 @@ def test_trait_surface_json_includes_trait_impl_and_dyn_type_nodes(
         assert_contains(json_out, needle, label="trait surface json")
 
 
-def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
+def test_trait_impl_body_syntax_does_not_break_plain_ir_lowering(
     compiler: CompilerHarness,
 ) -> None:
     ir = _emit_ir(
         compiler,
-        "trait_header_only.lo",
+        "trait_impl_body_only.lo",
         """
         trait Hash {
             def hash() u64
@@ -62,14 +69,18 @@ def test_trait_header_only_syntax_does_not_break_plain_ir_lowering(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() u64 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             ret 0
         }
         """,
     )
-    assert_contains(ir, "define i32 @main()", label="trait header ir")
+    assert_contains(ir, "define i32 @main()", label="trait impl body ir")
 
 
 def test_trait_v0_impl_for_body_supports_member_static_and_dyn_calls(
@@ -133,7 +144,11 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -165,7 +180,11 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
                 }
             }
 
-            impl Point: Hash
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.hash()
+                }
+            }
 
             def main() i32 {
                 var point = Point(value = 41)
@@ -188,7 +207,8 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
                 value i32
             }
 
-            impl Point: Hash
+            impl Hash for Point {
+            }
 
             def main() i32 {
                 ret 0
@@ -211,7 +231,11 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
                 }
             }
 
-            impl Point: Hash
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.value
+                }
+            }
 
             def main() i32 {
                 ret 0
@@ -234,7 +258,11 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
                 }
             }
 
-            impl Point: Hash
+            impl Hash for Point {
+                def hash(value i64) i32 {
+                    ret self.value + cast[i32](value)
+                }
+            }
 
             def main() i32 {
                 ret 0
@@ -257,8 +285,16 @@ def test_trait_v0_static_qualified_calls_and_impl_validation(
                 }
             }
 
-            impl Point: Hash
-            impl Point: Hash
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.value
+                }
+            }
 
             def main() i32 {
                 ret 0
@@ -290,7 +326,11 @@ def test_trait_v0_static_getters_accept_const_self_pointers(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             const point = Point(value = 41)
@@ -331,7 +371,14 @@ def test_trait_v0_allows_same_module_struct_types_in_trait_signatures(
             }
         }
 
-        impl Maker: Factory
+        impl Factory for Maker {
+            def make() Big {
+                ret self.make()
+            }
+            def score(item Big) i32 {
+                ret self.score(item)
+            }
+        }
 
         def main() i32 {
             var maker = Maker(seed = 20)
@@ -363,7 +410,11 @@ def test_trait_v0_qualified_calls_bind_named_args_from_trait_signatures(
             }
         }
 
-        impl Point: Add
+        impl Add for Point {
+            def add(x i32) i32 {
+                ret self.value + x
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -371,7 +422,11 @@ def test_trait_v0_qualified_calls_bind_named_args_from_trait_signatures(
         }
         """,
     )
-    assert_regex(ir, r"call i32 @.*Point\.add\(ptr [^,]+, i32 1\)", label="trait named args ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.__trait__\..*Add\.add\(ptr [^,]+, i32 1\)",
+        label="trait named args ir",
+    )
 
 
 def test_trait_v0_supports_multiple_traits_with_same_method_name(
@@ -397,8 +452,16 @@ def test_trait_v0_supports_multiple_traits_with_same_method_name(
             }
         }
 
-        impl Point: Hash
-        impl Point: Metric
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
+        impl Metric for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -436,8 +499,16 @@ def test_trait_v0_supports_multiple_traits_with_same_method_name(
             }
         }
 
-        impl Point: Hash
-        impl Point: Metric
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+        impl Metric for Point {
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
 
         def main() i32 {
             ret 0
@@ -601,7 +672,11 @@ def test_trait_v0_explicit_receiver_trait_paths_cover_pointer_and_mixed_impl_for
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def read() i32 {
+                ret self.read()
+            }
+        }
 
         impl Metric for Point {
             def read() i32 {
@@ -767,7 +842,11 @@ def test_trait_v0_allows_local_trait_dyn_fields_before_trait_declaration(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -816,9 +895,21 @@ def test_trait_v0_allows_self_and_forward_local_trait_dyn_signatures(
             }
         }
 
-        impl Point: Hash
-        impl Point: UseLater
-        impl Point: Later
+        impl Hash for Point {
+            def merge(other Hash dyn) i32 {
+                ret self.merge(other)
+            }
+        }
+        impl UseLater for Point {
+            def connect(other Later dyn) i32 {
+                ret self.connect(other)
+            }
+        }
+        impl Later for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -852,7 +943,11 @@ def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def forward(value Hash dyn) Hash dyn {
             ret value
@@ -893,7 +988,11 @@ def test_trait_v0_dyn_objects_support_casts_calls_and_signature_positions(
                 }
             }
 
-            impl Point: Hash
+            impl Hash for Point {
+                def hash() i32 {
+                    ret self.hash()
+                }
+            }
 
             def main() i32 {
                 var h Hash dyn = cast[Hash dyn](&Point(value = 41))
@@ -956,7 +1055,11 @@ def test_trait_v0_accepts_pointer_backed_trait_object_sources(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def invoke(value Hash dyn) i32 {
             ret value.hash()
@@ -1005,7 +1108,14 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+            set def bump(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
 
         def read_value(view CounterLike const dyn) i32 {
             ret view.read()
@@ -1054,7 +1164,14 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
                 }
             }
 
-            impl Counter: CounterLike
+            impl CounterLike for Counter {
+                def read() i32 {
+                    ret self.read()
+                }
+                set def bump(step i32) i32 {
+                    ret self.bump(step)
+                }
+            }
 
             def main() i32 {
                 const counter = Counter(value = 41)
@@ -1083,7 +1200,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
                 }
             }
 
-            impl Counter: CounterLike
+            impl CounterLike for Counter {
+                set def bump(step i32) i32 {
+                    ret self.bump(step)
+                }
+            }
 
             def main() i32 {
                 const counter = Counter(value = 41)
@@ -1111,7 +1232,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
                 }
             }
 
-            impl Counter: CounterLike
+            impl CounterLike for Counter {
+                set def bump(step i32) i32 {
+                    ret self.bump(step)
+                }
+            }
 
             def invoke(value Counter const) i32 {
                 ret cast[CounterLike dyn](&value).bump(1)
@@ -1142,7 +1267,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
                 }
             }
 
-            impl Counter: CounterLike
+            impl CounterLike for Counter {
+                def read() i32 {
+                    ret self.read()
+                }
+            }
 
             def main() i32 {
                 const counter = Counter(value = 41)
@@ -1170,7 +1299,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
                 }
             }
 
-            impl Counter: CounterLike
+            impl CounterLike for Counter {
+                def read() i32 {
+                    ret self.read()
+                }
+            }
 
             def invoke(view CounterLike dyn) i32 {
                 ret view.read()
@@ -1206,7 +1339,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+        }
 
         def main() i32 {
             const frozen = Counter(value = 41)
@@ -1240,7 +1377,14 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+            set def bump(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
 
         def main() i32 {
             const frozen = Counter(value = 41)
@@ -1289,7 +1433,11 @@ def test_trait_v0_dyn_mutability_tracks_readonly_and_writable_receivers(
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+        }
 
         def freeze() CounterLike dyn {
             const counter = Counter(value = 41)
@@ -1330,7 +1478,11 @@ def test_trait_v0_explicit_readonly_dyn_casts_work_in_params_returns_and_fields(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def freeze(value Hash const dyn) Hash const dyn {
             ret value
@@ -1378,7 +1530,14 @@ def test_trait_v0_readonly_trait_object_pointers_support_getters_and_reject_sett
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+            set def bump(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
 
         def invoke(ptr CounterLike const dyn*) i32 {
             ret ptr.read()
@@ -1421,7 +1580,14 @@ def test_trait_v0_readonly_trait_object_pointers_support_getters_and_reject_sett
             }
         }
 
-        impl Counter: CounterLike
+        impl CounterLike for Counter {
+            def read() i32 {
+                ret self.read()
+            }
+            set def bump(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
 
         def invoke(ptr CounterLike const dyn*) i32 {
             ret ptr.bump(1)
@@ -1460,7 +1626,11 @@ def test_trait_v0_trait_object_pointers_reuse_implicit_deref_for_calls(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def invoke(ptr Hash dyn*) i32 {
             ret ptr.hash()
@@ -1521,58 +1691,6 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
             ],
         ),
         (
-            "trait_impl_body_type_params_bad.lo",
-            """
-            trait Hash {
-                def hash() i32
-            }
-
-            struct Point {
-                value i32
-            }
-
-            impl[T Hash] Hash for Point {
-                def hash() i32 {
-                    ret self.value
-                }
-            }
-
-            def main() i32 {
-                ret 0
-            }
-            """,
-            [
-                "currently requires a monomorphic local concrete struct impl",
-                "Generic or imported impl forms still need the header-only impl form in this first cut.",
-            ],
-        ),
-        (
-            "trait_impl_body_generic_self_bad.lo",
-            """
-            trait Hash {
-                def hash() i32
-            }
-
-            struct Box[T] {
-                value T
-            }
-
-            impl Hash for Box[i32] {
-                def hash() i32 {
-                    ret self.value
-                }
-            }
-
-            def main() i32 {
-                ret 0
-            }
-            """,
-            [
-                "currently requires a monomorphic local concrete struct impl",
-                "Generic or imported impl forms still need the header-only impl form in this first cut.",
-            ],
-        ),
-        (
             "trait_local_var_bad.lo",
             """
             trait Hash {
@@ -1623,3 +1741,145 @@ def test_trait_v0_reports_targeted_diagnostics_for_unsupported_bodies_and_fields
     ]
     for name, source, needles in failures:
         _expect_ir_failure(compiler, name, source, needles)
+
+
+def test_trait_impl_for_body_supports_applied_self_types(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_impl_body_applied_self.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Box[T] {
+            value T
+        }
+
+        impl Hash for Box[i32] {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        def main() i32 {
+            var box = Box[i32](value = 41)
+            var view Hash dyn = cast[Hash dyn](&box)
+            ret box.hash() + Hash.hash(&box) + view.hash() - 126
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait applied self ir")
+    assert_contains(
+        ir,
+        "@__lona_trait_witness__",
+        label="trait applied self ir",
+    )
+
+
+def test_trait_impl_for_body_supports_generic_self_types(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "trait_impl_body_generic_self.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Num {
+            value i32
+        }
+
+        impl Hash for Num {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        struct Box[T] {
+            value T
+        }
+
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret Hash.hash(&self.value) + 1
+            }
+        }
+
+        def main() i32 {
+            var box = Box[Num](value = Num(value = 40))
+            var view Hash dyn = cast[Hash dyn](&box)
+            ret box.hash() + Hash.hash(&box) + view.hash() - 126
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait generic self ir")
+    assert_contains(
+        ir,
+        "@__lona_trait_witness__",
+        label="trait generic self ir",
+    )
+
+
+def test_plain_dot_lookup_keeps_generic_trait_impl_methods_ambiguous(
+    compiler: CompilerHarness,
+) -> None:
+    _expect_ir_failure(
+        compiler,
+        "trait_impl_body_generic_self_ambiguous_plain_dot.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        trait Metric {
+            def hash() i32
+        }
+
+        struct Num {
+            value i32
+        }
+
+        impl Hash for Num {
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Metric for Num {
+            def hash() i32 {
+                ret self.value + 2
+            }
+        }
+
+        struct Box[T] {
+            value T
+        }
+
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret Hash.hash(&self.value)
+            }
+        }
+
+        impl[T Metric] Metric for Box[T] {
+            def hash() i32 {
+                ret Metric.hash(&self.value)
+            }
+        }
+
+        def main() i32 {
+            var box = Box[Num](value = Num(value = 40))
+            ret box.hash()
+        }
+        """,
+        [
+            "ambiguous trait method `hash`",
+            "box.Hash.hash(...)",
+            "box.Metric.hash(...)",
+        ],
+    )

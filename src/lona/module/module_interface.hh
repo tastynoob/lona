@@ -54,6 +54,7 @@ public:
         string returnTypeSpelling = "void";
         std::vector<GenericParamDecl> typeParams;
         std::size_t enclosingTypeParamCount = 0;
+        AstFuncDecl *syntaxDecl = nullptr;
 
         bool isGeneric() const { return !typeParams.empty(); }
     };
@@ -99,6 +100,8 @@ public:
         string traitName;
         bool hasBody = false;
         std::vector<GenericParamDecl> typeParams;
+        AstTraitImplDecl *syntaxDecl = nullptr;
+        std::vector<MethodTemplateDecl> bodyMethods;
 
         bool isGeneric() const { return !typeParams.empty(); }
     };
@@ -251,14 +254,18 @@ public:
     }
     bool declareTraitImpl(string selfTypeSpelling, TypeNode *selfTypeNode,
                           string traitName, bool hasBody = false,
-                          std::vector<GenericParamDecl> typeParams = {});
+                          std::vector<GenericParamDecl> typeParams = {},
+                          AstTraitImplDecl *syntaxDecl = nullptr,
+                          std::vector<MethodTemplateDecl> bodyMethods = {});
     bool declareTraitImpl(std::string selfTypeSpelling, TypeNode *selfTypeNode,
                           std::string traitName, bool hasBody = false,
-                          std::vector<GenericParamDecl> typeParams = {}) {
+                          std::vector<GenericParamDecl> typeParams = {},
+                          AstTraitImplDecl *syntaxDecl = nullptr,
+                          std::vector<MethodTemplateDecl> bodyMethods = {}) {
         return declareTraitImpl(string(std::move(selfTypeSpelling)),
                                 selfTypeNode, string(std::move(traitName)),
-                                hasBody,
-                                std::move(typeParams));
+                                hasBody, std::move(typeParams), syntaxDecl,
+                                std::move(bodyMethods));
     }
     bool declareStructMethodTemplate(string structLocalName,
                                      MethodTemplateDecl method);

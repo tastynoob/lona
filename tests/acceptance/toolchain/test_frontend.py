@@ -626,7 +626,11 @@ def test_trait_static_dispatch_lowers_to_direct_method_call(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -660,7 +664,11 @@ def test_trait_dyn_dispatch_lowers_to_witness_indirection_without_struct_vptrs(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var point = Point(value = 41)
@@ -674,7 +682,7 @@ def test_trait_dyn_dispatch_lowers_to_witness_indirection_without_struct_vptrs(
     assert_contains(ir, "@__lona_trait_witness__", label="trait dyn dispatch ir")
     assert_regex(
         ir,
-        r"@__lona_trait_witness__.* = internal constant \[1 x ptr\] \[ptr @.*Point\.hash\]",
+        r"@__lona_trait_witness__.* = internal constant \[1 x ptr\] \[ptr @.*Point\.__trait__\..*Hash\.hash\]",
         label="trait dyn dispatch ir",
     )
     assert_contains(
@@ -714,7 +722,11 @@ def test_trait_dyn_indirect_results_keep_self_before_sret_in_witness_calls(
             }
         }
 
-        impl Maker: Factory
+        impl Factory for Maker {
+            def make() Big {
+                ret self.make()
+            }
+        }
 
         def main() i32 {
             var maker = Maker(seed = 40)

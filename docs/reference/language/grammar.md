@@ -262,12 +262,7 @@ trait-func-decl   ::= [ "set" ] "def" IDENT opt-type-params "(" ")" NL
                     | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" NL
                     | [ "set" ] "def" IDENT opt-type-params "(" param-decl-seq ")" type-name NL
 
-impl-decl         ::= "impl" opt-type-params type-name ":" dot-like-name NL
-                    | "impl" opt-type-params type-name ":" NL* dot-like-name NL
-                    | "impl" opt-type-params type-name ":" dot-like-name block
-                    | "impl" opt-type-params type-name ":" NL* dot-like-name block
-                    | "impl" opt-type-params dot-like-name "for" NL* type-name NL
-                    | "impl" opt-type-params dot-like-name "for" NL* type-name block
+impl-decl         ::= "impl" opt-type-params dot-like-name "for" NL* type-name block
 
 field-decl        ::= IDENT type-name
                     | "_" type-name
@@ -287,7 +282,7 @@ param-decl-seq    ::= param-decl
 
 说明：
 
-- 泛型参数列表统一写在名字后面的 `[...]`，例如 `struct Box[T]`、`def id[T](value T) T`、`impl[T Hash] Box[T]: Hash`。
+- 泛型参数列表统一写在名字后面的 `[...]`，例如 `struct Box[T]`、`def id[T](value T) T`、`impl[T Hash] Hash for Box[T]`。
 - generic v0 当前每个类型参数只支持一个 trait bound；例如 `[T Hash]` 合法，`[T Hash + Eq]` 会给 targeted diagnostic。
 - tag line 必须单独占一行，然后紧跟一个函数声明、结构体声明或变量定义。
 - tag line 也可以跟一个 `global` 声明。
@@ -303,9 +298,8 @@ param-decl-seq    ::= param-decl
 - `def name(...) Ret` 与后面的 `{` 也必须写在同一行；如果头部已经以换行结束，parser 会把它视为函数声明。
 - `trait Name` 与后面的 `{` 也必须写在同一行；`trait Name` 单独占一行时表示空 trait declaration。
 - `trait` body 当前稳定语义只接受方法签名；为了给用户更明确的 targeted diagnostic，parser 还会暂时接纳 `field`、`var`、`global`、`ret`、`if`、`for`、块语句等形状，然后在语义阶段统一拒绝。
-- `impl Type: Trait` 和 `impl Trait for Type` 都是合法顶层声明。
-- `impl Trait for Type { ... }` 当前已经支持最小可用的 impl body；`impl Type: Trait { ... }` 也仍然能被 parser 接住。
-- 这版 impl body 只稳定支持 local、non-generic、concrete struct self type；generic self type、imported self type 仍然建议继续用 header-only 形式。
+- `impl Trait for Type { ... }` 是合法顶层声明。
+- `impl Trait for Type { ... }` 现在支持 local self、imported self、applied self 和 generic self。
 - trait 方法和普通成员方法现在是分离命名空间；`obj.method()` 先找普通成员方法，再在 trait 方法中做唯一匹配，必要时可写成 `obj.Trait.method()` 或 `Trait.method(&obj)` 消歧。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。

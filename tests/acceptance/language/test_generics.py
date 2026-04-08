@@ -29,7 +29,11 @@ def test_generic_v0_surface_json_includes_type_params_type_apply_and_any_pointer
             right B
         }
 
-        impl[T Hash] Box[T]: Hash
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def id[T](value T) T {
             ret value
@@ -848,7 +852,7 @@ def test_generic_v0_reports_targeted_diagnostics_for_surface_cut_limits(
         _expect_ir_failure(compiler, name, source, needles)
 
 
-def test_generic_v0_trait_impl_headers_accept_applied_self_types(
+def test_generic_v0_trait_impl_bodies_accept_applied_self_types(
     compiler: CompilerHarness,
 ) -> None:
     ir = _emit_ir(
@@ -865,15 +869,23 @@ def test_generic_v0_trait_impl_headers_accept_applied_self_types(
             }
         }
 
-        impl[T Hash] Box[T]: Hash
-        impl Box[i32]: Hash
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
+        impl Hash for Box[i32] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             ret 0
         }
         """,
     )
-    assert_contains(ir, "define i32 @main()", label="generic trait impl header ir")
+    assert_contains(ir, "define i32 @main()", label="generic trait impl body ir")
 
 
 def test_generic_v0_bounded_generic_functions_require_visible_impls_and_trait_qualified_calls(
@@ -895,7 +907,11 @@ def test_generic_v0_bounded_generic_functions_require_visible_impls_and_trait_qu
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def hash_one[T Hash](value T) i32 {
             ret Hash.hash(&value)
@@ -943,7 +959,7 @@ def test_generic_v0_bound_failures_are_checked_at_instantiation_sites(
         """,
         [
             "type `generic_bound_failure_round12.Point` does not satisfy bound `generic_bound_failure_round12.Hash` for generic parameter `T` in generic function `hash_one`",
-            "Add `impl generic_bound_failure_round12.Point: generic_bound_failure_round12.Hash` in a visible module, or choose a type that already satisfies the bound.",
+            "Add `impl generic_bound_failure_round12.Hash for generic_bound_failure_round12.Point { ... }` in a visible module, or choose a type that already satisfies the bound.",
         ],
     )
 
@@ -967,7 +983,11 @@ def test_generic_v0_bounded_params_allow_plain_dot_lookup_for_bound_methods(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def hash_one[T Hash](value T) i32 {
             ret value.hash()
@@ -1009,7 +1029,11 @@ def test_generic_v0_bounded_array_projection_results_allow_plain_dot_lookup(
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         struct Box[T Hash] {
             items T[2]
@@ -1057,7 +1081,11 @@ def test_generic_v0_bounded_params_still_reject_bare_member_read_and_write(
                 }
             }
 
-            impl Record: Value
+            impl Value for Record {
+                def value() i32 {
+                    ret self.value()
+                }
+            }
 
             def bad_read[T Value](x T) i32 {
                 ret x.value
@@ -1083,7 +1111,11 @@ def test_generic_v0_bounded_params_still_reject_bare_member_read_and_write(
                 }
             }
 
-            impl Record: Value
+            impl Value for Record {
+                def value() i32 {
+                    ret self.value()
+                }
+            }
 
             def bad_write[T Value](x T) i32 {
                 var copy = x
@@ -1101,7 +1133,7 @@ def test_generic_v0_bounded_params_still_reject_bare_member_read_and_write(
         _expect_ir_failure(compiler, name, source, needles)
 
 
-def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_generic_receivers(
+def test_generic_v0_trait_impl_bodies_enable_trait_qualified_calls_for_applied_generic_receivers(
     compiler: CompilerHarness,
 ) -> None:
     ir = _emit_ir(
@@ -1120,7 +1152,11 @@ def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_
             }
         }
 
-        impl Point: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         struct Box[T] {
             value T
@@ -1130,7 +1166,11 @@ def test_generic_v0_trait_impl_headers_enable_trait_qualified_calls_for_applied_
             }
         }
 
-        impl[T Hash] Box[T]: Hash
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var box Box[Point] = Box[Point](value = Point(value = 7))
@@ -1177,8 +1217,16 @@ def test_generic_v0_struct_decl_bounds_and_generic_methods_lower_for_same_module
             }
         }
 
-        impl Point: Hash
-        impl Other: Hash
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
+        impl Hash for Other {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         struct Box[T Hash] {
             value T
@@ -1200,7 +1248,11 @@ def test_generic_v0_struct_decl_bounds_and_generic_methods_lower_for_same_module
             }
         }
 
-        impl[T Hash] Box[T]: Hash
+        impl[T Hash] Hash for Box[T] {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
 
         def main() i32 {
             var box Box[Point] = Box[Point](value = Point(value = 41))
@@ -1268,7 +1320,7 @@ def test_generic_v0_struct_decl_bounds_are_checked_when_materializing_applied_ty
         """,
         [
             "type `generic_struct_decl_bound_failure_round13.Point` does not satisfy bound `generic_struct_decl_bound_failure_round13.Hash` for generic parameter `T` in generic type `generic_struct_decl_bound_failure_round13.Box`",
-            "Add `impl generic_struct_decl_bound_failure_round13.Point: generic_struct_decl_bound_failure_round13.Hash` in a visible module, or choose a type that already satisfies the bound.",
+            "Add `impl generic_struct_decl_bound_failure_round13.Hash for generic_struct_decl_bound_failure_round13.Point { ... }` in a visible module, or choose a type that already satisfies the bound.",
         ],
     )
 

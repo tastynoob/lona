@@ -1735,6 +1735,36 @@ CompilationUnit::findVisibleTraitImpls(const ::string &traitName,
     return matches;
 }
 
+std::vector<CompilationUnit::VisibleTraitImpl>
+CompilationUnit::findVisibleTraitImpls(TypeClass *selfType) const {
+    std::vector<VisibleTraitImpl> matches;
+    std::unordered_set<std::string> active;
+
+    if (moduleInterface_) {
+        for (const auto &implDecl : moduleInterface_->traitImpls()) {
+            if (compilation_unit_impl::traitImplMatchesConcreteSelfType(
+                    *this, *this, implDecl, selfType, active)) {
+                matches.push_back(VisibleTraitImpl{&implDecl, nullptr});
+            }
+        }
+    }
+
+    for (const auto &entry : importedModules_) {
+        const auto &imported = entry.second;
+        if (!imported.interface || !imported.unit) {
+            continue;
+        }
+        for (const auto &implDecl : imported.interface->traitImpls()) {
+            if (compilation_unit_impl::traitImplMatchesConcreteSelfType(
+                    *this, *imported.unit, implDecl, selfType, active)) {
+                matches.push_back(VisibleTraitImpl{&implDecl, &imported});
+            }
+        }
+    }
+
+    return matches;
+}
+
 void
 CompilationUnit::clearInterface() {
     if (moduleInterface_) {
@@ -2042,8 +2072,8 @@ CompilationUnit::materializeAppliedStructType(
               "type `" + typeName + "` does not satisfy bound `" + boundName +
                   "` for generic parameter `" + paramName +
                   "` in generic type `" + genericTypeName + "`",
-              "Add `impl " + typeName + ": " + boundName +
-                  "` in a visible module, or choose a type that already "
+              "Add `impl " + boundName + " for " + typeName +
+                  " { ... }` in a visible module, or choose a type that already "
                   "satisfies the bound.");
     }
 

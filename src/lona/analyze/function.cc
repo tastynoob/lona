@@ -5,6 +5,7 @@
 #include "lona/ast/astnode.hh"
 #include "lona/ast/type_node_string.hh"
 #include "lona/ast/type_node_tools.hh"
+#include "lona/declare/support.hh"
 #include "lona/err/err.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/resolve/resolve.hh"
@@ -390,6 +391,45 @@ class FunctionAnalyzer {
         return nullptr;
     }
 
+    const CompilationUnit *traitImplOwnerUnit(
+        const CompilationUnit::VisibleTraitImpl &visibleImpl) const {
+        if (visibleImpl.importedModule) {
+            return visibleImpl.importedModule->unit;
+        }
+        return unit;
+    }
+
+    const ModuleInterface *traitImplOwnerInterface(
+        const CompilationUnit::VisibleTraitImpl &visibleImpl) const {
+        auto *ownerUnit = traitImplOwnerUnit(visibleImpl);
+        if (!ownerUnit || ownerUnit == unit) {
+            return nullptr;
+        }
+        return ownerUnit->interface();
+    }
+
+    std::string traitImplTemplateName(
+        const ModuleInterface::TraitImplDecl &implDecl) const {
+        return toStdString(implDecl.traitName) + " for " +
+               toStdString(implDecl.selfTypeSpelling);
+    }
+
+    const ModuleInterface::MethodTemplateDecl *findTraitImplBodyMethodTemplate(
+        const ModuleInterface::TraitImplDecl &implDecl,
+        llvm::StringRef methodName) const {
+        auto localMethodName = methodName.str();
+        auto prefix = traitMethodSlotKey(implDecl.traitName, string());
+        if (!prefix.empty() && localMethodName.rfind(prefix, 0) == 0) {
+            localMethodName.erase(0, prefix.size());
+        }
+        for (const auto &method : implDecl.bodyMethods) {
+            if (toStdString(method.localName) == localMethodName) {
+                return &method;
+            }
+        }
+        return nullptr;
+    }
+
     const ModuleInterface::TypeDecl *findVisibleTypeDeclForStructType(
         StructType *structType, const CompilationUnit **ownerUnitOut) const {
         if (ownerUnitOut) {
@@ -655,6 +695,65 @@ class FunctionAnalyzer {
                                     methodArgNames.begin(),
                                     methodArgNames.end());
         return key;
+    }
+
+    GenericInstanceKey buildTraitImplMethodInstanceKey(
+        const ModuleInterface::TraitImplDecl &implDecl, StructType *structType,
+        const CompilationUnit *ownerUnit, llvm::StringRef methodName,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc) {
+        if (!structType || !ownerUnit || !unit) {
+            internalError(
+                loc,
+                "generic trait impl method instance is missing its requester, "
+                "owner, or concrete self type",
+                "This looks like a trait impl instantiation bug.");
+        }
+        GenericInstanceKey key;
+        key.requesterModuleKey = unit->moduleKey();
+        key.ownerModuleKey = ownerUnit->moduleKey();
+        key.kind = GenericInstanceKind::Method;
+        key.templateName = traitImplTemplateName(implDecl);
+        key.methodName = string(methodName);
+        key.concreteTypeArgs = buildConcreteTypeArgNames(
+            implDecl.typeParams, genericArgs, loc,
+            "generic trait impl method `" + methodName.str() + "` instance");
+        return key;
+    }
+
+    std::unordered_map<std::string, TypeClass *> resolveTraitImplGenericArgs(
+        const ModuleInterface::TraitImplDecl &implDecl, StructType *structType,
+        const location &loc, const ModuleInterface *ownerInterface) {
+        std::unordered_map<std::string, TypeClass *> genericArgs;
+        genericArgs.reserve(implDecl.typeParams.size());
+        for (const auto &param : implDecl.typeParams) {
+            genericArgs.emplace(toStdString(param.localName), nullptr);
+        }
+        if (implDecl.typeParams.empty()) {
+            return genericArgs;
+        }
+        if (!implDecl.selfTypeNode || !structType) {
+            internalError(
+                loc,
+                "generic trait impl is missing its self type pattern or "
+                "concrete receiver type",
+                "This looks like a trait impl instantiation bug.");
+        }
+        inferGenericArgsFromPattern(
+            implDecl.selfTypeNode, structType, genericArgs, loc,
+            traitImplTemplateName(implDecl), ownerInterface);
+        for (const auto &param : implDecl.typeParams) {
+            auto paramName = toStdString(param.localName);
+            auto found = genericArgs.find(paramName);
+            if (found == genericArgs.end() || !found->second) {
+                internalError(
+                    loc,
+                    "generic trait impl `" + traitImplTemplateName(implDecl) +
+                        "` is missing a concrete type for `" + paramName + "`",
+                    "This looks like a trait impl instantiation bug.");
+            }
+        }
+        return genericArgs;
     }
 
     void recordGenericInstance(GenericInstanceKey key,
@@ -1187,6 +1286,231 @@ class FunctionAnalyzer {
         return func;
     }
 
+    Function *ensureTraitImplMethodBinding(
+        StructType *structType, const ModuleInterface::TraitImplDecl &implDecl,
+        const ModuleInterface::MethodTemplateDecl &methodTemplate,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc, const ModuleInterface *ownerInterface) {
+        if (!structType) {
+            internalError(
+                loc,
+                "trait impl method binding is missing its concrete receiver "
+                "type",
+                "This looks like a trait impl lowering bug.");
+        }
+
+        auto methodKey =
+            traitMethodSlotKey(implDecl.traitName, methodTemplate.localName);
+        if (auto *existing =
+                typeMgr->getMethodFunction(structType, toStringRef(methodKey))) {
+            return existing;
+        }
+
+        auto *funcType = structType->getTraitMethodTypeByKey(toStringRef(methodKey));
+        if (!funcType) {
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(methodTemplate.paramTypeNodes.size() + 1);
+            auto *selfPointee =
+                methodTemplate.receiverAccess == AccessKind::GetSet
+                    ? static_cast<TypeClass *>(structType)
+                    : static_cast<TypeClass *>(typeMgr->createConstType(structType));
+            argTypes.push_back(typeMgr->createPointerType(selfPointee));
+            for (auto *paramTypeNode : methodTemplate.paramTypeNodes) {
+                argTypes.push_back(substituteGenericSignatureType(
+                    paramTypeNode, genericArgs, loc,
+                    toStdString(methodTemplate.localName), ownerInterface));
+            }
+            auto *retType = substituteGenericSignatureType(
+                methodTemplate.returnTypeNode, genericArgs, loc,
+                toStdString(methodTemplate.localName), ownerInterface);
+            auto paramBindingKinds = methodTemplate.paramBindingKinds;
+            paramBindingKinds.insert(paramBindingKinds.begin(),
+                                     BindingKind::Value);
+            funcType = typeMgr->getOrCreateFunctionType(
+                argTypes, retType, paramBindingKinds, AbiKind::Native);
+            if (!funcType) {
+                internalError(
+                    loc,
+                    "failed to build concrete trait impl method type for `" +
+                        toStdString(methodTemplate.localName) + "`",
+                    "This looks like a trait impl instantiation bug.");
+            }
+            structType->addTraitMethodType(
+                toStringRef(implDecl.traitName),
+                toStringRef(methodTemplate.localName), funcType,
+                methodTemplate.paramNames);
+        }
+
+        auto llvmName = declarationsupport_impl::resolveTraitMethodSymbolName(
+            structType, toStringRef(implDecl.traitName),
+            toStringRef(methodTemplate.localName));
+        auto *llvmFunc = global->module.getFunction(llvmName);
+        if (!llvmFunc) {
+            llvmFunc = llvm::Function::Create(
+                getFunctionAbiLLVMType(*typeMgr, funcType, true),
+                llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
+                global->module);
+            annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        }
+
+        auto *func = new Function(llvmFunc, funcType, methodTemplate.paramNames,
+                                  true);
+        typeMgr->bindMethodFunction(structType, toStringRef(methodKey), func);
+        if (!global->getObj(string(llvmName))) {
+            global->addObj(string(llvmName), func);
+        }
+        return func;
+    }
+
+    Function *instantiateGenericTraitImplMethod(
+        StructType *structType,
+        const CompilationUnit::VisibleTraitImpl &visibleImpl,
+        const ModuleInterface::MethodTemplateDecl &methodTemplate,
+        const std::unordered_map<std::string, TypeClass *> &genericArgs,
+        const location &loc) {
+        auto *implDecl = visibleImpl.implDecl;
+        auto *ownerUnit = traitImplOwnerUnit(visibleImpl);
+        if (!implDecl || !ownerUnit) {
+            internalError(
+                loc,
+                "generic trait impl method lookup is missing its owner "
+                "metadata",
+                "This looks like a trait impl instantiation bug.");
+        }
+        if (!methodTemplate.syntaxDecl) {
+            internalError(
+                loc,
+                "generic trait impl method `" +
+                    toStdString(methodTemplate.localName) +
+                    "` is missing its template AST",
+                "This looks like a trait impl registration bug.");
+        }
+
+        auto *func = ensureTraitImplMethodBinding(
+            structType, *implDecl, methodTemplate, genericArgs, loc,
+            traitImplOwnerInterface(visibleImpl));
+        auto symbolName =
+            func->getllvmValue()
+                ? func->getllvmValue()->getName().str()
+                : declarationsupport_impl::resolveTraitMethodSymbolName(
+                      structType, toStringRef(implDecl->traitName),
+                      toStringRef(methodTemplate.localName));
+        auto instanceKey = buildTraitImplMethodInstanceKey(
+            *implDecl, structType, ownerUnit,
+            toStringRef(methodTemplate.localName), genericArgs, loc);
+        const bool shouldEmit = claimGenericInstanceEmission(instanceKey);
+        recordGenericInstance(instanceKey, ownerUnit,
+                              shouldEmit ? std::vector<string>{string(symbolName)}
+                                         : std::vector<string>{});
+        if (!shouldEmit) {
+            return func;
+        }
+
+        auto &runtimeState = genericRuntimeStateFor(ownerModule);
+        if (runtimeState.emittedInstances.count(instanceKey) != 0 ||
+            runtimeState.inProgressInstances.count(instanceKey) != 0 ||
+            findOwnerModuleFunction(symbolName)) {
+            return func;
+        }
+
+        GenericFunctionEmissionGuard guard(runtimeState, instanceKey);
+        std::vector<string> genericTypeParams;
+        std::unordered_map<std::string, std::string> genericTypeParamBounds;
+        genericTypeParams.reserve(implDecl->typeParams.size());
+        genericTypeParamBounds.reserve(implDecl->typeParams.size());
+        for (const auto &param : implDecl->typeParams) {
+            auto paramName = toStdString(param.localName);
+            genericTypeParams.push_back(paramName);
+            if (!param.boundTraitName.empty()) {
+                genericTypeParamBounds.emplace(
+                    paramName, toStdString(param.boundTraitName));
+            }
+        }
+
+        auto resolvedModule = resolveGenericMethodInstance(
+            global, ownerUnit, methodTemplate.syntaxDecl, string(symbolName),
+            toStdString(structType->full_name), std::move(genericTypeParams),
+            std::move(genericTypeParamBounds),
+            traitImplOwnerInterface(visibleImpl), genericArgs);
+        if (!resolvedModule || resolvedModule->functions().size() != 1) {
+            internalError(
+                loc,
+                "generic trait impl method instance `" + symbolName +
+                    "` did not resolve to exactly one function body",
+                "This looks like a trait impl resolve bug.");
+        }
+
+        auto *hirInstance = analyzeResolvedFunction(
+            global, ownerModule, unit, *resolvedModule->functions().front());
+        if (!findOwnerModuleFunction(symbolName)) {
+            ownerModule->addFunction(hirInstance);
+        }
+        guard.markCompleted();
+        return func;
+    }
+
+    void ensureVisibleTraitImplBodyMethods(
+        const std::vector<CompilationUnit::VisibleTraitImpl> &visibleImpls,
+        StructType *selfType, const location &loc,
+        llvm::StringRef methodName = llvm::StringRef(),
+        bool instantiateAllMethods = false,
+        bool instantiateBodies = false) {
+        for (const auto &visibleImpl : visibleImpls) {
+            auto *implDecl = visibleImpl.implDecl;
+            if (!implDecl || !implDecl->hasBody || implDecl->bodyMethods.empty()) {
+                continue;
+            }
+
+            if (implDecl->isGeneric()) {
+                auto genericArgs = resolveTraitImplGenericArgs(
+                    *implDecl, selfType, loc, traitImplOwnerInterface(visibleImpl));
+                if (instantiateAllMethods) {
+                    for (const auto &method : implDecl->bodyMethods) {
+                        if (instantiateBodies) {
+                            instantiateGenericTraitImplMethod(
+                                selfType, visibleImpl, method, genericArgs, loc);
+                        } else {
+                            (void)ensureTraitImplMethodBinding(
+                                selfType, *implDecl, method, genericArgs, loc,
+                                traitImplOwnerInterface(visibleImpl));
+                        }
+                    }
+                    continue;
+                }
+                if (auto *methodTemplate =
+                        findTraitImplBodyMethodTemplate(*implDecl, methodName)) {
+                    if (instantiateBodies) {
+                        instantiateGenericTraitImplMethod(
+                            selfType, visibleImpl, *methodTemplate, genericArgs,
+                            loc);
+                    } else {
+                        (void)ensureTraitImplMethodBinding(
+                            selfType, *implDecl, *methodTemplate, genericArgs,
+                            loc, traitImplOwnerInterface(visibleImpl));
+                    }
+                    continue;
+                }
+                continue;
+            }
+
+            if (instantiateAllMethods) {
+                for (const auto &method : implDecl->bodyMethods) {
+                    (void)ensureTraitImplMethodBinding(
+                        selfType, *implDecl, method, {}, loc,
+                        traitImplOwnerInterface(visibleImpl));
+                }
+                continue;
+            }
+            if (auto *methodTemplate =
+                    findTraitImplBodyMethodTemplate(*implDecl, methodName)) {
+                (void)ensureTraitImplMethodBinding(
+                    selfType, *implDecl, *methodTemplate, {}, loc,
+                    traitImplOwnerInterface(visibleImpl));
+                continue;
+            }
+        }
+    }
+
     Function *instantiateGenericMethod(
         StructType *structType, const GenericMethodTemplateLookup &lookup,
         const std::unordered_map<std::string, TypeClass *> &genericArgs,
@@ -1559,6 +1883,16 @@ class FunctionAnalyzer {
             }
             auto traitMethods =
                 owner.structType->findTraitMethodsByLocalName(fieldName);
+            if (traitMethods.empty() && unit) {
+                auto visibleImpls = unit->findVisibleTraitImpls(owner.structType);
+                if (!visibleImpls.empty()) {
+                    ensureVisibleTraitImplBodyMethods(
+                        visibleImpls, owner.structType, location(),
+                        llvm::StringRef(fieldName), false, false);
+                    traitMethods =
+                        owner.structType->findTraitMethodsByLocalName(fieldName);
+                }
+            }
             if (traitMethods.size() == 1) {
                 auto *entry = traitMethods.front();
                 if (resolvedMethodName) {
@@ -2413,6 +2747,15 @@ class FunctionAnalyzer {
                     instantiateGenericStructMethod(structType, methodName,
                                                    loc);
             }
+            if (unit && structType->getTraitMethodTypeByKey(methodName)) {
+                auto visibleImpls = unit->findVisibleTraitImpls(structType);
+                if (!visibleImpls.empty()) {
+                    ensureVisibleTraitImplBodyMethods(
+                        visibleImpls, structType, loc, methodName, false, true);
+                    methodFunc =
+                        typeMgr->getMethodFunction(structType, methodName);
+                }
+            }
             auto *funcType = methodFunc ? methodFunc->getType()->as<FuncType>()
                                         : getStructMethodTypeByKey(structType,
                                                                    methodName);
@@ -2650,7 +2993,8 @@ class FunctionAnalyzer {
                   "trait object construction expects a concrete struct value "
                   "for trait `" +
                       toStdString(traitDecl->exportedName) + "`",
-                  "Only struct types can currently satisfy `impl Type: Trait`.");
+                  "Only struct types can currently satisfy "
+                  "`impl Trait for Type { ... }`.");
         }
 
         auto visibleImpls =
@@ -2660,11 +3004,14 @@ class FunctionAnalyzer {
                   "type `" + describeResolvedType(selfType) +
                       "` does not implement trait `" +
                       toStdString(traitDecl->exportedName) + "`",
-                  "Add `impl " + describeResolvedType(selfType) + ": " +
-                      toStdString(traitDecl->exportedName) +
-                      "` in a visible module before constructing `" +
+                  "Add `impl " + toStdString(traitDecl->exportedName) +
+                      " for " + describeResolvedType(selfType) +
+                      " { ... }` in a visible module before constructing `" +
                       describeResolvedType(targetType) + "`.");
         }
+        ensureVisibleTraitImplBodyMethods(visibleImpls, selfType,
+                                          borrowSyntax->expr->loc,
+                                          llvm::StringRef(), true, true);
 
         TypeClass *resultDynType = typeMgr->createDynTraitType(
             dynType->traitName(),
@@ -4328,9 +4675,9 @@ class FunctionAnalyzer {
                       toStdString(param.boundTraitName) +
                       "` for generic parameter `" +
                       toStdString(param.localName) + "` in " + context,
-                  "Add `impl " + describeResolvedType(found->second) + ": " +
-                      toStdString(param.boundTraitName) +
-                      "` in a visible module, or choose a type that already "
+                  "Add `impl " + toStdString(param.boundTraitName) +
+                      " for " + describeResolvedType(found->second) +
+                      " { ... }` in a visible module, or choose a type that already "
                       "satisfies the bound.");
         }
     }
@@ -4711,10 +5058,13 @@ class FunctionAnalyzer {
                   "type `" + describeResolvedType(receiverStructType) +
                       "` does not implement trait `" +
                       toStdString(traitBinding->resolvedName()) + "`",
-                  "Add `impl " + describeResolvedType(receiverStructType) +
-                      ": " + toStdString(traitBinding->resolvedName()) +
-                      "` in a visible module.");
+                  "Add `impl " + toStdString(traitBinding->resolvedName()) +
+                      " for " + describeResolvedType(receiverStructType) +
+                      " { ... }` in a visible module.");
         }
+        ensureVisibleTraitImplBodyMethods(visibleImpls, receiverStructType,
+                                          receiverSpec.loc,
+                                          toStringRef(fieldName), false, true);
 
         auto methodLookupName = resolveConcreteTraitMethodLookupName(
             receiverStructType, *traitDecl, fieldName);
@@ -4728,8 +5078,7 @@ class FunctionAnalyzer {
                       displayTraitReceiverSegment(
                           toStringRef(traitBinding->resolvedName())) +
                       " for " + describeResolvedType(receiverStructType) +
-                      " { ... }`, or keep a matching inherent method for the "
-                      "header-only impl form.");
+                      " { ... }`.");
         }
 
         CallArgList remainingArgs;
@@ -4811,11 +5160,13 @@ class FunctionAnalyzer {
                   "type `" + describeResolvedType(receiverStructType) +
                       "` does not implement trait `" +
                       toStdString(traitDecl->exportedName) + "`",
-                  "Add `impl " + displayTraitReceiverSegment(
-                                         toStringRef(traitDecl->exportedName)) +
-                      " for " + describeResolvedType(receiverStructType) +
-                      "` in a visible module.");
+                  "Add `impl " + toStdString(traitDecl->exportedName) + " for " +
+                      describeResolvedType(receiverStructType) +
+                      " { ... }` in a visible module.");
         }
+        ensureVisibleTraitImplBodyMethods(visibleImpls, receiverStructType,
+                                          traitSelector->loc,
+                                          toStringRef(fieldName), false, true);
 
         auto methodLookupName = resolveConcreteTraitMethodLookupName(
             receiverStructType, *traitDecl, fieldName);
@@ -4829,8 +5180,7 @@ class FunctionAnalyzer {
                       displayTraitReceiverSegment(
                           toStringRef(traitDecl->exportedName)) +
                       " for " + describeResolvedType(receiverStructType) +
-                      " { ... }`, or keep a matching inherent method for the "
-                      "header-only impl form.");
+                      " { ... }`.");
         }
 
         auto normalizedArgs = normalizeCallArgs(node->args, node->loc);

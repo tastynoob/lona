@@ -309,7 +309,11 @@ struct {point_name} {{
     }}
 }}
 
-impl {point_name}: {trait_name}
+impl {trait_name} for {point_name} {{
+    def hash() i32 {{
+        ret self.value + {point_bias}
+    }}
+}}
 
 struct {box_name}[T] {{
     value T
@@ -323,7 +327,11 @@ struct {box_name}[T] {{
     }}
 }}
 
-impl[T {trait_name}] {box_name}[T]: {trait_name}
+impl[T {trait_name}] {trait_name} for {box_name}[T] {{
+    def hash() i32 {{
+        ret {trait_name}.hash(&self.value) + {box_bias}
+    }}
+}}
 
 def id_{case_id}[T](value T) T {{
     ret value

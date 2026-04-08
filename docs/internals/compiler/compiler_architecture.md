@@ -147,11 +147,11 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 
 其中：
 
-- `collect-declarations` 收集当前模块和其直接 import 模块的声明，以及类型/函数/全局/trait/impl header 的可见接口
+- `collect-declarations` 收集当前模块和其直接 import 模块的声明，以及类型/函数/全局/trait/impl declaration 的可见接口
 - `collect-declarations` 也会在接口层验证 trait 满足性、orphan rule 和 visible impl coherence
 - `define-globals` 为当前模块的全局变量补齐 LLVM global storage 和静态 initializer
 - `lower-hir` 执行 resolve 和 HIR 分析
-- `lower-hir` 也负责把 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` / `value.Trait.method(...)` 绑定到 concrete trait impl method；如果是 header-only impl，则回退到 concrete inherent method；同时也会把 `Trait dyn` / `h.method()` lower 到专用 trait-object HIR 节点
+- `lower-hir` 也负责把 `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` / `value.Trait.method(...)` 绑定到 concrete trait impl method；同时也会把 `Trait dyn` / `h.method()` lower 到专用 trait-object HIR 节点
 - `emit-llvm` 把函数级 HIR lowering 成 LLVM IR
 - `emit-llvm` 也会为 `Trait dyn` 生成 witness table，并把动态调用降成间接 dispatch
 - `optimize-llvm` 应用 LLVM 优化 pipeline
@@ -176,7 +176,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 - `declare/function.cc` 负责函数签名声明、extern C 约束和 LLVM function materialization
 - `declare/struct.cc` 负责结构体声明、字段规则和成员布局收集
 - `declare/scanner.cc` 负责结构体成员收集、类型扫描、单模块声明收集入口
-- `declare/interface.cc` 负责模块接口收集与接口物化，包括 trait declaration、impl header、trait 满足性检查和 visible impl coherence
+- `declare/interface.cc` 负责模块接口收集与接口物化，包括 trait declaration、impl declaration、trait 满足性检查和 visible impl coherence
 - `declare/global.cc` 负责全局变量定义与静态 initializer lowering
 - `emit/debug.cc` 负责 LLVM debug info 构造
 - `emit/codegen.cc` 负责函数级 LLVM lowering 与模块级 IR emission，包括 trait witness table 和 `Trait dyn` lowering
@@ -239,7 +239,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 职责：
 
 - 缓存模块接口级语义信息
-- 保存结构体类型声明、trait declaration、impl header 和函数签名
+- 保存结构体类型声明、trait declaration、impl declaration 和函数签名
 - 保存派生类型，如指针、数组、函数类型和 `DynTraitType`
 
 当前缓存的是“结构化语义接口”，不是简单字符串表，也不是 LLVM 对象。
@@ -248,7 +248,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 
 - 让多个 importer 在同一会话中复用同一个模块接口
 - 避免重复扫描同一模块的接口定义
-- 让 trait / impl header 变化能稳定进入 `interfaceHash`，从而打断 importer 复用
+- 让 trait / impl declaration 变化能稳定进入 `interfaceHash`，从而打断 importer 复用
 
 ### 3.4 `ModuleCache`
 
@@ -265,7 +265,7 @@ Builder 解决的是“这些模块应该怎么编、哪些可以复用、最终
 对 trait v0 来说，这层还意味着：
 
 - importer 看到的是结构化 trait 接口，而不是临时 AST 片段
-- trait 方法签名与 visible impl header 的变化必须经过接口缓存传播
+- trait 方法签名与 visible impl declaration 的变化必须经过接口缓存传播
 - same-session 增量复用要同时服从 `interfaceHash` 和模块 artifact 的 entry-role 区分
 
 ### 3.5 `ModuleArtifact`

@@ -259,7 +259,11 @@ def trait_dependency_text(
         "}\n\n"
     )
     if include_impl:
-        text += "impl Point: Hash\n\n"
+        text += (
+            "impl Hash for Point {\n"
+            f"{method_def}"
+            "}\n\n"
+        )
     text += (
         "def make() Point {\n"
         f"    ret Point(value = {seed_value})\n"
@@ -499,7 +503,7 @@ def run_trait_dyn_signature_interface_hash_case(
     )
 
 
-def run_trait_dyn_impl_header_interface_hash_case(
+def run_trait_dyn_impl_declaration_interface_hash_case(
     rng: random.Random, runner: SessionRunner, root: Path
 ) -> None:
     dep_path = root / "dep.lo"
@@ -524,7 +528,7 @@ def run_trait_dyn_impl_header_interface_hash_case(
     expect_compile_ok(result, compiled=1, reused=1)
     expect(
         "@__lona_trait_witness__dep_2eHash__dep_2ePoint" in result["stdout"],
-        "expected restoring the visible impl header to rebuild the caller dyn witness path",
+        "expected restoring the visible impl declaration to rebuild the caller dyn witness path",
     )
 
 
@@ -548,7 +552,11 @@ def run_same_module_generic_runtime_case(
             "        ret self.value + 1\n"
             "    }\n"
             "}\n\n"
-            "impl Point: Hash\n\n"
+            "impl Hash for Point {\n"
+            "    def hash() i32 {\n"
+            "        ret self.value + 1\n"
+            "    }\n"
+            "}\n\n"
             "struct Box[T] {\n"
             "    value T\n\n"
             "    def get() T {\n"
@@ -558,7 +566,11 @@ def run_same_module_generic_runtime_case(
             f"        ret Hash.hash(&self.value) + {first_bonus}\n"
             "    }\n"
             "}\n\n"
-            "impl[T Hash] Box[T]: Hash\n\n"
+            "impl[T Hash] Hash for Box[T] {\n"
+            "    def hash() i32 {\n"
+            f"        ret Hash.hash(&self.value) + {first_bonus}\n"
+            "    }\n"
+            "}\n\n"
             "def id[T](value T) T {\n"
             "    ret value\n"
             "}\n\n"
@@ -601,7 +613,11 @@ def run_same_module_generic_runtime_case(
             "        ret self.value + 1\n"
             "    }\n"
             "}\n\n"
-            "impl Point: Hash\n\n"
+            "impl Hash for Point {\n"
+            "    def hash() i32 {\n"
+            "        ret self.value + 1\n"
+            "    }\n"
+            "}\n\n"
             "struct Box[T] {\n"
             "    value T\n\n"
             "    def get() T {\n"
@@ -611,7 +627,11 @@ def run_same_module_generic_runtime_case(
             f"        ret Hash.hash(&self.value) + {second_bonus}\n"
             "    }\n"
             "}\n\n"
-            "impl[T Hash] Box[T]: Hash\n\n"
+            "impl[T Hash] Hash for Box[T] {\n"
+            "    def hash() i32 {\n"
+            f"        ret Hash.hash(&self.value) + {second_bonus}\n"
+            "    }\n"
+            "}\n\n"
             "def id[T](value T) T {\n"
             "    ret value\n"
             "}\n\n"
@@ -891,9 +911,9 @@ def main() -> int:
                 ),
             )
             suite.add(
-                "trait-dyn-impl-header-interface-hash-invalidation",
-                lambda: run_trait_dyn_impl_header_interface_hash_case(
-                    rng, runner, root / "trait_dyn_impl_header_interface"
+                "trait-dyn-impl-declaration-interface-hash-invalidation",
+                lambda: run_trait_dyn_impl_declaration_interface_hash_case(
+                    rng, runner, root / "trait_dyn_impl_declaration_interface"
                 ),
             )
             suite.add(

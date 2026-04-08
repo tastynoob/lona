@@ -2065,20 +2065,6 @@ class ModuleResolver {
             return;
         }
 
-        auto *selfBase = traitImplSelfTypeBase(node->selfType);
-        if (!selfBase) {
-            return;
-        }
-
-        std::string moduleName;
-        std::string memberName;
-        if (splitBaseTypeName(selfBase, moduleName, memberName)) {
-            return;
-        }
-        if (!dynamic_cast<BaseTypeNode *>(node->selfType)) {
-            return;
-        }
-
         auto *selfType = unit_->resolveType(typeMgr_, node->selfType);
         auto *structType = selfType ? selfType->as<StructType>() : nullptr;
         auto *body = dynamic_cast<AstStatList *>(node->body);

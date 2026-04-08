@@ -214,6 +214,8 @@ public:
         const std::string &traitName, TypeClass *selfType) const {
         return findVisibleTraitImpls(string(traitName), selfType);
     }
+    std::vector<VisibleTraitImpl> findVisibleTraitImpls(
+        TypeClass *selfType) const;
     TypeClass *findResolvedType(TypeNode *node) const;
     void cacheResolvedType(TypeNode *node, TypeClass *type) const;
     void clearResolvedTypes();

@@ -1142,24 +1142,6 @@ class InterfaceCollector {
                toStdString(selfRef.resolvedName) + "`";
     }
 
-    void validateTraitImplBodySupport(AstTraitImplDecl *traitImplDecl,
-                                      const ResolvedTraitRef &traitRef,
-                                      const ResolvedSelfTypeRef &selfRef) {
-        if (!traitImplDecl || !traitImplDecl->hasBody()) {
-            return;
-        }
-        if (!traitImplDecl->hasTypeParams() && selfRef.localToUnit &&
-            selfRef.concreteMethodValidation) {
-            return;
-        }
-        error(traitImplDecl->loc,
-              "trait impl body " + describeTraitImplContext(traitRef, selfRef) +
-                  " currently requires a monomorphic local concrete struct impl",
-              "Use `impl Trait for LocalStruct { ... }` for a local concrete "
-              "struct for now. Generic or imported impl forms still need the "
-              "header-only impl form in this first cut.");
-    }
-
     std::vector<AstFuncDecl *> collectTraitImplBodyMethods(
         AstTraitImplDecl *traitImplDecl, const ResolvedTraitRef &traitRef,
         const ResolvedSelfTypeRef &selfRef) {
@@ -1169,8 +1151,6 @@ class InterfaceCollector {
         if (!body) {
             return methods;
         }
-
-        validateTraitImplBodySupport(traitImplDecl, traitRef, selfRef);
 
         std::unordered_set<std::string> seenMethods;
         for (auto *stmt : body->getBody()) {
@@ -1217,7 +1197,7 @@ class InterfaceCollector {
         if (!collectDotLikeSegments(traitSyntax, segments) || segments.empty()) {
             error(loc, "invalid trait reference in impl declaration",
                   "Use a trait name like `Hash` or `dep.Hash` in "
-                  "`impl Type: Trait` or `impl Trait for Type`.");
+                  "`impl Trait for Type { ... }`.");
         }
 
         if (segments.size() == 1) {
@@ -1266,8 +1246,8 @@ class InterfaceCollector {
         if (!base) {
             error(loc,
                   "trait impl self type must name a struct type",
-                  "Write `impl Point: Hash`, `impl Hash for Point`, or "
-                  "`impl[T Trait] Box[T]: Trait`, not pointers, arrays, "
+                  "Write `impl Hash for Point` or "
+                  "`impl[T Trait] Hash for Box[T]`, not pointers, arrays, "
                   "tuples, or function types.");
         }
 
@@ -1314,8 +1294,8 @@ class InterfaceCollector {
             error(loc,
                   "generic impl self type requires declaration-style type arguments: `" +
                       toStdString(typeDecl->exportedName) + "`",
-                  "Write `impl[T Trait] Box[T]: Trait`, `impl Box[i32]: Trait`, "
-                  "or the corresponding `impl Trait for ...` spelling.");
+                  "Write `impl[T Trait] Trait for Box[T]` or "
+                  "`impl Trait for Box[i32]`.");
         }
 
         StructType *resolvedStructType = nullptr;
@@ -1449,25 +1429,13 @@ class InterfaceCollector {
 
     void validateTraitBodyMethodMatch(
         const ModuleInterface::TraitDecl &traitDecl,
-        const ModuleInterface::TraitMethodDecl &method, StructType *selfType,
-        const location &implLoc) {
-        auto methodKey =
-            traitMethodSlotKey(traitDecl.exportedName, method.localName);
-        auto *methodType = selfType->getTraitMethodTypeByKey(methodKey);
+        const ModuleInterface::TraitMethodDecl &method,
+        const ModuleInterface::MethodTemplateDecl &bodyMethod,
+        const ResolvedSelfTypeRef &selfRef, const location &implLoc) {
         const auto implLabel =
-            "`" + describeResolvedType(selfType) + ": " +
+            "`" + toStdString(selfRef.resolvedName) + ": " +
             toStdString(traitDecl.exportedName) + "`";
-        if (!methodType) {
-            error(implLoc,
-                  "impl " + implLabel + " is missing method `" +
-                      toStdString(method.localName) + "`",
-                  "Define `def " + toStdString(method.localName) +
-                      "(...) { ... }` inside this impl body.");
-        }
-
-        auto actualReceiverAccess = inferMethodReceiverAccess(
-            selfType, methodType, implLoc, toStringRef(method.localName));
-        if (actualReceiverAccess != method.receiverAccess) {
+        if (bodyMethod.receiverAccess != method.receiverAccess) {
             error(
                 implLoc,
                 "impl " + implLabel + " has receiver access mismatch for `" +
@@ -1477,9 +1445,7 @@ class InterfaceCollector {
                     toStdString(method.localName) + "`.");
         }
 
-        const auto &argTypes = methodType->getArgTypes();
-        const std::size_t actualParamCount =
-            argTypes.empty() ? 0 : argTypes.size() - 1;
+        const std::size_t actualParamCount = bodyMethod.paramTypeSpellings.size();
         if (actualParamCount != method.paramTypeSpellings.size()) {
             error(implLoc,
                   "impl " + implLabel + " has parameter count mismatch for `" +
@@ -1490,8 +1456,7 @@ class InterfaceCollector {
         }
 
         for (std::size_t i = 0; i < actualParamCount; ++i) {
-            const auto actualBindingKind = methodType->getArgBindingKind(i + 1);
-            if (actualBindingKind != method.paramBindingKinds[i]) {
+            if (bodyMethod.paramBindingKinds[i] != method.paramBindingKinds[i]) {
                 error(implLoc,
                       "impl " + implLabel +
                           " has parameter binding mismatch for `" +
@@ -1503,27 +1468,23 @@ class InterfaceCollector {
                           "` at that position.");
             }
 
-            const auto actualTypeName =
-                describeResolvedTypeName(argTypes[i + 1]);
-            if (actualTypeName != method.paramTypeSpellings[i]) {
+            if (bodyMethod.paramTypeSpellings[i] != method.paramTypeSpellings[i]) {
                 error(implLoc,
                       "impl " + implLabel + " has parameter type mismatch for `" +
                           toStdString(method.localName) + "` at index " +
                           std::to_string(i) + ": expected `" +
                           toStdString(method.paramTypeSpellings[i]) + "`, got `" +
-                          actualTypeName + "`",
+                          toStdString(bodyMethod.paramTypeSpellings[i]) + "`",
                       "Match the trait method parameter types exactly.");
             }
         }
 
-        const auto actualReturnTypeName =
-            describeResolvedTypeName(methodType->getRetType());
-        if (actualReturnTypeName != method.returnTypeSpelling) {
+        if (bodyMethod.returnTypeSpelling != method.returnTypeSpelling) {
             error(implLoc,
                   "impl " + implLabel + " has return type mismatch for `" +
                       toStdString(method.localName) + "`: expected `" +
                       toStdString(method.returnTypeSpelling) + "`, got `" +
-                      actualReturnTypeName + "`",
+                      toStdString(bodyMethod.returnTypeSpelling) + "`",
                   "Match the trait method return type exactly.");
         }
     }
@@ -1790,8 +1751,8 @@ class InterfaceCollector {
                                                traitImplDecl->loc);
             if (!traitRef.localToUnit && !selfRef.localToUnit) {
                 error(traitImplDecl->loc,
-                      "impl `" + toStdString(selfRef.resolvedName) + ": " +
-                          toStdString(traitRef.resolvedName) +
+                      "impl `" + toStdString(traitRef.resolvedName) + " for " +
+                          toStdString(selfRef.resolvedName) +
                           "` violates the trait orphan rule",
                       "At least one side of an impl must be defined in the "
                       "current module.");
@@ -1800,7 +1761,12 @@ class InterfaceCollector {
             if (traitImplDecl->hasBody()) {
                 auto bodyMethods =
                     collectTraitImplBodyMethods(traitImplDecl, traitRef, selfRef);
+                auto bodyMethodInterfaces = collectTraitImplBodyMethodInterfaces(
+                    bodyMethods, selfRef.structType, implTypeParams);
                 std::unordered_map<std::string, AstFuncDecl *> bodyMethodMap;
+                std::unordered_map<std::string,
+                                   const ModuleInterface::MethodTemplateDecl *>
+                    bodyMethodInterfaceMap;
                 for (auto *methodDecl : bodyMethods) {
                     bodyMethodMap.emplace(toStdString(methodDecl->name),
                                           methodDecl);
@@ -1816,21 +1782,44 @@ class InterfaceCollector {
                                   "` may appear in this impl body.");
                     }
                 }
+                for (const auto &methodDecl : bodyMethodInterfaces) {
+                    bodyMethodInterfaceMap.emplace(toStdString(methodDecl.localName),
+                                                   &methodDecl);
+                }
                 for (const auto &method : traitRef.decl->methods) {
                     if (bodyMethodMap.find(toStdString(method.localName)) ==
                         bodyMethodMap.end()) {
                         error(traitImplDecl->loc,
-                              "impl `" + toStdString(selfRef.resolvedName) +
-                                  ": " + toStdString(traitRef.resolvedName) +
+                              "impl `" + toStdString(traitRef.resolvedName) +
+                                  " for " + toStdString(selfRef.resolvedName) +
                                   "` is missing method `" +
                                   toStdString(method.localName) + "`",
                               "Define `def " + toStdString(method.localName) +
                                   "(...) { ... }` inside this impl body.");
                     }
+                    auto foundInterface =
+                        bodyMethodInterfaceMap.find(toStdString(method.localName));
+                    if (foundInterface == bodyMethodInterfaceMap.end() ||
+                        !foundInterface->second) {
+                        internalError(traitImplDecl->loc,
+                                      "trait impl body method metadata is "
+                                      "missing during validation",
+                                      "This looks like a trait impl interface "
+                                      "collection bug.");
+                    }
                     validateTraitBodyMethodMatch(*traitRef.decl, method,
-                                                 selfRef.structType,
+                                                 *foundInterface->second, selfRef,
                                                  traitImplDecl->loc);
                 }
+
+                validated.push_back(ValidatedTraitImpl{
+                    ModuleInterface::TraitImplDecl{
+                        selfRef.resolvedName, traitImplDecl->selfType,
+                        traitRef.resolvedName, traitImplDecl->hasBody(),
+                        std::move(implTypeParams), traitImplDecl,
+                        std::move(bodyMethodInterfaces)},
+                    traitImplDecl->loc});
+                continue;
             } else if (selfRef.concreteMethodValidation) {
                 for (const auto &method : traitRef.decl->methods) {
                     validateTraitMethodMatch(*traitRef.decl, method,
@@ -1844,7 +1833,8 @@ class InterfaceCollector {
                                                traitImplDecl->selfType,
                                                traitRef.resolvedName,
                                                traitImplDecl->hasBody(),
-                                               std::move(implTypeParams)},
+                                               std::move(implTypeParams),
+                                               traitImplDecl, {}},
                 traitImplDecl->loc});
         }
 
@@ -1858,7 +1848,9 @@ class InterfaceCollector {
                                          implDecl.decl.selfTypeNode,
                                          implDecl.decl.traitName,
                                          implDecl.decl.hasBody,
-                                         implDecl.decl.typeParams);
+                                         implDecl.decl.typeParams,
+                                         implDecl.decl.syntaxDecl,
+                                         implDecl.decl.bodyMethods);
         }
     }
 
@@ -2166,6 +2158,36 @@ class InterfaceCollector {
         return collected;
     }
 
+    std::vector<ModuleInterface::MethodTemplateDecl>
+    collectTraitImplBodyMethodInterfaces(
+        const std::vector<AstFuncDecl *> &bodyMethods, StructType *selfType,
+        const std::vector<ModuleInterface::GenericParamDecl> &implTypeParams) {
+        std::vector<ModuleInterface::MethodTemplateDecl> methods;
+        methods.reserve(bodyMethods.size());
+        for (auto *funcDecl : bodyMethods) {
+            auto collected =
+                collectFunctionInterface(funcDecl, selfType, &implTypeParams);
+            auto paramBindingKinds = std::move(collected.paramBindingKinds);
+            if (!paramBindingKinds.empty()) {
+                paramBindingKinds.erase(paramBindingKinds.begin());
+            }
+            methods.push_back(ModuleInterface::MethodTemplateDecl{
+                funcDecl->name,
+                funcDecl->receiverAccess,
+                std::move(collected.paramNames),
+                std::move(paramBindingKinds),
+                std::move(collected.paramTypeNodes),
+                std::move(collected.paramTypeSpellings),
+                collected.returnTypeNode,
+                std::move(collected.returnTypeSpelling),
+                std::move(collected.typeParams),
+                implTypeParams.size(),
+                funcDecl,
+            });
+        }
+        return methods;
+    }
+
     void declareFunctions() {
         for (auto *structDecl : structDecls_) {
             auto *typeDecl =
@@ -2218,42 +2240,6 @@ class InterfaceCollector {
                                         funcDecl->name.size()),
                         funcType, extractParamNames(funcDecl));
                 }
-            }
-        }
-
-        for (auto *traitImplDecl : traitImplDecls_) {
-            if (!traitImplDecl || !traitImplDecl->hasBody()) {
-                continue;
-            }
-            auto implTypeParams = collectGenericParams(
-                traitImplDecl->typeParams,
-                GenericParamContext::TraitImplHeader);
-            auto traitRef = resolveTraitRef(traitImplDecl->trait,
-                                            traitImplDecl->loc);
-            auto selfRef = resolveImplSelfType(traitImplDecl->selfType,
-                                               implTypeParams,
-                                               traitImplDecl->loc);
-            auto bodyMethods =
-                collectTraitImplBodyMethods(traitImplDecl, traitRef, selfRef);
-            if (!selfRef.localToUnit || !selfRef.concreteMethodValidation ||
-                !selfRef.structType) {
-                continue;
-            }
-
-            for (auto *funcDecl : bodyMethods) {
-                auto methodName = llvm::StringRef(funcDecl->name.tochara(),
-                                                  funcDecl->name.size());
-                auto collected =
-                    collectFunctionInterface(funcDecl, selfRef.structType);
-                if (!collected.type) {
-                    error(funcDecl->loc,
-                          "generic methods are not supported in trait impl body " +
-                              describeTraitImplContext(traitRef, selfRef),
-                          "Keep trait impl methods monomorphic for now.");
-                }
-                selfRef.structType->addTraitMethodType(
-                    toStringRef(traitRef.resolvedName), methodName,
-                    collected.type, extractParamNames(funcDecl));
             }
         }
 
@@ -2535,6 +2521,73 @@ materializeStructTraitMethodBindings(TypeTable *typeMgr,
     }
 }
 
+TypeClass *
+materializeTraitMethodTypeByNode(TypeTable *typeMgr, CompilationUnit &unit,
+                                 TypeNode *typeNode) {
+    if (!typeMgr || !typeNode) {
+        return nullptr;
+    }
+    return unit.resolveType(typeMgr, typeNode);
+}
+
+void
+materializeConcreteTraitImplBodyMethods(TypeTable *typeMgr,
+                                        CompilationUnit &unit,
+                                        const ModuleInterface::TraitImplDecl &implDecl) {
+    if (!typeMgr || !implDecl.hasBody || implDecl.isGeneric() ||
+        implDecl.bodyMethods.empty() || !implDecl.selfTypeNode) {
+        return;
+    }
+
+    auto *selfType = unit.resolveType(typeMgr, implDecl.selfTypeNode);
+    auto *structType = selfType ? selfType->as<StructType>() : nullptr;
+    if (!structType) {
+        return;
+    }
+
+    for (const auto &method : implDecl.bodyMethods) {
+        auto methodKey = traitMethodSlotKey(implDecl.traitName, method.localName);
+        if (!structType->getTraitMethodTypeByKey(toStringRef(methodKey))) {
+            std::vector<TypeClass *> argTypes;
+            argTypes.reserve(method.paramTypeNodes.size() + 1);
+            auto *selfPointee =
+                method.receiverAccess == AccessKind::GetSet
+                    ? static_cast<TypeClass *>(structType)
+                    : static_cast<TypeClass *>(typeMgr->createConstType(structType));
+            argTypes.push_back(typeMgr->createPointerType(selfPointee));
+            for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
+                auto *paramType =
+                    materializeTraitMethodTypeByNode(typeMgr, unit,
+                                                    method.paramTypeNodes[i]);
+                if (!paramType) {
+                    internalError(
+                        "failed to materialize concrete trait impl method `" +
+                            toStdString(method.localName) +
+                            "` parameter type `" +
+                            describeTypeNode(
+                                method.paramTypeNodes[i], "<unknown type>") + "`",
+                        "Trait impl body interfaces should only store fully "
+                        "resolved concrete type nodes.");
+                }
+                argTypes.push_back(paramType);
+            }
+            auto *retType =
+                materializeTraitMethodTypeByNode(typeMgr, unit,
+                                                method.returnTypeNode);
+            auto paramBindingKinds = method.paramBindingKinds;
+            paramBindingKinds.insert(paramBindingKinds.begin(),
+                                     BindingKind::Value);
+            auto *funcType = typeMgr->getOrCreateFunctionType(
+                argTypes, retType, paramBindingKinds, AbiKind::Native);
+            structType->addTraitMethodType(toStringRef(implDecl.traitName),
+                                           toStringRef(method.localName),
+                                           funcType, method.paramNames);
+        }
+    }
+
+    materializeStructTraitMethodBindings(typeMgr, structType);
+}
+
 void
 materializeReachableMethodBindings(
     TypeTable *typeMgr, TypeClass *type,
@@ -2672,7 +2725,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
     }
 
     for (const auto &implDecl : interface->traitImpls()) {
-        auto *selfType = typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
+        materializeConcreteTraitImplBodyMethods(typeMgr, unit, implDecl);
+        auto *selfType = (!implDecl.isGeneric() && implDecl.selfTypeNode)
+                             ? unit.resolveType(typeMgr, implDecl.selfTypeNode)
+                             : typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
         materializeReachableMethodBindings(typeMgr, selfType,
                                            reachableMethodTypes);
     }

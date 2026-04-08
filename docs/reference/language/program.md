@@ -48,9 +48,13 @@ trait 的完整规则见 [trait.md](trait.md)。
 ## 6. 顶层可以放 impl 声明
 
 ```lona
-impl Point: Hash
-impl Point: dep.Hash
 impl Hash for Point {
+    def hash() i32 {
+        ret self.value + 1
+    }
+}
+
+impl dep.Hash for Point {
     def hash() i32 {
         ret self.value + 1
     }
@@ -59,9 +63,8 @@ impl Hash for Point {
 
 说明：
 
-- `impl Type: Trait` 和 `impl Trait for Type` 都是顶层声明。
-- `impl Trait for Type { ... }` 当前支持最小可用的 impl body。
-- 这版 impl body 只稳定支持 local、non-generic、concrete struct self type。
+- `impl Trait for Type { ... }` 是合法顶层声明。
+- `impl Trait for Type { ... }` 已支持 local self、imported self、applied self 和 generic self。
 - `obj.method()`、`Trait.method(&obj)`、`obj.Trait.method()` 和 `Trait dyn` 都可以调用这些 impl body 里定义的方法。
 - trait 方法和普通成员方法现在属于不同命名空间；如果有普通成员方法同名，`obj.method()` 仍然优先命中普通成员方法。
 - 当同一类型上有多个 trait 提供同名方法时，普通 `obj.method()` 会报歧义，此时改写成 `obj.Trait.method()` 或 `Trait.method(&obj)`。

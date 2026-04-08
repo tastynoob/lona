@@ -1,5 +1,5 @@
 // Generic + trait sample: generic functions, applied generic structs,
-// concrete impl bodies, generic header-only impls, and trait-qualified
+// concrete impl bodies, generic impl bodies, and trait-qualified
 // static calls.
 
 trait Hash {
@@ -28,7 +28,11 @@ struct Box[T] {
     }
 }
 
-impl[T Hash] Box[T]: Hash
+impl[T Hash] Hash for Box[T] {
+    def hash() i32 {
+        ret 100
+    }
+}
 
 def id[T](value T) T {
     ret value
