@@ -37,6 +37,13 @@ std::vector<BindingKind>
 extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false);
 
 std::string
+resolveStructMethodOwnerTypeName(StructType *methodParent);
+
+std::string
+resolveStructMethodSymbolName(StructType *methodParent,
+                              llvm::StringRef methodName);
+
+std::string
 resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName,
                              llvm::StringRef methodName);
 

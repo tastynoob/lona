@@ -685,8 +685,8 @@ class FunctionCompiler {
                            structType->getMethodType(methodName)) {
                     auto *methodType = structType->getMethodType(methodName);
                     auto symbolName =
-                        mangleModuleEntryComponent(structType->full_name) +
-                        "." + methodName.str();
+                        declarationsupport_impl::resolveStructMethodSymbolName(
+                            structType, methodName);
                     auto *llvmFunc = scope->module.getFunction(symbolName);
                     if (methodType && llvmFunc) {
                         funcType = methodType;

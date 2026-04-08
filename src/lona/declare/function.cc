@@ -38,6 +38,21 @@ describeExternCFunctionName(AstFuncDecl *node, StructType *methodParent) {
 }
 
 std::string
+buildAppliedStructTypeName(llvm::StringRef templateName,
+                           const std::vector<TypeClass *> &typeArgs) {
+    std::string name = templateName.str() + "[";
+    for (std::size_t i = 0; i < typeArgs.size(); ++i) {
+        if (i != 0) {
+            name += ", ";
+        }
+        auto *typeArg = typeArgs[i];
+        name += typeArg ? toStdString(typeArg->full_name) : "<null>";
+    }
+    name += "]";
+    return name;
+}
+
+std::string
 describeExternCTypeSubject(const std::string &role, const std::string &name) {
     if (name.empty()) {
         return role;
@@ -219,12 +234,41 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
 }  // namespace
 
 std::string
+resolveStructMethodOwnerTypeName(StructType *methodParent) {
+    if (!methodParent) {
+        return {};
+    }
+    if (methodParent->isAppliedTemplateInstance() &&
+        !methodParent->getAppliedTemplateName().empty()) {
+        return buildAppliedStructTypeName(
+            llvm::StringRef(methodParent->getAppliedTemplateName().tochara(),
+                            methodParent->getAppliedTemplateName().size()),
+            methodParent->getAppliedTypeArgs());
+    }
+    return toStdString(methodParent->full_name);
+}
+
+std::string
+resolveStructMethodSymbolName(StructType *methodParent,
+                              llvm::StringRef methodName) {
+    if (!methodParent) {
+        return methodName.str();
+    }
+    auto ownerTypeName = resolveStructMethodOwnerTypeName(methodParent);
+    if (methodParent->isAppliedTemplateInstance()) {
+        return mangleModuleEntryComponent(string(ownerTypeName)) + "." +
+               methodName.str();
+    }
+    return ownerTypeName + "." + methodName.str();
+}
+
+std::string
 resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName,
                              llvm::StringRef methodName) {
     if (!methodParent) {
         return methodName.str();
     }
-    return toStdString(methodParent->full_name) + ".__trait__." +
+    return resolveStructMethodOwnerTypeName(methodParent) + ".__trait__." +
            mangleModuleEntryComponent(traitName) + "." + methodName.str();
 }
 
@@ -481,7 +525,9 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     std::string llvmName = resolvedFunctionName.empty() ? toStdString(funcName)
                                                         : resolvedFunctionName;
     if (methodParent) {
-        llvmName = toStdString(methodParent->full_name) + "." + llvmName;
+        llvmName = resolveStructMethodSymbolName(
+            methodParent,
+            llvm::StringRef(funcName.tochara(), funcName.size()));
     }
 
     auto *llvmFunc = llvm::Function::Create(

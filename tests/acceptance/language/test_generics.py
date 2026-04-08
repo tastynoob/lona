@@ -1180,12 +1180,12 @@ def test_generic_v0_trait_impl_bodies_enable_trait_qualified_calls_for_applied_g
     )
     assert_regex(
         ir,
-        r"define i32 @Box_5b.*Point.*_5d\.hash\(ptr ",
+        r"define i32 @generic_5ftrait_5fimpl_5fstatic_5fcall_5fround12_2eBox_5b.*Point.*_5d\.hash\(ptr ",
         label="generic trait impl static call ir",
     )
     assert_regex(
         ir,
-        r"call i32 @Box_5b.*Point.*_5d\.hash\(ptr ",
+        r"call i32 @generic_5ftrait_5fimpl_5fstatic_5fcall_5fround12_2eBox_5b.*Point.*_5d\.hash\(ptr ",
         label="generic trait impl static call ir",
     )
 
@@ -1274,22 +1274,22 @@ def test_generic_v0_struct_decl_bounds_and_generic_methods_lower_for_same_module
     )
     assert_regex(
         ir,
-        r"@Box_5b.*Point.*_5d\.echo__inst__i32",
+        r"@generic_5fstruct_5fdecl_5fbound_5fand_5fmethod_5fround13_2eBox_5b.*Point.*_5d\.echo__inst__i32",
         label="generic method explicit instantiation ir",
     )
     assert_regex(
         ir,
-        r"@Box_5b.*Point.*_5d\.echo__inst__bool",
+        r"@generic_5fstruct_5fdecl_5fbound_5fand_5fmethod_5fround13_2eBox_5b.*Point.*_5d\.echo__inst__bool",
         label="generic method inferred instantiation ir",
     )
     assert_regex(
         ir,
-        r"@Box_5b.*Point.*_5d\.score_with__inst__.*Other",
+        r"@generic_5fstruct_5fdecl_5fbound_5fand_5fmethod_5fround13_2eBox_5b.*Point.*_5d\.score_with__inst__.*Other",
         label="generic method bounded instantiation ir",
     )
     assert_regex(
         ir,
-        r"call i32 @Box_5b.*Point.*_5d\.hash_value\(ptr ",
+        r"call i32 @generic_5fstruct_5fdecl_5fbound_5fand_5fmethod_5fround13_2eBox_5b.*Point.*_5d\.hash_value\(ptr ",
         label="struct decl bound method ir",
     )
 

@@ -2460,12 +2460,8 @@ materializeStructMethodBindings(TypeTable *typeMgr, StructType *structType) {
         if (typeMgr->getMethodFunction(structType, method.first())) {
             continue;
         }
-        auto methodName =
-            structType->isAppliedTemplateInstance()
-                ? mangleModuleEntryComponent(structType->full_name) + "." +
-                      method.first().str()
-                : toStdString(structType->full_name) + "." +
-                      method.first().str();
+        auto methodName = declarationsupport_impl::resolveStructMethodSymbolName(
+            structType, method.first());
         auto *llvmFunc = llvm::Function::Create(
             getFunctionAbiLLVMType(*typeMgr, methodType, true),
             llvm::Function::ExternalLinkage, llvm::Twine(methodName),

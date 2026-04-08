@@ -885,6 +885,85 @@ def test_imported_generic_structs_materialize_by_value_layout_and_methods(
     )
 
 
+def test_same_name_generic_struct_methods_from_different_modules_do_not_collide(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "generic_struct_method_collision" / "src"
+    compiler.write_source(
+        "generic_struct_method_collision/src/left/box.lo",
+        """
+        struct Box[T] {
+            value T
+            bias i32
+
+            def score() i32 {
+                ret self.bias
+            }
+        }
+
+        def answer() i32 {
+            var box = Box[i32](value = 1, bias = 11)
+            ret box.score()
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_struct_method_collision/src/right/box.lo",
+        """
+        struct Box[T] {
+            value T
+            bias i32
+
+            def score() i32 {
+                ret self.bias + 100
+            }
+        }
+
+        def answer() i32 {
+            var box = Box[i32](value = 2, bias = 7)
+            ret box.score()
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_struct_method_collision/src/left/one.lo",
+        """
+        import left/box
+
+        def answer() i32 {
+            ret box.answer()
+        }
+        """,
+    )
+    compiler.write_source(
+        "generic_struct_method_collision/src/right/two.lo",
+        """
+        import right/box
+
+        def answer() i32 {
+            ret box.answer()
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "generic_struct_method_collision/src/app/main.lo",
+        """
+        import left/one
+        import right/two
+
+        ret one.answer() + two.answer()
+        """,
+    )
+
+    result, exe_path = compiler.build_system_executable(
+        main_path,
+        output_name="generic_struct_method_collision.bin",
+        include_paths=[include_root],
+    )
+    result.expect_ok()
+    compiler.run_executable(exe_path).expect_exit_code(118)
+
+
 def test_imported_generic_structs_work_by_value_in_function_signatures(
     compiler: CompilerHarness,
 ) -> None:
@@ -2159,6 +2238,124 @@ def test_same_basename_modules_use_include_root_relative_symbol_prefixes(
     )
     result.expect_ok()
     compiler.run_executable(exe_path).expect_exit_code(66)
+
+
+def test_multi_level_module_symbols_use_full_canonical_prefixes(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "multi_level_symbols" / "src"
+    compiler.write_source(
+        "multi_level_symbols/src/A/B/C/xx.lo",
+        """
+        global BASE i32 = 5
+
+        struct Counter {
+            value i32
+
+            def bump(step i32) i32 {
+                ret self.value + step + BASE
+            }
+        }
+
+        trait Score {
+            def score(step i32) i32
+        }
+
+        impl Score for Counter {
+            def score(step i32) i32 {
+                ret self.bump(step)
+            }
+        }
+
+        def answer() i32 {
+            var counter = Counter(value = 30)
+            var view Score dyn = cast[Score dyn](&counter)
+            ret counter.bump(7) + view.score(0)
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "multi_level_symbols/src/app/main.lo",
+        """
+        import A/B/C/xx
+
+        ret xx.answer()
+        """,
+    )
+
+    ir = compiler.emit_ir(main_path, include_paths=[include_root]).expect_ok().stdout
+    assert_contains(
+        ir,
+        "@A.B.C.xx.BASE = global i32 5",
+        label="multi level symbol prefix ir",
+    )
+    assert_contains(
+        ir,
+        "define i32 @A.B.C.xx.answer()",
+        label="multi level symbol prefix ir",
+    )
+    assert_regex(
+        ir,
+        r"define i32 @A\.B\.C\.xx\.Counter\.bump\(ptr ",
+        label="multi level symbol prefix ir",
+    )
+    assert_regex(
+        ir,
+        r"define i32 @A\.B\.C\.xx\.Counter\.__trait__\..*A(?:\.|_2e)B(?:\.|_2e)C(?:\.|_2e)xx(?:\.|_2e)Score\.score\(ptr ",
+        label="multi level symbol prefix ir",
+    )
+    assert_regex(
+        ir,
+        r"@__lona_trait_witness__.*\[ptr @A\.B\.C\.xx\.Counter\.__trait__\..*A(?:\.|_2e)B(?:\.|_2e)C(?:\.|_2e)xx(?:\.|_2e)Score\.score\]",
+        label="multi level symbol prefix ir",
+    )
+
+
+def test_multi_level_generic_symbols_use_full_canonical_prefixes(
+    compiler: CompilerHarness,
+) -> None:
+    include_root = compiler.tmp_path / "multi_level_generic_symbols" / "src"
+    compiler.write_source(
+        "multi_level_generic_symbols/src/A/B/C/box.lo",
+        """
+        struct Box[T] {
+            value T
+
+            def get() T {
+                ret self.value
+            }
+        }
+
+        def id[T](value T) T {
+            ret value
+        }
+
+        def answer() i32 {
+            var box = Box[i32](value = 9)
+            ret id[i32](box.get())
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "multi_level_generic_symbols/src/app/main.lo",
+        """
+        import A/B/C/box
+
+        ret box.answer()
+        """,
+    )
+
+    ir = compiler.emit_ir(main_path, include_paths=[include_root]).expect_ok().stdout
+    assert_contains(
+        ir,
+        "define i32 @A.B.C.box.answer()",
+        label="multi level generic symbol prefix ir",
+    )
+    assert_contains(
+        ir,
+        "@A.B.C.box.id__inst__i32",
+        label="multi level generic symbol prefix ir",
+    )
 
 
 def test_ambiguous_same_basename_imports_across_include_roots_are_rejected(

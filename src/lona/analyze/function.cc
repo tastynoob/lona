@@ -776,8 +776,9 @@ class FunctionAnalyzer {
                           "type",
                           "This looks like a method instantiation bug.");
         }
-        auto symbolName = mangleModuleEntryComponent(structType->full_name) +
-                          "." + methodName.str();
+        auto symbolName =
+            declarationsupport_impl::resolveStructMethodSymbolName(
+                structType, methodName);
         if (methodTypeArgs.empty()) {
             return symbolName;
         }
@@ -814,6 +815,18 @@ class FunctionAnalyzer {
         auto symbolName =
             buildLocalGenericStructMethodInstanceSymbolName(structType,
                                                             methodName, {}, loc);
+        if (auto *existingObj = global->getObj(string(symbolName))) {
+            auto *func = existingObj->as<Function>();
+            if (!func) {
+                internalError(
+                    loc,
+                    "generic struct method instance symbol `" + symbolName +
+                        "` collides with a non-function global",
+                    "This looks like a symbol declaration bug.");
+            }
+            typeMgr->bindMethodFunction(structType, methodName, func);
+            return func;
+        }
         auto *funcType = structType->getMethodType(methodName);
         if (!funcType) {
             internalError(
@@ -829,11 +842,14 @@ class FunctionAnalyzer {
                 structType->getMethodParamNames(methodName)) {
             paramNames = *storedParamNames;
         }
-        auto *llvmFunc = llvm::Function::Create(
-            getFunctionAbiLLVMType(*typeMgr, funcType, true),
-            llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
-            global->module);
-        annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        auto *llvmFunc = global->module.getFunction(symbolName);
+        if (!llvmFunc) {
+            llvmFunc = llvm::Function::Create(
+                getFunctionAbiLLVMType(*typeMgr, funcType, true),
+                llvm::Function::ExternalLinkage, llvm::Twine(symbolName),
+                global->module);
+            annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+        }
         auto *func =
             new Function(llvmFunc, funcType, std::move(paramNames), true);
         typeMgr->bindMethodFunction(structType, methodName, func);

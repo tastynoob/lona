@@ -457,7 +457,7 @@ def test_generic_v0_same_module_applied_structs_emit_concrete_runtime_layout_and
     )
     assert_contains(
         ir,
-        "@Box_5bi32_5d.get",
+        "@generic_5fapplied_5ftype_5fruntime_5fround3_2eBox_5bi32_5d.get",
         label="generic applied value ir",
     )
 
