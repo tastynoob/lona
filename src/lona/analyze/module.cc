@@ -17,12 +17,13 @@ public:
         : global(global), unit(unit) {}
 
     std::unique_ptr<HIRModule> analyze(const ResolvedModule &resolvedModule) {
+        AnalysisLookupCache lookupCache(unit);
         for (const auto &resolvedFunction : resolvedModule.functions()) {
             if (resolvedFunction->isTemplateValidationOnly()) {
                 continue;
             }
             module->addFunction(analyzeResolvedFunction(
-                global, module.get(), unit, *resolvedFunction));
+                global, module.get(), unit, *resolvedFunction, &lookupCache));
         }
         return std::move(module);
     }

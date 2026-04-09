@@ -152,6 +152,8 @@ class FunctionAnalyzer {
     OperatorResolver operatorResolver;
     HIRModule *ownerModule;
     HIRFunc *hirFunc;
+    AnalysisLookupCache localLookupCache_;
+    AnalysisLookupCache *lookupCache;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
     int loopDepth = 0;
 
@@ -372,23 +374,13 @@ class FunctionAnalyzer {
         if (!templateUnit) {
             return nullptr;
         }
-        auto *root = templateUnit->syntaxTree();
-        auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body =
-            dynamic_cast<AstStatList *>(program ? program->body : root);
-        if (!body) {
+        ensureStructSyntaxIndex(templateUnit);
+        auto foundUnit = lookupCache->structSyntaxByUnit.find(templateUnit);
+        if (foundUnit == lookupCache->structSyntaxByUnit.end()) {
             return nullptr;
         }
-        for (auto *stmt : body->getBody()) {
-            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-            if (!structDecl) {
-                continue;
-            }
-            if (toStdString(structDecl->name) == toStdString(typeDecl.localName)) {
-                return structDecl;
-            }
-        }
-        return nullptr;
+        auto found = foundUnit->second.find(typeDecl.localName);
+        return found != foundUnit->second.end() ? found->second : nullptr;
     }
 
     const CompilationUnit *traitImplOwnerUnit(
@@ -442,31 +434,14 @@ class FunctionAnalyzer {
                 findAppliedTemplateDecl(structType, ownerUnitOut)) {
             return appliedTemplateDecl;
         }
-        if (unit->interface()) {
-            for (const auto &entry : unit->interface()->types()) {
-                if (entry.second.type == structType ||
-                    entry.second.exportedName == structType->full_name) {
-                    if (ownerUnitOut) {
-                        *ownerUnitOut = unit;
-                    }
-                    return &entry.second;
-                }
-            }
+        auto lookup = visibleTypeLookupFor(structType);
+        if (!lookup.found()) {
+            return nullptr;
         }
-        for (const auto &imported : unit->importedModules()) {
-            if (!imported.second.interface || !imported.second.unit) {
-                continue;
-            }
-            for (const auto &entry : imported.second.interface->types()) {
-                if (entry.second.exportedName == structType->full_name) {
-                    if (ownerUnitOut) {
-                        *ownerUnitOut = imported.second.unit;
-                    }
-                    return &entry.second;
-                }
-            }
+        if (ownerUnitOut) {
+            *ownerUnitOut = lookup.ownerUnit;
         }
-        return nullptr;
+        return lookup.typeDecl;
     }
 
     const ModuleInterface::MethodTemplateDecl *findGenericMethodTemplateDecl(
@@ -481,24 +456,20 @@ class FunctionAnalyzer {
         return nullptr;
     }
 
-    const AstFuncDecl *findLocalStructMethodDecl(const AstStructDecl *structDecl,
+    const AstFuncDecl *findLocalStructMethodDecl(const CompilationUnit *ownerUnit,
+                                                 const AstStructDecl *structDecl,
                                                  llvm::StringRef methodName) const {
-        auto *body = dynamic_cast<AstStatList *>(structDecl ? structDecl->body
-                                                            : nullptr);
-        if (!body) {
+        if (!ownerUnit || !structDecl) {
             return nullptr;
         }
-        for (auto *stmt : body->getBody()) {
-            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
-            if (!funcDecl) {
-                continue;
-            }
-            if (llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()) ==
-                methodName) {
-                return funcDecl;
-            }
+        ensureStructSyntaxIndex(ownerUnit);
+        auto foundStruct = lookupCache->methodSyntaxByStruct.find(structDecl);
+        if (foundStruct == lookupCache->methodSyntaxByStruct.end()) {
+            return nullptr;
         }
-        return nullptr;
+        auto foundMethod = foundStruct->second.find(string(methodName.str()));
+        return foundMethod != foundStruct->second.end() ? foundMethod->second
+                                                        : nullptr;
     }
 
     const ModuleInterface::TypeDecl *findAppliedTemplateDecl(
@@ -519,12 +490,133 @@ class FunctionAnalyzer {
         if (templateUnitOut) {
             *templateUnitOut = templateUnit;
         }
-        for (const auto &entry : templateUnit->interface()->types()) {
-            if (entry.second.exportedName == structType->getAppliedTemplateName()) {
-                return &entry.second;
+        return typeDeclByExportedName(templateUnit,
+                                      structType->getAppliedTemplateName());
+    }
+
+    void ensureVisibleTypeLookup() const {
+        if (lookupCache->visibleTypesReady) {
+            return;
+        }
+        lookupCache->visibleTypesReady = true;
+        auto *rootUnit = lookupCache->rootUnit ? lookupCache->rootUnit : unit;
+        if (!rootUnit) {
+            return;
+        }
+        indexVisibleTypesFrom(rootUnit);
+        for (const auto &imported : rootUnit->importedModules()) {
+            if (!imported.second.interface || !imported.second.unit) {
+                continue;
+            }
+            indexVisibleTypesFrom(imported.second.unit);
+        }
+    }
+
+    void indexVisibleTypesFrom(const CompilationUnit *ownerUnit) const {
+        if (!ownerUnit) {
+            return;
+        }
+        ensureTypeDeclExportedIndex(ownerUnit);
+        auto foundUnit = lookupCache->typeDeclsByExportedName.find(ownerUnit);
+        if (foundUnit == lookupCache->typeDeclsByExportedName.end()) {
+            return;
+        }
+        for (const auto &entry : foundUnit->second) {
+            AnalysisLookupCache::VisibleTypeLookup lookup{entry.second, ownerUnit};
+            lookupCache->visibleTypesByExportedName.emplace(entry.first, lookup);
+            if (ownerUnit == unit) {
+                if (auto *declStructType =
+                        asUnqualified<StructType>(entry.second->type)) {
+                    lookupCache->visibleTypesByRuntimeType.emplace(declStructType,
+                                                                   lookup);
+                }
             }
         }
-        return nullptr;
+    }
+
+    void ensureTypeDeclExportedIndex(const CompilationUnit *ownerUnit) const {
+        if (!ownerUnit ||
+            lookupCache->typeDeclsByExportedName.count(ownerUnit) != 0) {
+            return;
+        }
+        std::unordered_map<string, const ModuleInterface::TypeDecl *> indexed;
+        if (auto *ownerInterface = ownerUnit->interface()) {
+            indexed.reserve(ownerInterface->types().size());
+            for (const auto &entry : ownerInterface->types()) {
+                indexed.emplace(entry.second.exportedName, &entry.second);
+            }
+        }
+        lookupCache->typeDeclsByExportedName.emplace(ownerUnit,
+                                                     std::move(indexed));
+    }
+
+    void ensureStructSyntaxIndex(const CompilationUnit *ownerUnit) const {
+        if (!ownerUnit ||
+            lookupCache->structSyntaxByUnit.count(ownerUnit) != 0) {
+            return;
+        }
+        std::unordered_map<string, const AstStructDecl *> structsByLocalName;
+        auto *root = ownerUnit->syntaxTree();
+        auto *program = dynamic_cast<AstProgram *>(root);
+        auto *body =
+            dynamic_cast<AstStatList *>(program ? program->body : root);
+        if (body) {
+            structsByLocalName.reserve(body->getBody().size());
+            for (auto *stmt : body->getBody()) {
+                auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
+                if (!structDecl) {
+                    continue;
+                }
+                structsByLocalName.emplace(structDecl->name, structDecl);
+                auto *structBody = dynamic_cast<AstStatList *>(structDecl->body);
+                if (!structBody) {
+                    continue;
+                }
+                auto &methods = lookupCache->methodSyntaxByStruct[structDecl];
+                methods.reserve(structBody->getBody().size());
+                for (auto *member : structBody->getBody()) {
+                    auto *funcDecl = dynamic_cast<AstFuncDecl *>(member);
+                    if (!funcDecl) {
+                        continue;
+                    }
+                    methods.emplace(funcDecl->name, funcDecl);
+                }
+            }
+        }
+        lookupCache->structSyntaxByUnit.emplace(ownerUnit,
+                                                std::move(structsByLocalName));
+    }
+
+    const ModuleInterface::TypeDecl *
+    typeDeclByExportedName(const CompilationUnit *ownerUnit,
+                           const string &exportedName) const {
+        ensureTypeDeclExportedIndex(ownerUnit);
+        auto foundUnit = lookupCache->typeDeclsByExportedName.find(ownerUnit);
+        if (foundUnit == lookupCache->typeDeclsByExportedName.end()) {
+            return nullptr;
+        }
+        auto foundType = foundUnit->second.find(exportedName);
+        return foundType != foundUnit->second.end() ? foundType->second
+                                                    : nullptr;
+    }
+
+    AnalysisLookupCache::VisibleTypeLookup
+    visibleTypeLookupFor(StructType *structType) const {
+        ensureVisibleTypeLookup();
+        auto foundByType = lookupCache->visibleTypesByRuntimeType.find(structType);
+        if (foundByType != lookupCache->visibleTypesByRuntimeType.end()) {
+            return foundByType->second;
+        }
+        return visibleTypeLookupByExportedName(structType->full_name);
+    }
+
+    AnalysisLookupCache::VisibleTypeLookup
+    visibleTypeLookupByExportedName(const string &exportedName) const {
+        ensureVisibleTypeLookup();
+        auto found = lookupCache->visibleTypesByExportedName.find(exportedName);
+        return found != lookupCache->visibleTypesByExportedName.end()
+                   ? found->second
+                   : AnalysisLookupCache::VisibleTypeLookup{};
     }
 
     StructType *instantiateGenericStructType(
@@ -997,7 +1089,8 @@ class FunctionAnalyzer {
         }
 
         auto *hirInstance = analyzeResolvedFunction(
-            global, ownerModule, unit, *resolvedModule->functions().front());
+            global, ownerModule, unit, *resolvedModule->functions().front(),
+            lookupCache);
         if (!findOwnerModuleFunction(symbolName)) {
             ownerModule->addFunction(hirInstance);
         }
@@ -1015,7 +1108,8 @@ class FunctionAnalyzer {
         }
 
         auto *templateDecl = findStructDecl(templateUnit, *typeDecl);
-        auto *methodDecl = findLocalStructMethodDecl(templateDecl, methodName);
+        auto *methodDecl =
+            findLocalStructMethodDecl(templateUnit, templateDecl, methodName);
         if (!templateDecl || !methodDecl) {
             internalError(
                 loc,
@@ -1080,7 +1174,8 @@ class FunctionAnalyzer {
         }
 
         auto *hirInstance = analyzeResolvedFunction(
-            global, ownerModule, unit, *resolvedModule->functions().front());
+            global, ownerModule, unit, *resolvedModule->functions().front(),
+            lookupCache);
         if (!findOwnerModuleFunction(symbolName)) {
             ownerModule->addFunction(hirInstance);
         }
@@ -1115,7 +1210,8 @@ class FunctionAnalyzer {
             return lookup;
         }
         auto *structDecl = findStructDecl(lookup.ownerUnit, *lookup.typeDecl);
-        lookup.methodDecl = findLocalStructMethodDecl(structDecl, methodName);
+        lookup.methodDecl =
+            findLocalStructMethodDecl(lookup.ownerUnit, structDecl, methodName);
         if (!structDecl || !lookup.methodDecl) {
             internalError(
                 loc,
@@ -1457,7 +1553,8 @@ class FunctionAnalyzer {
         }
 
         auto *hirInstance = analyzeResolvedFunction(
-            global, ownerModule, unit, *resolvedModule->functions().front());
+            global, ownerModule, unit, *resolvedModule->functions().front(),
+            lookupCache);
         if (!findOwnerModuleFunction(symbolName)) {
             ownerModule->addFunction(hirInstance);
         }
@@ -1604,7 +1701,8 @@ class FunctionAnalyzer {
         }
 
         auto *hirInstance = analyzeResolvedFunction(
-            global, ownerModule, unit, *resolvedModule->functions().front());
+            global, ownerModule, unit, *resolvedModule->functions().front(),
+            lookupCache);
         if (!findOwnerModuleFunction(symbolName)) {
             ownerModule->addFunction(hirInstance);
         }
@@ -5918,14 +6016,17 @@ class FunctionAnalyzer {
 public:
     FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global,
                      HIRModule *ownerModule, const CompilationUnit *unit,
-                     const ResolvedFunction &resolved)
+                     const ResolvedFunction &resolved,
+                     AnalysisLookupCache *lookupCache)
         : typeMgr(typeMgr),
           global(global),
           unit(unit),
           resolved(resolved),
           operatorResolver(typeMgr),
           ownerModule(ownerModule),
-          hirFunc(nullptr) {}
+          hirFunc(nullptr),
+          localLookupCache_(unit),
+          lookupCache(lookupCache ? lookupCache : &localLookupCache_) {}
 
 private:
     void prepareFunctionShell() {
@@ -6031,9 +6132,11 @@ public:
 HIRFunc *
 analyzeResolvedFunction(GlobalScope *global, HIRModule *ownerModule,
                         const CompilationUnit *unit,
-                        const ResolvedFunction &resolved) {
+                        const ResolvedFunction &resolved,
+                        AnalysisLookupCache *lookupCache) {
     auto *typeMgr = requireTypeTable(global);
-    return FunctionAnalyzer(typeMgr, global, ownerModule, unit, resolved)
+    return FunctionAnalyzer(typeMgr, global, ownerModule, unit, resolved,
+                            lookupCache)
         .analyze();
 }
 
