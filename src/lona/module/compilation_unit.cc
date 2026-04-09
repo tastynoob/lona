@@ -4,6 +4,7 @@
 #include "lona/ast/type_node_tools.hh"
 #include "lona/declare/support.hh"
 #include "lona/err/err.hh"
+#include "lona/generic/applied_struct_instantiation.hh"
 #include "lona/sema/initializer.hh"
 #include "lona/type/type.hh"
 #include <algorithm>
@@ -11,8 +12,8 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <tuple>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace lona {
@@ -71,7 +72,8 @@ deriveModuleName(const std::string &path) {
 }
 
 std::string
-normalizeExportNamespacePath(const string &modulePath, const string &moduleName) {
+normalizeExportNamespacePath(const string &modulePath,
+                             const string &moduleName) {
     auto path = toStdString(modulePath);
     if (path.empty()) {
         path = toStdString(moduleName);
@@ -440,7 +442,8 @@ std::string
 genericTemplateHint(const std::string &rawName) {
     return "Write `" + rawName +
            "[...]` with explicit type arguments, or keep the template name "
-           "inside another applied type like `" + rawName + "[T]`.";
+           "inside another applied type like `" +
+           rawName + "[T]`.";
 }
 
 [[noreturn]] void
@@ -449,21 +452,6 @@ errorBareGenericTemplateType(const location &loc, const std::string &rawName) {
           "generic type template `" + rawName +
               "` requires explicit `[...]` type arguments",
           genericTemplateHint(rawName));
-}
-
-std::string
-buildAppliedTypeName(const std::string &baseName,
-                     const std::vector<TypeClass *> &args) {
-    std::string name = baseName.empty() ? std::string("<type>") : baseName;
-    name += "[";
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (i != 0) {
-            name += ", ";
-        }
-        name += args[i] ? describeResolvedType(args[i]) : "<unknown type>";
-    }
-    name += "]";
-    return name;
 }
 
 const ModuleInterface::TypeDecl *
@@ -502,10 +490,9 @@ computeVisibleImportInterfaceHash(const CompilationUnit &unit) {
     for (const auto &entry : unit.importedModules()) {
         imports.push_back({toStdString(entry.first), &entry.second});
     }
-    std::sort(imports.begin(), imports.end(),
-              [](const auto &lhs, const auto &rhs) {
-                  return lhs.first < rhs.first;
-              });
+    std::sort(
+        imports.begin(), imports.end(),
+        [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
     seed = combineHash(seed, imports.size());
     for (const auto &[alias, imported] : imports) {
         hashText(seed, alias);
@@ -515,10 +502,10 @@ computeVisibleImportInterfaceHash(const CompilationUnit &unit) {
         hashText(seed, toStdString(imported->moduleKey));
         hashText(seed, toStdString(imported->path));
         seed = combineHash(
-            seed,
-            imported->unit ? imported->unit->interfaceHash()
-                           : (imported->interface ? imported->interface->sourceHash()
-                                                  : 0));
+            seed, imported->unit
+                      ? imported->unit->interfaceHash()
+                      : (imported->interface ? imported->interface->sourceHash()
+                                             : 0));
     }
     return seed;
 }
@@ -565,13 +552,13 @@ computeVisibleTraitImplHash(const CompilationUnit &unit) {
         }
     }
 
-    std::sort(impls.begin(), impls.end(), [](const ImplDescriptor &lhs,
-                                             const ImplDescriptor &rhs) {
-        return std::tie(lhs.sourceModuleKey, lhs.traitName, lhs.selfTypeSpelling,
-                        lhs.typeParams) <
-               std::tie(rhs.sourceModuleKey, rhs.traitName, rhs.selfTypeSpelling,
-                        rhs.typeParams);
-    });
+    std::sort(impls.begin(), impls.end(),
+              [](const ImplDescriptor &lhs, const ImplDescriptor &rhs) {
+                  return std::tie(lhs.sourceModuleKey, lhs.traitName,
+                                  lhs.selfTypeSpelling, lhs.typeParams) <
+                         std::tie(rhs.sourceModuleKey, rhs.traitName,
+                                  rhs.selfTypeSpelling, rhs.typeParams);
+              });
 
     seed = combineHash(seed, impls.size());
     for (const auto &impl : impls) {
@@ -622,8 +609,8 @@ canonicalTypePatternSpelling(
         std::string moduleName;
         std::string memberName;
         if (!splitBaseTypeName(base, moduleName, memberName)) {
-            if (const auto *typeDecl =
-                    resolveVisibleTypeDecl(ownerUnit, const_cast<BaseTypeNode *>(base))) {
+            if (const auto *typeDecl = resolveVisibleTypeDecl(
+                    ownerUnit, const_cast<BaseTypeNode *>(base))) {
                 return toStdString(typeDecl->exportedName);
             }
             return rawName;
@@ -637,10 +624,9 @@ canonicalTypePatternSpelling(
         return rawName;
     }
     if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
-        std::string text =
-            canonicalTypePatternSpelling(ownerUnit, applied->base,
-                                         genericBindings) +
-            "[";
+        std::string text = canonicalTypePatternSpelling(
+                               ownerUnit, applied->base, genericBindings) +
+                           "[";
         for (std::size_t i = 0; i < applied->args.size(); ++i) {
             if (i != 0) {
                 text += ", ";
@@ -657,15 +643,15 @@ canonicalTypePatternSpelling(
                " const";
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
-        auto text =
-            canonicalTypePatternSpelling(ownerUnit, pointer->base,
-                                         genericBindings);
+        auto text = canonicalTypePatternSpelling(ownerUnit, pointer->base,
+                                                 genericBindings);
         for (uint32_t i = 0; i < pointer->dim; ++i) {
             text += "*";
         }
         return text;
     }
-    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+    if (auto *indexable =
+            dynamic_cast<const IndexablePointerTypeNode *>(node)) {
         return canonicalTypePatternSpelling(ownerUnit, indexable->base,
                                             genericBindings) +
                "[*]";
@@ -696,9 +682,8 @@ canonicalTypePatternSpelling(
             if (funcParamBindingKind(func->args[i]) == BindingKind::Ref) {
                 text += "ref ";
             }
-            text += canonicalTypePatternSpelling(ownerUnit,
-                                                 unwrapFuncParamType(func->args[i]),
-                                                 genericBindings);
+            text += canonicalTypePatternSpelling(
+                ownerUnit, unwrapFuncParamType(func->args[i]), genericBindings);
         }
         text += ":";
         if (func->ret) {
@@ -773,32 +758,30 @@ matchTraitImplSelfTypePattern(
     }
     if (auto *qualified = dynamic_cast<const ConstTypeNode *>(pattern)) {
         auto *actualConst = actualType->as<ConstType>();
-        return actualConst &&
-               matchTraitImplSelfTypePattern(ownerUnit, typeParams,
-                                             qualified->base,
-                                             actualConst->getBaseType(),
-                                             genericBindings);
+        return actualConst && matchTraitImplSelfTypePattern(
+                                  ownerUnit, typeParams, qualified->base,
+                                  actualConst->getBaseType(), genericBindings);
     }
     if (auto *pointer = dynamic_cast<const PointerTypeNode *>(pattern)) {
         auto *current = actualType;
         for (uint32_t i = 0; i < pointer->dim; ++i) {
-            auto *actualPointer = current ? current->as<PointerType>() : nullptr;
+            auto *actualPointer =
+                current ? current->as<PointerType>() : nullptr;
             if (!actualPointer) {
                 return false;
             }
             current = actualPointer->getPointeeType();
         }
-        return matchTraitImplSelfTypePattern(ownerUnit, typeParams,
-                                             pointer->base, current,
-                                             genericBindings);
+        return matchTraitImplSelfTypePattern(
+            ownerUnit, typeParams, pointer->base, current, genericBindings);
     }
-    if (auto *indexable = dynamic_cast<const IndexablePointerTypeNode *>(pattern)) {
+    if (auto *indexable =
+            dynamic_cast<const IndexablePointerTypeNode *>(pattern)) {
         auto *actualIndexable = actualType->as<IndexablePointerType>();
         return actualIndexable &&
-               matchTraitImplSelfTypePattern(ownerUnit, typeParams,
-                                             indexable->base,
-                                             actualIndexable->getElementType(),
-                                             genericBindings);
+               matchTraitImplSelfTypePattern(
+                   ownerUnit, typeParams, indexable->base,
+                   actualIndexable->getElementType(), genericBindings);
     }
     if (auto *array = dynamic_cast<const ArrayTypeNode *>(pattern)) {
         auto *actualArray = actualType->as<ArrayType>();
@@ -814,10 +797,9 @@ matchTraitImplSelfTypePattern(
             return false;
         }
         for (std::size_t i = 0; i < tuple->items.size(); ++i) {
-            if (!matchTraitImplSelfTypePattern(ownerUnit, typeParams,
-                                               tuple->items[i],
-                                               actualTuple->getItemTypes()[i],
-                                               genericBindings)) {
+            if (!matchTraitImplSelfTypePattern(
+                    ownerUnit, typeParams, tuple->items[i],
+                    actualTuple->getItemTypes()[i], genericBindings)) {
                 return false;
             }
         }
@@ -825,18 +807,17 @@ matchTraitImplSelfTypePattern(
     }
     if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(pattern)) {
         auto *actualPointer = actualType->as<PointerType>();
-        auto *actualFunc =
-            actualPointer ? actualPointer->getPointeeType()->as<FuncType>()
-                          : nullptr;
+        auto *actualFunc = actualPointer
+                               ? actualPointer->getPointeeType()->as<FuncType>()
+                               : nullptr;
         if (!actualFunc ||
             actualFunc->getArgTypes().size() != func->args.size()) {
             return false;
         }
         for (std::size_t i = 0; i < func->args.size(); ++i) {
-            if (!matchTraitImplSelfTypePattern(ownerUnit, typeParams,
-                                               unwrapFuncParamType(func->args[i]),
-                                               actualFunc->getArgTypes()[i],
-                                               genericBindings)) {
+            if (!matchTraitImplSelfTypePattern(
+                    ownerUnit, typeParams, unwrapFuncParamType(func->args[i]),
+                    actualFunc->getArgTypes()[i], genericBindings)) {
                 return false;
             }
         }
@@ -846,24 +827,24 @@ matchTraitImplSelfTypePattern(
     }
     if (auto *dynType = dynamic_cast<const DynTypeNode *>(pattern)) {
         auto *actualDyn = actualType->as<DynTraitType>();
-        return actualDyn &&
-               canonicalTypePatternSpelling(ownerUnit, pattern,
-                                            genericBindings) ==
-                   toStdString(actualDyn->full_name);
+        return actualDyn && canonicalTypePatternSpelling(ownerUnit, pattern,
+                                                         genericBindings) ==
+                                toStdString(actualDyn->full_name);
     }
     return false;
 }
 
 bool
-typeSatisfiesVisibleTraitImpl(
-    const CompilationUnit &requesterUnit, const ::string &traitName,
-    TypeClass *selfType, std::unordered_set<std::string> &active);
+typeSatisfiesVisibleTraitImpl(const CompilationUnit &requesterUnit,
+                              const ::string &traitName, TypeClass *selfType,
+                              std::unordered_set<std::string> &active);
 
 bool
-traitImplMatchesConcreteSelfType(
-    const CompilationUnit &requesterUnit, const CompilationUnit &ownerUnit,
-    const ModuleInterface::TraitImplDecl &implDecl, TypeClass *selfType,
-    std::unordered_set<std::string> &active) {
+traitImplMatchesConcreteSelfType(const CompilationUnit &requesterUnit,
+                                 const CompilationUnit &ownerUnit,
+                                 const ModuleInterface::TraitImplDecl &implDecl,
+                                 TypeClass *selfType,
+                                 std::unordered_set<std::string> &active) {
     if (!selfType) {
         return false;
     }
@@ -899,9 +880,9 @@ traitImplMatchesConcreteSelfType(
 }
 
 bool
-typeSatisfiesVisibleTraitImpl(
-    const CompilationUnit &requesterUnit, const ::string &traitName,
-    TypeClass *selfType, std::unordered_set<std::string> &active) {
+typeSatisfiesVisibleTraitImpl(const CompilationUnit &requesterUnit,
+                              const ::string &traitName, TypeClass *selfType,
+                              std::unordered_set<std::string> &active) {
     if (!selfType) {
         return false;
     }
@@ -971,26 +952,84 @@ buildStructInstanceKey(const CompilationUnit &requesterUnit,
     return key;
 }
 
-AstStructDecl *
-findLocalStructDecl(const CompilationUnit &unit, llvm::StringRef localName) {
-    auto *root = unit.syntaxTree();
-    auto *program = dynamic_cast<AstProgram *>(root);
-    auto *body = dynamic_cast<AstStatList *>(program ? program->body : root);
-    if (!body) {
-        return nullptr;
+struct AppliedStructOps final : appliedstructinstantiation::MaterializationOps {
+    TypeTable *typeTable;
+    const CompilationUnit &requesterUnit;
+
+    AppliedStructOps(TypeTable *typeTable, const CompilationUnit &requesterUnit)
+        : typeTable(typeTable), requesterUnit(requesterUnit) {}
+
+    TypeClass *resolveFallbackType(
+        TypeNode *node, const CompilationUnit &lookupUnit) const override {
+        return resolveTypeNode(typeTable, lookupUnit, node, false);
     }
-    for (auto *stmt : body->getBody()) {
-        auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-        if (!structDecl) {
-            continue;
-        }
-        if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
-            localName) {
-            return structDecl;
-        }
+
+    const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
+        BaseTypeNode *base, const CompilationUnit &lookupUnit) const override {
+        return compilation_unit_impl::resolveVisibleTypeDecl(lookupUnit, base);
     }
-    return nullptr;
-}
+
+    TypeClass *instantiateAppliedStructType(
+        const ModuleInterface::TypeDecl &typeDecl,
+        std::vector<TypeClass *> argTypes,
+        const CompilationUnit &lookupUnit) const override {
+        if (auto *ownerUnit = findTemplateOwnerUnit(lookupUnit, typeDecl)) {
+            return requesterUnit.materializeAppliedStructType(
+                typeTable, typeDecl, std::move(argTypes), *ownerUnit);
+        }
+        return typeTable->createOpaqueStructType(
+            appliedstructinstantiation::buildAppliedTypeName(
+                toStdString(typeDecl.exportedName), argTypes),
+            typeDecl.declKind, typeDecl.exportedName, std::move(argTypes));
+    }
+
+    TypeClass *createAnyType() const override {
+        return typeTable->createAnyType();
+    }
+
+    TypeClass *createConstType(TypeClass *baseType) const override {
+        return typeTable->createConstType(baseType);
+    }
+
+    TypeClass *createPointerType(TypeClass *baseType) const override {
+        return typeTable->createPointerType(baseType);
+    }
+
+    TypeClass *createIndexablePointerType(TypeClass *baseType) const override {
+        return typeTable->createIndexablePointerType(baseType);
+    }
+
+    TypeClass *createArrayType(
+        TypeClass *baseType, std::vector<AstNode *> dimensions) const override {
+        return typeTable->createArrayType(baseType, std::move(dimensions));
+    }
+
+    TypeClass *createTupleType(
+        const std::vector<TypeClass *> &itemTypes) const override {
+        return typeTable->getOrCreateTupleType(itemTypes);
+    }
+
+    TypeClass *createFunctionPointerType(
+        const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+        std::vector<BindingKind> argBindingKinds) const override {
+        auto *funcType = typeTable->getOrCreateFunctionType(
+            argTypes, retType, std::move(argBindingKinds));
+        return funcType ? typeTable->createPointerType(funcType) : nullptr;
+    }
+
+    TypeClass *receiverPointeeType(StructType *structType,
+                                   AccessKind receiverAccess) const override {
+        return declarationsupport_impl::methodReceiverPointeeType(
+            typeTable, structType, receiverAccess);
+    }
+
+    FuncType *createMethodFunctionType(
+        const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+        const std::vector<BindingKind> &paramBindingKinds) const override {
+        return typeTable->getOrCreateFunctionType(
+            argTypes, retType, paramBindingKinds, AbiKind::Native);
+    }
+};
 
 TypeClass *
 substituteAppliedStructTemplateType(
@@ -998,133 +1037,12 @@ substituteAppliedStructTemplateType(
     const CompilationUnit &contextUnit, TypeNode *node,
     const std::unordered_map<std::string, TypeClass *> &genericArgs,
     const location &loc, const std::string &context) {
-    if (!typeTable || !node) {
+    if (!typeTable) {
         return nullptr;
     }
-
-    if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-        return substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, param->type, genericArgs,
-            loc, context);
-    }
-    if (dynamic_cast<AnyTypeNode *>(node)) {
-        return typeTable->createAnyType();
-    }
-    if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-        auto rawName = baseTypeName(base);
-        if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
-            return found->second;
-        }
-        return resolveTypeNode(typeTable, contextUnit, node, false);
-    }
-    if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
-        auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
-        auto *typeDecl = resolveVisibleTypeDecl(contextUnit, base);
-        if (!typeDecl) {
-            return resolveTypeNode(typeTable, contextUnit, node, false);
-        }
-        if (!typeDecl->isGeneric()) {
-            error(applied->loc,
-                  "type `" + describeTypeNode(applied, "<unknown type>") +
-                      "` applies `[...]` arguments to a non-generic type",
-                  "Remove the `[...]` arguments, or make the base type generic "
-                  "before specializing it.");
-        }
-        if (applied->args.size() != typeDecl->typeParams.size()) {
-            error(applied->loc,
-                  "generic type argument count mismatch for `" +
-                      toStdString(typeDecl->exportedName) + "`: expected " +
-                      std::to_string(typeDecl->typeParams.size()) + ", got " +
-                      std::to_string(applied->args.size()),
-                  "Match the number of `[` `]` type arguments to the generic "
-                  "type parameter list.");
-        }
-        std::vector<TypeClass *> argTypes;
-        argTypes.reserve(applied->args.size());
-        for (auto *arg : applied->args) {
-            auto *argType = substituteAppliedStructTemplateType(
-                typeTable, requesterUnit, contextUnit, arg, genericArgs,
-                arg ? arg->loc : loc,
-                context);
-            if (!argType) {
-                error(arg ? arg->loc : loc,
-                      "unknown type argument for `" +
-                          describeTypeNode(applied, "<unknown type>") + "`: " +
-                          describeTypeNode(arg, "void"));
-            }
-            argTypes.push_back(argType);
-        }
-        if (auto *ownerUnit = findTemplateOwnerUnit(contextUnit, *typeDecl)) {
-            return requesterUnit.materializeAppliedStructType(
-                typeTable, *typeDecl, std::move(argTypes), *ownerUnit);
-        }
-        return typeTable->createOpaqueStructType(
-            buildAppliedTypeName(toStdString(typeDecl->exportedName), argTypes),
-            typeDecl->declKind, typeDecl->exportedName, std::move(argTypes));
-    }
-    if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
-        auto *baseType = substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, qualified->base,
-            genericArgs, loc, context);
-        return baseType ? typeTable->createConstType(baseType) : nullptr;
-    }
-    if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-        return resolveTypeNode(typeTable, contextUnit, dynType, false);
-    }
-    if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-        auto *baseType = substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, pointer->base, genericArgs,
-            loc, context);
-        for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
-            baseType = typeTable->createPointerType(baseType);
-        }
-        return baseType;
-    }
-    if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-        auto *baseType = substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, indexable->base,
-            genericArgs, loc, context);
-        return baseType ? typeTable->createIndexablePointerType(baseType)
-                        : nullptr;
-    }
-    if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-        auto *baseType = substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, array->base, genericArgs,
-            loc, context);
-        return baseType ? typeTable->createArrayType(baseType, array->dim)
-                        : nullptr;
-    }
-    if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-        std::vector<TypeClass *> itemTypes;
-        itemTypes.reserve(tuple->items.size());
-        for (auto *item : tuple->items) {
-            itemTypes.push_back(substituteAppliedStructTemplateType(
-                typeTable, requesterUnit, contextUnit, item, genericArgs,
-                item ? item->loc : loc, context));
-        }
-        return typeTable->getOrCreateTupleType(itemTypes);
-    }
-    if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
-        std::vector<TypeClass *> argTypes;
-        std::vector<BindingKind> argBindingKinds;
-        argTypes.reserve(func->args.size());
-        argBindingKinds.reserve(func->args.size());
-        for (auto *arg : func->args) {
-            argBindingKinds.push_back(funcParamBindingKind(arg));
-            argTypes.push_back(substituteAppliedStructTemplateType(
-                typeTable, requesterUnit, contextUnit,
-                unwrapFuncParamType(arg), genericArgs,
-                arg ? arg->loc : loc, context));
-        }
-        auto *retType = substituteAppliedStructTemplateType(
-            typeTable, requesterUnit, contextUnit, func->ret, genericArgs,
-            loc, context);
-        auto *funcType = typeTable->getOrCreateFunctionType(
-            argTypes, retType, std::move(argBindingKinds));
-        return funcType ? typeTable->createPointerType(funcType) : nullptr;
-    }
-
-    return resolveTypeNode(typeTable, contextUnit, node, false);
+    AppliedStructOps ops{typeTable, requesterUnit};
+    return appliedstructinstantiation::substituteTemplateType(
+        node, genericArgs, loc, context, contextUnit, ops);
 }
 
 TypeClass *
@@ -1180,8 +1098,8 @@ resolveTypeNode(TypeTable *typeTable, const CompilationUnit &unit,
             auto *argType = resolveTypeNode(typeTable, unit, arg, false);
             if (!argType) {
                 error(arg ? arg->loc : applied->loc,
-                      "unknown type argument for `" + appliedName + "`: " +
-                          describeTypeNode(arg, "void"));
+                      "unknown type argument for `" + appliedName +
+                          "`: " + describeTypeNode(arg, "void"));
             }
             argTypes.push_back(argType);
         }
@@ -1515,8 +1433,9 @@ CompilationUnit::clearLocalBindings() {
 
 bool
 CompilationUnit::addImportedModule(string alias, const CompilationUnit &unit) {
-    ImportedModule imported = {unit.path(), unit.moduleKey(), unit.moduleName(),
-                               unit.modulePath(), unit.interface(), &unit};
+    ImportedModule imported = {unit.path(),       unit.moduleKey(),
+                               unit.moduleName(), unit.modulePath(),
+                               unit.interface(),  &unit};
     return importedModules_.emplace(std::move(alias), std::move(imported))
         .second;
 }
@@ -1537,8 +1456,8 @@ CompilationUnit::findImportedModuleByInterface(
         return nullptr;
     }
     for (const auto &entry : importedModules_) {
-        if (compilation_unit_impl::sameInterfaceIdentity(
-                entry.second.interface, interface)) {
+        if (compilation_unit_impl::sameInterfaceIdentity(entry.second.interface,
+                                                         interface)) {
             return &entry.second;
         }
     }
@@ -1789,13 +1708,13 @@ CompilationUnit::ensureHashes() const {
     if (hashesReady_) {
         return;
     }
-    interfaceHash_ = syntaxTree_
-                         ? compilation_unit_impl::combineHash(
-                               compilation_unit_impl::computeInterfaceHash(
-                                   syntaxTree_),
-                               compilation_unit_impl::
-                                   computeVisibleImportInterfaceHash(*this))
-                         : 0;
+    interfaceHash_ =
+        syntaxTree_
+            ? compilation_unit_impl::combineHash(
+                  compilation_unit_impl::computeInterfaceHash(syntaxTree_),
+                  compilation_unit_impl::computeVisibleImportInterfaceHash(
+                      *this))
+            : 0;
     implementationHash_ = sourceHash();
     hashesReady_ = true;
 }
@@ -1888,7 +1807,8 @@ CompilationUnit::clearResolvedTypes() {
 }
 
 void
-CompilationUnit::recordGenericInstance(GenericInstanceArtifactRecord record) const {
+CompilationUnit::recordGenericInstance(
+    GenericInstanceArtifactRecord record) const {
     for (auto &existing : recordedGenericInstances_) {
         if (!(existing.key == record.key)) {
             continue;
@@ -1937,8 +1857,8 @@ CompilationUnit::ownerUnitForTypeDecl(
             if (!imported.unit || !imported.interface) {
                 continue;
             }
-            if (imported.interface->findType(toStdString(typeDecl->localName)) ==
-                typeDecl) {
+            if (imported.interface->findType(
+                    toStdString(typeDecl->localName)) == typeDecl) {
                 return imported.unit;
             }
             if (auto *owner = search(imported.unit)) {
@@ -1959,9 +1879,8 @@ CompilationUnit::contextUnitForInterface(
         if (!current || !visited.insert(current).second) {
             return nullptr;
         }
-        if (!ownerInterface ||
-            compilation_unit_impl::sameInterfaceIdentity(ownerInterface,
-                                                         current->interface())) {
+        if (!ownerInterface || compilation_unit_impl::sameInterfaceIdentity(
+                                   ownerInterface, current->interface())) {
             return current;
         }
         if (const auto *imported =
@@ -2003,10 +1922,10 @@ CompilationUnit::materializeAppliedStructType(
         return nullptr;
     }
 
-    const auto baseAppliedName =
-        templateOwnerUnit == this ? toStdString(typeDecl.localName)
-                                  : toStdString(typeDecl.exportedName);
-    auto appliedName = compilation_unit_impl::buildAppliedTypeName(
+    const auto baseAppliedName = templateOwnerUnit == this
+                                     ? toStdString(typeDecl.localName)
+                                     : toStdString(typeDecl.exportedName);
+    auto appliedName = appliedstructinstantiation::buildAppliedTypeName(
         baseAppliedName, appliedTypeArgs);
     auto *structType = typeTable->createOpaqueStructType(
         string(appliedName), typeDecl.declKind, typeDecl.exportedName,
@@ -2017,10 +1936,11 @@ CompilationUnit::materializeAppliedStructType(
 
     auto instanceKey = compilation_unit_impl::buildStructInstanceKey(
         *this, *templateOwnerUnit, typeDecl, appliedTypeArgs);
-    auto revision = GenericTemplateRevision{
-        templateOwnerUnit->interfaceHash(), templateOwnerUnit->implementationHash(),
-        templateOwnerUnit->visibleImportInterfaceHash(),
-        visibleTraitImplHash()};
+    auto revision =
+        GenericTemplateRevision{templateOwnerUnit->interfaceHash(),
+                                templateOwnerUnit->implementationHash(),
+                                templateOwnerUnit->visibleImportInterfaceHash(),
+                                visibleTraitImplHash()};
     recordGenericInstance({instanceKey, revision, {}});
 
     auto [_, inserted] = materializingAppliedStructs_.insert(instanceKey);
@@ -2033,19 +1953,9 @@ CompilationUnit::materializeAppliedStructType(
         ~Guard() { active.erase(key); }
     } guard{materializingAppliedStructs_, std::move(instanceKey)};
 
-    std::unordered_map<std::string, TypeClass *> genericArgs;
-    if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Internal,
-            "generic struct `" + toStdString(typeDecl.localName) +
-                "` instance is missing concrete type arguments",
-            "This looks like an applied-struct instantiation bug.");
-    }
-    genericArgs.reserve(typeDecl.typeParams.size());
-    for (std::size_t i = 0; i < typeDecl.typeParams.size(); ++i) {
-        genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
-                            appliedTypeArgs[i]);
-    }
+    auto genericArgs = appliedstructinstantiation::bindGenericArgs(
+        typeDecl, appliedTypeArgs,
+        "instance is missing concrete type arguments");
     for (const auto &param : typeDecl.typeParams) {
         if (param.boundTraitName.empty()) {
             continue;
@@ -2055,12 +1965,13 @@ CompilationUnit::materializeAppliedStructType(
             throw DiagnosticError(
                 DiagnosticError::Category::Internal,
                 "generic struct `" + toStdString(typeDecl.localName) +
-                    "` instance is missing a concrete type for bound parameter `" +
+                    "` instance is missing a concrete type for bound parameter "
+                    "`" +
                     toStdString(param.localName) + "`",
                 "This looks like a generic struct instantiation bug.");
         }
-        auto visibleImpls =
-            contextUnit.findVisibleTraitImpls(param.boundTraitName, found->second);
+        auto visibleImpls = contextUnit.findVisibleTraitImpls(
+            param.boundTraitName, found->second);
         if (!visibleImpls.empty()) {
             continue;
         }
@@ -2068,158 +1979,19 @@ CompilationUnit::materializeAppliedStructType(
         auto boundName = toStdString(param.boundTraitName);
         auto paramName = toStdString(param.localName);
         auto genericTypeName = toStdString(typeDecl.exportedName);
-        error(location(),
-              "type `" + typeName + "` does not satisfy bound `" + boundName +
-                  "` for generic parameter `" + paramName +
-                  "` in generic type `" + genericTypeName + "`",
-              "Add `impl " + boundName + " for " + typeName +
-                  " { ... }` in a visible module, or choose a type that already "
-                  "satisfies the bound.");
+        error(
+            location(),
+            "type `" + typeName + "` does not satisfy bound `" + boundName +
+                "` for generic parameter `" + paramName +
+                "` in generic type `" + genericTypeName + "`",
+            "Add `impl " + boundName + " for " + typeName +
+                " { ... }` in a visible module, or choose a type that already "
+                "satisfies the bound.");
     }
 
-    if (structType->isOpaque()) {
-        auto *structDecl = compilation_unit_impl::findLocalStructDecl(
-            *templateOwnerUnit, toStringRef(typeDecl.localName));
-        if (!structDecl) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "generic struct `" +
-                    toStdString(typeDecl.localName) +
-                    "` is missing its template AST",
-                "This looks like a generic template registration bug.");
-        }
-
-        auto *body = dynamic_cast<AstStatList *>(structDecl->body);
-        llvm::StringMap<StructType::ValueTy> members;
-        llvm::StringMap<AccessKind> memberAccess;
-        llvm::StringSet<> embeddedMembers;
-        std::unordered_map<std::string, location> seenMembers;
-        int nextMemberIndex = 0;
-
-        if (body) {
-            for (auto *stmt : body->getBody()) {
-                auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt);
-                if (!fieldDecl) {
-                    continue;
-                }
-                auto *fieldType =
-                    compilation_unit_impl::substituteAppliedStructTemplateType(
-                        typeTable, *this, *templateOwnerUnit,
-                        fieldDecl->typeNode, genericArgs,
-                        fieldDecl->loc,
-                        "struct field `" +
-                            declarationsupport_impl::describeStructFieldSyntax(
-                                fieldDecl) +
-                            "`");
-                if (!fieldType) {
-                    error(fieldDecl->loc,
-                          "unknown struct field type for `" +
-                              declarationsupport_impl::describeStructFieldSyntax(
-                                  fieldDecl) +
-                              "`: " +
-                              describeTypeNode(fieldDecl->typeNode, "void"));
-                }
-                declarationsupport_impl::rejectBareFunctionType(
-                    fieldType, fieldDecl->typeNode,
-                    "unsupported bare function struct field type for `" +
-                        declarationsupport_impl::describeStructFieldSyntax(
-                            fieldDecl) +
-                        "`",
-                    fieldDecl->loc);
-                declarationsupport_impl::validateStructFieldType(
-                    structDecl, fieldDecl, fieldType);
-                declarationsupport_impl::validateEmbeddedStructField(
-                    structDecl, fieldDecl, fieldType);
-                declarationsupport_impl::insertStructMember(
-                    structDecl, fieldDecl, fieldType, members, memberAccess,
-                    embeddedMembers, seenMembers, nextMemberIndex);
-            }
-        }
-
-        structType->complete(members, memberAccess, embeddedMembers);
-    }
-
-    for (const auto &method : typeDecl.methodTemplates) {
-        if (structType->getMethodType(toStringRef(method.localName))) {
-            continue;
-        }
-        if (method.typeParams.size() > method.enclosingTypeParamCount) {
-            continue;
-        }
-
-        std::vector<TypeClass *> argTypes;
-        argTypes.reserve(method.paramTypeNodes.size() + 1);
-        auto *selfPointee = declarationsupport_impl::methodReceiverPointeeType(
-            typeTable, structType, method.receiverAccess);
-        argTypes.push_back(typeTable->createPointerType(selfPointee));
-        for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
-            auto *paramType =
-                compilation_unit_impl::substituteAppliedStructTemplateType(
-                    typeTable, *this, *templateOwnerUnit,
-                    method.paramTypeNodes[i], genericArgs,
-                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                             : location(),
-                    "parameter `" +
-                        (i < method.paramNames.size()
-                             ? toStdString(method.paramNames[i])
-                             : std::string("<param>")) +
-                        "` in method `" + toStdString(typeDecl.localName) +
-                        "." + toStdString(method.localName) + "`");
-            if (!paramType) {
-                error(method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                               : location(),
-                      "unknown method parameter type in `" +
-                          toStdString(typeDecl.localName) + "." +
-                          toStdString(method.localName) + "`");
-            }
-            declarationsupport_impl::rejectBareFunctionType(
-                paramType, method.paramTypeNodes[i],
-                "unsupported bare function parameter type in `" +
-                    toStdString(typeDecl.localName) + "." +
-                    toStdString(method.localName) + "`",
-                method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                         : location());
-            declarationsupport_impl::rejectOpaqueStructByValue(
-                paramType, method.paramTypeNodes[i],
-                method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                         : location(),
-                "parameter `" +
-                    (i < method.paramNames.size()
-                         ? toStdString(method.paramNames[i])
-                         : std::string("<param>")) +
-                    "` in method `" + toStdString(typeDecl.localName) + "." +
-                    toStdString(method.localName) + "`");
-            argTypes.push_back(paramType);
-        }
-
-        TypeClass *retType = nullptr;
-        if (method.returnTypeNode) {
-            retType = compilation_unit_impl::substituteAppliedStructTemplateType(
-                typeTable, *this, *templateOwnerUnit, method.returnTypeNode,
-                genericArgs,
-                method.returnTypeNode->loc,
-                "return type of method `" + toStdString(typeDecl.localName) +
-                    "." + toStdString(method.localName) + "`");
-            declarationsupport_impl::rejectBareFunctionType(
-                retType, method.returnTypeNode,
-                "unsupported bare function return type for method `" +
-                    toStdString(typeDecl.localName) + "." +
-                    toStdString(method.localName) + "`",
-                method.returnTypeNode->loc);
-            declarationsupport_impl::rejectOpaqueStructByValue(
-                retType, method.returnTypeNode, method.returnTypeNode->loc,
-                "return type of method `" + toStdString(typeDecl.localName) +
-                    "." + toStdString(method.localName) + "`");
-        }
-
-        auto paramBindingKinds = method.paramBindingKinds;
-        paramBindingKinds.insert(paramBindingKinds.begin(),
-                                 BindingKind::Value);
-        auto *funcType = typeTable->getOrCreateFunctionType(
-            argTypes, retType, paramBindingKinds, AbiKind::Native);
-        structType->addMethodType(toStringRef(method.localName), funcType,
-                                  method.paramNames);
-    }
+    compilation_unit_impl::AppliedStructOps ops{typeTable, *this};
+    appliedstructinstantiation::materializeStructLayoutAndMethods(
+        typeDecl, structType, genericArgs, *templateOwnerUnit, ops);
 
     return structType;
 }

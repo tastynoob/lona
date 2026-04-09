@@ -4,10 +4,11 @@
 #include "lona/ast/type_node_tools.hh"
 #include "lona/declare/support.hh"
 #include "lona/err/err.hh"
+#include "lona/generic/applied_struct_instantiation.hh"
 #include "lona/module/compilation_unit.hh"
 #include "lona/module/module_interface.hh"
-#include "lona/sema/moduleentry.hh"
 #include "lona/sema/initializer.hh"
+#include "lona/sema/moduleentry.hh"
 #include "lona/type/buildin.hh"
 #include "lona/type/scope.hh"
 #include <cassert>
@@ -65,8 +66,9 @@ reportGlobalConflict(const CompilationUnit *unit, llvm::StringRef globalName,
 }
 
 [[noreturn]] void
-reportFunctionConflict(const CompilationUnit *unit, llvm::StringRef functionName,
-                       FuncType *existingType, FuncType *incomingType) {
+reportFunctionConflict(const CompilationUnit *unit,
+                       llvm::StringRef functionName, FuncType *existingType,
+                       FuncType *incomingType) {
     std::string message =
         "conflicting declarations for function `" + functionName.str() + "`";
     if (existingType && incomingType) {
@@ -125,6 +127,101 @@ class InterfaceCollector {
     std::unordered_map<std::string, std::pair<TopLevelDeclKind, location>>
         topLevelDecls_;
 
+    struct AppliedStructOps final
+        : appliedstructinstantiation::MaterializationOps {
+        InterfaceCollector &collector;
+
+        explicit AppliedStructOps(InterfaceCollector &collector)
+            : collector(collector) {}
+
+        TypeClass *resolveFallbackType(
+            TypeNode *node, const CompilationUnit &lookupUnit) const override {
+            return collector.resolveType(node, lookupUnit, false);
+        }
+
+        const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
+            BaseTypeNode *base,
+            const CompilationUnit &lookupUnit) const override {
+            return collector.resolveVisibleTypeDecl(
+                base, lookupUnit, collector.interfaceForLookupUnit(lookupUnit));
+        }
+
+        TypeClass *instantiateAppliedStructType(
+            const ModuleInterface::TypeDecl &typeDecl,
+            std::vector<TypeClass *> argTypes,
+            const CompilationUnit &lookupUnit) const override {
+            if (auto *templateOwnerUnit =
+                    lookupUnit.ownerUnitForTypeDecl(&typeDecl)) {
+                return collector.materializeVisibleAppliedStructType(
+                    typeDecl, std::move(argTypes), templateOwnerUnit);
+            }
+            auto appliedName = appliedstructinstantiation::buildAppliedTypeName(
+                toStdString(typeDecl.exportedName), argTypes);
+            auto *structType =
+                collector.interface_->getOrCreateAppliedStructType(
+                    appliedName, typeDecl.declKind, typeDecl.exportedName,
+                    argTypes);
+            if (structType) {
+                structType->setAppliedTemplateInfo(typeDecl.exportedName,
+                                                   argTypes, nullptr);
+            }
+            return structType;
+        }
+
+        TypeClass *createAnyType() const override {
+            return collector.interface_->getOrCreateAnyType();
+        }
+
+        TypeClass *createConstType(TypeClass *baseType) const override {
+            return collector.interface_->getOrCreateConstType(baseType);
+        }
+
+        TypeClass *createPointerType(TypeClass *baseType) const override {
+            return collector.interface_->getOrCreatePointerType(baseType);
+        }
+
+        TypeClass *createIndexablePointerType(
+            TypeClass *baseType) const override {
+            return collector.interface_->getOrCreateIndexablePointerType(
+                baseType);
+        }
+
+        TypeClass *createArrayType(
+            TypeClass *baseType,
+            std::vector<AstNode *> dimensions) const override {
+            return collector.interface_->getOrCreateArrayType(
+                baseType, std::move(dimensions));
+        }
+
+        TypeClass *createTupleType(
+            const std::vector<TypeClass *> &itemTypes) const override {
+            return collector.interface_->getOrCreateTupleType(itemTypes);
+        }
+
+        TypeClass *createFunctionPointerType(
+            const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+            std::vector<BindingKind> argBindingKinds) const override {
+            auto *funcType = collector.interface_->getOrCreateFunctionType(
+                argTypes, retType, std::move(argBindingKinds));
+            return funcType
+                       ? collector.interface_->getOrCreatePointerType(funcType)
+                       : nullptr;
+        }
+
+        TypeClass *receiverPointeeType(
+            StructType *structType, AccessKind receiverAccess) const override {
+            return interfaceMethodReceiverPointeeType(
+                collector.interface_, structType, receiverAccess);
+        }
+
+        FuncType *createMethodFunctionType(
+            const std::vector<TypeClass *> &argTypes, TypeClass *retType,
+            const std::vector<BindingKind> &paramBindingKinds) const override {
+            return collector.interface_->getOrCreateFunctionType(
+                argTypes, retType, paramBindingKinds);
+        }
+    };
+
     struct ResolvedTraitRef {
         const ModuleInterface::TraitDecl *decl = nullptr;
         string resolvedName;
@@ -163,9 +260,9 @@ class InterfaceCollector {
         TraitImplHeader,
     };
 
-    std::vector<ModuleInterface::GenericParamDecl>
-    collectGenericParams(const std::vector<AstGenericParam *> *params,
-                         GenericParamContext context) {
+    std::vector<ModuleInterface::GenericParamDecl> collectGenericParams(
+        const std::vector<AstGenericParam *> *params,
+        GenericParamContext context) {
         std::vector<ModuleInterface::GenericParamDecl> collected;
         if (!params) {
             return collected;
@@ -177,8 +274,8 @@ class InterfaceCollector {
             }
             ModuleInterface::GenericParamDecl decl{param->name.text, string()};
             if (param->hasBoundTrait()) {
-                auto traitRef = resolveTraitRef(param->boundTrait,
-                                                param->boundTrait->loc);
+                auto traitRef =
+                    resolveTraitRef(param->boundTrait, param->boundTrait->loc);
                 decl.boundTraitName = traitRef.resolvedName;
             }
             collected.push_back(std::move(decl));
@@ -186,8 +283,7 @@ class InterfaceCollector {
         return collected;
     }
 
-    static std::unordered_set<std::string>
-    collectGenericParamNames(
+    static std::unordered_set<std::string> collectGenericParamNames(
         const std::vector<ModuleInterface::GenericParamDecl> &params) {
         std::unordered_set<std::string> names;
         names.reserve(params.size());
@@ -200,8 +296,8 @@ class InterfaceCollector {
     static std::string genericTemplateHint(const std::string &rawName) {
         return "Write `" + rawName +
                "[...]` with explicit type arguments, or use the template "
-               "name only inside another applied type like `" + rawName +
-               "[T]`.";
+               "name only inside another applied type like `" +
+               rawName + "[T]`.";
     }
 
     static BaseTypeNode *rootSelfTypeBase(TypeNode *node) {
@@ -214,8 +310,8 @@ class InterfaceCollector {
         return nullptr;
     }
 
-    static string qualifySelfTypeSpelling(TypeNode *node,
-                                          const ModuleInterface::TypeDecl *decl) {
+    static string qualifySelfTypeSpelling(
+        TypeNode *node, const ModuleInterface::TypeDecl *decl) {
         if (!node) {
             return {};
         }
@@ -245,10 +341,9 @@ class InterfaceCollector {
               genericTemplateHint(rawName));
     }
 
-    const ModuleInterface::TypeDecl *
-    resolveVisibleTypeDecl(BaseTypeNode *base,
-                           const CompilationUnit &lookupUnit,
-                           const ModuleInterface *lookupInterface) const {
+    const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
+        BaseTypeNode *base, const CompilationUnit &lookupUnit,
+        const ModuleInterface *lookupInterface) const {
         if (!base || !lookupInterface) {
             return nullptr;
         }
@@ -260,7 +355,8 @@ class InterfaceCollector {
             return lookup.isType() ? lookup.typeDecl : nullptr;
         }
 
-        const auto *imported = findImportedModuleForLookup(lookupUnit, moduleName);
+        const auto *imported =
+            findImportedModuleForLookup(lookupUnit, moduleName);
         if (!imported || !imported->interface) {
             return nullptr;
         }
@@ -268,13 +364,13 @@ class InterfaceCollector {
         return lookup.isType() ? lookup.typeDecl : nullptr;
     }
 
-    const ModuleInterface::TypeDecl *
-    resolveVisibleTypeDecl(BaseTypeNode *base) {
+    const ModuleInterface::TypeDecl *resolveVisibleTypeDecl(
+        BaseTypeNode *base) {
         return resolveVisibleTypeDecl(base, unit_, interface_);
     }
 
-    const ModuleInterface *
-    interfaceForLookupUnit(const CompilationUnit &lookupUnit) const {
+    const ModuleInterface *interfaceForLookupUnit(
+        const CompilationUnit &lookupUnit) const {
         if (&lookupUnit == &unit_) {
             return interface_;
         }
@@ -442,14 +538,12 @@ class InterfaceCollector {
     }
 
     bool ownsTypeDecl(const ModuleInterface::TypeDecl *typeDecl) const {
-        return typeDecl &&
-               interface_->findType(toStdString(typeDecl->localName)) ==
-                   typeDecl;
+        return typeDecl && interface_->findType(
+                               toStdString(typeDecl->localName)) == typeDecl;
     }
 
-    static const ModuleInterface::TypeDecl *
-    findTypeDeclByTemplateName(const ModuleInterface *interface,
-                               llvm::StringRef templateName) {
+    static const ModuleInterface::TypeDecl *findTypeDeclByTemplateName(
+        const ModuleInterface *interface, llvm::StringRef templateName) {
         if (!interface || templateName.empty()) {
             return nullptr;
         }
@@ -462,8 +556,7 @@ class InterfaceCollector {
         return nullptr;
     }
 
-    const ModuleInterface::TypeDecl *
-    findVisibleTypeDeclByTemplateName(
+    const ModuleInterface::TypeDecl *findVisibleTypeDeclByTemplateName(
         llvm::StringRef templateName,
         const CompilationUnit **ownerUnitOut = nullptr) const {
         if (ownerUnitOut) {
@@ -472,7 +565,8 @@ class InterfaceCollector {
         if (templateName.empty()) {
             return nullptr;
         }
-        if (auto *typeDecl = findTypeDeclByTemplateName(interface_, templateName)) {
+        if (auto *typeDecl =
+                findTypeDeclByTemplateName(interface_, templateName)) {
             if (ownerUnitOut) {
                 *ownerUnitOut = &unit_;
             }
@@ -483,8 +577,8 @@ class InterfaceCollector {
             if (!imported.interface) {
                 continue;
             }
-            if (auto *typeDecl =
-                    findTypeDeclByTemplateName(imported.interface, templateName)) {
+            if (auto *typeDecl = findTypeDeclByTemplateName(imported.interface,
+                                                            templateName)) {
                 if (ownerUnitOut) {
                     *ownerUnitOut = imported.unit;
                 }
@@ -494,178 +588,14 @@ class InterfaceCollector {
         return nullptr;
     }
 
-    static AstStructDecl *findStructDeclInUnit(const CompilationUnit *unit,
-                                               llvm::StringRef localName) {
-        if (!unit) {
-            return nullptr;
-        }
-        auto *root = unit->syntaxTree();
-        auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body =
-            dynamic_cast<AstStatList *>(program ? program->body : root);
-        if (!body) {
-            return nullptr;
-        }
-        for (auto *stmt : body->getBody()) {
-            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-            if (!structDecl) {
-                continue;
-            }
-            if (toStringRef(structDecl->name) == localName) {
-                return structDecl;
-            }
-        }
-        return nullptr;
-    }
-
-    static std::string buildAppliedTypeName(const std::string &baseName,
-                                            const std::vector<TypeClass *> &args) {
-        std::string name = baseName.empty() ? std::string("<type>") : baseName;
-        name += "[";
-        for (std::size_t i = 0; i < args.size(); ++i) {
-            if (i != 0) {
-                name += ", ";
-            }
-            name += args[i] ? describeResolvedType(args[i]) : "<unknown type>";
-        }
-        name += "]";
-        return name;
-    }
-
     TypeClass *substituteAppliedStructTemplateType(
         TypeNode *node,
         const std::unordered_map<std::string, TypeClass *> &genericArgs,
         const location &loc, const std::string &context,
         const CompilationUnit &lookupUnit) {
-        if (!node) {
-            return nullptr;
-        }
-        if (auto *param = dynamic_cast<FuncParamTypeNode *>(node)) {
-            return substituteAppliedStructTemplateType(param->type, genericArgs,
-                                                       loc, context, lookupUnit);
-        }
-        if (dynamic_cast<AnyTypeNode *>(node)) {
-            return interface_->getOrCreateAnyType();
-        }
-        if (auto *base = dynamic_cast<BaseTypeNode *>(node)) {
-            auto rawName = baseTypeName(base);
-            if (auto found = genericArgs.find(rawName); found != genericArgs.end()) {
-                return found->second;
-            }
-            return resolveType(node, lookupUnit, false);
-        }
-        if (auto *applied = dynamic_cast<AppliedTypeNode *>(node)) {
-            auto *base = dynamic_cast<BaseTypeNode *>(applied->base);
-            const auto *typeDecl =
-                resolveVisibleTypeDecl(base, lookupUnit,
-                                       interfaceForLookupUnit(lookupUnit));
-            if (!typeDecl) {
-                return resolveType(node, lookupUnit, false);
-            }
-            if (!typeDecl->isGeneric()) {
-                error(applied->loc,
-                      "type `" + describeTypeNode(applied, "<unknown type>") +
-                          "` applies `[...]` arguments to a non-generic type",
-                      "Remove the `[...]` arguments, or make the base type "
-                      "generic before specializing it.");
-            }
-            if (applied->args.size() != typeDecl->typeParams.size()) {
-                error(applied->loc,
-                      "generic type argument count mismatch for `" +
-                          toStdString(typeDecl->exportedName) + "`: expected " +
-                          std::to_string(typeDecl->typeParams.size()) +
-                          ", got " + std::to_string(applied->args.size()),
-                      "Match the number of `[` `]` type arguments to the "
-                      "generic type parameter list.");
-            }
-            std::vector<TypeClass *> argTypes;
-            argTypes.reserve(applied->args.size());
-            for (auto *arg : applied->args) {
-                auto *argType = substituteAppliedStructTemplateType(
-                    arg, genericArgs, arg ? arg->loc : loc, context, lookupUnit);
-                if (!argType) {
-                    error(arg ? arg->loc : loc,
-                          "unknown type argument for `" +
-                              describeTypeNode(applied, "<unknown type>") +
-                              "`: " + describeTypeNode(arg, "void"));
-                }
-                argTypes.push_back(argType);
-            }
-            if (auto *templateOwnerUnit =
-                    lookupUnit.ownerUnitForTypeDecl(typeDecl)) {
-                return materializeVisibleAppliedStructType(
-                    *typeDecl, std::move(argTypes), templateOwnerUnit);
-            }
-            auto appliedName =
-                buildAppliedTypeName(toStdString(typeDecl->exportedName), argTypes);
-            auto *structType = interface_->getOrCreateAppliedStructType(
-                appliedName, typeDecl->declKind, typeDecl->exportedName,
-                argTypes);
-            if (structType) {
-                structType->setAppliedTemplateInfo(typeDecl->exportedName,
-                                                   argTypes, nullptr);
-            }
-            return structType;
-        }
-        if (auto *qualified = dynamic_cast<ConstTypeNode *>(node)) {
-            auto *baseType = substituteAppliedStructTemplateType(
-                qualified->base, genericArgs, loc, context, lookupUnit);
-            return baseType ? interface_->getOrCreateConstType(baseType)
-                            : nullptr;
-        }
-        if (auto *dynType = dynamic_cast<DynTypeNode *>(node)) {
-            return resolveType(dynType, lookupUnit, false);
-        }
-        if (auto *pointer = dynamic_cast<PointerTypeNode *>(node)) {
-            auto *baseType = substituteAppliedStructTemplateType(
-                pointer->base, genericArgs, loc, context, lookupUnit);
-            for (uint32_t i = 0; baseType && i < pointer->dim; ++i) {
-                baseType = interface_->getOrCreatePointerType(baseType);
-            }
-            return baseType;
-        }
-        if (auto *indexable = dynamic_cast<IndexablePointerTypeNode *>(node)) {
-            auto *elementType = substituteAppliedStructTemplateType(
-                indexable->base, genericArgs, loc, context, lookupUnit);
-            return elementType ? interface_->getOrCreateIndexablePointerType(
-                                     elementType)
-                               : nullptr;
-        }
-        if (auto *array = dynamic_cast<ArrayTypeNode *>(node)) {
-            auto *elementType = substituteAppliedStructTemplateType(
-                array->base, genericArgs, loc, context, lookupUnit);
-            return elementType ? interface_->getOrCreateArrayType(
-                                     elementType, array->dim)
-                               : nullptr;
-        }
-        if (auto *tuple = dynamic_cast<TupleTypeNode *>(node)) {
-            std::vector<TypeClass *> itemTypes;
-            itemTypes.reserve(tuple->items.size());
-            for (auto *item : tuple->items) {
-                itemTypes.push_back(substituteAppliedStructTemplateType(
-                    item, genericArgs, item ? item->loc : loc, context,
-                    lookupUnit));
-            }
-            return interface_->getOrCreateTupleType(itemTypes);
-        }
-        if (auto *func = dynamic_cast<FuncPtrTypeNode *>(node)) {
-            std::vector<TypeClass *> argTypes;
-            std::vector<BindingKind> argBindingKinds;
-            argTypes.reserve(func->args.size());
-            argBindingKinds.reserve(func->args.size());
-            for (auto *arg : func->args) {
-                argBindingKinds.push_back(funcParamBindingKind(arg));
-                argTypes.push_back(substituteAppliedStructTemplateType(
-                    unwrapFuncParamType(arg), genericArgs,
-                    arg ? arg->loc : loc, context, lookupUnit));
-            }
-            auto *retType = substituteAppliedStructTemplateType(
-                func->ret, genericArgs, loc, context, lookupUnit);
-            return interface_->getOrCreatePointerType(
-                interface_->getOrCreateFunctionType(argTypes, retType,
-                                                    std::move(argBindingKinds)));
-        }
-        return resolveType(node, lookupUnit, false);
+        AppliedStructOps ops(*this);
+        return appliedstructinstantiation::substituteTemplateType(
+            node, genericArgs, loc, context, lookupUnit, ops);
     }
 
     StructType *materializeVisibleAppliedStructType(
@@ -676,10 +606,11 @@ class InterfaceCollector {
             templateOwnerUnit = unit_.ownerUnitForTypeDecl(&typeDecl);
         }
 
-        const auto baseAppliedName =
-            templateOwnerUnit == &unit_ ? toStdString(typeDecl.localName)
-                                        : toStdString(typeDecl.exportedName);
-        auto appliedName = buildAppliedTypeName(baseAppliedName, appliedTypeArgs);
+        const auto baseAppliedName = templateOwnerUnit == &unit_
+                                         ? toStdString(typeDecl.localName)
+                                         : toStdString(typeDecl.exportedName);
+        auto appliedName = appliedstructinstantiation::buildAppliedTypeName(
+            baseAppliedName, appliedTypeArgs);
         auto *structType = interface_->getOrCreateAppliedStructType(
             appliedName, typeDecl.declKind, typeDecl.exportedName,
             appliedTypeArgs);
@@ -687,8 +618,7 @@ class InterfaceCollector {
             return nullptr;
         }
         structType->setAppliedTemplateInfo(typeDecl.exportedName,
-                                           appliedTypeArgs,
-                                           templateOwnerUnit);
+                                           appliedTypeArgs, templateOwnerUnit);
 
         auto [_, inserted] = materializingAppliedStructs_.insert(appliedName);
         if (!inserted) {
@@ -700,134 +630,12 @@ class InterfaceCollector {
             ~Guard() { active.erase(name); }
         } guard{materializingAppliedStructs_, appliedName};
 
-        if (typeDecl.typeParams.size() != appliedTypeArgs.size()) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "generic struct `" + toStdString(typeDecl.localName) +
-                    "` interface instance is missing concrete type arguments",
-                "This looks like an applied-struct interface bug.");
-        }
-
-        std::unordered_map<std::string, TypeClass *> genericArgs;
-        genericArgs.reserve(typeDecl.typeParams.size());
-        for (std::size_t i = 0; i < typeDecl.typeParams.size(); ++i) {
-            genericArgs.emplace(toStdString(typeDecl.typeParams[i].localName),
-                                appliedTypeArgs[i]);
-        }
-
-        if (structType->isOpaque()) {
-            auto *structDecl = findStructDeclInUnit(
-                templateOwnerUnit, toStringRef(typeDecl.localName));
-            if (!structDecl) {
-                throw DiagnosticError(
-                    DiagnosticError::Category::Internal,
-                    "generic struct `" + toStdString(typeDecl.localName) +
-                        "` is missing its template AST",
-                    "This looks like a generic template registration bug.");
-            }
-
-            auto *body = dynamic_cast<AstStatList *>(structDecl->body);
-            llvm::StringMap<StructType::ValueTy> members;
-            llvm::StringMap<AccessKind> memberAccess;
-            llvm::StringSet<> embeddedMembers;
-            std::unordered_map<std::string, location> seenMembers;
-            int index = 0;
-
-            if (body) {
-                for (auto *stmt : body->getBody()) {
-                    auto *varDecl = dynamic_cast<AstVarDecl *>(stmt);
-                    if (!varDecl) {
-                        continue;
-                    }
-                    auto *fieldType = substituteAppliedStructTemplateType(
-                        varDecl->typeNode, genericArgs, varDecl->loc,
-                        "struct field `" + describeStructFieldSyntax(varDecl) +
-                            "`",
-                        *templateOwnerUnit);
-                    if (!fieldType) {
-                        error(varDecl->loc,
-                              "unknown struct field type for `" +
-                                  describeStructFieldSyntax(varDecl) + "`: " +
-                                  describeTypeNode(varDecl->typeNode, "void"));
-                    }
-                    rejectBareFunctionType(
-                        fieldType, varDecl->typeNode,
-                        "unsupported bare function struct field type for `" +
-                            describeStructFieldSyntax(varDecl) + "`",
-                        varDecl->loc);
-                    validateStructFieldType(structDecl, varDecl, fieldType);
-                    validateEmbeddedStructField(structDecl, varDecl, fieldType);
-                    insertStructMember(structDecl, varDecl, fieldType, members,
-                                       memberAccess, embeddedMembers,
-                                       seenMembers, index);
-                }
-            }
-
-            structType->complete(members, memberAccess, embeddedMembers);
-        }
-
-        for (const auto &method : typeDecl.methodTemplates) {
-            if (structType->getMethodType(toStringRef(method.localName))) {
-                continue;
-            }
-            if (method.typeParams.size() > method.enclosingTypeParamCount) {
-                continue;
-            }
-            std::vector<TypeClass *> argTypes;
-            auto *selfPointee = interfaceMethodReceiverPointeeType(
-                interface_, structType, method.receiverAccess);
-            argTypes.push_back(interface_->getOrCreatePointerType(selfPointee));
-            for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
-                auto *paramType = substituteAppliedStructTemplateType(
-                    method.paramTypeNodes[i], genericArgs,
-                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                             : location(),
-                    "method parameter", *templateOwnerUnit);
-                rejectBareFunctionType(
-                    paramType, method.paramTypeNodes[i],
-                    "unsupported bare function parameter type in `" +
-                        toStdString(typeDecl.localName) + "." +
-                        toStdString(method.localName) + "`",
-                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                             : location());
-                rejectOpaqueStructByValue(
-                    paramType, method.paramTypeNodes[i],
-                    method.paramTypeNodes[i] ? method.paramTypeNodes[i]->loc
-                                             : location(),
-                    "parameter `" +
-                        (i < method.paramNames.size()
-                             ? toStdString(method.paramNames[i])
-                             : std::string("<param>")) +
-                        "` in method `" + toStdString(typeDecl.localName) +
-                        "." + toStdString(method.localName) + "`");
-                argTypes.push_back(paramType);
-            }
-            TypeClass *retType = nullptr;
-            if (method.returnTypeNode) {
-                retType = substituteAppliedStructTemplateType(
-                    method.returnTypeNode, genericArgs,
-                    method.returnTypeNode->loc, "method return type",
-                    *templateOwnerUnit);
-                rejectBareFunctionType(
-                    retType, method.returnTypeNode,
-                    "unsupported bare function return type for `" +
-                        toStdString(typeDecl.localName) + "." +
-                        toStdString(method.localName) + "`",
-                    method.returnTypeNode->loc);
-                rejectOpaqueStructByValue(
-                    retType, method.returnTypeNode, method.returnTypeNode->loc,
-                    "return type of method `" +
-                        toStdString(typeDecl.localName) + "." +
-                        toStdString(method.localName) + "`");
-            }
-            auto paramBindingKinds = method.paramBindingKinds;
-            paramBindingKinds.insert(paramBindingKinds.begin(),
-                                     BindingKind::Value);
-            auto *funcType = interface_->getOrCreateFunctionType(
-                argTypes, retType, paramBindingKinds);
-            structType->addMethodType(toStringRef(method.localName), funcType,
-                                      method.paramNames);
-        }
+        auto genericArgs = appliedstructinstantiation::bindGenericArgs(
+            typeDecl, appliedTypeArgs,
+            "interface instance is missing concrete type arguments");
+        AppliedStructOps ops(*this);
+        appliedstructinstantiation::materializeStructLayoutAndMethods(
+            typeDecl, structType, genericArgs, *templateOwnerUnit, ops);
 
         return structType;
     }
@@ -864,7 +672,8 @@ class InterfaceCollector {
 
     TypeClass *resolveAppliedType(AppliedTypeNode *applied,
                                   const CompilationUnit &lookupUnit) {
-        auto *base = dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
+        auto *base =
+            dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
         auto appliedName = describeTypeNode(applied, "<unknown type>");
         if (!base) {
             return materializeOpaqueAppliedStructIfNeeded(
@@ -899,23 +708,22 @@ class InterfaceCollector {
             auto *argType = resolveType(arg, lookupUnit, false);
             if (!argType) {
                 error(arg ? arg->loc : applied->loc,
-                      "unknown type argument for `" + appliedName + "`: " +
-                          describeTypeNode(arg, "void"));
+                      "unknown type argument for `" + appliedName +
+                          "`: " + describeTypeNode(arg, "void"));
             }
             argTypes.push_back(argType);
         }
         if (auto *templateOwnerUnit =
                 lookupUnit.ownerUnitForTypeDecl(typeDecl)) {
             return materializeOpaqueAppliedStructIfNeeded(
-                materializeVisibleAppliedStructType(*typeDecl,
-                                                   std::move(argTypes),
-                                                   templateOwnerUnit));
+                materializeVisibleAppliedStructType(
+                    *typeDecl, std::move(argTypes), templateOwnerUnit));
         }
         auto *structType = interface_->getOrCreateAppliedStructType(
             appliedName, typeDecl->declKind, typeDecl->exportedName, argTypes);
         if (structType) {
-            structType->setAppliedTemplateInfo(typeDecl->exportedName,
-                                               argTypes, nullptr);
+            structType->setAppliedTemplateInfo(typeDecl->exportedName, argTypes,
+                                               nullptr);
         }
         return materializeOpaqueAppliedStructIfNeeded(structType);
     }
@@ -924,10 +732,12 @@ class InterfaceCollector {
         return resolveAppliedType(applied, unit_);
     }
 
-    void validateAppliedTypeNode(
-        AppliedTypeNode *applied, const std::unordered_set<std::string> &params,
-        const location &loc, const std::string &context) {
-        auto *base = dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
+    void validateAppliedTypeNode(AppliedTypeNode *applied,
+                                 const std::unordered_set<std::string> &params,
+                                 const location &loc,
+                                 const std::string &context) {
+        auto *base =
+            dynamic_cast<BaseTypeNode *>(applied ? applied->base : nullptr);
         auto appliedName = describeTypeNode(applied, "<unknown type>");
         if (!base) {
             error(loc, "unknown type for " + context + ": " + appliedName,
@@ -1136,8 +946,8 @@ class InterfaceCollector {
               "Trait v0 only allows method signatures inside trait bodies.");
     }
 
-    static std::string describeTraitImplContext(const ResolvedTraitRef &traitRef,
-                                                const ResolvedSelfTypeRef &selfRef) {
+    static std::string describeTraitImplContext(
+        const ResolvedTraitRef &traitRef, const ResolvedSelfTypeRef &selfRef) {
         return "`" + toStdString(traitRef.resolvedName) + " for " +
                toStdString(selfRef.resolvedName) + "`";
     }
@@ -1146,8 +956,8 @@ class InterfaceCollector {
         AstTraitImplDecl *traitImplDecl, const ResolvedTraitRef &traitRef,
         const ResolvedSelfTypeRef &selfRef) {
         std::vector<AstFuncDecl *> methods;
-        auto *body = dynamic_cast<AstStatList *>(traitImplDecl ? traitImplDecl->body
-                                                               : nullptr);
+        auto *body = dynamic_cast<AstStatList *>(
+            traitImplDecl ? traitImplDecl->body : nullptr);
         if (!body) {
             return methods;
         }
@@ -1194,7 +1004,8 @@ class InterfaceCollector {
     ResolvedTraitRef resolveTraitRef(AstNode *traitSyntax,
                                      const location &loc) {
         std::vector<std::string> segments;
-        if (!collectDotLikeSegments(traitSyntax, segments) || segments.empty()) {
+        if (!collectDotLikeSegments(traitSyntax, segments) ||
+            segments.empty()) {
             error(loc, "invalid trait reference in impl declaration",
                   "Use a trait name like `Hash` or `dep.Hash` in "
                   "`impl Trait for Type { ... }`.");
@@ -1204,7 +1015,8 @@ class InterfaceCollector {
             if (const auto *traitDecl = interface_->findTrait(segments[0])) {
                 return {traitDecl, traitDecl->exportedName, true};
             }
-            error(loc, "unknown trait `" + segments[0] + "` in impl declaration",
+            error(loc,
+                  "unknown trait `" + segments[0] + "` in impl declaration",
                   "Declare the trait in this module or import the module that "
                   "defines it before writing the impl.");
         }
@@ -1221,16 +1033,15 @@ class InterfaceCollector {
         if (!imported || !imported->interface) {
             error(loc, "unknown imported module alias `" + segments[0] + "`",
                   "Add an explicit `import " + segments[0] +
-                      "` before referring to `" + describeDotLikeSyntax(
-                                                       traitSyntax, "<trait>") +
-                      "`.");
+                      "` before referring to `" +
+                      describeDotLikeSyntax(traitSyntax, "<trait>") + "`.");
         }
 
         auto lookup = imported->interface->lookupTopLevelName(segments[1]);
         if (!lookup.isTrait() || !lookup.traitDecl) {
             error(loc,
-                  "unknown trait `" + describeDotLikeSyntax(traitSyntax,
-                                                            "<trait>") +
+                  "unknown trait `" +
+                      describeDotLikeSyntax(traitSyntax, "<trait>") +
                       "` in impl declaration",
                   "Only directly imported top-level traits are available "
                   "through `file.Trait`.");
@@ -1244,8 +1055,7 @@ class InterfaceCollector {
         const location &loc) {
         auto *base = rootSelfTypeBase(selfTypeNode);
         if (!base) {
-            error(loc,
-                  "trait impl self type must name a struct type",
+            error(loc, "trait impl self type must name a struct type",
                   "Write `impl Hash for Point` or "
                   "`impl[T Trait] Hash for Box[T]`, not pointers, arrays, "
                   "tuples, or function types.");
@@ -1273,13 +1083,13 @@ class InterfaceCollector {
             std::string memberName;
             const bool localToUnit =
                 !splitBaseTypeName(base, moduleName, memberName);
-            return {structType, nullptr,
-                    string(structType->full_name), localToUnit,
+            return {structType, nullptr, string(structType->full_name),
+                    localToUnit,
                     dynamic_cast<BaseTypeNode *>(selfTypeNode) != nullptr};
         }
 
-        auto *declStructType = typeDecl->type ? typeDecl->type->as<StructType>()
-                                              : nullptr;
+        auto *declStructType =
+            typeDecl->type ? typeDecl->type->as<StructType>() : nullptr;
         if (!declStructType) {
             error(loc,
                   "trait impl self type must resolve to a struct: `" +
@@ -1292,7 +1102,8 @@ class InterfaceCollector {
         if (typeDecl->isGeneric() &&
             dynamic_cast<AppliedTypeNode *>(selfTypeNode) == nullptr) {
             error(loc,
-                  "generic impl self type requires declaration-style type arguments: `" +
+                  "generic impl self type requires declaration-style type "
+                  "arguments: `" +
                       toStdString(typeDecl->exportedName) + "`",
                   "Write `impl[T Trait] Trait for Box[T]` or "
                   "`impl Trait for Box[i32]`.");
@@ -1346,14 +1157,14 @@ class InterfaceCollector {
                                            : AccessKind::GetOnly;
     }
 
-    void validateTraitMethodMatch(const ModuleInterface::TraitDecl &traitDecl,
-                                  const ModuleInterface::TraitMethodDecl &method,
-                                  StructType *selfType,
-                                  const location &implLoc) {
-        auto *methodType = selfType->getMethodType(toStringRef(method.localName));
-        const auto implLabel =
-            "`" + describeResolvedType(selfType) + ": " +
-            toStdString(traitDecl.exportedName) + "`";
+    void validateTraitMethodMatch(
+        const ModuleInterface::TraitDecl &traitDecl,
+        const ModuleInterface::TraitMethodDecl &method, StructType *selfType,
+        const location &implLoc) {
+        auto *methodType =
+            selfType->getMethodType(toStringRef(method.localName));
+        const auto implLabel = "`" + describeResolvedType(selfType) + ": " +
+                               toStdString(traitDecl.exportedName) + "`";
         if (!methodType) {
             error(implLoc,
                   "impl " + implLabel + " is missing method `" +
@@ -1367,13 +1178,12 @@ class InterfaceCollector {
         auto actualReceiverAccess = inferMethodReceiverAccess(
             selfType, methodType, implLoc, toStringRef(method.localName));
         if (actualReceiverAccess != method.receiverAccess) {
-            error(
-                implLoc,
-                "impl " + implLabel + " has receiver access mismatch for `" +
-                    toStdString(method.localName) + "`",
-                "Trait `" + toStdString(traitDecl.exportedName) + "` expects `" +
-                    accessKindKeyword(method.receiverAccess) + " def " +
-                    toStdString(method.localName) + "`.");
+            error(implLoc,
+                  "impl " + implLabel + " has receiver access mismatch for `" +
+                      toStdString(method.localName) + "`",
+                  "Trait `" + toStdString(traitDecl.exportedName) +
+                      "` expects `" + accessKindKeyword(method.receiverAccess) +
+                      " def " + toStdString(method.localName) + "`.");
         }
 
         const auto &argTypes = methodType->getArgTypes();
@@ -1406,11 +1216,12 @@ class InterfaceCollector {
                 describeResolvedTypeName(argTypes[i + 1]);
             if (actualTypeName != method.paramTypeSpellings[i]) {
                 error(implLoc,
-                      "impl " + implLabel + " has parameter type mismatch for `" +
+                      "impl " + implLabel +
+                          " has parameter type mismatch for `" +
                           toStdString(method.localName) + "` at index " +
                           std::to_string(i) + ": expected `" +
-                          toStdString(method.paramTypeSpellings[i]) + "`, got `" +
-                          actualTypeName + "`",
+                          toStdString(method.paramTypeSpellings[i]) +
+                          "`, got `" + actualTypeName + "`",
                       "Match the trait method parameter types exactly.");
             }
         }
@@ -1432,20 +1243,19 @@ class InterfaceCollector {
         const ModuleInterface::TraitMethodDecl &method,
         const ModuleInterface::MethodTemplateDecl &bodyMethod,
         const ResolvedSelfTypeRef &selfRef, const location &implLoc) {
-        const auto implLabel =
-            "`" + toStdString(selfRef.resolvedName) + ": " +
-            toStdString(traitDecl.exportedName) + "`";
+        const auto implLabel = "`" + toStdString(selfRef.resolvedName) + ": " +
+                               toStdString(traitDecl.exportedName) + "`";
         if (bodyMethod.receiverAccess != method.receiverAccess) {
-            error(
-                implLoc,
-                "impl " + implLabel + " has receiver access mismatch for `" +
-                    toStdString(method.localName) + "`",
-                "Trait `" + toStdString(traitDecl.exportedName) + "` expects `" +
-                    accessKindKeyword(method.receiverAccess) + " def " +
-                    toStdString(method.localName) + "`.");
+            error(implLoc,
+                  "impl " + implLabel + " has receiver access mismatch for `" +
+                      toStdString(method.localName) + "`",
+                  "Trait `" + toStdString(traitDecl.exportedName) +
+                      "` expects `" + accessKindKeyword(method.receiverAccess) +
+                      " def " + toStdString(method.localName) + "`.");
         }
 
-        const std::size_t actualParamCount = bodyMethod.paramTypeSpellings.size();
+        const std::size_t actualParamCount =
+            bodyMethod.paramTypeSpellings.size();
         if (actualParamCount != method.paramTypeSpellings.size()) {
             error(implLoc,
                   "impl " + implLabel + " has parameter count mismatch for `" +
@@ -1456,7 +1266,8 @@ class InterfaceCollector {
         }
 
         for (std::size_t i = 0; i < actualParamCount; ++i) {
-            if (bodyMethod.paramBindingKinds[i] != method.paramBindingKinds[i]) {
+            if (bodyMethod.paramBindingKinds[i] !=
+                method.paramBindingKinds[i]) {
                 error(implLoc,
                       "impl " + implLabel +
                           " has parameter binding mismatch for `" +
@@ -1468,14 +1279,16 @@ class InterfaceCollector {
                           "` at that position.");
             }
 
-            if (bodyMethod.paramTypeSpellings[i] != method.paramTypeSpellings[i]) {
-                error(implLoc,
-                      "impl " + implLabel + " has parameter type mismatch for `" +
-                          toStdString(method.localName) + "` at index " +
-                          std::to_string(i) + ": expected `" +
-                          toStdString(method.paramTypeSpellings[i]) + "`, got `" +
-                          toStdString(bodyMethod.paramTypeSpellings[i]) + "`",
-                      "Match the trait method parameter types exactly.");
+            if (bodyMethod.paramTypeSpellings[i] !=
+                method.paramTypeSpellings[i]) {
+                error(
+                    implLoc,
+                    "impl " + implLabel + " has parameter type mismatch for `" +
+                        toStdString(method.localName) + "` at index " +
+                        std::to_string(i) + ": expected `" +
+                        toStdString(method.paramTypeSpellings[i]) + "`, got `" +
+                        toStdString(bodyMethod.paramTypeSpellings[i]) + "`",
+                    "Match the trait method parameter types exactly.");
             }
         }
 
@@ -1504,11 +1317,13 @@ class InterfaceCollector {
                 continue;
             }
             for (const auto &implDecl : imported.interface->traitImpls()) {
-                auto key = makeKey(implDecl.traitName, implDecl.selfTypeSpelling);
+                auto key =
+                    makeKey(implDecl.traitName, implDecl.selfTypeSpelling);
                 auto source = "imported module `" + toStdString(alias) + "`";
                 auto found = seenSources.find(key);
                 if (found != seenSources.end()) {
-                    error(unit_.syntaxTree() ? unit_.syntaxTree()->loc : location(),
+                    error(unit_.syntaxTree() ? unit_.syntaxTree()->loc
+                                             : location(),
                           "duplicate visible impl for trait `" +
                               toStdString(implDecl.traitName) + "` and type `" +
                               toStdString(implDecl.selfTypeSpelling) + "`",
@@ -1521,7 +1336,8 @@ class InterfaceCollector {
         }
 
         for (const auto &entry : validatedImpls) {
-            auto key = makeKey(entry.decl.traitName, entry.decl.selfTypeSpelling);
+            auto key =
+                makeKey(entry.decl.traitName, entry.decl.selfTypeSpelling);
             auto found = seenSources.find(key);
             if (found != seenSources.end()) {
                 error(entry.loc,
@@ -1529,8 +1345,8 @@ class InterfaceCollector {
                           toStdString(entry.decl.traitName) + "` and type `" +
                           toStdString(entry.decl.selfTypeSpelling) + "`",
                       "Only one visible impl is allowed for each "
-                      "(Trait, Type) pair. Existing source: " + found->second +
-                      ".");
+                      "(Trait, Type) pair. Existing source: " +
+                          found->second + ".");
             }
             seenSources.emplace(
                 std::move(key),
@@ -1538,11 +1354,11 @@ class InterfaceCollector {
         }
     }
 
-    std::vector<ModuleInterface::TraitMethodDecl>
-    collectTraitMethods(AstTraitDecl *traitDecl) {
+    std::vector<ModuleInterface::TraitMethodDecl> collectTraitMethods(
+        AstTraitDecl *traitDecl) {
         std::vector<ModuleInterface::TraitMethodDecl> methods;
-        auto *body = dynamic_cast<AstStatList *>(traitDecl ? traitDecl->body
-                                                           : nullptr);
+        auto *body =
+            dynamic_cast<AstStatList *>(traitDecl ? traitDecl->body : nullptr);
         if (!body) {
             return methods;
         }
@@ -1577,9 +1393,8 @@ class InterfaceCollector {
                 seenMethods.emplace(toStdString(funcDecl->name), funcDecl->loc);
             if (!inserted.second) {
                 error(funcDecl->loc,
-                      "duplicate trait method `" +
-                          toStdString(funcDecl->name) + "` in trait `" +
-                          toStdString(traitDecl->name) + "`",
+                      "duplicate trait method `" + toStdString(funcDecl->name) +
+                          "` in trait `" + toStdString(traitDecl->name) + "`",
                       "Trait method names must be unique within the same "
                       "trait.");
             }
@@ -1666,8 +1481,7 @@ class InterfaceCollector {
                 validateImportAliasConflict(traitDecl);
                 recordTopLevelDeclName(topLevelDecls_,
                                        toStdString(traitDecl->name),
-                                       TopLevelDeclKind::Trait,
-                                       traitDecl->loc);
+                                       TopLevelDeclKind::Trait, traitDecl->loc);
                 traitDecls_.push_back(traitDecl);
             } else if (auto *traitImplDecl =
                            dynamic_cast<AstTraitImplDecl *>(stmt)) {
@@ -1741,14 +1555,13 @@ class InterfaceCollector {
         validated.reserve(traitImplDecls_.size());
 
         for (auto *traitImplDecl : traitImplDecls_) {
-            auto implTypeParams = collectGenericParams(
-                traitImplDecl->typeParams,
-                GenericParamContext::TraitImplHeader);
-            auto traitRef = resolveTraitRef(traitImplDecl->trait,
-                                            traitImplDecl->loc);
-            auto selfRef = resolveImplSelfType(traitImplDecl->selfType,
-                                               implTypeParams,
-                                               traitImplDecl->loc);
+            auto implTypeParams =
+                collectGenericParams(traitImplDecl->typeParams,
+                                     GenericParamContext::TraitImplHeader);
+            auto traitRef =
+                resolveTraitRef(traitImplDecl->trait, traitImplDecl->loc);
+            auto selfRef = resolveImplSelfType(
+                traitImplDecl->selfType, implTypeParams, traitImplDecl->loc);
             if (!traitRef.localToUnit && !selfRef.localToUnit) {
                 error(traitImplDecl->loc,
                       "impl `" + toStdString(traitRef.resolvedName) + " for " +
@@ -1759,10 +1572,11 @@ class InterfaceCollector {
             }
 
             if (traitImplDecl->hasBody()) {
-                auto bodyMethods =
-                    collectTraitImplBodyMethods(traitImplDecl, traitRef, selfRef);
-                auto bodyMethodInterfaces = collectTraitImplBodyMethodInterfaces(
-                    bodyMethods, selfRef.structType, implTypeParams);
+                auto bodyMethods = collectTraitImplBodyMethods(
+                    traitImplDecl, traitRef, selfRef);
+                auto bodyMethodInterfaces =
+                    collectTraitImplBodyMethodInterfaces(
+                        bodyMethods, selfRef.structType, implTypeParams);
                 std::unordered_map<std::string, AstFuncDecl *> bodyMethodMap;
                 std::unordered_map<std::string,
                                    const ModuleInterface::MethodTemplateDecl *>
@@ -1783,8 +1597,8 @@ class InterfaceCollector {
                     }
                 }
                 for (const auto &methodDecl : bodyMethodInterfaces) {
-                    bodyMethodInterfaceMap.emplace(toStdString(methodDecl.localName),
-                                                   &methodDecl);
+                    bodyMethodInterfaceMap.emplace(
+                        toStdString(methodDecl.localName), &methodDecl);
                 }
                 for (const auto &method : traitRef.decl->methods) {
                     if (bodyMethodMap.find(toStdString(method.localName)) ==
@@ -1797,8 +1611,8 @@ class InterfaceCollector {
                               "Define `def " + toStdString(method.localName) +
                                   "(...) { ... }` inside this impl body.");
                     }
-                    auto foundInterface =
-                        bodyMethodInterfaceMap.find(toStdString(method.localName));
+                    auto foundInterface = bodyMethodInterfaceMap.find(
+                        toStdString(method.localName));
                     if (foundInterface == bodyMethodInterfaceMap.end() ||
                         !foundInterface->second) {
                         internalError(traitImplDecl->loc,
@@ -1808,8 +1622,8 @@ class InterfaceCollector {
                                       "collection bug.");
                     }
                     validateTraitBodyMethodMatch(*traitRef.decl, method,
-                                                 *foundInterface->second, selfRef,
-                                                 traitImplDecl->loc);
+                                                 *foundInterface->second,
+                                                 selfRef, traitImplDecl->loc);
                 }
 
                 validated.push_back(ValidatedTraitImpl{
@@ -1834,7 +1648,8 @@ class InterfaceCollector {
                                                traitRef.resolvedName,
                                                traitImplDecl->hasBody(),
                                                std::move(implTypeParams),
-                                               traitImplDecl, {}},
+                                               traitImplDecl,
+                                               {}},
                 traitImplDecl->loc});
         }
 
@@ -1844,13 +1659,11 @@ class InterfaceCollector {
     void declareValidatedTraitImpls(
         const std::vector<ValidatedTraitImpl> &validatedImpls) {
         for (const auto &implDecl : validatedImpls) {
-            interface_->declareTraitImpl(implDecl.decl.selfTypeSpelling,
-                                         implDecl.decl.selfTypeNode,
-                                         implDecl.decl.traitName,
-                                         implDecl.decl.hasBody,
-                                         implDecl.decl.typeParams,
-                                         implDecl.decl.syntaxDecl,
-                                         implDecl.decl.bodyMethods);
+            interface_->declareTraitImpl(
+                implDecl.decl.selfTypeSpelling, implDecl.decl.selfTypeNode,
+                implDecl.decl.traitName, implDecl.decl.hasBody,
+                implDecl.decl.typeParams, implDecl.decl.syntaxDecl,
+                implDecl.decl.bodyMethods);
         }
     }
 
@@ -1866,10 +1679,10 @@ class InterfaceCollector {
         return typeDecl;
     }
 
-    [[noreturn]] void errorRecursiveByValueStructCycle(AstStructDecl *structDecl,
-                                                       AstVarDecl *fieldDecl) {
-        auto structName =
-            structDecl ? toStdString(structDecl->name) : std::string("<struct>");
+    [[noreturn]] void errorRecursiveByValueStructCycle(
+        AstStructDecl *structDecl, AstVarDecl *fieldDecl) {
+        auto structName = structDecl ? toStdString(structDecl->name)
+                                     : std::string("<struct>");
         error(fieldDecl ? fieldDecl->loc : location(),
               "struct `" + structName +
                   "` forms a recursive by-value cycle through field `" +
@@ -1891,9 +1704,8 @@ class InterfaceCollector {
         }
         if (auto *structType = fieldType->as<StructType>()) {
             if (structType->isOpaqueDecl()) {
-                auto typeName = describeTypeNode(fieldDecl ? fieldDecl->typeNode
-                                                           : nullptr,
-                                                 "void");
+                auto typeName = describeTypeNode(
+                    fieldDecl ? fieldDecl->typeNode : nullptr, "void");
                 error(fieldDecl ? fieldDecl->loc : location(),
                       "opaque struct `" + typeName +
                           "` cannot be used by value in struct field `" +
@@ -1910,8 +1722,7 @@ class InterfaceCollector {
                 return;
             }
             auto *dependencyDecl = found->second;
-            auto state =
-                structCompletionStates_[dependencyDecl];
+            auto state = structCompletionStates_[dependencyDecl];
             if (state == StructCompletionState::Completed) {
                 return;
             }
@@ -1921,7 +1732,8 @@ class InterfaceCollector {
             completeStruct(dependencyDecl);
             return;
         }
-        if (fieldType->as<PointerType>() || fieldType->as<IndexablePointerType>() ||
+        if (fieldType->as<PointerType>() ||
+            fieldType->as<IndexablePointerType>() ||
             fieldType->as<FuncType>() || fieldType->as<DynTraitType>() ||
             fieldType->as<BaseType>() || fieldType->as<AnyType>()) {
             return;
@@ -2012,8 +1824,8 @@ class InterfaceCollector {
             if (!fieldType) {
                 error(varDecl->loc,
                       "unknown struct field type for `" +
-                          describeStructFieldSyntax(varDecl) + "`: " +
-                          describeTypeNode(varDecl->typeNode, "void"));
+                          describeStructFieldSyntax(varDecl) +
+                          "`: " + describeTypeNode(varDecl->typeNode, "void"));
             }
             ensureStructFieldDependenciesCompleted(fieldType, structDecl,
                                                    varDecl);
@@ -2073,20 +1885,17 @@ class InterfaceCollector {
                     }
                     validateGenericTypeNode(
                         varDecl->typeNode, genericParamNames, varDecl->loc,
-                        "function parameter `" +
-                            toStdString(varDecl->field) + "` in `" +
-                            toStdString(node->name) + "`");
+                        "function parameter `" + toStdString(varDecl->field) +
+                            "` in `" + toStdString(node->name) + "`");
                     collected.paramTypeNodes.push_back(varDecl->typeNode);
                     collected.paramTypeSpellings.push_back(
                         describeTypeNode(varDecl->typeNode, "void"));
                 }
             }
             if (node->retType) {
-                validateGenericTypeNode(node->retType, genericParamNames,
-                                        node->loc,
-                                        "function `" +
-                                            toStdString(node->name) +
-                                            "` return type");
+                validateGenericTypeNode(
+                    node->retType, genericParamNames, node->loc,
+                    "function `" + toStdString(node->name) + "` return type");
                 collected.returnTypeNode = node->retType;
                 collected.returnTypeSpelling =
                     describeTypeNode(node->retType, "void");
@@ -2368,9 +2177,8 @@ materializeDeclaredFunction(Scope &scope, TypeTable *typeMgr,
         reportFunctionConflict(unit, llvmName, nullptr, funcType);
     }
     auto *llvmFunc = llvm::Function::Create(
-        expectedLLVMType,
-        llvm::Function::ExternalLinkage, llvm::Twine(llvmName),
-        typeMgr->getModule());
+        expectedLLVMType, llvm::Function::ExternalLinkage,
+        llvm::Twine(llvmName), typeMgr->getModule());
     annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
     auto *func = new Function(llvmFunc, funcType, std::move(paramNames),
                               hasImplicitSelf);
@@ -2382,9 +2190,8 @@ std::string
 chooseFunctionRuntimeName(Scope &scope,
                           const ModuleInterface::FunctionDecl &functionDecl,
                           bool exportNamespace) {
-    auto runtimeName =
-        exportNamespace ? toStdString(functionDecl.symbolName)
-                        : toStdString(functionDecl.localName);
+    auto runtimeName = exportNamespace ? toStdString(functionDecl.symbolName)
+                                       : toStdString(functionDecl.localName);
     if (exportNamespace || functionDecl.abiKind == AbiKind::C) {
         return runtimeName;
     }
@@ -2395,13 +2202,12 @@ chooseFunctionRuntimeName(Scope &scope,
     }
 
     auto *existingFunc = dynamic_cast<Function *>(existing);
-    auto *existingType =
-        existingFunc ? dynamic_cast<FuncType *>(existingFunc->getType())
-                     : nullptr;
-    auto *llvmFunc = existingFunc
-                         ? llvm::dyn_cast_or_null<llvm::Function>(
-                               existingFunc->getllvmValue())
-                         : nullptr;
+    auto *existingType = existingFunc
+                             ? dynamic_cast<FuncType *>(existingFunc->getType())
+                             : nullptr;
+    auto *llvmFunc = existingFunc ? llvm::dyn_cast_or_null<llvm::Function>(
+                                        existingFunc->getllvmValue())
+                                  : nullptr;
     if (existingFunc && existingType &&
         existingType->getAbiKind() == functionDecl.abiKind && llvmFunc &&
         llvmFunc->getName() == llvm::StringRef(runtimeName)) {
@@ -2460,8 +2266,9 @@ materializeStructMethodBindings(TypeTable *typeMgr, StructType *structType) {
         if (typeMgr->getMethodFunction(structType, method.first())) {
             continue;
         }
-        auto methodName = declarationsupport_impl::resolveStructMethodSymbolName(
-            structType, method.first());
+        auto methodName =
+            declarationsupport_impl::resolveStructMethodSymbolName(
+                structType, method.first());
         auto *llvmFunc = llvm::Function::Create(
             getFunctionAbiLLVMType(*typeMgr, methodType, true),
             llvm::Function::ExternalLinkage, llvm::Twine(methodName),
@@ -2527,9 +2334,9 @@ materializeTraitMethodTypeByNode(TypeTable *typeMgr, CompilationUnit &unit,
 }
 
 void
-materializeConcreteTraitImplBodyMethods(TypeTable *typeMgr,
-                                        CompilationUnit &unit,
-                                        const ModuleInterface::TraitImplDecl &implDecl) {
+materializeConcreteTraitImplBodyMethods(
+    TypeTable *typeMgr, CompilationUnit &unit,
+    const ModuleInterface::TraitImplDecl &implDecl) {
     if (!typeMgr || !implDecl.hasBody || implDecl.isGeneric() ||
         implDecl.bodyMethods.empty() || !implDecl.selfTypeNode) {
         return;
@@ -2542,34 +2349,34 @@ materializeConcreteTraitImplBodyMethods(TypeTable *typeMgr,
     }
 
     for (const auto &method : implDecl.bodyMethods) {
-        auto methodKey = traitMethodSlotKey(implDecl.traitName, method.localName);
+        auto methodKey =
+            traitMethodSlotKey(implDecl.traitName, method.localName);
         if (!structType->getTraitMethodTypeByKey(toStringRef(methodKey))) {
             std::vector<TypeClass *> argTypes;
             argTypes.reserve(method.paramTypeNodes.size() + 1);
-            auto *selfPointee =
-                method.receiverAccess == AccessKind::GetSet
-                    ? static_cast<TypeClass *>(structType)
-                    : static_cast<TypeClass *>(typeMgr->createConstType(structType));
+            auto *selfPointee = method.receiverAccess == AccessKind::GetSet
+                                    ? static_cast<TypeClass *>(structType)
+                                    : static_cast<TypeClass *>(
+                                          typeMgr->createConstType(structType));
             argTypes.push_back(typeMgr->createPointerType(selfPointee));
             for (std::size_t i = 0; i < method.paramTypeNodes.size(); ++i) {
-                auto *paramType =
-                    materializeTraitMethodTypeByNode(typeMgr, unit,
-                                                    method.paramTypeNodes[i]);
+                auto *paramType = materializeTraitMethodTypeByNode(
+                    typeMgr, unit, method.paramTypeNodes[i]);
                 if (!paramType) {
                     internalError(
                         "failed to materialize concrete trait impl method `" +
                             toStdString(method.localName) +
                             "` parameter type `" +
-                            describeTypeNode(
-                                method.paramTypeNodes[i], "<unknown type>") + "`",
+                            describeTypeNode(method.paramTypeNodes[i],
+                                             "<unknown type>") +
+                            "`",
                         "Trait impl body interfaces should only store fully "
                         "resolved concrete type nodes.");
                 }
                 argTypes.push_back(paramType);
             }
-            auto *retType =
-                materializeTraitMethodTypeByNode(typeMgr, unit,
-                                                method.returnTypeNode);
+            auto *retType = materializeTraitMethodTypeByNode(
+                typeMgr, unit, method.returnTypeNode);
             auto paramBindingKinds = method.paramBindingKinds;
             paramBindingKinds.insert(paramBindingKinds.begin(),
                                      BindingKind::Value);
@@ -2614,8 +2421,7 @@ materializeReachableMethodBindings(
     }
     if (auto *tuple = type->as<TupleType>()) {
         for (auto *itemType : tuple->getItemTypes()) {
-            materializeReachableMethodBindings(typeMgr, itemType,
-                                               visitedTypes);
+            materializeReachableMethodBindings(typeMgr, itemType, visitedTypes);
         }
         return;
     }
@@ -2722,9 +2528,10 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
 
     for (const auto &implDecl : interface->traitImpls()) {
         materializeConcreteTraitImplBodyMethods(typeMgr, unit, implDecl);
-        auto *selfType = (!implDecl.isGeneric() && implDecl.selfTypeNode)
-                             ? unit.resolveType(typeMgr, implDecl.selfTypeNode)
-                             : typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
+        auto *selfType =
+            (!implDecl.isGeneric() && implDecl.selfTypeNode)
+                ? unit.resolveType(typeMgr, implDecl.selfTypeNode)
+                : typeMgr->getType(toStringRef(implDecl.selfTypeSpelling));
         materializeReachableMethodBindings(typeMgr, selfType,
                                            reachableMethodTypes);
     }
@@ -2737,9 +2544,8 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
 void
 collectUnitDeclarations(Scope *global, CompilationUnit &unit,
                         bool exportNamespace, bool declareNamespace) {
-    moduleinterface_impl::materializeUnitInterface(global, unit,
-                                                   exportNamespace,
-                                                   declareNamespace);
+    moduleinterface_impl::materializeUnitInterface(
+        global, unit, exportNamespace, declareNamespace);
 }
 
 }  // namespace lona
