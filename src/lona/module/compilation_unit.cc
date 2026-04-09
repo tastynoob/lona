@@ -1387,8 +1387,7 @@ CompilationUnit::setModulePath(string modulePath) {
 
 void
 CompilationUnit::setSyntaxTree(AstNode *tree) {
-    syntaxTree_ = applyBuiltinTags(tree);
-    validateBuiltinTagResults(syntaxTree_);
+    syntaxTree_ = normalizeBuiltinTags(tree);
     invalidateCaches();
     stage_ =
         tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;

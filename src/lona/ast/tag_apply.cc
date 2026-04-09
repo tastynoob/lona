@@ -266,99 +266,12 @@ appendPendingTags(std::vector<AstTag *> *&pending, const AstTagNode *tagNode) {
                     tagNode->tags->end());
 }
 
-AstNode *
-applyBuiltinTagsImpl(AstNode *node, bool allowTagsInList) {
-    if (!node) {
-        return nullptr;
-    }
-    if (auto *program = dynamic_cast<AstProgram *>(node)) {
-        applyBuiltinTagsImpl(program->body, true);
-        return program;
-    }
-    if (auto *list = dynamic_cast<AstStatList *>(node)) {
-        std::list<AstNode *> normalized;
-        std::vector<AstTag *> *pendingTags = nullptr;
-        for (auto *stmt : list->getBody()) {
-            if (auto *tagNode = dynamic_cast<AstTagNode *>(stmt)) {
-                if (!allowTagsInList) {
-                    errorNonTopLevelTag(tagNode);
-                }
-                appendPendingTags(pendingTags, tagNode);
-                continue;
-            }
-
-            auto *normalizedStmt = applyBuiltinTagsImpl(stmt, false);
-            if (pendingTags) {
-                applyBuiltinTagList(normalizedStmt, pendingTags);
-                pendingTags = nullptr;
-            }
-            normalized.push_back(normalizedStmt);
-        }
-        if (pendingTags) {
-            errorDanglingTags(pendingTags);
-        }
-        list->body = std::move(normalized);
-        return list;
-    }
-    if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
-        if (funcDecl->body) {
-            applyBuiltinTagsImpl(funcDecl->body, false);
-        }
-        return funcDecl;
-    }
-    if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
-        if (structDecl->body) {
-            applyBuiltinTagsImpl(structDecl->body, false);
-        }
-        return structDecl;
-    }
-    if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(node)) {
-        if (traitDecl->body) {
-            applyBuiltinTagsImpl(traitDecl->body, false);
-        }
-        return traitDecl;
-    }
-    if (auto *ifNode = dynamic_cast<AstIf *>(node)) {
-        applyBuiltinTagsImpl(ifNode->then, false);
-        applyBuiltinTagsImpl(ifNode->els, false);
-        return ifNode;
-    }
-    if (auto *forNode = dynamic_cast<AstFor *>(node)) {
-        applyBuiltinTagsImpl(forNode->body, false);
-        applyBuiltinTagsImpl(forNode->els, false);
-        return forNode;
-    }
-    return node;
-}
-
-}  // namespace tag_apply_impl
-
-AstNode *
-applyBuiltinTags(AstNode *node) {
-    return tag_apply_impl::applyBuiltinTagsImpl(node, true);
-}
-
 void
-validateBuiltinTagResults(AstNode *node) {
+validateBuiltinTagTarget(AstNode *node) {
     if (!node) {
         return;
     }
-    if (auto *program = dynamic_cast<AstProgram *>(node)) {
-        validateBuiltinTagResults(program->body);
-        return;
-    }
-    if (auto *list = dynamic_cast<AstStatList *>(node)) {
-        for (auto *stmt : list->getBody()) {
-            validateBuiltinTagResults(stmt);
-        }
-        return;
-    }
-    if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
-        if (funcDecl->body) {
-            validateBuiltinTagResults(funcDecl->body);
-        }
-        return;
-    }
+
     if (auto *structDecl = dynamic_cast<AstStructDecl *>(node)) {
         if (!structDecl->hasBody()) {
             if (structDecl->isReprC()) {
@@ -372,8 +285,9 @@ validateBuiltinTagResults(AstNode *node) {
                         toStdString(structDecl->name) + " { ... }`.");
             }
             structDecl->setDeclKind(StructDeclKind::Opaque);
+            return;
         }
-        if (structDecl->hasBody() && structDecl->isOpaqueDecl()) {
+        if (structDecl->isOpaqueDecl()) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, structDecl->loc,
                 "opaque struct `" + toStdString(structDecl->name) +
@@ -382,17 +296,9 @@ validateBuiltinTagResults(AstNode *node) {
                     "` for an opaque declaration, or drop the opaque form and "
                     "keep the body.");
         }
-        if (structDecl->body) {
-            validateBuiltinTagResults(structDecl->body);
-        }
         return;
     }
-    if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(node)) {
-        if (traitDecl->body) {
-            validateBuiltinTagResults(traitDecl->body);
-        }
-        return;
-    }
+
     if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(node)) {
         if (globalDecl->isExtern()) {
             if (!globalDecl->hasTypeNode()) {
@@ -423,18 +329,94 @@ validateBuiltinTagResults(AstNode *node) {
                     " T = expr`, or `#[extern] global " +
                     toStdString(globalDecl->getName()) + " T`.");
         }
-        return;
     }
-    if (auto *ifNode = dynamic_cast<AstIf *>(node)) {
-        validateBuiltinTagResults(ifNode->then);
-        validateBuiltinTagResults(ifNode->els);
-        return;
+}
+
+AstNode *
+normalizeBuiltinTagsImpl(AstNode *node, bool allowTagsInList) {
+    if (!node) {
+        return nullptr;
     }
-    if (auto *forNode = dynamic_cast<AstFor *>(node)) {
-        validateBuiltinTagResults(forNode->body);
-        validateBuiltinTagResults(forNode->els);
-        return;
+
+    switch (node->kind()) {
+        case AstKind::Program: {
+            auto *program = static_cast<AstProgram *>(node);
+            normalizeBuiltinTagsImpl(program->body, true);
+            return program;
+        }
+        case AstKind::StatList: {
+            auto *list = static_cast<AstStatList *>(node);
+            std::list<AstNode *> normalized;
+            std::vector<AstTag *> *pendingTags = nullptr;
+            for (auto *stmt : list->getBody()) {
+                if (stmt && stmt->kind() == AstKind::TagNode) {
+                    auto *tagNode = static_cast<AstTagNode *>(stmt);
+                    if (!allowTagsInList) {
+                        errorNonTopLevelTag(tagNode);
+                    }
+                    appendPendingTags(pendingTags, tagNode);
+                    continue;
+                }
+
+                auto *normalizedStmt = normalizeBuiltinTagsImpl(stmt, false);
+                if (pendingTags) {
+                    applyBuiltinTagList(normalizedStmt, pendingTags);
+                    pendingTags = nullptr;
+                }
+                validateBuiltinTagTarget(normalizedStmt);
+                normalized.push_back(normalizedStmt);
+            }
+            if (pendingTags) {
+                errorDanglingTags(pendingTags);
+            }
+            list->body = std::move(normalized);
+            return list;
+        }
+        case AstKind::FuncDecl: {
+            auto *funcDecl = static_cast<AstFuncDecl *>(node);
+            if (funcDecl->body) {
+                normalizeBuiltinTagsImpl(funcDecl->body, false);
+            }
+            return funcDecl;
+        }
+        case AstKind::StructDecl: {
+            auto *structDecl = static_cast<AstStructDecl *>(node);
+            if (structDecl->body) {
+                normalizeBuiltinTagsImpl(structDecl->body, false);
+            }
+            return structDecl;
+        }
+        case AstKind::TraitDecl: {
+            auto *traitDecl = static_cast<AstTraitDecl *>(node);
+            if (traitDecl->body) {
+                normalizeBuiltinTagsImpl(traitDecl->body, false);
+            }
+            return traitDecl;
+        }
+        case AstKind::If: {
+            auto *ifNode = static_cast<AstIf *>(node);
+            normalizeBuiltinTagsImpl(ifNode->then, false);
+            normalizeBuiltinTagsImpl(ifNode->els, false);
+            return ifNode;
+        }
+        case AstKind::For: {
+            auto *forNode = static_cast<AstFor *>(node);
+            normalizeBuiltinTagsImpl(forNode->body, false);
+            normalizeBuiltinTagsImpl(forNode->els, false);
+            return forNode;
+        }
+        default:
+            return node;
     }
+}
+
+}  // namespace tag_apply_impl
+
+AstNode *
+normalizeBuiltinTags(AstNode *node) {
+    auto *normalized = tag_apply_impl::normalizeBuiltinTagsImpl(node, true);
+    tag_apply_impl::validateBuiltinTagTarget(normalized);
+    return normalized;
 }
 
 }  // namespace lona

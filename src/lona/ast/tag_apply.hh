@@ -5,8 +5,6 @@ namespace lona {
 class AstNode;
 
 AstNode *
-applyBuiltinTags(AstNode *node);
-void
-validateBuiltinTagResults(AstNode *node);
+normalizeBuiltinTags(AstNode *node);
 
 }  // namespace lona
