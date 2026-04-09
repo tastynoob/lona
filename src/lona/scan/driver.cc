@@ -8,7 +8,7 @@ Driver::Driver() { parser = new Parser(*this); }
 void
 Driver::input(std::istream *in, const SourceBuffer &newSource) {
     if (scanner) delete scanner;
-    scanner = new Scanner(in);
+    scanner = new Scanner(in, newSource.content());
     source = &newSource;
 }
 
