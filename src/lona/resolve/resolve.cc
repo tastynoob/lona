@@ -8,6 +8,7 @@
 #include "lona/type/scope.hh"
 #include "lona/type/type.hh"
 #include "parser.hh"
+#include "llvm/ADT/StringMap.h"
 #include <algorithm>
 #include <cassert>
 #include <memory>
@@ -132,6 +133,73 @@ statementListBody(AstNode *node) {
         statementListBody(static_cast<const AstNode *>(node)));
 }
 
+llvm::StringRef
+localTypeName(llvm::StringRef typeName) {
+    if (auto dotPos = typeName.rfind('.'); dotPos != llvm::StringRef::npos) {
+        return typeName.substr(dotPos + 1);
+    }
+    return typeName;
+}
+
+const AstStructDecl *
+findStructDeclInUnit(const CompilationUnit *searchUnit, llvm::StringRef localName) {
+    if (!searchUnit) {
+        return nullptr;
+    }
+    auto *body = statementListBody(searchUnit->syntaxTree());
+    if (!body) {
+        return nullptr;
+    }
+    for (auto *stmt : body->getBody()) {
+        if (!stmt || stmt->kind() != AstKind::StructDecl) {
+            continue;
+        }
+        auto *structDecl = static_cast<AstStructDecl *>(stmt);
+        if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
+            localName) {
+            return structDecl;
+        }
+    }
+    return nullptr;
+}
+
+struct StructResolutionContext {
+    const AstStructDecl *decl = nullptr;
+    llvm::StringMap<const AstVarDecl *> fields;
+    llvm::StringMap<const AstNode *> genericBoundSyntax;
+};
+
+StructResolutionContext
+buildStructResolutionContext(const AstStructDecl *structDecl) {
+    StructResolutionContext context;
+    context.decl = structDecl;
+    if (!structDecl) {
+        return context;
+    }
+
+    if (structDecl->typeParams) {
+        for (auto *param : *structDecl->typeParams) {
+            if (param && param->hasBoundTrait()) {
+                context.genericBoundSyntax[toStringRef(param->name.text)] =
+                    param->boundTrait;
+            }
+        }
+    }
+
+    auto *body = statementListBody(structDecl->body);
+    if (!body) {
+        return context;
+    }
+    for (auto *stmt : body->getBody()) {
+        if (!stmt || stmt->kind() != AstKind::VarDecl) {
+            continue;
+        }
+        auto *fieldDecl = static_cast<AstVarDecl *>(stmt);
+        context.fields[toStringRef(fieldDecl->field)] = fieldDecl;
+    }
+    return context;
+}
+
 AstVarDecl *
 requireFunctionParamDeclImpl(AstNode *node, const location &loc) {
     auto *varDecl = node && node->kind() == AstKind::VarDecl
@@ -169,6 +237,8 @@ class FunctionResolver {
     };
     std::unordered_map<const ResolvedLocalBinding *, GenericCapabilityInfo>
         bindingGenericInfo_;
+    const StructResolutionContext *methodStructContext_ = nullptr;
+    StructResolutionContext ownedMethodStructContext_;
 
     void pushLocalScope() { localScopes_.emplace_back(); }
 
@@ -230,6 +300,32 @@ class FunctionResolver {
 
     GenericCapabilityInfo noGenericCapability() const { return {}; }
 
+    const StructResolutionContext *methodStructContext() const {
+        return methodStructContext_ && methodStructContext_->decl
+                   ? methodStructContext_
+                   : nullptr;
+    }
+
+    const AstNode *methodStructTypeParamBoundSyntax(
+        llvm::StringRef paramName) const {
+        auto *context = methodStructContext();
+        if (!context) {
+            return nullptr;
+        }
+        auto found = context->genericBoundSyntax.find(paramName);
+        return found != context->genericBoundSyntax.end() ? found->second
+                                                          : nullptr;
+    }
+
+    const AstVarDecl *methodStructFieldDecl(llvm::StringRef fieldName) const {
+        auto *context = methodStructContext();
+        if (!context) {
+            return nullptr;
+        }
+        auto found = context->fields.find(fieldName);
+        return found != context->fields.end() ? found->second : nullptr;
+    }
+
     const AstNode *genericTypeParamBoundSyntax(llvm::StringRef paramName) const {
         auto lookupBound =
             [paramName](const std::vector<AstGenericParam *> *params)
@@ -252,72 +348,8 @@ class FunctionResolver {
             if (auto *bound = lookupBound(decl->typeParams)) {
                 return bound;
             }
-            if (auto *structDecl = findEnclosingStructDecl(decl)) {
-                if (auto *bound = lookupBound(structDecl->typeParams)) {
-                    return bound;
-                }
-            }
         }
-        if (resolved_.isMethod() && unit_) {
-            auto structName = toStdString(resolved_.methodParentTypeName());
-            if (auto dotPos = structName.rfind('.'); dotPos != std::string::npos) {
-                structName = structName.substr(dotPos + 1);
-            }
-            if (auto *structDecl = findStructDeclInUnit(unit_, structName)) {
-                if (auto *bound = lookupBound(structDecl->typeParams)) {
-                    return bound;
-                }
-            }
-        }
-        return nullptr;
-    }
-
-    const AstStructDecl *findStructDeclInUnit(const CompilationUnit *searchUnit,
-                                              llvm::StringRef localName) const {
-        if (!searchUnit) {
-            return nullptr;
-        }
-        auto *body = statementListBody(searchUnit->syntaxTree());
-        if (!body) {
-            return nullptr;
-        }
-        for (auto *stmt : body->getBody()) {
-            if (!stmt || stmt->kind() != AstKind::StructDecl) {
-                continue;
-            }
-            auto *structDecl = static_cast<AstStructDecl *>(stmt);
-            if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
-                localName) {
-                return structDecl;
-            }
-        }
-        return nullptr;
-    }
-
-    const AstStructDecl *findEnclosingStructDecl(const AstFuncDecl *decl) const {
-        if (!unit_ || !decl) {
-            return nullptr;
-        }
-        auto *body = statementListBody(unit_->syntaxTree());
-        if (!body) {
-            return nullptr;
-        }
-        for (auto *stmt : body->getBody()) {
-            if (!stmt || stmt->kind() != AstKind::StructDecl) {
-                continue;
-            }
-            auto *structDecl = static_cast<AstStructDecl *>(stmt);
-            auto *structBody = statementListBody(structDecl->body);
-            if (!structBody) {
-                continue;
-            }
-            for (auto *member : structBody->getBody()) {
-                if (member == decl) {
-                    return structDecl;
-                }
-            }
-        }
-        return nullptr;
+        return methodStructTypeParamBoundSyntax(paramName);
     }
 
     const AstVarDecl *findStructFieldDecl(const AstStructDecl *structDecl,
@@ -650,11 +682,10 @@ class FunctionResolver {
     }
 
     GenericCapabilityInfo selfFieldGenericInfo(llvm::StringRef fieldName) const {
-        if (!resolved_.isMethod() || !resolved_.decl()) {
+        if (!resolved_.isMethod()) {
             return noGenericCapability();
         }
-        auto *structDecl = findEnclosingStructDecl(resolved_.decl());
-        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        auto *fieldDecl = methodStructFieldDecl(fieldName);
         if (!fieldDecl) {
             return noGenericCapability();
         }
@@ -667,11 +698,10 @@ class FunctionResolver {
     }
 
     const TypeNode *selfFieldTypeNode(llvm::StringRef fieldName) const {
-        if (!resolved_.isMethod() || !resolved_.decl()) {
+        if (!resolved_.isMethod()) {
             return nullptr;
         }
-        auto *structDecl = findEnclosingStructDecl(resolved_.decl());
-        auto *fieldDecl = findStructFieldDecl(structDecl, fieldName);
+        auto *fieldDecl = methodStructFieldDecl(fieldName);
         return fieldDecl ? fieldDecl->typeNode : nullptr;
     }
 
@@ -1969,12 +1999,25 @@ class FunctionResolver {
 public:
     FunctionResolver(GlobalScope *global, TypeTable *typeMgr,
                      const CompilationUnit *unit, ResolvedModule &module,
-                     ResolvedFunction &resolved)
+                     ResolvedFunction &resolved,
+                     const StructResolutionContext *methodStructContext = nullptr)
         : global_(global),
           typeMgr_(typeMgr),
           unit_(unit),
           module_(module),
-          resolved_(resolved) {}
+          resolved_(resolved),
+          methodStructContext_(methodStructContext) {
+        if (!methodStructContext_ && resolved_.isMethod() && unit_) {
+            if (auto *structDecl = findStructDeclInUnit(
+                    unit_,
+                    localTypeName(
+                        toStringRef(resolved_.methodParentTypeName())))) {
+                ownedMethodStructContext_ =
+                    buildStructResolutionContext(structDecl);
+                methodStructContext_ = &ownedMethodStructContext_;
+            }
+        }
+    }
 
     void resolve() {
         pushLocalScope();
@@ -2055,7 +2098,8 @@ class ModuleResolver {
         string methodParentTypeName = string(),
         string methodLookupName = string(),
         std::vector<string> scopedTypeParams = {},
-        std::unordered_map<std::string, std::string> scopedTypeParamBounds = {}) {
+        std::unordered_map<std::string, std::string> scopedTypeParamBounds = {},
+        const StructResolutionContext *methodStructContext = nullptr) {
         if (!node) {
             return;
         }
@@ -2100,7 +2144,8 @@ class ModuleResolver {
             node->loc, false, false, node->body && node->body->hasTerminator(),
             templateValidationOnly, std::move(scopedTypeParams),
             std::move(genericTypeParamBounds));
-        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
+        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved,
+                         methodStructContext)
             .resolve();
     }
 
@@ -2129,6 +2174,7 @@ class ModuleResolver {
         if (!body) {
             return;
         }
+        auto structContext = buildStructResolutionContext(node);
         auto scopedTypeParams = collectGenericParamNames(node->typeParams);
         auto scopedTypeParamBounds = collectGenericParamBounds(node->typeParams);
         for (auto *stmt : body->getBody()) {
@@ -2137,7 +2183,8 @@ class ModuleResolver {
             }
             auto *func = static_cast<AstFuncDecl *>(stmt);
             resolveFunction(func, structType, resolvedStructName, string(),
-                            scopedTypeParams, scopedTypeParamBounds);
+                            scopedTypeParams, scopedTypeParamBounds,
+                            &structContext);
         }
     }
 
@@ -2191,6 +2238,8 @@ class ModuleResolver {
         if (!structType || !body) {
             return;
         }
+        auto structContext = buildStructResolutionContext(findStructDeclInUnit(
+            unit_, localTypeName(toStringRef(structType->full_name))));
 
         for (auto *stmt : body->getBody()) {
             if (!stmt || stmt->kind() != AstKind::FuncDecl) {
@@ -2199,7 +2248,8 @@ class ModuleResolver {
             auto *func = static_cast<AstFuncDecl *>(stmt);
             resolveFunction(
                 func, structType, toStdString(structType->full_name),
-                traitMethodSlotKey(resolvedTraitName, toStdString(func->name)));
+                traitMethodSlotKey(resolvedTraitName, toStdString(func->name)),
+                {}, {}, &structContext);
         }
     }
 
