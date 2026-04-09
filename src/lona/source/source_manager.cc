@@ -2,23 +2,25 @@
 #include "lona/err/err.hh"
 #include <filesystem>
 #include <fstream>
-#include <sstream>
+#include <string_view>
 #include <utility>
 
 namespace lona {
 
-std::vector<std::string>
-splitSourceLines(const std::string &content) {
-    std::vector<std::string> lines;
-    std::istringstream input(content);
-    std::string line;
-    while (std::getline(input, line)) {
-        lines.push_back(line);
+std::vector<std::size_t>
+computeLineOffsets(std::string_view content) {
+    std::vector<std::size_t> offsets;
+    if (content.empty()) {
+        return offsets;
     }
-    if (lines.empty() && !content.empty()) {
-        lines.push_back(content);
+
+    offsets.push_back(0);
+    for (std::size_t index = 0; index < content.size(); ++index) {
+        if (content[index] == '\n' && index + 1 < content.size()) {
+            offsets.push_back(index + 1);
+        }
     }
-    return lines;
+    return offsets;
 }
 
 std::string
@@ -34,24 +36,31 @@ SourceBuffer::SourceBuffer(std::string path, std::string content)
     resetContent(std::move(content));
 }
 
-const std::string *
+std::optional<std::string_view>
 SourceBuffer::line(std::size_t lineNumber) const {
-    if (lineNumber == 0 || lineNumber > lines_.size()) {
-        return nullptr;
+    if (lineNumber == 0 || lineNumber > lineOffsets_.size()) {
+        return std::nullopt;
     }
-    return &lines_[lineNumber - 1];
+
+    const auto start = lineOffsets_[lineNumber - 1];
+    auto end = lineNumber < lineOffsets_.size() ? (lineOffsets_[lineNumber] - 1)
+                                                : content_.size();
+    if (end > start && content_[end - 1] == '\n') {
+        --end;
+    }
+    return std::string_view(content_.data() + start, end - start);
 }
 
 void
 SourceBuffer::resetContent(std::string content) {
     content_ = std::move(content);
-    lines_ = splitSourceLines(content_);
+    lineOffsets_ = computeLineOffsets(content_);
 }
 
 const SourceBuffer &
 SourceManager::loadFile(const std::string &path) {
     auto normalizedPath = canonicalizeSourcePath(path);
-    std::ifstream input(normalizedPath);
+    std::ifstream input(normalizedPath, std::ios::binary);
     if (!input) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
@@ -59,16 +68,27 @@ SourceManager::loadFile(const std::string &path) {
             "Check that the path exists and that you have read permission.");
     }
 
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    if (!input.good() && !input.eof()) {
+    input.seekg(0, std::ios::end);
+    auto endPos = input.tellg();
+    if (endPos < 0) {
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
             "I couldn't read input file `" + normalizedPath + "`.",
             "Check that the file is readable and not truncated.");
     }
+    std::string content(static_cast<std::size_t>(endPos), '\0');
+    input.seekg(0, std::ios::beg);
+    if (!content.empty()) {
+        input.read(content.data(), static_cast<std::streamsize>(content.size()));
+        if (input.gcount() != static_cast<std::streamsize>(content.size())) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver,
+                "I couldn't read input file `" + normalizedPath + "`.",
+                "Check that the file is readable and not truncated.");
+        }
+    }
 
-    return addSource(normalizedPath, buffer.str());
+    return addSource(normalizedPath, std::move(content));
 }
 
 const SourceBuffer &

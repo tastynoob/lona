@@ -3,10 +3,23 @@
 #include "lona/scan/driver.hh"
 #include "lona/util/time.hh"
 #include <filesystem>
-#include <sstream>
+#include <istream>
+#include <streambuf>
 #include <unordered_set>
 
 namespace lona {
+
+namespace {
+
+class NonOwningStringStreamBuf : public std::streambuf {
+public:
+    explicit NonOwningStringStreamBuf(std::string_view content) {
+        auto *begin = const_cast<char *>(content.data());
+        setg(begin, begin, begin + content.size());
+    }
+};
+
+}  // namespace
 
 AstStatList *
 requireWorkspaceTopLevelBody(const CompilationUnit &unit) {
@@ -333,7 +346,8 @@ WorkspaceLoader::parseUnit(CompilationUnit &unit) const {
         return unit.syntaxTree();
     }
 
-    std::istringstream input(unit.source().content());
+    NonOwningStringStreamBuf inputBuffer(unit.source().content());
+    std::istream input(&inputBuffer);
     Driver driver;
     driver.input(&input, unit.source());
     auto *tree = driver.parse();

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <sstream>
+#include <string_view>
 
 namespace lona {
 
@@ -37,7 +38,7 @@ diagnosticLocationPath(const DiagnosticError &error,
 }
 
 std::string
-diagnosticUnderlineFor(const location &loc, const std::string &line) {
+diagnosticUnderlineFor(const location &loc, std::string_view line) {
     const int startColumn = std::max(1, loc.begin.column);
     int width = 1;
     if (loc.begin.line == loc.end.line && loc.end.column > loc.begin.column) {
@@ -81,8 +82,7 @@ DiagnosticEngine::render(const DiagnosticError &error,
         source = sources_->find(path);
     }
     if (source) {
-        if (const auto *sourceLine =
-                source->line(static_cast<std::size_t>(lineNumber))) {
+        if (auto sourceLine = source->line(static_cast<std::size_t>(lineNumber))) {
             const auto lineLabel = std::to_string(lineNumber);
             out << ' ' << std::string(lineLabel.size(), ' ') << " |\n";
             out << ' ' << lineLabel << " | " << *sourceLine << '\n';

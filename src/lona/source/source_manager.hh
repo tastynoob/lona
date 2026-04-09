@@ -2,7 +2,9 @@
 
 #include "location.hh"
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -11,7 +13,7 @@ namespace lona {
 class SourceBuffer {
     std::string path_;
     std::string content_;
-    std::vector<std::string> lines_;
+    std::vector<std::size_t> lineOffsets_;
 
 public:
     SourceBuffer(std::string path, std::string content);
@@ -19,8 +21,8 @@ public:
     const std::string &path() const { return path_; }
     const std::string *stablePath() const { return &path_; }
     const std::string &content() const { return content_; }
-    const std::vector<std::string> &lines() const { return lines_; }
-    const std::string *line(std::size_t lineNumber) const;
+    std::size_t lineCount() const { return lineOffsets_.size(); }
+    std::optional<std::string_view> line(std::size_t lineNumber) const;
     void resetContent(std::string content);
 };
 
