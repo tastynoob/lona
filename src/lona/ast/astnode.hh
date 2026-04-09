@@ -71,6 +71,41 @@ enum class StructDeclKind {
     ReprC,
 };
 
+enum class AstKind {
+    Program,
+    TagNode,
+    StatList,
+    Const,
+    Field,
+    FuncRef,
+    Assign,
+    BinOper,
+    UnaryOper,
+    RefExpr,
+    TupleLiteral,
+    BraceInitItem,
+    BraceInit,
+    NamedCallArg,
+    TypeApply,
+    StructDecl,
+    TraitDecl,
+    TraitImplDecl,
+    GlobalDecl,
+    Import,
+    VarDecl,
+    VarDef,
+    FuncDecl,
+    Ret,
+    Break,
+    Continue,
+    If,
+    For,
+    CastExpr,
+    SizeofExpr,
+    FieldCall,
+    DotLike,
+};
+
 inline const char *
 structDeclKindKeyword(StructDeclKind kind) {
     switch (kind) {
@@ -234,8 +269,10 @@ createPointerOrArrayTypeNode(TypeNode *head, std::vector<AstNode *> *suffix);
 class AstNode {
 public:
     location const loc;
-    AstNode() {}
-    AstNode(const location &loc) : loc(loc) {}
+    explicit AstNode(AstKind kind, const location &loc = location())
+        : loc(loc), kind_(kind) {}
+
+    AstKind kind() const { return kind_; }
 
     virtual Object *accept(AstVisitor &visitor) = 0;
     virtual bool hasTerminator() { return false; }
@@ -250,6 +287,9 @@ public:
     T *as() {
         return dynamic_cast<T *>(this);
     }
+
+private:
+    AstKind kind_;
 };
 
 class AstTagNode : public AstNode {
@@ -257,8 +297,10 @@ public:
     std::vector<AstTag *> *const tags;
 
     explicit AstTagNode(std::vector<AstTag *> *tags)
-        : AstNode(tags && !tags->empty() && (*tags)[0] ? (*tags)[0]->name.loc
-                                                       : location()),
+        : AstNode(AstKind::TagNode,
+                  tags && !tags->empty() && (*tags)[0]
+                      ? (*tags)[0]->name.loc
+                      : location()),
           tags(tags ? tags : new std::vector<AstTag *>) {}
 
     void toJson(Json &root) override;
@@ -354,7 +396,7 @@ public:
     string const name;
     AstField(AstToken &token);
     AstField(string name, const location &loc = location())
-        : AstNode(loc), name(name) {}
+        : AstNode(AstKind::Field, loc), name(name) {}
     void toJson(Json &root) override;
 
     Object *accept(AstVisitor &visitor) override;
@@ -365,7 +407,7 @@ public:
     AstNode *const value;
 
     AstFuncRef(AstNode *value, const location &loc = location())
-        : AstNode(loc), value(value) {}
+        : AstNode(AstKind::FuncRef, loc), value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -408,7 +450,7 @@ public:
     AstNode *const expr;
 
     explicit AstRefExpr(const location &loc, AstNode *expr)
-        : AstNode(loc), expr(expr) {}
+        : AstNode(AstKind::RefExpr, loc), expr(expr) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -419,7 +461,7 @@ public:
     std::vector<AstNode *> *const items;
 
     AstTupleLiteral(const location &loc, std::vector<AstNode *> *items)
-        : AstNode(loc), items(items) {}
+        : AstNode(AstKind::TupleLiteral, loc), items(items) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -430,7 +472,8 @@ public:
     AstNode *const value;
 
     explicit AstBraceInitItem(AstNode *value)
-        : AstNode(value ? value->loc : location()), value(value) {}
+        : AstNode(AstKind::BraceInitItem, value ? value->loc : location()),
+          value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -441,7 +484,7 @@ public:
     std::vector<AstNode *> *const items;
 
     AstBraceInit(const location &loc, std::vector<AstNode *> *items)
-        : AstNode(loc), items(items) {}
+        : AstNode(AstKind::BraceInit, loc), items(items) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -453,7 +496,9 @@ public:
     AstNode *const value;
 
     AstNamedCallArg(AstToken &nameToken, AstNode *value)
-        : AstNode(nameToken.loc), name(nameToken.text), value(value) {}
+        : AstNode(AstKind::NamedCallArg, nameToken.loc),
+          name(nameToken.text),
+          value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -466,7 +511,7 @@ public:
 
     AstTypeApply(AstNode *value, std::vector<TypeNode *> *typeArgs,
                  const location &loc = location())
-        : AstNode(loc), value(value), typeArgs(typeArgs) {}
+        : AstNode(AstKind::TypeApply, loc), value(value), typeArgs(typeArgs) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -482,7 +527,7 @@ public:
     AstStructDecl(AstToken &field, AstNode *body,
                   std::vector<AstGenericParam *> *typeParams = nullptr,
                   StructDeclKind declKind = StructDeclKind::Native)
-        : AstNode(field.loc),
+        : AstNode(AstKind::StructDecl, field.loc),
           name(field.text),
           typeParams(typeParams),
           body(body),
@@ -504,7 +549,7 @@ public:
     AstNode *const body;
 
     AstTraitDecl(AstToken &field, AstNode *body)
-        : AstNode(field.loc), name(field.text), body(body) {}
+        : AstNode(AstKind::TraitDecl, field.loc), name(field.text), body(body) {}
 
     bool hasBody() const { return body != nullptr; }
     void toJson(Json &root) override;
@@ -521,7 +566,7 @@ public:
     AstTraitImplDecl(TypeNode *selfType, AstNode *trait, AstNode *body,
                      std::vector<AstGenericParam *> *typeParams = nullptr,
                      const location &loc = location())
-        : AstNode(loc),
+        : AstNode(AstKind::TraitImplDecl, loc),
           typeParams(typeParams),
           selfType(selfType),
           trait(trait),
@@ -544,7 +589,7 @@ class AstGlobalDecl : public AstNode {
 public:
     AstGlobalDecl(AstToken &name, TypeNode *typeNode = nullptr,
                   AstNode *initVal = nullptr, bool isExtern = false)
-        : AstNode(name.loc),
+        : AstNode(AstKind::GlobalDecl, name.loc),
           name_(name.text),
           typeNode_(typeNode),
           initVal_(initVal),
@@ -567,7 +612,8 @@ public:
     std::string const path;
 
     AstImport(const location &loc, AstToken &pathToken)
-        : AstNode(loc), path(pathToken.text.tochara(), pathToken.text.size()) {}
+        : AstNode(AstKind::Import, loc),
+          path(pathToken.text.tochara(), pathToken.text.size()) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -602,7 +648,7 @@ class AstVarDef : public AstNode {
 public:
     AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr,
               bool readOnlyBinding = false)
-        : AstNode(vardecl->loc),
+        : AstNode(AstKind::VarDef, vardecl->loc),
           bindingKind(vardecl->bindingKind),
           readOnlyBinding(readOnlyBinding),
           field(vardecl->field),
@@ -611,7 +657,7 @@ public:
 
     AstVarDef(AstToken &field, AstNode *initVal = nullptr,
               bool readOnlyBinding = false)
-        : AstNode(field.loc),
+        : AstNode(AstKind::VarDef, field.loc),
           bindingKind(BindingKind::Value),
           readOnlyBinding(readOnlyBinding),
           field(field.text),
@@ -647,7 +693,7 @@ public:
         return false;
     }
 
-    AstStatList() {}
+    AstStatList() : AstNode(AstKind::StatList) {}
     AstStatList(AstNode *node);
     void toJson(Json &root) override;
 
@@ -695,7 +741,7 @@ public:
 
 class AstBreak : public AstNode {
 public:
-    explicit AstBreak(const location &loc) : AstNode(loc) {}
+    explicit AstBreak(const location &loc) : AstNode(AstKind::Break, loc) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -703,7 +749,8 @@ public:
 
 class AstContinue : public AstNode {
 public:
-    explicit AstContinue(const location &loc) : AstNode(loc) {}
+    explicit AstContinue(const location &loc)
+        : AstNode(AstKind::Continue, loc) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -756,7 +803,7 @@ public:
 
     AstCastExpr(TypeNode *targetType, AstNode *value,
                 const location &loc = location())
-        : AstNode(loc), targetType(targetType), value(value) {}
+        : AstNode(AstKind::CastExpr, loc), targetType(targetType), value(value) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
@@ -769,7 +816,9 @@ public:
 
     AstSizeofExpr(TypeNode *targetType, AstNode *value,
                   const location &loc = location())
-        : AstNode(loc), targetType(targetType), value(value) {}
+        : AstNode(AstKind::SizeofExpr, loc),
+          targetType(targetType),
+          value(value) {}
 
     bool hasTypeOperand() const { return targetType != nullptr; }
     bool hasValueOperand() const { return value != nullptr; }
@@ -796,7 +845,7 @@ public:
     AstNode *const parent;
     AstToken *const field;
     AstDotLike(AstNode *parent, AstToken *field)
-        : AstNode(field->loc), parent(parent), field(field) {}
+        : AstNode(AstKind::DotLike, field->loc), parent(parent), field(field) {}
 
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;

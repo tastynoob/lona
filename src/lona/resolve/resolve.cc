@@ -111,7 +111,45 @@ hasTransitivelyImportedModuleNamed(const CompilationUnit &unit,
     return false;
 }
 
+const AstStatList *
+statementListBody(const AstNode *node) {
+    if (!node) {
+        return nullptr;
+    }
+    switch (node->kind()) {
+        case AstKind::Program:
+            return statementListBody(static_cast<const AstProgram *>(node)->body);
+        case AstKind::StatList:
+            return static_cast<const AstStatList *>(node);
+        default:
+            return nullptr;
+    }
+}
+
+AstStatList *
+statementListBody(AstNode *node) {
+    return const_cast<AstStatList *>(
+        statementListBody(static_cast<const AstNode *>(node)));
+}
+
+AstVarDecl *
+requireFunctionParamDeclImpl(AstNode *node, const location &loc) {
+    auto *varDecl = node && node->kind() == AstKind::VarDecl
+                        ? static_cast<AstVarDecl *>(node)
+                        : nullptr;
+    if (!varDecl) {
+        error(loc, "invalid function argument declaration",
+              "Each function parameter must be declared as a typed variable.");
+    }
+    return varDecl;
+}
+
 }  // namespace
+
+AstVarDecl *
+requireFunctionParamDecl(AstNode *node, const location &loc) {
+    return requireFunctionParamDeclImpl(node, loc);
+}
 
 class FunctionResolver {
     GlobalScope *global_;
@@ -239,18 +277,15 @@ class FunctionResolver {
         if (!searchUnit) {
             return nullptr;
         }
-        auto *root = searchUnit->syntaxTree();
-        auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body =
-            dynamic_cast<AstStatList *>(program ? program->body : root);
+        auto *body = statementListBody(searchUnit->syntaxTree());
         if (!body) {
             return nullptr;
         }
         for (auto *stmt : body->getBody()) {
-            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-            if (!structDecl) {
+            if (!stmt || stmt->kind() != AstKind::StructDecl) {
                 continue;
             }
+            auto *structDecl = static_cast<AstStructDecl *>(stmt);
             if (llvm::StringRef(structDecl->name.tochara(), structDecl->name.size()) ==
                 localName) {
                 return structDecl;
@@ -263,19 +298,16 @@ class FunctionResolver {
         if (!unit_ || !decl) {
             return nullptr;
         }
-        auto *root = unit_->syntaxTree();
-        auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body =
-            dynamic_cast<AstStatList *>(program ? program->body : root);
+        auto *body = statementListBody(unit_->syntaxTree());
         if (!body) {
             return nullptr;
         }
         for (auto *stmt : body->getBody()) {
-            auto *structDecl = dynamic_cast<AstStructDecl *>(stmt);
-            if (!structDecl) {
+            if (!stmt || stmt->kind() != AstKind::StructDecl) {
                 continue;
             }
-            auto *structBody = dynamic_cast<AstStatList *>(structDecl->body);
+            auto *structDecl = static_cast<AstStructDecl *>(stmt);
+            auto *structBody = statementListBody(structDecl->body);
             if (!structBody) {
                 continue;
             }
@@ -290,16 +322,15 @@ class FunctionResolver {
 
     const AstVarDecl *findStructFieldDecl(const AstStructDecl *structDecl,
                                          llvm::StringRef fieldName) const {
-        auto *body = dynamic_cast<AstStatList *>(structDecl ? structDecl->body
-                                                            : nullptr);
+        auto *body = statementListBody(structDecl ? structDecl->body : nullptr);
         if (!body) {
             return nullptr;
         }
         for (auto *stmt : body->getBody()) {
-            auto *fieldDecl = dynamic_cast<AstVarDecl *>(stmt);
-            if (!fieldDecl) {
+            if (!stmt || stmt->kind() != AstKind::VarDecl) {
                 continue;
             }
+            auto *fieldDecl = static_cast<AstVarDecl *>(stmt);
             if (llvm::StringRef(fieldDecl->field.tochara(),
                                 fieldDecl->field.size()) == fieldName) {
                 return fieldDecl;
@@ -313,15 +344,15 @@ class FunctionResolver {
         if (!structDecl) {
             return nullptr;
         }
-        auto *body = dynamic_cast<AstStatList *>(structDecl->body);
+        auto *body = statementListBody(structDecl->body);
         if (!body) {
             return nullptr;
         }
         for (auto *stmt : body->getBody()) {
-            auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt);
-            if (!funcDecl) {
+            if (!stmt || stmt->kind() != AstKind::FuncDecl) {
                 continue;
             }
+            auto *funcDecl = static_cast<AstFuncDecl *>(stmt);
             if (llvm::StringRef(funcDecl->name.tochara(), funcDecl->name.size()) ==
                 methodName) {
                 return funcDecl;
@@ -389,25 +420,31 @@ class FunctionResolver {
         if (!expr) {
             return nullptr;
         }
-        if (auto *field = dynamic_cast<const AstField *>(expr)) {
-            if (auto *binding = resolved_.field(field)) {
-                if (binding->kind() == ResolvedEntityRef::Kind::LocalBinding) {
-                    return bindingDeclaredTypeNode(binding->localBinding());
+        switch (expr->kind()) {
+            case AstKind::Field: {
+                auto *field = static_cast<const AstField *>(expr);
+                if (auto *binding = resolved_.field(field)) {
+                    if (binding->kind() ==
+                        ResolvedEntityRef::Kind::LocalBinding) {
+                        return bindingDeclaredTypeNode(binding->localBinding());
+                    }
                 }
-            }
-            return nullptr;
-        }
-        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(expr)) {
-            return projectionOwnerTypeNode(refExpr->expr);
-        }
-        if (auto *unary = dynamic_cast<const AstUnaryOper *>(expr)) {
-            if (unary->op != '*') {
                 return nullptr;
             }
-            auto *inner = projectionOwnerTypeNode(unary->expr);
-            return pointeeTypeNode(inner);
+            case AstKind::RefExpr:
+                return projectionOwnerTypeNode(
+                    static_cast<const AstRefExpr *>(expr)->expr);
+            case AstKind::UnaryOper: {
+                auto *unary = static_cast<const AstUnaryOper *>(expr);
+                if (unary->op != '*') {
+                    return nullptr;
+                }
+                auto *inner = projectionOwnerTypeNode(unary->expr);
+                return pointeeTypeNode(inner);
+            }
+            default:
+                return nullptr;
         }
-        return nullptr;
     }
 
     bool sameVisibleTypeBase(const BaseTypeNode *lhs,
@@ -654,43 +691,52 @@ class FunctionResolver {
         if (!node) {
             return nullptr;
         }
-        if (auto *field = dynamic_cast<const AstField *>(node)) {
-            auto *binding = resolved_.field(field);
-            if (!binding ||
-                binding->kind() != ResolvedEntityRef::Kind::LocalBinding) {
-                return nullptr;
-            }
-            return bindingDeclaredTypeNode(binding->localBinding());
-        }
-        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
-            return exprVisibleTypeNode(refExpr->expr);
-        }
-        if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
-            if (unary->op != '*') {
-                return nullptr;
-            }
-            return pointeeTypeNode(exprVisibleTypeNode(unary->expr));
-        }
-        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
-            auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
-                                             dotLike->field->text.size());
-            if (auto *parentField = dynamic_cast<const AstField *>(dotLike->parent)) {
-                if (auto *binding = resolved_.field(parentField);
-                    binding &&
-                    binding->kind() == ResolvedEntityRef::Kind::LocalBinding &&
-                    binding->localBinding() == resolved_.selfBinding()) {
-                    return selfFieldTypeNode(fieldName);
+        switch (node->kind()) {
+            case AstKind::Field: {
+                auto *field = static_cast<const AstField *>(node);
+                auto *binding = resolved_.field(field);
+                if (!binding ||
+                    binding->kind() != ResolvedEntityRef::Kind::LocalBinding) {
+                    return nullptr;
                 }
+                return bindingDeclaredTypeNode(binding->localBinding());
             }
-            auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
-            return projectedFieldTypeNode(ownerTypeNode, fieldName);
+            case AstKind::RefExpr:
+                return exprVisibleTypeNode(
+                    static_cast<const AstRefExpr *>(node)->expr);
+            case AstKind::UnaryOper: {
+                auto *unary = static_cast<const AstUnaryOper *>(node);
+                if (unary->op != '*') {
+                    return nullptr;
+                }
+                return pointeeTypeNode(exprVisibleTypeNode(unary->expr));
+            }
+            case AstKind::DotLike: {
+                auto *dotLike = static_cast<const AstDotLike *>(node);
+                auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
+                                                 dotLike->field->text.size());
+                auto *parent = dotLike->parent;
+                if (parent && parent->kind() == AstKind::Field) {
+                    auto *parentField = static_cast<const AstField *>(parent);
+                    if (auto *binding = resolved_.field(parentField);
+                        binding &&
+                        binding->kind() ==
+                            ResolvedEntityRef::Kind::LocalBinding &&
+                        binding->localBinding() == resolved_.selfBinding()) {
+                        return selfFieldTypeNode(fieldName);
+                    }
+                }
+                auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
+                return projectedFieldTypeNode(ownerTypeNode, fieldName);
+            }
+            default:
+                return nullptr;
         }
-        return nullptr;
     }
 
     const AstNode *callArgValue(const AstNode *node) const {
-        if (auto *namedArg = dynamic_cast<const AstNamedCallArg *>(node)) {
-            return namedArg->value;
+        if (node && node->kind() == AstKind::NamedCallArg) {
+            return static_cast<const AstNamedCallArg *>(node)->value;
         }
         return node;
     }
@@ -699,8 +745,8 @@ class FunctionResolver {
         if (!node) {
             return nullptr;
         }
-        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
-            return typeApply->value;
+        if (node->value && node->value->kind() == AstKind::TypeApply) {
+            return static_cast<const AstTypeApply *>(node->value)->value;
         }
         return node->value;
     }
@@ -709,8 +755,8 @@ class FunctionResolver {
         if (!node) {
             return nullptr;
         }
-        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
-            return typeApply->typeArgs;
+        if (node->value && node->value->kind() == AstKind::TypeApply) {
+            return static_cast<const AstTypeApply *>(node->value)->typeArgs;
         }
         return nullptr;
     }
@@ -890,10 +936,11 @@ class FunctionResolver {
             return classifyGenericTypeNode(functionDecl->returnTypeNode, substs);
         }
 
-        auto *callee = dynamic_cast<const AstDotLike *>(callTargetNode(node));
-        if (!callee) {
+        auto *callTarget = callTargetNode(node);
+        if (!callTarget || callTarget->kind() != AstKind::DotLike) {
             return noGenericCapability();
         }
+        auto *callee = static_cast<const AstDotLike *>(callTarget);
         std::unordered_map<std::string, GenericCapabilityInfo> substs;
         auto fieldName = llvm::StringRef(callee->field->text.tochara(),
                                          callee->field->text.size());
@@ -939,7 +986,11 @@ class FunctionResolver {
                 std::min(argCount, methodDecl->args ? methodDecl->args->size() : 0);
             for (std::size_t i = 0; i < paramCount; ++i) {
                 auto *argExpr = callArgValue(args->at(i));
-                auto *argDecl = dynamic_cast<AstVarDecl *>(methodDecl->args->at(i));
+                auto *argNode = methodDecl->args->at(i);
+                auto *argDecl =
+                    argNode && argNode->kind() == AstKind::VarDecl
+                        ? static_cast<AstVarDecl *>(argNode)
+                        : nullptr;
                 inferGenericCapabilitySubsts(
                     argDecl ? argDecl->typeNode : nullptr,
                     exprVisibleTypeNode(argExpr), inferGenericExprInfo(argExpr),
@@ -953,60 +1004,70 @@ class FunctionResolver {
         if (!node) {
             return noGenericCapability();
         }
-        if (auto *field = dynamic_cast<const AstField *>(node)) {
-            auto *binding = resolved_.field(field);
-            if (!binding ||
-                binding->kind() != ResolvedEntityRef::Kind::LocalBinding) {
-                return noGenericCapability();
+        switch (node->kind()) {
+            case AstKind::Field: {
+                auto *field = static_cast<const AstField *>(node);
+                auto *binding = resolved_.field(field);
+                if (!binding ||
+                    binding->kind() !=
+                        ResolvedEntityRef::Kind::LocalBinding) {
+                    return noGenericCapability();
+                }
+                return bindingGenericInfo(binding->localBinding());
             }
-            return bindingGenericInfo(binding->localBinding());
-        }
-        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
-            return inferGenericExprInfo(refExpr->expr);
-        }
-        if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
-            auto info = inferGenericExprInfo(unary->expr);
-            if (!info.valid()) {
-                return info;
-            }
-            if (unary->op == '&') {
-                ++info.pointerDepth;
-                return info;
-            }
-            if (unary->op == '*') {
-                if (info.pointerDepth > 0) {
-                    --info.pointerDepth;
+            case AstKind::RefExpr:
+                return inferGenericExprInfo(
+                    static_cast<const AstRefExpr *>(node)->expr);
+            case AstKind::UnaryOper: {
+                auto *unary = static_cast<const AstUnaryOper *>(node);
+                auto info = inferGenericExprInfo(unary->expr);
+                if (!info.valid()) {
                     return info;
                 }
-                return noGenericCapability();
-            }
-            return noGenericCapability();
-        }
-        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
-            if (auto *binding = resolved_.dotLike(dotLike);
-                binding && binding->valid()) {
-                return noGenericCapability();
-            }
-            auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
-                                             dotLike->field->text.size());
-            if (auto *parentField = dynamic_cast<const AstField *>(dotLike->parent)) {
-                if (auto *binding = resolved_.field(parentField);
-                    binding &&
-                    binding->kind() == ResolvedEntityRef::Kind::LocalBinding &&
-                    binding->localBinding() == resolved_.selfBinding()) {
-                    auto info = selfFieldGenericInfo(fieldName);
-                    if (info.valid()) {
+                if (unary->op == '&') {
+                    ++info.pointerDepth;
+                    return info;
+                }
+                if (unary->op == '*') {
+                    if (info.pointerDepth > 0) {
+                        --info.pointerDepth;
                         return info;
                     }
+                    return noGenericCapability();
                 }
+                return noGenericCapability();
             }
-            auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
-            return projectedFieldGenericInfo(ownerTypeNode, fieldName);
+            case AstKind::DotLike: {
+                auto *dotLike = static_cast<const AstDotLike *>(node);
+                if (auto *binding = resolved_.dotLike(dotLike);
+                    binding && binding->valid()) {
+                    return noGenericCapability();
+                }
+                auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
+                                                 dotLike->field->text.size());
+                auto *parent = dotLike->parent;
+                if (parent && parent->kind() == AstKind::Field) {
+                    auto *parentField = static_cast<const AstField *>(parent);
+                    if (auto *binding = resolved_.field(parentField);
+                        binding &&
+                        binding->kind() ==
+                            ResolvedEntityRef::Kind::LocalBinding &&
+                        binding->localBinding() == resolved_.selfBinding()) {
+                        auto info = selfFieldGenericInfo(fieldName);
+                        if (info.valid()) {
+                            return info;
+                        }
+                    }
+                }
+                auto *ownerTypeNode = projectionOwnerTypeNode(dotLike->parent);
+                return projectedFieldGenericInfo(ownerTypeNode, fieldName);
+            }
+            case AstKind::FieldCall:
+                return inferGenericCallResultInfo(
+                    static_cast<const AstFieldCall *>(node));
+            default:
+                return noGenericCapability();
         }
-        if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
-            return inferGenericCallResultInfo(call);
-        }
-        return noGenericCapability();
     }
 
     void rememberBindingGenericInfo(const ResolvedLocalBinding *binding,
@@ -1442,21 +1503,25 @@ class FunctionResolver {
     }
 
     const ResolvedEntityRef *resolvedExpr(const AstNode *node) const {
-        if (auto *field = dynamic_cast<const AstField *>(node)) {
-            return resolved_.field(field);
+        if (!node) {
+            return nullptr;
         }
-        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
-            return resolved_.dotLike(dotLike);
+        switch (node->kind()) {
+            case AstKind::Field:
+                return resolved_.field(static_cast<const AstField *>(node));
+            case AstKind::DotLike:
+                return resolved_.dotLike(static_cast<const AstDotLike *>(node));
+            default:
+                return nullptr;
         }
-        return nullptr;
     }
 
     const AstNode *funcRefTargetNode(const AstFuncRef *node) const {
         if (!node) {
             return nullptr;
         }
-        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
-            return typeApply->value;
+        if (node->value && node->value->kind() == AstKind::TypeApply) {
+            return static_cast<const AstTypeApply *>(node->value)->value;
         }
         return node->value;
     }
@@ -1469,8 +1534,10 @@ class FunctionResolver {
         if (!node) {
             return "<function>";
         }
-        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node->value)) {
-            return describeDotLikeSyntax(typeApply->value, "<function>");
+        if (node->value && node->value->kind() == AstKind::TypeApply) {
+            return describeDotLikeSyntax(
+                static_cast<const AstTypeApply *>(node->value)->value,
+                "<function>");
         }
         return describeDotLikeSyntax(node->value, "<function>");
     }
@@ -1544,65 +1611,77 @@ class FunctionResolver {
         if (!node) {
             return;
         }
-        if (auto *list = dynamic_cast<const AstStatList *>(node)) {
-            resolveBlock(list, true);
-            return;
-        }
-        if (auto *varDef = dynamic_cast<const AstVarDef *>(node)) {
-            if (resolved_.isTemplateValidationOnly() && varDef->getTypeNode()) {
-                validateVisibleType(varDef->getTypeNode(),
-                                    varDef->getTypeNode()->loc,
-                                    "local variable `" +
-                                        toStdString(varDef->getName()) + "`");
+        switch (node->kind()) {
+            case AstKind::StatList: {
+                auto *list = static_cast<const AstStatList *>(node);
+                resolveBlock(list, true);
+                return;
             }
-            if (varDef->withInitVal()) {
-                resolveExpr(varDef->getInitVal());
+            case AstKind::VarDef: {
+                auto *varDef = static_cast<const AstVarDef *>(node);
+                if (resolved_.isTemplateValidationOnly() &&
+                    varDef->getTypeNode()) {
+                    validateVisibleType(
+                        varDef->getTypeNode(), varDef->getTypeNode()->loc,
+                        "local variable `" +
+                            toStdString(varDef->getName()) + "`");
+                }
+                if (varDef->withInitVal()) {
+                    resolveExpr(varDef->getInitVal());
+                }
+                auto *binding = module_.createLocalBinding(
+                    ResolvedLocalBinding::Kind::Variable,
+                    varDef->getBindingKind(), toStdString(varDef->getName()),
+                    varDef, varDef->loc);
+                declareBinding(
+                    binding, varDef->loc,
+                    "duplicate variable definition for `" +
+                        toStdString(varDef->getName()) + "`",
+                    "Rename one of the variables or reuse the existing "
+                    "binding.");
+                resolved_.bindVariable(varDef, binding);
+                rememberBindingGenericInfo(binding, varDef->getTypeNode(),
+                                           varDef->withInitVal()
+                                               ? varDef->getInitVal()
+                                               : nullptr);
+                return;
             }
-            auto *binding = module_.createLocalBinding(
-                ResolvedLocalBinding::Kind::Variable, varDef->getBindingKind(),
-                toStdString(varDef->getName()), varDef, varDef->loc);
-            declareBinding(
-                binding, varDef->loc,
-                "duplicate variable definition for `" +
-                    toStdString(varDef->getName()) + "`",
-                "Rename one of the variables or reuse the existing binding.");
-            resolved_.bindVariable(varDef, binding);
-            rememberBindingGenericInfo(binding, varDef->getTypeNode(),
-                                       varDef->withInitVal()
-                                           ? varDef->getInitVal()
-                                           : nullptr);
-            return;
-        }
-        if (auto *ret = dynamic_cast<const AstRet *>(node)) {
-            if (ret->expr) {
-                resolveExpr(ret->expr);
+            case AstKind::Ret: {
+                auto *ret = static_cast<const AstRet *>(node);
+                if (ret->expr) {
+                    resolveExpr(ret->expr);
+                }
+                return;
             }
-            return;
-        }
-        if (dynamic_cast<const AstBreak *>(node) ||
-            dynamic_cast<const AstContinue *>(node)) {
-            return;
-        }
-        if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
-            resolveExpr(ifNode->condition);
-            resolveStmt(ifNode->then);
-            if (ifNode->els) {
-                resolveStmt(ifNode->els);
+            case AstKind::Break:
+            case AstKind::Continue:
+            case AstKind::StructDecl:
+            case AstKind::TraitDecl:
+            case AstKind::TraitImplDecl:
+            case AstKind::FuncDecl:
+            case AstKind::GlobalDecl:
+            case AstKind::Import:
+                return;
+            case AstKind::If: {
+                auto *ifNode = static_cast<const AstIf *>(node);
+                resolveExpr(ifNode->condition);
+                resolveStmt(ifNode->then);
+                if (ifNode->els) {
+                    resolveStmt(ifNode->els);
+                }
+                return;
             }
-            return;
-        }
-        if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
-            resolveExpr(forNode->expr);
-            resolveStmt(forNode->body);
-            if (forNode->els) {
-                resolveStmt(forNode->els);
+            case AstKind::For: {
+                auto *forNode = static_cast<const AstFor *>(node);
+                resolveExpr(forNode->expr);
+                resolveStmt(forNode->body);
+                if (forNode->els) {
+                    resolveStmt(forNode->els);
+                }
+                return;
             }
-            return;
-        }
-        if (node->is<AstStructDecl>() || node->is<AstTraitDecl>() ||
-            node->is<AstTraitImplDecl>() || node->is<AstFuncDecl>() ||
-            node->is<AstGlobalDecl>() || node->is<AstImport>()) {
-            return;
+            default:
+                break;
         }
         resolveExpr(node);
     }
@@ -1611,79 +1690,101 @@ class FunctionResolver {
         if (!node) {
             return;
         }
-        if (dynamic_cast<const AstConst *>(node)) {
-            return;
-        }
-        if (auto *field = dynamic_cast<const AstField *>(node)) {
-            if (auto *local = lookupLocalBinding(field->name)) {
-                resolved_.bindField(field,
-                                    ResolvedEntityRef::local(local));
+        switch (node->kind()) {
+            case AstKind::Const:
                 return;
-            }
+            case AstKind::Field: {
+                auto *field = static_cast<const AstField *>(node);
+                if (auto *local = lookupLocalBinding(field->name)) {
+                    resolved_.bindField(field, ResolvedEntityRef::local(local));
+                    return;
+                }
 
-            if (unit_) {
-                auto lookup =
-                    unit_->lookupTopLevelName(toStdString(field->name));
-                if (lookup.isFunction()) {
-                    if (lookup.functionDecl && lookup.functionDecl->isGeneric()) {
-                        resolved_.bindField(field,
-                                            ResolvedEntityRef::genericFunction(
-                                                lookup.resolvedName,
-                                                lookup.functionDecl,
-                                                unit_->interface()));
-                    } else {
+                if (unit_) {
+                    auto lookup =
+                        unit_->lookupTopLevelName(toStdString(field->name));
+                    if (lookup.isFunction()) {
+                        if (lookup.functionDecl &&
+                            lookup.functionDecl->isGeneric()) {
+                            resolved_.bindField(
+                                field, ResolvedEntityRef::genericFunction(
+                                           lookup.resolvedName,
+                                           lookup.functionDecl,
+                                           unit_->interface()));
+                        } else {
+                            resolved_.bindField(
+                                field, ResolvedEntityRef::globalValue(
+                                           lookup.resolvedName));
+                        }
+                        return;
+                    }
+                    if (lookup.isGlobal()) {
                         resolved_.bindField(
                             field, ResolvedEntityRef::globalValue(
                                        lookup.resolvedName));
+                        return;
                     }
-                    return;
-                }
-                if (lookup.isGlobal()) {
-                    resolved_.bindField(field, ResolvedEntityRef::globalValue(
-                                                   lookup.resolvedName));
-                    return;
-                }
-                if (lookup.isType()) {
-                    if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
-                        resolved_.bindField(
-                            field, ResolvedEntityRef::genericType(
-                                       lookup.resolvedName, lookup.typeDecl,
-                                       unit_->interface()));
-                    } else {
+                    if (lookup.isType()) {
+                        if (lookup.typeDecl && lookup.typeDecl->isGeneric()) {
+                            resolved_.bindField(
+                                field, ResolvedEntityRef::genericType(
+                                           lookup.resolvedName, lookup.typeDecl,
+                                           unit_->interface()));
+                        } else {
+                            resolved_.bindField(
+                                field,
+                                ResolvedEntityRef::type(lookup.resolvedName));
+                        }
+                        return;
+                    }
+                    if (lookup.isTrait()) {
                         resolved_.bindField(
                             field,
-                            ResolvedEntityRef::type(lookup.resolvedName));
+                            ResolvedEntityRef::trait(lookup.resolvedName));
+                        return;
                     }
-                    return;
+                    if (lookup.isModule()) {
+                        resolved_.bindField(
+                            field,
+                            ResolvedEntityRef::module(lookup.resolvedName));
+                        return;
+                    }
                 }
-                if (lookup.isTrait()) {
-                    resolved_.bindField(
-                        field, ResolvedEntityRef::trait(lookup.resolvedName));
-                    return;
-                }
-                if (lookup.isModule()) {
-                    resolved_.bindField(
-                        field, ResolvedEntityRef::module(lookup.resolvedName));
-                    return;
-                }
-            }
 
-            auto *globalObject = global_->getObj(field->name);
-            if (!globalObject) {
-                auto *globalType =
-                    typeMgr_ ? typeMgr_->getType(llvm::StringRef(
-                                   field->name.tochara(), field->name.size()))
-                             : nullptr;
-                if (globalType) {
-                    resolved_.bindField(
-                        field, ResolvedEntityRef::type(
-                                   toStdString(globalType->full_name)));
-                    return;
+                auto *globalObject = global_->getObj(field->name);
+                if (!globalObject) {
+                    auto *globalType =
+                        typeMgr_
+                            ? typeMgr_->getType(llvm::StringRef(
+                                  field->name.tochara(), field->name.size()))
+                            : nullptr;
+                    if (globalType) {
+                        resolved_.bindField(
+                            field, ResolvedEntityRef::type(
+                                       toStdString(globalType->full_name)));
+                        return;
+                    }
+                    if (unit_ &&
+                        hasTransitivelyImportedModuleNamed(
+                            *unit_, llvm::StringRef(field->name.tochara(),
+                                                    field->name.size()))) {
+                        error(field->loc,
+                              "module `" + toStdString(field->name) +
+                                  "` is not directly imported here",
+                              "Add an explicit `import " +
+                                  toStdString(field->name) +
+                                  "` in this file before using `" +
+                                  toStdString(field->name) + ".xxx`.");
+                    }
+                    error(field->loc,
+                          "undefined identifier `" +
+                              toStdString(field->name) + "`",
+                          "Declare it with `var` before using it, or check the "
+                          "spelling.");
                 }
-                if (unit_ &&
-                    hasTransitivelyImportedModuleNamed(
-                        *unit_, llvm::StringRef(field->name.tochara(),
-                                                field->name.size()))) {
+                if (globalObject->as<ModuleObject>() &&
+                    (!unit_ ||
+                     !unit_->importsModule(toStdString(field->name)))) {
                     error(field->loc,
                           "module `" + toStdString(field->name) +
                               "` is not directly imported here",
@@ -1692,164 +1793,174 @@ class FunctionResolver {
                               "` in this file before using `" +
                               toStdString(field->name) + ".xxx`.");
                 }
-                error(field->loc,
-                      "undefined identifier `" + toStdString(field->name) + "`",
-                      "Declare it with `var` before using it, or check the "
-                      "spelling.");
+                resolved_.bindField(field, ResolvedEntityRef::globalValue(
+                                               toStdString(field->name)));
+                return;
             }
-            if (globalObject->as<ModuleObject>() &&
-                (!unit_ || !unit_->importsModule(toStdString(field->name)))) {
-                error(field->loc,
-                      "module `" + toStdString(field->name) +
-                          "` is not directly imported here",
-                      "Add an explicit `import " + toStdString(field->name) +
-                          "` in this file before using `" +
-                          toStdString(field->name) + ".xxx`.");
-            }
-            resolved_.bindField(field, ResolvedEntityRef::globalValue(
-                                           toStdString(field->name)));
-            return;
-        }
-        if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
-            resolveExpr(funcRef->value);
-            if (auto *binding = resolvedFuncRefTarget(funcRef)) {
-                if (binding->kind() == ResolvedEntityRef::Kind::GenericFunction ||
-                    binding->kind() == ResolvedEntityRef::Kind::GlobalValue) {
-                    resolved_.bindFunctionRef(funcRef, *binding);
-                    return;
+            case AstKind::FuncRef: {
+                auto *funcRef = static_cast<const AstFuncRef *>(node);
+                resolveExpr(funcRef->value);
+                if (auto *binding = resolvedFuncRefTarget(funcRef)) {
+                    if (binding->kind() ==
+                            ResolvedEntityRef::Kind::GenericFunction ||
+                        binding->kind() ==
+                            ResolvedEntityRef::Kind::GlobalValue) {
+                        resolved_.bindFunctionRef(funcRef, *binding);
+                        return;
+                    }
                 }
+                error(funcRef->loc,
+                      "function reference target must name a top-level "
+                      "function: `" +
+                          describeFuncRefTarget(funcRef) + "`",
+                      "Use `@name`, `@module.name`, or `@name[T]` with a "
+                      "visible top-level function.");
+                return;
             }
-            error(funcRef->loc,
-                  "function reference target must name a top-level function: `" +
-                      describeFuncRefTarget(funcRef) + "`",
-                  "Use `@name`, `@module.name`, or `@name[T]` with a visible "
-                  "top-level function.");
-            return;
-        }
-        if (auto *assign = dynamic_cast<const AstAssign *>(node)) {
-            resolveExpr(assign->left);
-            resolveExpr(assign->right);
-            return;
-        }
-        if (auto *bin = dynamic_cast<const AstBinOper *>(node)) {
-            resolveExpr(bin->left);
-            resolveExpr(bin->right);
-            auto leftInfo = inferGenericExprInfo(bin->left);
-            if (leftInfo.isDirectValue()) {
-                errorUnconstrainedGenericOperatorUse(bin->loc, leftInfo,
-                                                     bin->op);
+            case AstKind::Assign: {
+                auto *assign = static_cast<const AstAssign *>(node);
+                resolveExpr(assign->left);
+                resolveExpr(assign->right);
+                return;
             }
-            auto rightInfo = inferGenericExprInfo(bin->right);
-            if (rightInfo.isDirectValue()) {
-                errorUnconstrainedGenericOperatorUse(bin->loc, rightInfo,
-                                                     bin->op);
+            case AstKind::BinOper: {
+                auto *bin = static_cast<const AstBinOper *>(node);
+                resolveExpr(bin->left);
+                resolveExpr(bin->right);
+                auto leftInfo = inferGenericExprInfo(bin->left);
+                if (leftInfo.isDirectValue()) {
+                    errorUnconstrainedGenericOperatorUse(bin->loc, leftInfo,
+                                                         bin->op);
+                }
+                auto rightInfo = inferGenericExprInfo(bin->right);
+                if (rightInfo.isDirectValue()) {
+                    errorUnconstrainedGenericOperatorUse(bin->loc, rightInfo,
+                                                         bin->op);
+                }
+                return;
             }
-            return;
-        }
-        if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
-            resolveExpr(unary->expr);
-            if (unary->op != '&' && unary->op != '*') {
-                auto info = inferGenericExprInfo(unary->expr);
+            case AstKind::UnaryOper: {
+                auto *unary = static_cast<const AstUnaryOper *>(node);
+                resolveExpr(unary->expr);
+                if (unary->op != '&' && unary->op != '*') {
+                    auto info = inferGenericExprInfo(unary->expr);
+                    if (info.isDirectValue()) {
+                        errorUnconstrainedGenericOperatorUse(unary->loc, info,
+                                                             unary->op);
+                    }
+                }
+                return;
+            }
+            case AstKind::RefExpr: {
+                auto *refExpr = static_cast<const AstRefExpr *>(node);
+                resolveExpr(refExpr->expr);
+                return;
+            }
+            case AstKind::TupleLiteral: {
+                auto *tuple = static_cast<const AstTupleLiteral *>(node);
+                if (tuple->items) {
+                    for (auto *item : *tuple->items) {
+                        resolveExpr(item);
+                    }
+                }
+                return;
+            }
+            case AstKind::TypeApply: {
+                auto *typeApply = static_cast<const AstTypeApply *>(node);
+                resolveExpr(typeApply->value);
+                return;
+            }
+            case AstKind::BraceInitItem: {
+                auto *braceItem = static_cast<const AstBraceInitItem *>(node);
+                if (braceItem->value) {
+                    resolveExpr(braceItem->value);
+                }
+                return;
+            }
+            case AstKind::BraceInit: {
+                auto *braceInit = static_cast<const AstBraceInit *>(node);
+                if (braceInit->items) {
+                    for (auto *item : *braceInit->items) {
+                        resolveExpr(item);
+                    }
+                }
+                return;
+            }
+            case AstKind::NamedCallArg: {
+                auto *namedArg = static_cast<const AstNamedCallArg *>(node);
+                if (namedArg->value) {
+                    resolveExpr(namedArg->value);
+                }
+                return;
+            }
+            case AstKind::DotLike: {
+                auto *dotLike = static_cast<const AstDotLike *>(node);
+                resolveExpr(dotLike->parent);
+                resolveDotLike(dotLike);
+                auto info = inferGenericExprInfo(dotLike->parent);
                 if (info.isDirectValue()) {
-                    errorUnconstrainedGenericOperatorUse(unary->loc, info,
-                                                         unary->op);
+                    errorUnconstrainedGenericMemberUse(
+                        dotLike->loc, info,
+                        llvm::StringRef(dotLike->field->text.tochara(),
+                                        dotLike->field->text.size()));
                 }
+                return;
             }
-            return;
-        }
-        if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
-            resolveExpr(refExpr->expr);
-            return;
-        }
-        if (auto *tuple = dynamic_cast<const AstTupleLiteral *>(node)) {
-            if (tuple->items) {
-                for (auto *item : *tuple->items) {
-                    resolveExpr(item);
+            case AstKind::CastExpr: {
+                auto *castExpr = static_cast<const AstCastExpr *>(node);
+                if (resolved_.isTemplateValidationOnly()) {
+                    validateVisibleType(castExpr->targetType,
+                                        castExpr->targetType->loc,
+                                        "cast target type");
                 }
+                resolveExpr(castExpr->value);
+                return;
             }
-            return;
-        }
-        if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node)) {
-            resolveExpr(typeApply->value);
-            return;
-        }
-        if (auto *braceItem = dynamic_cast<const AstBraceInitItem *>(node)) {
-            if (braceItem->value) {
-                resolveExpr(braceItem->value);
-            }
-            return;
-        }
-        if (auto *braceInit = dynamic_cast<const AstBraceInit *>(node)) {
-            if (braceInit->items) {
-                for (auto *item : *braceInit->items) {
-                    resolveExpr(item);
+            case AstKind::SizeofExpr: {
+                auto *sizeofExpr = static_cast<const AstSizeofExpr *>(node);
+                if (resolved_.isTemplateValidationOnly() &&
+                    sizeofExpr->targetType) {
+                    validateVisibleType(sizeofExpr->targetType,
+                                        sizeofExpr->targetType->loc,
+                                        "`sizeof[...]` target type");
                 }
+                if (sizeofExpr->value) {
+                    resolveExpr(sizeofExpr->value);
+                }
+                return;
             }
-            return;
-        }
-        if (auto *namedArg = dynamic_cast<const AstNamedCallArg *>(node)) {
-            if (namedArg->value) {
-                resolveExpr(namedArg->value);
-            }
-            return;
-        }
-        if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
-            resolveExpr(dotLike->parent);
-            resolveDotLike(dotLike);
-            auto info = inferGenericExprInfo(dotLike->parent);
-            if (info.isDirectValue()) {
-                errorUnconstrainedGenericMemberUse(
-                    dotLike->loc, info,
-                    llvm::StringRef(dotLike->field->text.tochara(),
-                                    dotLike->field->text.size()));
-            }
-            return;
-        }
-        if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
-            if (resolved_.isTemplateValidationOnly()) {
-                validateVisibleType(castExpr->targetType,
-                                    castExpr->targetType->loc,
-                                    "cast target type");
-            }
-            resolveExpr(castExpr->value);
-            return;
-        }
-        if (auto *sizeofExpr = dynamic_cast<const AstSizeofExpr *>(node)) {
-            if (resolved_.isTemplateValidationOnly() &&
-                sizeofExpr->targetType) {
-                validateVisibleType(sizeofExpr->targetType,
-                                    sizeofExpr->targetType->loc,
-                                    "`sizeof[...]` target type");
-            }
-            if (sizeofExpr->value) {
-                resolveExpr(sizeofExpr->value);
-            }
-            return;
-        }
-        if (auto *call = dynamic_cast<const AstFieldCall *>(node)) {
-            if (auto *typeApply = dynamic_cast<const AstTypeApply *>(call->value)) {
-                if (auto *dotLike =
-                        dynamic_cast<const AstDotLike *>(typeApply->value)) {
-                    resolveCalledSelector(dotLike);
+            case AstKind::FieldCall: {
+                auto *call = static_cast<const AstFieldCall *>(node);
+                auto *callValue = call->value;
+                if (callValue && callValue->kind() == AstKind::TypeApply) {
+                    auto *typeApply =
+                        static_cast<const AstTypeApply *>(callValue);
+                    if (typeApply->value &&
+                        typeApply->value->kind() == AstKind::DotLike) {
+                        resolveCalledSelector(
+                            static_cast<const AstDotLike *>(typeApply->value));
+                    } else {
+                        resolveExpr(callValue);
+                    }
+                } else if (callValue &&
+                           callValue->kind() == AstKind::DotLike) {
+                    resolveCalledSelector(
+                        static_cast<const AstDotLike *>(callValue));
                 } else {
-                    resolveExpr(call->value);
+                    resolveExpr(callValue);
                 }
-            } else if (auto *dotLike =
-                           dynamic_cast<const AstDotLike *>(call->value)) {
-                resolveCalledSelector(dotLike);
-            } else {
-                resolveExpr(call->value);
-            }
-            if (call->args) {
-                for (auto *arg : *call->args) {
-                    resolveExpr(arg);
+                if (call->args) {
+                    for (auto *arg : *call->args) {
+                        resolveExpr(arg);
+                    }
                 }
+                return;
             }
-            return;
-        }
-        if (auto *list = dynamic_cast<const AstStatList *>(node)) {
-            resolveStmt(list);
-            return;
+            case AstKind::StatList:
+                resolveStmt(static_cast<const AstStatList *>(node));
+                return;
+            default:
+                break;
         }
         error(node->loc, "unsupported AST node in name resolution",
               "This looks like a compiler bug in the frontend pipeline.");
@@ -1891,7 +2002,7 @@ public:
             rememberBindingGenericInfo(binding, bindingDeclaredTypeNode(binding));
         }
 
-        if (auto *body = dynamic_cast<const AstStatList *>(resolved_.body())) {
+        if (auto *body = statementListBody(resolved_.body())) {
             resolveBlock(body, false);
             return;
         }
@@ -1930,12 +2041,7 @@ class ModuleResolver {
         }
         if (decl && decl->args) {
             for (auto *arg : *decl->args) {
-                auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
-                if (!varDecl) {
-                    error(decl->loc, "invalid function argument declaration",
-                          "Each function parameter must be declared as a typed "
-                          "variable.");
-                }
+                auto *varDecl = requireFunctionParamDecl(arg, decl->loc);
                 resolved->addParam(module_->createLocalBinding(
                     ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
                     toStdString(varDecl->field), varDecl, varDecl->loc));
@@ -2019,19 +2125,19 @@ class ModuleResolver {
                   "struct declaration is missing from the type table",
                   "Run type scanning before name resolution.");
         }
-        auto *body = dynamic_cast<AstStatList *>(node->body);
+        auto *body = statementListBody(node->body);
         if (!body) {
             return;
         }
         auto scopedTypeParams = collectGenericParamNames(node->typeParams);
         auto scopedTypeParamBounds = collectGenericParamBounds(node->typeParams);
         for (auto *stmt : body->getBody()) {
-            auto *func = dynamic_cast<AstFuncDecl *>(stmt);
-            if (func) {
-                resolveFunction(func, structType, resolvedStructName,
-                                string(),
-                                scopedTypeParams, scopedTypeParamBounds);
+            if (!stmt || stmt->kind() != AstKind::FuncDecl) {
+                continue;
             }
+            auto *func = static_cast<AstFuncDecl *>(stmt);
+            resolveFunction(func, structType, resolvedStructName, string(),
+                            scopedTypeParams, scopedTypeParamBounds);
         }
     }
 
@@ -2041,24 +2147,38 @@ class ModuleResolver {
         }
 
         string resolvedTraitName;
-        if (auto *traitField = dynamic_cast<AstField *>(node->trait)) {
-            auto lookup = unit_->lookupTopLevelName(toStdString(traitField->name));
-            if (lookup.isTrait()) {
-                resolvedTraitName = lookup.resolvedName;
-            }
-        } else if (auto *traitDot = dynamic_cast<AstDotLike *>(node->trait)) {
-            auto *moduleField = dynamic_cast<AstField *>(traitDot->parent);
-            if (moduleField) {
-                auto moduleLookup =
-                    unit_->lookupTopLevelName(toStdString(moduleField->name));
-                if (moduleLookup.isModule() && moduleLookup.importedModule) {
-                    auto traitLookup = unit_->lookupTopLevelName(
-                        *moduleLookup.importedModule,
-                        toStdString(traitDot->field->text));
-                    if (traitLookup.isTrait()) {
-                        resolvedTraitName = traitLookup.resolvedName;
+        if (node->trait) {
+            switch (node->trait->kind()) {
+                case AstKind::Field: {
+                    auto *traitField = static_cast<AstField *>(node->trait);
+                    auto lookup =
+                        unit_->lookupTopLevelName(toStdString(traitField->name));
+                    if (lookup.isTrait()) {
+                        resolvedTraitName = lookup.resolvedName;
                     }
+                    break;
                 }
+                case AstKind::DotLike: {
+                    auto *traitDot = static_cast<AstDotLike *>(node->trait);
+                    auto *moduleExpr = traitDot->parent;
+                    if (!moduleExpr || moduleExpr->kind() != AstKind::Field) {
+                        break;
+                    }
+                    auto *moduleField = static_cast<AstField *>(moduleExpr);
+                    auto moduleLookup =
+                        unit_->lookupTopLevelName(toStdString(moduleField->name));
+                    if (moduleLookup.isModule() && moduleLookup.importedModule) {
+                        auto traitLookup = unit_->lookupTopLevelName(
+                            *moduleLookup.importedModule,
+                            toStdString(traitDot->field->text));
+                        if (traitLookup.isTrait()) {
+                            resolvedTraitName = traitLookup.resolvedName;
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
             }
         }
         if (resolvedTraitName.empty()) {
@@ -2067,16 +2187,16 @@ class ModuleResolver {
 
         auto *selfType = unit_->resolveType(typeMgr_, node->selfType);
         auto *structType = selfType ? selfType->as<StructType>() : nullptr;
-        auto *body = dynamic_cast<AstStatList *>(node->body);
+        auto *body = statementListBody(node->body);
         if (!structType || !body) {
             return;
         }
 
         for (auto *stmt : body->getBody()) {
-            auto *func = dynamic_cast<AstFuncDecl *>(stmt);
-            if (!func) {
+            if (!stmt || stmt->kind() != AstKind::FuncDecl) {
                 continue;
             }
+            auto *func = static_cast<AstFuncDecl *>(stmt);
             resolveFunction(
                 func, structType, toStdString(structType->full_name),
                 traitMethodSlotKey(resolvedTraitName, toStdString(func->name)));
@@ -2087,27 +2207,27 @@ class ModuleResolver {
         auto *execBody = new AstStatList();
         bool hasImports = false;
         for (auto *stmt : body->getBody()) {
-            if (auto *structDecl = dynamic_cast<AstStructDecl *>(stmt)) {
-                resolveStruct(structDecl);
+            if (!stmt) {
                 continue;
             }
-            if (dynamic_cast<AstImport *>(stmt)) {
-                hasImports = true;
-                continue;
-            }
-            if (dynamic_cast<AstGlobalDecl *>(stmt)) {
-                continue;
-            }
-            if (dynamic_cast<AstTraitDecl *>(stmt)) {
-                continue;
-            }
-            if (auto *traitImplDecl = dynamic_cast<AstTraitImplDecl *>(stmt)) {
-                resolveTraitImpl(traitImplDecl);
-                continue;
-            }
-            if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
-                resolveFunction(funcDecl);
-                continue;
+            switch (stmt->kind()) {
+                case AstKind::StructDecl:
+                    resolveStruct(static_cast<AstStructDecl *>(stmt));
+                    continue;
+                case AstKind::Import:
+                    hasImports = true;
+                    continue;
+                case AstKind::GlobalDecl:
+                case AstKind::TraitDecl:
+                    continue;
+                case AstKind::TraitImplDecl:
+                    resolveTraitImpl(static_cast<AstTraitImplDecl *>(stmt));
+                    continue;
+                case AstKind::FuncDecl:
+                    resolveFunction(static_cast<AstFuncDecl *>(stmt));
+                    continue;
+                default:
+                    break;
             }
             execBody->push(stmt);
         }
@@ -2136,9 +2256,7 @@ public:
     }
 
     std::unique_ptr<ResolvedModule> resolve(AstNode *root) {
-        auto *program = dynamic_cast<AstProgram *>(root);
-        auto *body =
-            dynamic_cast<AstStatList *>(program ? program->body : root);
+        auto *body = statementListBody(root);
         if (!body) {
             error("program body must be a statement list");
         }
@@ -2261,12 +2379,8 @@ resolveGenericFunctionInstance(
 
     if (decl->args) {
         for (auto *arg : *decl->args) {
-            auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
-            if (!varDecl) {
-                error(decl->loc, "invalid function argument declaration",
-                      "Each function parameter must be declared as a typed "
-                      "variable.");
-            }
+            auto *varDecl =
+                resolve_impl::requireFunctionParamDecl(arg, decl->loc);
             resolved->addParam(module->createLocalBinding(
                 ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
                 toStdString(varDecl->field), varDecl, varDecl->loc));
@@ -2318,12 +2432,8 @@ resolveGenericMethodInstance(
 
     if (decl->args) {
         for (auto *arg : *decl->args) {
-            auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
-            if (!varDecl) {
-                error(decl->loc, "invalid function argument declaration",
-                      "Each function parameter must be declared as a typed "
-                      "variable.");
-            }
+            auto *varDecl =
+                resolve_impl::requireFunctionParamDecl(arg, decl->loc);
             resolved->addParam(module->createLocalBinding(
                 ResolvedLocalBinding::Kind::Parameter, varDecl->bindingKind,
                 toStdString(varDecl->field), varDecl, varDecl->loc));

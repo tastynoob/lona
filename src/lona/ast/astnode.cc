@@ -288,11 +288,12 @@ DEF_ACCEPT(AstFieldCall)
 DEF_ACCEPT(AstDotLike)
 
 AstProgram::AstProgram(AstNode *body)
-    : AstNode(body ? body->loc : location()), body(body->as<AstStatList>()) {
+    : AstNode(AstKind::Program, body ? body->loc : location()),
+      body(body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
 }
 
-AstConst::AstConst(AstToken &token) : AstNode(token.loc) {
+AstConst::AstConst(AstToken &token) : AstNode(AstKind::Const, token.loc) {
     switch (token.type) {
         case TokenType::ConstNumeric: {
             auto literal = parseNumericLiteralToken(token);
@@ -497,28 +498,33 @@ AstConst::setNumericLiteral(Type type, bool explicitType, void *value,
     this->buf = value;
 }
 
-AstField::AstField(AstToken &token) : AstNode(token.loc), name(token.text) {
+AstField::AstField(AstToken &token)
+    : AstNode(AstKind::Field, token.loc), name(token.text) {
     assert(token.type == TokenType::Field);
 }
 
 AstAssign::AstAssign(AstNode *left, AstNode *right)
-    : AstNode(left ? left->loc : (right ? right->loc : location())),
+    : AstNode(AstKind::Assign,
+              left ? left->loc : (right ? right->loc : location())),
       left(left),
       right(right) {}
 
 AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
-    : AstNode(left ? left->loc : (right ? right->loc : location())),
+    : AstNode(AstKind::BinOper,
+              left ? left->loc : (right ? right->loc : location())),
       left(left),
       op(op),
       right(right) {}
 
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
-    : AstNode(expr ? expr->loc : location()), op(op), expr(expr) {}
+    : AstNode(AstKind::UnaryOper, expr ? expr->loc : location()),
+      op(op),
+      expr(expr) {}
 
 AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
                        TypeNode *typeNode, AstNode *right,
                        AccessKind accessKind, bool embeddedField)
-    : AstNode(field.loc),
+    : AstNode(AstKind::VarDecl, field.loc),
       bindingKind(bindingKind),
       accessKind(accessKind),
       field(field.text),
@@ -532,7 +538,7 @@ AstStatList::push(AstNode *node) {
 }
 
 AstStatList::AstStatList(AstNode *node)
-    : AstNode(node ? node->loc : location()) {
+    : AstNode(AstKind::StatList, node ? node->loc : location()) {
     this->body.push_back(node);
 }
 
@@ -540,7 +546,7 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstGenericParam *> *typeParams,
                          std::vector<AstNode *> *args, TypeNode *retType,
                          AbiKind abiKind, AccessKind receiverAccess)
-    : AstNode(name.loc),
+    : AstNode(AstKind::FuncDecl, name.loc),
       name(name.text),
       typeParams(typeParams),
       args(args),
@@ -549,22 +555,25 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
       abiKind(abiKind),
       receiverAccess(receiverAccess) {}
 
-AstRet::AstRet(const location &loc, AstNode *expr) : AstNode(loc), expr(expr) {}
+AstRet::AstRet(const location &loc, AstNode *expr)
+    : AstNode(AstKind::Ret, loc), expr(expr) {}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
-    : AstNode(condition ? condition->loc : location()),
+    : AstNode(AstKind::If, condition ? condition->loc : location()),
       condition(condition),
       then(then),
       els(els) {}
 
 AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
-    : AstNode(expr ? expr->loc : location()),
+    : AstNode(AstKind::For, expr ? expr->loc : location()),
       expr(expr),
       body(body),
       els(els) {}
 
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
-    : AstNode(value ? value->loc : location()), value(value), args(args) {}
+    : AstNode(AstKind::FieldCall, value ? value->loc : location()),
+      value(value),
+      args(args) {}
 
 std::string
 describeDotLikeSyntax(const AstNode *node, std::string_view nullDescription) {
