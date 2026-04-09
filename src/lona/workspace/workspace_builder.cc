@@ -1207,10 +1207,30 @@ WorkspaceBuilder::compileModule(CompilationUnit &unit,
     return exitCode;
 }
 
+bool
+WorkspaceBuilder::verifyOutputModule(llvm::Module &module,
+                                     const CompileOptions &options,
+                                     bool linkedStage, SessionStats &stats,
+                                     std::ostream &out) const {
+    if (!options.verifyIR) {
+        return true;
+    }
+
+    auto verifyStart = Clock::now();
+    const bool ok = verifyCompiledModule(module, out);
+    auto verifyMs = elapsedMillis(verifyStart, Clock::now());
+    if (linkedStage) {
+        stats.linkVerifyMs += verifyMs;
+    } else {
+        stats.moduleVerifyMs += verifyMs;
+    }
+    stats.verifyMs += verifyMs;
+    return ok;
+}
+
 WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
-                                bool hostedEntry, bool verifyIR,
-                                SessionStats &stats, std::ostream &out) const {
+                                bool hostedEntry, SessionStats &stats) const {
     auto *rootArtifact =
         workspace_.findArtifact(rootUnit.path(), ModuleEntryRole::Root);
     if (rootArtifact == nullptr) {
@@ -1268,20 +1288,166 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
         linkMergeMs += elapsedMillis(mergeStart, Clock::now());
     }
 
-    if (verifyIR) {
-        auto verifyStart = Clock::now();
-        const bool ok = verifyCompiledModule(*linkedModule, out);
-        auto verifyMs = elapsedMillis(verifyStart, Clock::now());
-        stats.linkVerifyMs += verifyMs;
-        stats.verifyMs += verifyMs;
-        if (!ok) {
-            return {};
-        }
-    }
     stats.linkLoadMs += linkLoadMs;
     stats.linkMergeMs += linkMergeMs;
     stats.linkMs += linkLoadMs + linkMergeMs;
     return {std::move(context), std::move(linkedModule)};
+}
+
+int
+WorkspaceBuilder::prepareLinkedModule(
+    CompilationUnit &rootUnit, const CompileOptions &options,
+    const std::filesystem::path *artifactCacheDir, SessionStats &stats,
+    std::ostream &out, LinkedModule &linked) const {
+    int exitCode =
+        buildArtifacts(rootUnit, options, false, true, artifactCacheDir, stats,
+                       out);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
+                           stats);
+    if (options.ltoMode == CompileOptions::LTOMode::Full) {
+        if (!verifyOutputModule(*linked.module, options, true, stats, out)) {
+            return 1;
+        }
+        auto optimizeStart = Clock::now();
+        optimizeModule(*linked.module, options.optLevel);
+        auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
+        stats.ltoOptimizeMs += optimizeMs;
+        stats.optimizeMs += optimizeMs;
+        return 0;
+    }
+
+    return verifyOutputModule(*linked.module, options, true, stats, out) ? 0
+                                                                          : 1;
+}
+
+int
+WorkspaceBuilder::emitObjectModule(llvm::Module &module,
+                                   const CompileOptions &options,
+                                   const std::string &outputPath,
+                                   SessionStats &stats,
+                                   std::ostream &out) const {
+    ensureNativeAbiVersionField(module, options.targetTriple);
+    if (!outputPath.empty()) {
+        auto emitStart = Clock::now();
+        emitObjectFile(module, options.targetTriple, outputPath);
+        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()),
+                             0.0);
+        return 0;
+    }
+
+    auto renderStart = Clock::now();
+    auto bytes = emitObjectData(module, options.targetTriple);
+    auto renderMs = elapsedMillis(renderStart, Clock::now());
+    auto writeStart = Clock::now();
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write the emitted object file.",
+            "Check that the destination stream or file is writable.");
+    }
+    accumulateOutputEmit(stats, renderMs,
+                         elapsedMillis(writeStart, Clock::now()));
+    return 0;
+}
+
+int
+WorkspaceBuilder::emitArtifactBundle(CompilationUnit &rootUnit,
+                                     const CompileOptions &options,
+                                     const std::string &outputPath,
+                                     const std::string &cacheOutputPath,
+                                     BundleArtifactKind kind,
+                                     SessionStats &stats,
+                                     std::ostream &out) const {
+    const bool requireObjects = kind == BundleArtifactKind::Object;
+    const bool requireBitcode = !requireObjects;
+    const char *emitFlag = requireObjects ? "--emit obj" : "--emit bc";
+    const char *manifestKind = requireObjects ? "obj" : "bc";
+    const char *payloadLabel =
+        requireObjects ? "object code" : "bitcode";
+    const char *bundleLabel =
+        requireObjects ? "object bundle" : "bitcode bundle";
+
+    if (options.ltoMode != CompileOptions::LTOMode::Off) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            std::string("`") + emitFlag +
+                "` does not support link-time optimization",
+            "Use `--emit linked-obj --lto full` for the explicit slow LTO "
+            "path.");
+    }
+    if (outputPath.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            std::string(bundleLabel) +
+                " emission requires an explicit manifest output path",
+            std::string("Pass an output file when using `") + emitFlag +
+                "`.");
+    }
+
+    namespace fs = std::filesystem;
+    fs::path manifestPath = fs::path(outputPath);
+    fs::path bundleStem = manifestPath.filename();
+    bundleStem += ".d";
+    fs::path bundleDir = cacheOutputPath.empty()
+                             ? manifestPath.parent_path() / bundleStem
+                             : fs::path(cacheOutputPath) / bundleStem;
+    fs::create_directories(bundleDir);
+
+    int exitCode =
+        buildArtifacts(rootUnit, options, requireObjects, requireBitcode,
+                       &bundleDir, stats, out);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+
+    out << "format\tlona-artifact-bundle-v1\n";
+    out << "kind\t" << manifestKind << '\n';
+    out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
+
+    auto writeStart = Clock::now();
+    for (const auto &path :
+         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
+        auto *unit = workspace_.moduleGraph().find(path);
+        if (unit == nullptr) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission references a missing module `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module graph bug.");
+        }
+        auto *artifact = workspace_.findArtifact(
+            path, artifactEntryRoleFor(*unit, rootUnit));
+        if (artifact == nullptr) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module artifact `" +
+                    toStdString(path) + "`",
+                "This looks like a compiler module scheduling bug.");
+        }
+        if (requireObjects ? !artifact->hasObjectCode()
+                           : !artifact->hasBitcode()) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Internal,
+                "bundle emission is missing module " +
+                    std::string(payloadLabel) + " for `" +
+                    toStdString(artifact->path()) + "`",
+                std::string("This looks like a compiler ") + payloadLabel +
+                    " emission bug.");
+        }
+
+        fs::path memberPath = bundleMemberPath(*artifact, bundleDir, kind);
+        out << "artifact\t" << manifestKind << '\t'
+            << entryRoleKeyword(artifact->entryRole()) << '\t'
+            << fs::absolute(memberPath).string() << '\n';
+    }
+    accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
+    return 0;
 }
 
 std::size_t
@@ -1306,60 +1472,21 @@ WorkspaceBuilder::emitHostedEntryObject(const CompileOptions &options,
     auto context = std::make_unique<llvm::LLVMContext>();
     auto hostedShim = createHostedMainShimModule(
         *context, normalizeTargetTriple(options.targetTriple));
-    if (options.verifyIR) {
-        auto verifyStart = Clock::now();
-        const bool ok = verifyCompiledModule(*hostedShim, out);
-        auto verifyMs = elapsedMillis(verifyStart, Clock::now());
-        stats.moduleVerifyMs += verifyMs;
-        stats.verifyMs += verifyMs;
-        if (!ok) {
-            return 1;
-        }
+    if (!verifyOutputModule(*hostedShim, options, false, stats, out)) {
+        return 1;
     }
-    ensureNativeAbiVersionField(*hostedShim, options.targetTriple);
-    auto emitStart = Clock::now();
-    if (outputPath.empty()) {
-        emitObjectFile(*hostedShim, options.targetTriple, out);
-    } else {
-        emitObjectFile(*hostedShim, options.targetTriple, outputPath);
-    }
-    accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
-    return 0;
+    return emitObjectModule(*hostedShim, options, outputPath, stats, out);
 }
 
 int
 WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
                          const CompileOptions &options, SessionStats &stats,
                          std::ostream &out) const {
-    const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
+    LinkedModule linked;
     int exitCode =
-        buildArtifacts(rootUnit, options, false, true, nullptr, stats, out);
+        prepareLinkedModule(rootUnit, options, nullptr, stats, out, linked);
     if (exitCode != 0) {
         return exitCode;
-    }
-
-    auto linked =
-        linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
-                      options.verifyIR, stats, out);
-    if (!linked.module) {
-        return 1;
-    }
-    if (useLTO) {
-        auto optimizeStart = Clock::now();
-        optimizeModule(*linked.module, options.optLevel);
-        auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
-        stats.ltoOptimizeMs += optimizeMs;
-        stats.optimizeMs += optimizeMs;
-        if (options.verifyIR) {
-            auto verifyStart = Clock::now();
-            const bool ok = verifyCompiledModule(*linked.module, out);
-            auto verifyMs = elapsedMillis(verifyStart, Clock::now());
-            stats.linkVerifyMs += verifyMs;
-            stats.verifyMs += verifyMs;
-            if (!ok) {
-                return 1;
-            }
-        }
     }
 
     auto emitStart = Clock::now();
@@ -1377,69 +1504,20 @@ WorkspaceBuilder::emitLinkedObject(CompilationUnit &rootUnit,
                                    const std::string &artifactCachePath,
                                    SessionStats &stats,
                                    std::ostream &out) const {
-    const bool useLTO = options.ltoMode == CompileOptions::LTOMode::Full;
     std::optional<std::filesystem::path> artifactCacheDir;
     if (!artifactCachePath.empty()) {
         artifactCacheDir = std::filesystem::path(artifactCachePath);
     } else if (!outputPath.empty()) {
         artifactCacheDir = std::filesystem::path(outputPath + ".d");
     }
-    int exitCode =
-        buildArtifacts(rootUnit, options, false, true,
-                       artifactCacheDir ? &*artifactCacheDir : nullptr, stats,
-                       out);
+    LinkedModule linked;
+    int exitCode = prepareLinkedModule(
+        rootUnit, options, artifactCacheDir ? &*artifactCacheDir : nullptr,
+        stats, out, linked);
     if (exitCode != 0) {
         return exitCode;
     }
-
-    auto linked =
-        linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
-                      options.verifyIR, stats, out);
-    if (!linked.module) {
-        return 1;
-    }
-    if (useLTO) {
-        auto optimizeStart = Clock::now();
-        optimizeModule(*linked.module, options.optLevel);
-        auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
-        stats.ltoOptimizeMs += optimizeMs;
-        stats.optimizeMs += optimizeMs;
-        if (options.verifyIR) {
-            auto verifyStart = Clock::now();
-            const bool ok = verifyCompiledModule(*linked.module, out);
-            auto verifyMs = elapsedMillis(verifyStart, Clock::now());
-            stats.linkVerifyMs += verifyMs;
-            stats.verifyMs += verifyMs;
-            if (!ok) {
-                return 1;
-            }
-        }
-    }
-
-    ensureNativeAbiVersionField(*linked.module, options.targetTriple);
-    if (!outputPath.empty()) {
-        auto emitStart = Clock::now();
-        emitObjectFile(*linked.module, options.targetTriple, outputPath);
-        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()),
-                             0.0);
-        return 0;
-    }
-
-    auto renderStart = Clock::now();
-    auto bytes = emitObjectData(*linked.module, options.targetTriple);
-    auto renderMs = elapsedMillis(renderStart, Clock::now());
-    auto writeStart = Clock::now();
-    out.write(reinterpret_cast<const char *>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (!out) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Driver,
-            "I couldn't write the emitted object file.",
-            "Check that the destination stream or file is writable.");
-    }
-    accumulateOutputEmit(stats, renderMs,
-                         elapsedMillis(writeStart, Clock::now()));
-    return 0;
+    return emitObjectModule(*linked.module, options, outputPath, stats, out);
 }
 
 int
@@ -1449,75 +1527,8 @@ WorkspaceBuilder::emitBitcodeBundle(CompilationUnit &rootUnit,
                                     const std::string &cacheOutputPath,
                                     SessionStats &stats,
                                     std::ostream &out) const {
-    if (options.ltoMode != CompileOptions::LTOMode::Off) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Driver,
-            "`--emit bc` does not support link-time optimization",
-            "Use `--emit linked-obj --lto full` for the explicit slow LTO "
-            "path.");
-    }
-    if (outputPath.empty()) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Driver,
-            "bitcode bundle emission requires an explicit manifest output path",
-            "Pass an output file when using `--emit bc`.");
-    }
-
-    namespace fs = std::filesystem;
-    fs::path manifestPath = fs::path(outputPath);
-    fs::path bundleStem = manifestPath.filename();
-    bundleStem += ".d";
-    fs::path bundleDir = cacheOutputPath.empty()
-                             ? manifestPath.parent_path() / bundleStem
-                             : fs::path(cacheOutputPath) / bundleStem;
-    fs::create_directories(bundleDir);
-
-    int exitCode =
-        buildArtifacts(rootUnit, options, false, true, &bundleDir, stats, out);
-    if (exitCode != 0) {
-        return exitCode;
-    }
-
-    out << "format\tlona-artifact-bundle-v1\n";
-    out << "kind\tbc\n";
-    out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
-
-    auto writeStart = Clock::now();
-    for (const auto &path :
-         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
-        auto *unit = workspace_.moduleGraph().find(path);
-        if (unit == nullptr) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission references a missing module `" +
-                    toStdString(path) + "`",
-                "This looks like a compiler module graph bug.");
-        }
-        auto *artifact = workspace_.findArtifact(
-            path, artifactEntryRoleFor(*unit, rootUnit));
-        if (artifact == nullptr) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission is missing module artifact `" +
-                    toStdString(path) + "`",
-                "This looks like a compiler module scheduling bug.");
-        }
-        if (!artifact->hasBitcode()) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission is missing module bitcode for `" +
-                    toStdString(artifact->path()) + "`",
-                "This looks like a compiler bitcode emission bug.");
-        }
-
-        fs::path bitcodePath =
-            bundleMemberPath(*artifact, bundleDir, BundleArtifactKind::Bitcode);
-        out << "artifact\tbc\t" << entryRoleKeyword(artifact->entryRole())
-            << '\t' << fs::absolute(bitcodePath).string() << '\n';
-    }
-    accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
-
-    return 0;
+    return emitArtifactBundle(rootUnit, options, outputPath, cacheOutputPath,
+                              BundleArtifactKind::Bitcode, stats, out);
 }
 
 int
@@ -1527,75 +1538,8 @@ WorkspaceBuilder::emitObjectBundle(CompilationUnit &rootUnit,
                                    const std::string &cacheOutputPath,
                                    SessionStats &stats,
                                    std::ostream &out) const {
-    if (options.ltoMode != CompileOptions::LTOMode::Off) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Driver,
-            "`--emit obj` does not support link-time optimization",
-            "Use `--emit linked-obj --lto full` for the explicit slow LTO "
-            "path.");
-    }
-    if (outputPath.empty()) {
-        throw DiagnosticError(
-            DiagnosticError::Category::Driver,
-            "object bundle emission requires an explicit manifest output path",
-            "Pass an output file when using `--emit obj`.");
-    }
-
-    namespace fs = std::filesystem;
-    fs::path manifestPath = fs::path(outputPath);
-    fs::path bundleStem = manifestPath.filename();
-    bundleStem += ".d";
-    fs::path bundleDir = cacheOutputPath.empty()
-                             ? manifestPath.parent_path() / bundleStem
-                             : fs::path(cacheOutputPath) / bundleStem;
-    fs::create_directories(bundleDir);
-
-    int exitCode =
-        buildArtifacts(rootUnit, options, true, false, &bundleDir, stats, out);
-    if (exitCode != 0) {
-        return exitCode;
-    }
-
-    out << "format\tlona-artifact-bundle-v1\n";
-    out << "kind\tobj\n";
-    out << "target\t" << normalizeTargetTriple(options.targetTriple) << '\n';
-
-    auto writeStart = Clock::now();
-    for (const auto &path :
-         workspace_.moduleGraph().postOrderFrom(rootUnit.path())) {
-        auto *unit = workspace_.moduleGraph().find(path);
-        if (unit == nullptr) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission references a missing module `" +
-                    toStdString(path) + "`",
-                "This looks like a compiler module graph bug.");
-        }
-        auto *artifact = workspace_.findArtifact(
-            path, artifactEntryRoleFor(*unit, rootUnit));
-        if (artifact == nullptr) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission is missing module artifact `" +
-                    toStdString(path) + "`",
-                "This looks like a compiler module scheduling bug.");
-        }
-        if (!artifact->hasObjectCode()) {
-            throw DiagnosticError(
-                DiagnosticError::Category::Internal,
-                "bundle emission is missing module object code for `" +
-                    toStdString(artifact->path()) + "`",
-                "This looks like a compiler object emission bug.");
-        }
-
-        fs::path objectPath =
-            bundleMemberPath(*artifact, bundleDir, BundleArtifactKind::Object);
-        out << "artifact\tobj\t" << entryRoleKeyword(artifact->entryRole())
-            << '\t' << fs::absolute(objectPath).string() << '\n';
-    }
-    accumulateOutputEmit(stats, 0.0, elapsedMillis(writeStart, Clock::now()));
-
-    return 0;
+    return emitArtifactBundle(rootUnit, options, outputPath, cacheOutputPath,
+                              BundleArtifactKind::Object, stats, out);
 }
 
 }  // namespace lona

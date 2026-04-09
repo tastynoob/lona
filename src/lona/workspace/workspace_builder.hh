@@ -71,9 +71,27 @@ class WorkspaceBuilder {
                       GenericInstanceRegistry &instanceRegistry,
                       SessionStats &stats,
                       std::ostream &out) const;
+    bool verifyOutputModule(llvm::Module &module,
+                            const CompileOptions &options, bool linkedStage,
+                            SessionStats &stats, std::ostream &out) const;
     LinkedModule linkArtifacts(const CompilationUnit &rootUnit,
-                               bool hostedEntry, bool verifyIR,
-                               SessionStats &stats, std::ostream &out) const;
+                               bool hostedEntry,
+                               SessionStats &stats) const;
+    int prepareLinkedModule(CompilationUnit &rootUnit,
+                            const CompileOptions &options,
+                            const std::filesystem::path *artifactCacheDir,
+                            SessionStats &stats, std::ostream &out,
+                            LinkedModule &linked) const;
+    int emitObjectModule(llvm::Module &module,
+                         const CompileOptions &options,
+                         const std::string &outputPath,
+                         SessionStats &stats, std::ostream &out) const;
+    int emitArtifactBundle(CompilationUnit &rootUnit,
+                           const CompileOptions &options,
+                           const std::string &outputPath,
+                           const std::string &cacheOutputPath,
+                           BundleArtifactKind kind, SessionStats &stats,
+                           std::ostream &out) const;
 
 public:
     WorkspaceBuilder(CompilerWorkspace &workspace,
