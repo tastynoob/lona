@@ -1482,6 +1482,86 @@ int
 WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
                          const CompileOptions &options, SessionStats &stats,
                          std::ostream &out) const {
+    GenericInstanceRegistry instanceRegistry;
+    const bool singleModuleBuild =
+        workspace_.moduleGraph().postOrderFrom(rootUnit.path()).size() == 1;
+    auto cacheLookupStart = Clock::now();
+    auto *cachedArtifact =
+        reusableArtifactFor(rootUnit, options, rootUnit, instanceRegistry);
+    stats.cacheLookupMs += elapsedMillis(cacheLookupStart, Clock::now());
+
+    if (singleModuleBuild && cachedArtifact == nullptr) {
+        std::optional<ModuleArtifact> artifact;
+        if (!options.noCache) {
+            artifact.emplace(createArtifact(rootUnit, options, rootUnit));
+        }
+
+        rootUnit.clearResolvedTypes();
+        std::ostringstream ir;
+        IRPipelineContext context(rootUnit, workspace_.moduleGraph(), options, ir,
+                                  stats);
+        context.rootUnit = workspace_.moduleGraph().root();
+        context.captureIRText = false;
+        context.build.global.setGenericInstanceRegistry(&instanceRegistry);
+
+        int exitCode = pipeline_.run(context);
+        if (exitCode != 0) {
+            out << ir.str();
+            return exitCode;
+        }
+
+        rootUnit.markCompiled();
+        ++stats.compiledModules;
+
+        if (artifact.has_value()) {
+            artifact->setContainsNativeAbi(moduleUsesNativeAbi(context.build.module));
+            artifact->setGenericInstanceRecords(rootUnit.recordedGenericInstances());
+            auto emitStart = Clock::now();
+            artifact->setBitcode(emitBitcodeData(context.build.module));
+            accumulateArtifactEmit(stats, elapsedMillis(emitStart, Clock::now()));
+            ++stats.emittedModuleBitcode;
+            registerArtifactGenericEmissions(instanceRegistry, *artifact);
+            workspace_.storeArtifact(std::move(*artifact));
+        }
+
+        bool linkedStage = false;
+        if (targetUsesHostedEntry(options.targetTriple) &&
+            moduleHasFunctionSymbol(context.build.module, languageEntryName()) &&
+            !moduleHasFunctionSymbol(context.build.module, "main")) {
+            auto linkStart = Clock::now();
+            llvm::Linker linker(context.build.module);
+            linkSyntheticModule(
+                linker,
+                createHostedMainShimModule(
+                    context.build.context,
+                    normalizeTargetTriple(options.targetTriple)),
+                "hosted entry shim");
+            auto linkMs = elapsedMillis(linkStart, Clock::now());
+            stats.linkMergeMs += linkMs;
+            stats.linkMs += linkMs;
+            linkedStage = true;
+        }
+
+        if (linkedStage &&
+            !verifyOutputModule(context.build.module, options, true, stats, out)) {
+            return 1;
+        }
+        if (options.ltoMode == CompileOptions::LTOMode::Full) {
+            auto optimizeStart = Clock::now();
+            optimizeModule(context.build.module, options.optLevel);
+            auto optimizeMs = elapsedMillis(optimizeStart, Clock::now());
+            stats.ltoOptimizeMs += optimizeMs;
+            stats.optimizeMs += optimizeMs;
+        }
+
+        auto emitStart = Clock::now();
+        llvm::raw_os_ostream irOut(out);
+        context.build.module.print(irOut, nullptr);
+        irOut.flush();
+        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
+        return 0;
+    }
+
     LinkedModule linked;
     int exitCode =
         prepareLinkedModule(rootUnit, options, nullptr, stats, out, linked);
