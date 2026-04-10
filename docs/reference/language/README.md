@@ -15,7 +15,7 @@
 - [mutability.md](mutability.md): `var` / 前缀 `const` / `set` / `ref` 的统一规则。
 - [program.md](program.md): 程序结构、顶层项和入口约定。
 - [global.md](global.md): 模块级 `global` 与 `#[extern] global`。
-- [vardef.md](vardef.md): 变量定义与初始化规则。
+- [vardef.md](vardef.md): 变量定义、初始化和 `inline` 编译期常量规则。
 - [func.md](func.md): 顶层函数、参数和返回值。
 - [generic.md](generic.md): 泛型结构体、泛型函数、实例化、推断与 single bound。
 - [struct.md](struct.md): 普通结构体、字段、call-like 初始化和方法语义。

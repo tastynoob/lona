@@ -2,14 +2,22 @@
 
 > 对应 `grammar.md` 的“3.1 程序结构”和“3.2 语句”。
 
-## 1. 顶层可以声明全局变量
+## 1. 顶层可以声明全局变量和 `inline` 常量
 
 ```lona
 global counter = 1
 global total i64 = 42_i64
+inline answer = 42
+inline banner = "lona"
 ```
 
 `global` 的完整规则见 [global.md](global.md)。
+
+说明：
+
+- `global` 表示模块级运行时存储；它会对应真实的全局对象。
+- 顶层 `inline` 表示模块级编译期常量绑定；它可以被同模块后续函数或顶层语句直接读取。
+- 顶层 `inline` 会进入模块接口，但本身不会物化成独立运行时符号。
 
 ## 2. 顶层可以直接放语句
 
@@ -112,6 +120,7 @@ ret answer
 - 导入路径写成无引号、无文件后缀的形式；实际会按 `.lo` 文件解析。
 - `import` 路径必须写成 canonical 模块路径，也就是“某个模块 root 下的相对路径，去掉 `.lo` 后缀”。
 - imported module 的顶层函数通过 `file.xxx(...)` 的形式访问，模块名来自被导入文件的文件名。
+- imported module 的顶层 `inline` 常量通过 `file.xxx` 读取，例如 `math.answer`。
 - 模块搜索根由两部分组成：
   - root 源文件所在目录
   - 命令行传入的 `-I` / `--include-dir` 目录

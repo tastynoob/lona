@@ -55,7 +55,56 @@ const view u8 const[*] = "lona"
 - 如果推断出来的类型顶层已经是 `const`，这里不会重复叠加第二层同级 `const`。
 - 这条语法仍然要求初始化器可推断；例如 `const p = null` 会因为 `null` 缺少具体指针类型而报错。
 
-## 5. 简写形式 `name := expr`
+## 5. 编译期常量绑定 `inline name = expr` / `inline name T = expr`
+
+```lona
+inline size = 4
+inline ratio f64 = 0.25
+inline msg = "lona"
+
+def local() i32 {
+    inline twice = size * 2
+    ret twice
+}
+```
+
+说明：
+
+- `inline` 表示“编译期常量绑定”，不是文本替换，也不是函数内联。
+- `inline name = expr` 只有在类型推断和值求值都能在编译期完成时才合法；例如 `inline p = null` 仍然会因为缺少目标指针类型而报错。
+- 当前 `inline` 绑定值只支持内建标量和指针类型，例如 `i32`、`f64`、`bool`、`T*`、`T[*]`。
+- 初始化器必须属于当前支持的编译期常量表达式子集：标量字面量、字符串字面量、`null`、已有 `inline` 绑定、支持的内建一元/二元运算、`cast[T](expr)`、`sizeof`。
+- `inline` 不能依赖运行时值；例如 `var x = 1; inline y = x` 会报错。
+- `inline` 绑定不分配运行时存储槽位，因此不能取 `&`，也不能作为 `ref` 实参传递。
+
+### 5.1 顶层 `inline`
+
+```lona
+// dep.lo
+inline answer = 42
+
+// main.lo
+import dep
+
+inline local = dep.answer + 1
+
+def read_local() i32 {
+    ret local
+}
+
+def read_dep() i32 {
+    ret dep.answer
+}
+```
+
+说明：
+
+- `inline` 既可以出现在块内，也可以出现在文件顶层。
+- 顶层 `inline` 在同模块里按普通名字可见；后续函数和顶层语句可以直接读取它。
+- importer 可以通过 `file.xxx` 访问被导入模块的顶层 `inline` 常量，例如 `dep.answer`。
+- 顶层 `inline` 仍然不是 `global`；它会进入模块接口，但不会物化成独立的运行时全局符号。
+
+## 6. 简写形式 `name := expr`
 
 ```lona
 count := 1
@@ -71,7 +120,7 @@ IDENT ":" "=" expr
 
 因此当前只接受简单标识符，不是成员访问或解引用左值。
 
-## 6. 当前采用值语义与拷贝赋值
+## 7. 当前采用值语义与拷贝赋值
 
 说明：
 
@@ -80,7 +129,7 @@ IDENT ":" "=" expr
 - `ref a T = x` 会把 `a` 绑定成 `x` 的别名；后续 `a = y` 会写入被绑定对象。
 - 更完整的指针与 `ref` 语义边界见 [pointer.md](./pointer.md) 与 [ref.md](./ref.md)；结构体字段、方法和 `set` 规则见 [struct.md](./struct.md)。
 
-## 7. 变量声明中也可以直接使用复杂类型
+## 8. 变量声明中也可以直接使用复杂类型
 
 ```lona
 var p i32*

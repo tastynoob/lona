@@ -83,10 +83,15 @@ point.x
 user.profile.name
 obj.method(1)
 math.inc(1)
+math.answer
 pair._1
 ```
 
-其中 `math.inc(1)` 这种形式表示调用 imported module `math` 暴露出来的顶层函数。
+其中：
+
+- `math.inc(1)` 表示调用 imported module `math` 暴露出来的顶层函数。
+- `math.answer` 表示读取 imported module `math` 暴露出来的顶层 `inline` 常量。
+
 tuple 则按匿名结构体处理，字段名使用 `_1`、`_2`、`_3` 这类自动生成的成员名。
 对于数值和原始字节数组，`.` 还可以命中少量被注入的内建成员，例如 `value.tobits()`、`value.tobits().toi32()`。
 对 raw pointer 做成员访问时，当前会自动补一层解引用，因此 `ptr.x` 等价于 `(*ptr).x`，`ptr.method(...)` 等价于 `(*ptr).method(...)`。
