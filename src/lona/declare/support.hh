@@ -22,6 +22,7 @@ enum class TopLevelDeclKind {
     Trait,
     Function,
     Global,
+    Inline,
 };
 
 void

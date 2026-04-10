@@ -4,6 +4,7 @@
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
 #include "lona/type/scope.hh"
+#include <memory>
 #include <unordered_map>
 
 namespace lona {
@@ -31,6 +32,8 @@ struct AnalysisLookupCache {
     std::unordered_map<const AstStructDecl *,
                        std::unordered_map<string, const AstFuncDecl *>>
         methodSyntaxByStruct;
+    std::unordered_map<const CompilationUnit *, std::unique_ptr<ResolvedModule>>
+        resolvedModulesByUnit;
 
     explicit AnalysisLookupCache(const CompilationUnit *rootUnit = nullptr)
         : rootUnit(rootUnit) {}

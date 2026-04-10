@@ -91,6 +91,7 @@ public:
     ConstVar(TypeClass *type, std::any value)
         : BaseVar(type, Object::REG_VAL | Object::READONLY), value(value) {}
 
+    const std::any &rawValue() const { return value; }
     llvm::Value *get(Scope *scope) override;
 };
 

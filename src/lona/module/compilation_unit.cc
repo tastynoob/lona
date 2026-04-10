@@ -130,6 +130,22 @@ hashText(std::uint64_t &seed, std::string_view text) {
 void
 hashTypeNode(std::uint64_t &seed, const TypeNode *node);
 
+AstStatList *
+topLevelStatementList(AstNode *node) {
+    if (!node) {
+        return nullptr;
+    }
+    if (auto *program = dynamic_cast<AstProgram *>(node)) {
+        return topLevelStatementList(program->body);
+    }
+    return dynamic_cast<AstStatList *>(node);
+}
+
+const AstStatList *
+topLevelStatementList(const AstNode *node) {
+    return topLevelStatementList(const_cast<AstNode *>(node));
+}
+
 void
 hashArrayDimensions(std::uint64_t &seed,
                     const std::vector<AstNode *> &dimensions) {
@@ -161,8 +177,7 @@ hashParamSignature(std::uint64_t &seed, AstNode *node) {
     if (auto *def = dynamic_cast<AstVarDef *>(node)) {
         hashText(seed, "param");
         hashText(seed, bindingKindKeyword(def->getBindingKind()));
-        hashText(seed, def->isReadOnlyBinding() ? "readonly-binding"
-                                                : "mutable-binding");
+        hashText(seed, varStorageKindKeyword(def->getStorageKind()));
         hashText(seed, toStdString(def->getName()));
         hashTypeNode(seed, def->getTypeNode());
         return;
@@ -242,6 +257,131 @@ hashInferredGlobalType(std::uint64_t &seed, const AstNode *node) {
 
 void
 hashInterfaceNode(std::uint64_t &seed, AstNode *node);
+
+void
+hashInlineExpr(std::uint64_t &seed, const AstNode *node) {
+    if (node == nullptr) {
+        hashText(seed, "inline-expr:null");
+        return;
+    }
+    if (auto *constant = dynamic_cast<const AstConst *>(node)) {
+        hashText(seed, "inline-expr:const");
+        switch (constant->getType()) {
+            case AstConst::Type::I8:
+                hashText(seed, "i8");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::int8_t>()));
+                return;
+            case AstConst::Type::U8:
+                hashText(seed, "u8");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::uint8_t>()));
+                return;
+            case AstConst::Type::I16:
+                hashText(seed, "i16");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::int16_t>()));
+                return;
+            case AstConst::Type::U16:
+                hashText(seed, "u16");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::uint16_t>()));
+                return;
+            case AstConst::Type::I32:
+                hashText(seed, "i32");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::int32_t>()));
+                return;
+            case AstConst::Type::U32:
+                hashText(seed, "u32");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::uint32_t>()));
+                return;
+            case AstConst::Type::I64:
+                hashText(seed, "i64");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::int64_t>()));
+                return;
+            case AstConst::Type::U64:
+                hashText(seed, "u64");
+                seed = combineHash(seed, *constant->getBuf<std::uint64_t>());
+                return;
+            case AstConst::Type::USIZE:
+                hashText(seed, "usize");
+                seed = combineHash(seed, *constant->getBuf<std::uint64_t>());
+                return;
+            case AstConst::Type::F32:
+                hashText(seed, "f32");
+                seed = combineHash(
+                    seed,
+                    static_cast<std::uint64_t>(
+                        std::hash<float>{}(*constant->getBuf<float>())));
+                return;
+            case AstConst::Type::F64:
+                hashText(seed, "f64");
+                seed = combineHash(
+                    seed,
+                    static_cast<std::uint64_t>(
+                        std::hash<double>{}(*constant->getBuf<double>())));
+                return;
+            case AstConst::Type::STRING:
+                hashText(seed, "string");
+                hashText(seed, toStdString(*constant->getBuf<string>()));
+                return;
+            case AstConst::Type::CHAR:
+                hashText(seed, "char");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<std::uint8_t>()));
+                return;
+            case AstConst::Type::BOOL:
+                hashText(seed, "bool");
+                seed = combineHash(
+                    seed, static_cast<std::uint64_t>(*constant->getBuf<bool>()));
+                return;
+            case AstConst::Type::NULLPTR:
+                hashText(seed, "null");
+                return;
+        }
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        hashText(seed, "inline-expr:field");
+        hashText(seed, toStdString(field->name));
+        return;
+    }
+    if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+        hashText(seed, "inline-expr:dot");
+        hashInlineExpr(seed, dotLike->parent);
+        hashText(seed, toStdString(dotLike->field->text));
+        return;
+    }
+    if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
+        hashText(seed, "inline-expr:unary");
+        seed = combineHash(seed, static_cast<std::uint64_t>(unary->op));
+        hashInlineExpr(seed, unary->expr);
+        return;
+    }
+    if (auto *binary = dynamic_cast<const AstBinOper *>(node)) {
+        hashText(seed, "inline-expr:binary");
+        seed = combineHash(seed, static_cast<std::uint64_t>(binary->op));
+        hashInlineExpr(seed, binary->left);
+        hashInlineExpr(seed, binary->right);
+        return;
+    }
+    if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
+        hashText(seed, "inline-expr:cast");
+        hashTypeNode(seed, castExpr->targetType);
+        hashInlineExpr(seed, castExpr->value);
+        return;
+    }
+    if (auto *sizeofExpr = dynamic_cast<const AstSizeofExpr *>(node)) {
+        hashText(seed, "inline-expr:sizeof");
+        hashTypeNode(seed, sizeofExpr->targetType);
+        hashInlineExpr(seed, sizeofExpr->value);
+        return;
+    }
+    hashText(seed, "inline-expr:other");
+    seed = combineHash(seed, static_cast<std::uint64_t>(node->kind()));
+}
 
 void
 hashInterfaceList(std::uint64_t &seed, AstNode *node) {
@@ -340,6 +480,19 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
         }
         hashText(seed, globalDecl->hasInitVal() ? "global-init:present"
                                                 : "global-init:none");
+        return;
+    }
+    if (auto *varDef = dynamic_cast<AstVarDef *>(node)) {
+        if (!varDef->isInlineBinding()) {
+            hashText(seed, "non-interface");
+            return;
+        }
+        hashText(seed, "inline");
+        hashText(seed, toStdString(varDef->getName()));
+        hashTypeNode(seed, varDef->getTypeNode());
+        hashText(seed, varDef->withInitVal() ? "inline-init:present"
+                                             : "inline-init:none");
+        hashInlineExpr(seed, varDef->getInitVal());
         return;
     }
     if (auto *varDecl = dynamic_cast<AstVarDecl *>(node)) {
@@ -1780,6 +1933,24 @@ CompilationUnit::findLocalGlobal(const ::string &localName) const {
         return nullptr;
     }
     return &found->second;
+}
+
+const AstVarDef *
+CompilationUnit::findTopLevelInline(const ::string &localName) const {
+    auto *body = compilation_unit_impl::topLevelStatementList(syntaxTree_);
+    if (!body) {
+        return nullptr;
+    }
+    for (auto *stmt : body->getBody()) {
+        auto *varDef = dynamic_cast<AstVarDef *>(stmt);
+        if (!varDef || !varDef->isInlineBinding()) {
+            continue;
+        }
+        if (toStdString(varDef->getName()) == toStdString(localName)) {
+            return varDef;
+        }
+    }
+    return nullptr;
 }
 
 TypeClass *

@@ -255,7 +255,7 @@ rejectOpaqueStructStorage(TypeClass *type, AstVarDef *node) {
 
 void
 rejectConstVariableStorage(TypeClass *type, AstVarDef *node) {
-    if (!node || !type || node->isRefBinding() || node->isReadOnlyBinding()) {
+    if (!node || !type || node->isRefBinding() || node->isConstBinding()) {
         return;
     }
     auto *typeNode = node->getTypeNode();

@@ -31,6 +31,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <llvm-18/llvm/ADT/APInt.h>
 
 namespace lona {
 namespace analysis_impl {
@@ -145,6 +146,11 @@ getStructMethodParamNamesByKey(const StructType *structType,
 }  // namespace
 
 class FunctionAnalyzer {
+    struct TopLevelInlineEvalContext {
+        std::unordered_map<const AstVarDef *, HIRExpr *> values;
+        std::unordered_set<const AstVarDef *> active;
+    };
+
     TypeTable *typeMgr;
     GlobalScope *global;
     const CompilationUnit *unit;
@@ -155,6 +161,10 @@ class FunctionAnalyzer {
     AnalysisLookupCache localLookupCache_;
     AnalysisLookupCache *lookupCache;
     std::unordered_map<const ResolvedLocalBinding *, ObjectPtr> bindingObjects;
+    std::unordered_map<const ResolvedLocalBinding *, HIRExpr *>
+        inlineBindingValues;
+    TopLevelInlineEvalContext localTopLevelInlineEval_;
+    TopLevelInlineEvalContext *topLevelInlineEval_;
     int loopDepth = 0;
 
     [[noreturn]] void error(const location &loc, const std::string &message,
@@ -235,6 +245,12 @@ class FunctionAnalyzer {
         bindingObjects[binding] = object;
     }
 
+    void bindInlineValue(const ResolvedLocalBinding *binding, HIRExpr *value) {
+        assert(binding);
+        assert(value);
+        inlineBindingValues[binding] = value;
+    }
+
     AstNode *makeStaticDimensionNode(std::size_t extent, const location &loc) {
         auto text = std::to_string(extent);
         AstToken token(TokenType::ConstInt32, text.c_str(), loc);
@@ -256,6 +272,991 @@ class FunctionAnalyzer {
                           "This looks like a compiler pipeline bug.");
         }
         return found->second;
+    }
+
+    HIRExpr *boundInlineValue(const ResolvedLocalBinding *binding) const {
+        if (!binding) {
+            return nullptr;
+        }
+        auto found = inlineBindingValues.find(binding);
+        return found == inlineBindingValues.end() ? nullptr : found->second;
+    }
+
+    const ResolvedFunction *requireResolvedTopLevelEntry(
+        const CompilationUnit *ownerUnit, const location &loc,
+        llvm::StringRef inlineName) {
+        if (!ownerUnit || !ownerUnit->syntaxTree()) {
+            internalError(loc,
+                          "top-level inline `" + inlineName.str() +
+                              "` is missing its owner syntax tree",
+                          "This looks like a compiler module-loading bug.");
+        }
+
+        auto found = lookupCache->resolvedModulesByUnit.find(ownerUnit);
+        if (found == lookupCache->resolvedModulesByUnit.end()) {
+            auto resolvedModule = resolveModule(
+                global, ownerUnit->syntaxTree(), ownerUnit,
+                lookupCache->rootUnit != nullptr &&
+                    ownerUnit == lookupCache->rootUnit);
+            found = lookupCache->resolvedModulesByUnit
+                        .emplace(ownerUnit, std::move(resolvedModule))
+                        .first;
+        }
+
+        for (const auto &resolvedFunction : found->second->functions()) {
+            if (resolvedFunction && resolvedFunction->isTopLevelEntry()) {
+                return resolvedFunction.get();
+            }
+        }
+
+        internalError(
+            loc,
+            "top-level inline `" + inlineName.str() +
+                "` is missing its resolved module-entry body",
+            "This looks like a compiler module-resolution bug.");
+    }
+
+    HIRExpr *analyzeTopLevelInlineDecl(const AstVarDef *target,
+                                       llvm::StringRef inlineName,
+                                       const location &useLoc) {
+        if (!target || !target->isInlineBinding()) {
+            internalError(useLoc,
+                          "requested top-level inline `" + inlineName.str() +
+                              "` is not an inline binding",
+                          "This looks like a compiler inline-lookup bug.");
+        }
+        if (!resolved.isTopLevelEntry()) {
+            internalError(useLoc,
+                          "top-level inline `" + inlineName.str() +
+                              "` escaped non-entry analysis",
+                          "This looks like a compiler inline-evaluation bug.");
+        }
+
+        auto *body = dynamic_cast<const AstStatList *>(resolved.body());
+        if (!body) {
+            internalError(useLoc,
+                          "top-level inline `" + inlineName.str() +
+                              "` is missing its statement-list body",
+                          "This looks like a compiler inline-evaluation bug.");
+        }
+
+        for (auto *stmt : const_cast<AstStatList *>(body)->getBody()) {
+            auto *varDef = dynamic_cast<AstVarDef *>(stmt);
+            if (!varDef) {
+                continue;
+            }
+
+            auto *binding = resolved.variable(varDef);
+            if (!binding) {
+                internalError(
+                    varDef->loc,
+                    "missing resolved binding while evaluating top-level "
+                    "inline `" +
+                        inlineName.str() + "`",
+                    "This looks like a compiler inline-resolution bug.");
+            }
+
+            if (varDef->isInlineBinding()) {
+                if (auto found = topLevelInlineEval_->values.find(varDef);
+                    found != topLevelInlineEval_->values.end()) {
+                    bindInlineValue(binding, found->second);
+                } else {
+                    (void)analyzeVarDef(varDef);
+                    if (auto *value = boundInlineValue(binding)) {
+                        topLevelInlineEval_->values[varDef] = value;
+                    }
+                }
+                if (varDef == target) {
+                    if (auto *value = boundInlineValue(binding)) {
+                        return value;
+                    }
+                    internalError(
+                        varDef->loc,
+                        "top-level inline `" + inlineName.str() +
+                            "` did not produce a compile-time value",
+                        "This looks like a compiler inline-evaluation bug.");
+                }
+                continue;
+            }
+
+            (void)analyzeVarDef(varDef);
+            if (varDef == target) {
+                internalError(useLoc,
+                              "top-level inline `" + inlineName.str() +
+                                  "` lost its inline storage kind",
+                              "This looks like a compiler inline-evaluation "
+                              "bug.");
+            }
+        }
+
+        internalError(useLoc,
+                      "failed to find top-level inline `" + inlineName.str() +
+                          "` in its owner module body",
+                      "This looks like a compiler inline-lookup bug.");
+    }
+
+    HIRExpr *requireTopLevelInlineValue(const AstVarDef *inlineDecl,
+                                        const CompilationUnit *ownerUnit,
+                                        const location &loc,
+                                        llvm::StringRef inlineName) {
+        if (!inlineDecl || !inlineDecl->isInlineBinding()) {
+            internalError(loc,
+                          "missing top-level inline declaration for `" +
+                              inlineName.str() + "`",
+                          "This looks like a compiler inline-lookup bug.");
+        }
+        if (auto found = topLevelInlineEval_->values.find(inlineDecl);
+            found != topLevelInlineEval_->values.end()) {
+            return found->second;
+        }
+        if (!topLevelInlineEval_->active.insert(inlineDecl).second) {
+            error(loc,
+                  "top-level inline `" + inlineName.str() +
+                      "` forms a cyclic dependency",
+                  "Break the cycle so every top-level inline constant can be "
+                  "evaluated from already-defined compile-time values.");
+        }
+        struct ActiveGuard {
+            TopLevelInlineEvalContext *context = nullptr;
+            const AstVarDef *decl = nullptr;
+            ~ActiveGuard() {
+                if (context && decl) {
+                    context->active.erase(decl);
+                }
+            }
+        } activeGuard{topLevelInlineEval_, inlineDecl};
+
+        auto *resolvedTopLevel =
+            requireResolvedTopLevelEntry(ownerUnit, loc, inlineName);
+        auto value = FunctionAnalyzer(typeMgr, global, ownerModule, ownerUnit,
+                                      *resolvedTopLevel, lookupCache,
+                                      topLevelInlineEval_)
+                         .analyzeTopLevelInlineDecl(inlineDecl, inlineName,
+                                                    loc);
+        topLevelInlineEval_->values[inlineDecl] = value;
+        return value;
+    }
+
+    bool isSupportedInlineValueType(TypeClass *type) const {
+        auto *storageType = stripTopLevelConst(type);
+        if (!storageType || storageType != type) {
+            return false;
+        }
+        return asUnqualified<BaseType>(storageType) != nullptr ||
+               storageType->as<PointerType>() != nullptr ||
+               storageType->as<IndexablePointerType>() != nullptr;
+    }
+
+    [[noreturn]] void errorUnsupportedInlineType(const location &loc,
+                                                 llvm::StringRef name,
+                                                 TypeClass *type) {
+        error(loc,
+              "inline binding `" + name.str() +
+                  "` only supports scalar and pointer value types, got " +
+                  describeResolvedType(type),
+              "Use a builtin scalar type like `i32` / `f64` / `bool`, or a "
+              "pointer type like `T*` / `T[*]` for inline v0.");
+    }
+
+    ConstVar *constScalarValue(HIRExpr *expr) const {
+        auto *value = dynamic_cast<HIRValue *>(expr);
+        return value ? dynamic_cast<ConstVar *>(value->getValue()) : nullptr;
+    }
+
+    HIRExpr *makeInlineConstExpr(TypeClass *type, std::any value,
+                                 const location &loc) {
+        return makeHIR<HIRValue>(new ConstVar(type, std::move(value)), loc);
+    }
+
+    unsigned inlineIntegerBitWidth(TypeClass *type) const {
+        auto *storageType = stripTopLevelConst(type);
+        if (!storageType || !isIntegerType(storageType)) {
+            ::lona::internalError(
+                "inline integer folding requires a concrete integer type");
+        }
+        const auto byteSize = typeMgr->getTypeAllocSize(storageType);
+        if (byteSize == 0 || byteSize > (std::numeric_limits<unsigned>::max() / 8)) {
+            ::lona::internalError(
+                "inline integer folding requires a fixed-width integer "
+                "storage layout");
+        }
+        return static_cast<unsigned>(byteSize * 8);
+    }
+
+    std::int64_t constSignedValue(ConstVar *value) const {
+        auto *base = value ? asUnqualified<BaseType>(value->getType()) : nullptr;
+        if (!base) {
+            throw std::bad_any_cast();
+        }
+        switch (base->type) {
+            case BaseType::I8:
+                return std::any_cast<std::int8_t>(value->rawValue());
+            case BaseType::I16:
+                return std::any_cast<std::int16_t>(value->rawValue());
+            case BaseType::I32:
+                return std::any_cast<std::int32_t>(value->rawValue());
+            case BaseType::I64:
+                return std::any_cast<std::int64_t>(value->rawValue());
+            default:
+                throw std::bad_any_cast();
+        }
+    }
+
+    std::uint64_t constUnsignedValue(ConstVar *value) const {
+        auto *base = value ? asUnqualified<BaseType>(value->getType()) : nullptr;
+        if (!base) {
+            throw std::bad_any_cast();
+        }
+        switch (base->type) {
+            case BaseType::U8:
+                return std::any_cast<std::uint8_t>(value->rawValue());
+            case BaseType::U16:
+                return std::any_cast<std::uint16_t>(value->rawValue());
+            case BaseType::U32:
+                return std::any_cast<std::uint32_t>(value->rawValue());
+            case BaseType::U64:
+                return std::any_cast<std::uint64_t>(value->rawValue());
+            case BaseType::USIZE:
+                return std::any_cast<std::uint64_t>(value->rawValue());
+            default:
+                throw std::bad_any_cast();
+        }
+    }
+
+    long double constFloatValue(ConstVar *value) const {
+        auto *base = value ? asUnqualified<BaseType>(value->getType()) : nullptr;
+        if (!base) {
+            throw std::bad_any_cast();
+        }
+        switch (base->type) {
+            case BaseType::F32:
+                return std::any_cast<float>(value->rawValue());
+            case BaseType::F64:
+                return std::any_cast<double>(value->rawValue());
+            default:
+                throw std::bad_any_cast();
+        }
+    }
+
+    bool constBoolValue(ConstVar *value) const {
+        return std::any_cast<bool>(value->rawValue());
+    }
+
+    llvm::APInt constSignedAPInt(ConstVar *value) const {
+        return llvm::APInt(inlineIntegerBitWidth(value ? value->getType() : nullptr),
+                           static_cast<std::uint64_t>(constSignedValue(value)),
+                           true);
+    }
+
+    llvm::APInt constUnsignedAPInt(ConstVar *value) const {
+        return llvm::APInt(inlineIntegerBitWidth(value ? value->getType() : nullptr),
+                           constUnsignedValue(value));
+    }
+
+    HIRExpr *makeSignedConst(TypeClass *type, std::int64_t value,
+                             const location &loc) {
+        auto *base = asUnqualified<BaseType>(type);
+        if (!base) {
+            internalError(loc, "inline signed constant requires a scalar type");
+        }
+        switch (base->type) {
+            case BaseType::I8:
+                return makeInlineConstExpr(type, static_cast<std::int8_t>(value),
+                                           loc);
+            case BaseType::I16:
+                return makeInlineConstExpr(type, static_cast<std::int16_t>(value),
+                                           loc);
+            case BaseType::I32:
+                return makeInlineConstExpr(type, static_cast<std::int32_t>(value),
+                                           loc);
+            case BaseType::I64:
+                return makeInlineConstExpr(type, static_cast<std::int64_t>(value),
+                                           loc);
+            default:
+                internalError(loc, "inline signed constant escaped scalar typing");
+        }
+    }
+
+    HIRExpr *makeSignedConstFromAPInt(TypeClass *type, const llvm::APInt &value,
+                                      const location &loc) {
+        auto normalized = value.sextOrTrunc(inlineIntegerBitWidth(type));
+        return makeSignedConst(type, normalized.getSExtValue(), loc);
+    }
+
+    HIRExpr *makeUnsignedConst(TypeClass *type, std::uint64_t value,
+                               const location &loc) {
+        auto *base = asUnqualified<BaseType>(type);
+        if (!base) {
+            internalError(loc, "inline unsigned constant requires a scalar type");
+        }
+        switch (base->type) {
+            case BaseType::U8:
+                return makeInlineConstExpr(type,
+                                           static_cast<std::uint8_t>(value), loc);
+            case BaseType::U16:
+                return makeInlineConstExpr(type,
+                                           static_cast<std::uint16_t>(value), loc);
+            case BaseType::U32:
+                return makeInlineConstExpr(type,
+                                           static_cast<std::uint32_t>(value), loc);
+            case BaseType::U64:
+            case BaseType::USIZE:
+                return makeInlineConstExpr(type,
+                                           static_cast<std::uint64_t>(value), loc);
+            default:
+                internalError(loc,
+                              "inline unsigned constant escaped scalar typing");
+        }
+    }
+
+    HIRExpr *makeUnsignedConstFromAPInt(TypeClass *type,
+                                        const llvm::APInt &value,
+                                        const location &loc) {
+        auto normalized = value.zextOrTrunc(inlineIntegerBitWidth(type));
+        return makeUnsignedConst(type, normalized.getZExtValue(), loc);
+    }
+
+    HIRExpr *makeFloatConst(TypeClass *type, long double value,
+                            const location &loc) {
+        auto *base = asUnqualified<BaseType>(type);
+        if (!base) {
+            internalError(loc, "inline float constant requires a scalar type");
+        }
+        switch (base->type) {
+            case BaseType::F32:
+                return makeInlineConstExpr(type, static_cast<float>(value), loc);
+            case BaseType::F64:
+                return makeInlineConstExpr(type, static_cast<double>(value), loc);
+            default:
+                internalError(loc, "inline float constant escaped scalar typing");
+        }
+    }
+
+    HIRExpr *makeBoolConst(bool value, const location &loc) {
+        return makeInlineConstExpr(boolTy, value, loc);
+    }
+
+    struct InlinePointerConstant {
+        enum class Kind {
+            Null,
+            Address,
+        };
+
+        Kind kind = Kind::Address;
+        const HIRExpr *identity = nullptr;
+    };
+
+    std::optional<InlinePointerConstant>
+    inlinePointerConstant(HIRExpr *expr) const {
+        if (!expr) {
+            return std::nullopt;
+        }
+        if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
+            return InlinePointerConstant{InlinePointerConstant::Kind::Address,
+                                         byteString};
+        }
+        if (dynamic_cast<HIRNullLiteral *>(expr)) {
+            return InlinePointerConstant{InlinePointerConstant::Kind::Null,
+                                         nullptr};
+        }
+        if (auto *bitCast = dynamic_cast<HIRBitCast *>(expr)) {
+            if (!isPointerLikeType(bitCast->getType())) {
+                return std::nullopt;
+            }
+            return inlinePointerConstant(bitCast->getExpr());
+        }
+        return std::nullopt;
+    }
+
+    std::optional<bool> inlineConstantTruthyValue(HIRExpr *expr) const {
+        if (auto *value = constScalarValue(expr)) {
+            auto *type = value->getType();
+            if (isSignedIntegerType(type)) {
+                return constSignedValue(value) != 0;
+            }
+            if (isUnsignedIntegerType(type)) {
+                return constUnsignedValue(value) != 0;
+            }
+            if (isFloatType(type)) {
+                return constFloatValue(value) != 0.0L;
+            }
+            if (isBoolStorageType(type)) {
+                return constBoolValue(value);
+            }
+        }
+
+        if (auto pointer = inlinePointerConstant(expr)) {
+            return pointer->kind != InlinePointerConstant::Kind::Null;
+        }
+
+        return std::nullopt;
+    }
+
+    std::optional<bool> compareInlinePointerConstants(HIRExpr *left,
+                                                      HIRExpr *right) const {
+        auto lhs = inlinePointerConstant(left);
+        auto rhs = inlinePointerConstant(right);
+        if (!lhs || !rhs) {
+            return std::nullopt;
+        }
+        if (lhs->kind == InlinePointerConstant::Kind::Null ||
+            rhs->kind == InlinePointerConstant::Kind::Null) {
+            return lhs->kind == rhs->kind;
+        }
+        return lhs->identity == rhs->identity;
+    }
+
+    HIRExpr *foldInlineScalarExpr(HIRExpr *expr, llvm::StringRef bindingName) {
+        if (!expr) {
+            return nullptr;
+        }
+        if (constScalarValue(expr) ||
+            dynamic_cast<HIRByteStringLiteral *>(expr) != nullptr ||
+            dynamic_cast<HIRNullLiteral *>(expr) != nullptr) {
+            return expr;
+        }
+
+        if (auto *bitCast = dynamic_cast<HIRBitCast *>(expr)) {
+            if (!isPointerLikeType(bitCast->getType())) {
+                return nullptr;
+            }
+            auto *foldedSource =
+                foldInlineScalarExpr(bitCast->getExpr(), bindingName);
+            if (!inlinePointerConstant(foldedSource)) {
+                return nullptr;
+            }
+            if (foldedSource == bitCast->getExpr()) {
+                return bitCast;
+            }
+            return makeHIR<HIRBitCast>(foldedSource, bitCast->getType(),
+                                       bitCast->getLocation());
+        }
+
+        if (auto *numericCast = dynamic_cast<HIRNumericCast *>(expr)) {
+            auto *foldedSource =
+                foldInlineScalarExpr(numericCast->getExpr(), bindingName);
+            auto *sourceValue = constScalarValue(foldedSource);
+            auto *sourceBase =
+                sourceValue ? asUnqualified<BaseType>(sourceValue->getType())
+                            : nullptr;
+            auto *targetBase = asUnqualified<BaseType>(numericCast->getType());
+            if (!sourceBase || !targetBase) {
+                return nullptr;
+            }
+
+            if (isFloatType(numericCast->getType())) {
+                long double converted = 0;
+                if (isFloatType(sourceValue->getType())) {
+                    converted = constFloatValue(sourceValue);
+                } else if (isSignedIntegerType(sourceValue->getType())) {
+                    converted = static_cast<long double>(
+                        constSignedValue(sourceValue));
+                } else {
+                    converted = static_cast<long double>(
+                        constUnsignedValue(sourceValue));
+                }
+                return makeFloatConst(numericCast->getType(), converted,
+                                      numericCast->getLocation());
+            }
+
+            if (isSignedIntegerType(numericCast->getType())) {
+                std::int64_t converted = 0;
+                if (isFloatType(sourceValue->getType())) {
+                    converted = static_cast<std::int64_t>(
+                        constFloatValue(sourceValue));
+                } else if (isSignedIntegerType(sourceValue->getType())) {
+                    converted = constSignedValue(sourceValue);
+                } else {
+                    converted = static_cast<std::int64_t>(
+                        constUnsignedValue(sourceValue));
+                }
+                return makeSignedConst(numericCast->getType(), converted,
+                                       numericCast->getLocation());
+            }
+
+            if (isUnsignedIntegerType(numericCast->getType())) {
+                std::uint64_t converted = 0;
+                if (isFloatType(sourceValue->getType())) {
+                    converted = static_cast<std::uint64_t>(
+                        constFloatValue(sourceValue));
+                } else if (isSignedIntegerType(sourceValue->getType())) {
+                    converted = static_cast<std::uint64_t>(
+                        constSignedValue(sourceValue));
+                } else {
+                    converted = constUnsignedValue(sourceValue);
+                }
+                return makeUnsignedConst(numericCast->getType(), converted,
+                                         numericCast->getLocation());
+            }
+
+            return nullptr;
+        }
+
+        if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
+            auto *foldedOperand = foldInlineScalarExpr(unary->getExpr(), bindingName);
+            auto *operandValue = constScalarValue(foldedOperand);
+            auto *operandType = operandValue ? operandValue->getType() : nullptr;
+
+            switch (unary->getBinding().kind) {
+                case UnaryOperatorKind::Identity:
+                    if (!operandValue || !operandType) {
+                        return nullptr;
+                    }
+                    return foldedOperand;
+                case UnaryOperatorKind::Negate:
+                    if (!operandValue || !operandType) {
+                        return nullptr;
+                    }
+                    if (isFloatType(operandType)) {
+                        return makeFloatConst(
+                            unary->getType(), -constFloatValue(operandValue),
+                            unary->getLocation());
+                    }
+                    if (isSignedIntegerType(operandType)) {
+                        return makeSignedConstFromAPInt(
+                            unary->getType(), -constSignedAPInt(operandValue),
+                            unary->getLocation());
+                    }
+                    if (isUnsignedIntegerType(operandType)) {
+                        return makeUnsignedConstFromAPInt(
+                            unary->getType(), -constUnsignedAPInt(operandValue),
+                            unary->getLocation());
+                    }
+                    return nullptr;
+                case UnaryOperatorKind::LogicalNot: {
+                    if (auto truthy = inlineConstantTruthyValue(foldedOperand)) {
+                        return makeBoolConst(!*truthy, unary->getLocation());
+                    }
+                    return nullptr;
+                }
+                case UnaryOperatorKind::BitwiseNot:
+                    if (!operandValue || !operandType) {
+                        return nullptr;
+                    }
+                    if (isSignedIntegerType(operandType)) {
+                        return makeSignedConstFromAPInt(
+                            unary->getType(), ~constSignedAPInt(operandValue),
+                            unary->getLocation());
+                    }
+                    if (isUnsignedIntegerType(operandType)) {
+                        return makeUnsignedConstFromAPInt(
+                            unary->getType(), ~constUnsignedAPInt(operandValue),
+                            unary->getLocation());
+                    }
+                    if (auto *boolBase = asUnqualified<BaseType>(operandType);
+                        boolBase && boolBase->type == BaseType::BOOL) {
+                        return makeBoolConst(!constBoolValue(operandValue),
+                                             unary->getLocation());
+                    }
+                    return nullptr;
+                case UnaryOperatorKind::AddressOf:
+                case UnaryOperatorKind::Dereference:
+                    return nullptr;
+            }
+        }
+
+        if (auto *bin = dynamic_cast<HIRBinOper *>(expr)) {
+            if (bin->getBinding().shortCircuit) {
+                auto *left = foldInlineScalarExpr(bin->getLeft(), bindingName);
+                auto lhsTruthy = inlineConstantTruthyValue(left);
+                if (!lhsTruthy) {
+                    return nullptr;
+                }
+                switch (bin->getBinding().kind) {
+                    case BinaryOperatorKind::LogicalAnd:
+                        if (!*lhsTruthy) {
+                            return makeBoolConst(false, bin->getLocation());
+                        }
+                        break;
+                    case BinaryOperatorKind::LogicalOr:
+                        if (*lhsTruthy) {
+                            return makeBoolConst(true, bin->getLocation());
+                        }
+                        break;
+                    default:
+                        return nullptr;
+                }
+
+                auto *right = foldInlineScalarExpr(bin->getRight(), bindingName);
+                auto rhsTruthy = inlineConstantTruthyValue(right);
+                if (!rhsTruthy) {
+                    return nullptr;
+                }
+                return makeBoolConst(*rhsTruthy, bin->getLocation());
+            }
+
+            auto *left = foldInlineScalarExpr(bin->getLeft(), bindingName);
+            auto *right = foldInlineScalarExpr(bin->getRight(), bindingName);
+            if ((bin->getBinding().kind == BinaryOperatorKind::Equal ||
+                 bin->getBinding().kind == BinaryOperatorKind::NotEqual)) {
+                if (auto pointerEqual =
+                        compareInlinePointerConstants(left, right)) {
+                    return makeBoolConst(
+                        bin->getBinding().kind == BinaryOperatorKind::Equal
+                            ? *pointerEqual
+                            : !*pointerEqual,
+                        bin->getLocation());
+                }
+            }
+
+            auto *leftValue = constScalarValue(left);
+            auto *rightValue = constScalarValue(right);
+            if (!leftValue || !rightValue) {
+                return nullptr;
+            }
+
+            auto *leftType = leftValue->getType();
+            if (isFloatType(leftType)) {
+                auto lhs = constFloatValue(leftValue);
+                auto rhs = constFloatValue(rightValue);
+                switch (bin->getBinding().kind) {
+                    case BinaryOperatorKind::Add:
+                        return makeFloatConst(bin->getType(), lhs + rhs,
+                                              bin->getLocation());
+                    case BinaryOperatorKind::Sub:
+                        return makeFloatConst(bin->getType(), lhs - rhs,
+                                              bin->getLocation());
+                    case BinaryOperatorKind::Mul:
+                        return makeFloatConst(bin->getType(), lhs * rhs,
+                                              bin->getLocation());
+                    case BinaryOperatorKind::Div:
+                        if (rhs == 0.0L) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` divides by zero",
+                                  "Inline constant expressions must be fully "
+                                  "defined at compile time.");
+                        }
+                        return makeFloatConst(bin->getType(), lhs / rhs,
+                                              bin->getLocation());
+                    case BinaryOperatorKind::Less:
+                        return makeBoolConst(lhs < rhs, bin->getLocation());
+                    case BinaryOperatorKind::Greater:
+                        return makeBoolConst(lhs > rhs, bin->getLocation());
+                    case BinaryOperatorKind::LessEqual:
+                        return makeBoolConst(lhs <= rhs, bin->getLocation());
+                    case BinaryOperatorKind::GreaterEqual:
+                        return makeBoolConst(lhs >= rhs, bin->getLocation());
+                    case BinaryOperatorKind::Equal:
+                        return makeBoolConst(lhs == rhs, bin->getLocation());
+                    case BinaryOperatorKind::NotEqual:
+                        return makeBoolConst(lhs != rhs, bin->getLocation());
+                    default:
+                        return nullptr;
+                }
+            }
+
+            if (isSignedIntegerType(leftType)) {
+                auto lhs = constSignedAPInt(leftValue);
+                auto rhs = constSignedAPInt(rightValue);
+                switch (bin->getBinding().kind) {
+                    case BinaryOperatorKind::Add:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs + rhs, bin->getLocation());
+                    case BinaryOperatorKind::Sub:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs - rhs, bin->getLocation());
+                    case BinaryOperatorKind::Mul:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs * rhs, bin->getLocation());
+                    case BinaryOperatorKind::Div:
+                        if (rhs.isZero()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` divides by zero",
+                                  "Inline constant expressions must be fully "
+                                  "defined at compile time.");
+                        }
+                        if (lhs.isMinSignedValue() && rhs.isAllOnes()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` signed division overflows",
+                                  "Inline constant expressions must avoid "
+                                  "operations that lower to poison in LLVM "
+                                  "IR.");
+                        }
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs.sdiv(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Mod:
+                        if (rhs.isZero()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` takes a remainder by zero",
+                                  "Inline constant expressions must be fully "
+                                  "defined at compile time.");
+                        }
+                        if (lhs.isMinSignedValue() && rhs.isAllOnes()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` signed remainder overflows",
+                                  "Inline constant expressions must avoid "
+                                  "operations that lower to poison in LLVM "
+                                  "IR.");
+                        }
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs.srem(rhs), bin->getLocation());
+                    case BinaryOperatorKind::ShiftLeft: {
+                        if (rhs.isNegative()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        const auto shiftAmount = rhs.getZExtValue();
+                        if (shiftAmount >= lhs.getBitWidth()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs.shl(static_cast<unsigned>(shiftAmount)),
+                            bin->getLocation());
+                    }
+                    case BinaryOperatorKind::ShiftRight: {
+                        if (rhs.isNegative()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        const auto shiftAmount = rhs.getZExtValue();
+                        if (shiftAmount >= lhs.getBitWidth()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        return makeSignedConstFromAPInt(
+                            bin->getType(),
+                            lhs.ashr(static_cast<unsigned>(shiftAmount)),
+                            bin->getLocation());
+                    }
+                    case BinaryOperatorKind::BitAnd:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs & rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitXor:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs ^ rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitOr:
+                        return makeSignedConstFromAPInt(
+                            bin->getType(), lhs | rhs, bin->getLocation());
+                    case BinaryOperatorKind::Less:
+                        return makeBoolConst(lhs.slt(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Greater:
+                        return makeBoolConst(lhs.sgt(rhs), bin->getLocation());
+                    case BinaryOperatorKind::LessEqual:
+                        return makeBoolConst(lhs.sle(rhs), bin->getLocation());
+                    case BinaryOperatorKind::GreaterEqual:
+                        return makeBoolConst(lhs.sge(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Equal:
+                        return makeBoolConst(lhs == rhs, bin->getLocation());
+                    case BinaryOperatorKind::NotEqual:
+                        return makeBoolConst(lhs != rhs, bin->getLocation());
+                    default:
+                        return nullptr;
+                }
+            }
+
+            if (isUnsignedIntegerType(leftType)) {
+                auto lhs = constUnsignedAPInt(leftValue);
+                auto rhs = constUnsignedAPInt(rightValue);
+                switch (bin->getBinding().kind) {
+                    case BinaryOperatorKind::Add:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs + rhs, bin->getLocation());
+                    case BinaryOperatorKind::Sub:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs - rhs, bin->getLocation());
+                    case BinaryOperatorKind::Mul:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs * rhs, bin->getLocation());
+                    case BinaryOperatorKind::Div:
+                        if (rhs.isZero()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` divides by zero",
+                                  "Inline constant expressions must be fully "
+                                  "defined at compile time.");
+                        }
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs.udiv(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Mod:
+                        if (rhs.isZero()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` takes a remainder by zero",
+                                  "Inline constant expressions must be fully "
+                                  "defined at compile time.");
+                        }
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs.urem(rhs), bin->getLocation());
+                    case BinaryOperatorKind::ShiftLeft: {
+                        const auto shiftAmount = rhs.getZExtValue();
+                        if (shiftAmount >= lhs.getBitWidth()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs.shl(static_cast<unsigned>(shiftAmount)),
+                            bin->getLocation());
+                    }
+                    case BinaryOperatorKind::ShiftRight: {
+                        const auto shiftAmount = rhs.getZExtValue();
+                        if (shiftAmount >= lhs.getBitWidth()) {
+                            error(bin->getLocation(),
+                                  "inline binding `" + bindingName.str() +
+                                      "` shift count is out of range",
+                                  "Use a shift count between 0 and " +
+                                      std::to_string(lhs.getBitWidth() - 1) +
+                                      " for `" +
+                                      describeResolvedType(bin->getType()) +
+                                      "`.");
+                        }
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(),
+                            lhs.lshr(static_cast<unsigned>(shiftAmount)),
+                            bin->getLocation());
+                    }
+                    case BinaryOperatorKind::BitAnd:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs & rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitXor:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs ^ rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitOr:
+                        return makeUnsignedConstFromAPInt(
+                            bin->getType(), lhs | rhs, bin->getLocation());
+                    case BinaryOperatorKind::Less:
+                        return makeBoolConst(lhs.ult(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Greater:
+                        return makeBoolConst(lhs.ugt(rhs), bin->getLocation());
+                    case BinaryOperatorKind::LessEqual:
+                        return makeBoolConst(lhs.ule(rhs), bin->getLocation());
+                    case BinaryOperatorKind::GreaterEqual:
+                        return makeBoolConst(lhs.uge(rhs), bin->getLocation());
+                    case BinaryOperatorKind::Equal:
+                        return makeBoolConst(lhs == rhs, bin->getLocation());
+                    case BinaryOperatorKind::NotEqual:
+                        return makeBoolConst(lhs != rhs, bin->getLocation());
+                    default:
+                        return nullptr;
+                }
+            }
+
+            if (auto *leftBase = asUnqualified<BaseType>(leftType);
+                leftBase && leftBase->type == BaseType::BOOL) {
+                auto lhs = constBoolValue(leftValue);
+                auto rhs = constBoolValue(rightValue);
+                switch (bin->getBinding().kind) {
+                    case BinaryOperatorKind::BitAnd:
+                        return makeBoolConst(lhs & rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitXor:
+                        return makeBoolConst(lhs ^ rhs, bin->getLocation());
+                    case BinaryOperatorKind::BitOr:
+                        return makeBoolConst(lhs | rhs, bin->getLocation());
+                    case BinaryOperatorKind::Equal:
+                        return makeBoolConst(lhs == rhs, bin->getLocation());
+                    case BinaryOperatorKind::NotEqual:
+                        return makeBoolConst(lhs != rhs, bin->getLocation());
+                    default:
+                        return nullptr;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
+    HIRExpr *requireInlineConstantExpr(HIRExpr *expr, llvm::StringRef bindingName,
+                                       const location &loc) {
+        if (!expr || !expr->getType()) {
+            error(loc,
+                  "inline binding `" + bindingName.str() +
+                      "` requires a concrete compile-time value",
+                  "Use a scalar or pointer constant expression that can be "
+                  "fully resolved during analysis.");
+        }
+
+        if (auto *folded = foldInlineScalarExpr(expr, bindingName)) {
+            if (!isSupportedInlineValueType(folded->getType())) {
+                errorUnsupportedInlineType(loc, bindingName, folded->getType());
+            }
+            return folded;
+        }
+
+        if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
+            if (!isSupportedInlineValueType(byteString->getType())) {
+                errorUnsupportedInlineType(loc, bindingName,
+                                           byteString->getType());
+            }
+            return byteString;
+        }
+
+        if (auto *nullLiteral = dynamic_cast<HIRNullLiteral *>(expr)) {
+            if (!isPointerLikeType(nullLiteral->getType())) {
+                error(loc,
+                      "inline binding `" + bindingName.str() +
+                          "` requires a concrete pointer type for `null`",
+                      "Write an explicit pointer type such as `inline p i32* = "
+                      "null`.");
+            }
+            if (!isSupportedInlineValueType(nullLiteral->getType())) {
+                errorUnsupportedInlineType(loc, bindingName,
+                                           nullLiteral->getType());
+            }
+            return nullLiteral;
+        }
+
+        if (auto *bitCast = dynamic_cast<HIRBitCast *>(expr)) {
+            auto *source =
+                requireInlineConstantExpr(bitCast->getExpr(), bindingName, loc);
+            if (!isSupportedInlineValueType(bitCast->getType())) {
+                errorUnsupportedInlineType(loc, bindingName, bitCast->getType());
+            }
+            if (!isPointerLikeType(bitCast->getType())) {
+                error(loc,
+                      "inline binding `" + bindingName.str() +
+                          "` only supports pointer bit-casts in v0",
+                      "Keep inline casts on scalar values within builtin "
+                      "numeric conversion, or cast pointer constants like "
+                      "`null` / string literals.");
+            }
+            if (source == bitCast->getExpr()) {
+                return bitCast;
+            }
+            return makeHIR<HIRBitCast>(source, bitCast->getType(),
+                                       bitCast->getLocation());
+        }
+
+        error(loc,
+              "inline binding `" + bindingName.str() +
+                  "` initializer must be a compile-time constant expression",
+              "Inline v0 supports scalar literals, `null`, string literals, "
+              "builtin scalar unary/binary operators, `cast[T](expr)`, "
+              "`sizeof`, and previously defined inline bindings.");
     }
 
     ObjectPtr requireGlobalObject(const ::string &name, const location &loc,
@@ -2787,8 +3788,17 @@ class FunctionAnalyzer {
 
         switch (binding->kind()) {
             case ResolvedEntityRef::Kind::LocalBinding:
+                if (auto *inlineValue =
+                        boundInlineValue(binding->localBinding())) {
+                    return inlineValue;
+                }
                 return makeHIR<HIRValue>(
                     requireBoundObject(binding->localBinding(), loc), loc);
+            case ResolvedEntityRef::Kind::InlineGlobal:
+                return requireTopLevelInlineValue(
+                    binding->inlineDecl(),
+                    binding->ownerUnit() ? binding->ownerUnit() : unit, loc,
+                    toStringRef(binding->resolvedName()));
             case ResolvedEntityRef::Kind::GlobalValue: {
                 auto *obj = requireGlobalObject(binding->resolvedName(), loc,
                                                 "global identifier");
@@ -5627,6 +6637,7 @@ class FunctionAnalyzer {
             validateTypeNodeLayout(typeNode);
         }
         const bool isRefBinding = node->isRefBinding();
+        const bool isInlineBinding = node->isInlineBinding();
 
         TypeClass *type = nullptr;
         if (auto *typeNode = node->getTypeNode()) {
@@ -5648,6 +6659,14 @@ class FunctionAnalyzer {
         if (node->withInitVal()) {
             init = isRefBinding ? requireNonCallExpr(node->getInitVal(), type)
                                 : requireExpr(node->getInitVal(), type);
+        }
+
+        auto *binding = resolved.variable(node);
+        if (!binding) {
+            internalError(node->loc,
+                          "missing resolved variable binding for `" +
+                              toStdString(node->getName()) + "`",
+                          "Run name resolution before HIR lowering.");
         }
 
         if (isRefBinding && !init) {
@@ -5681,7 +6700,7 @@ class FunctionAnalyzer {
                     }
                 } else {
                     auto *initExpectedType =
-                        node->isReadOnlyBinding()
+                        node->isConstBinding()
                             ? static_cast<TypeClass *>(typeMgr->createConstType(type))
                             : type;
                     init = coerceNumericExpr(init, initExpectedType, node->loc,
@@ -5726,7 +6745,21 @@ class FunctionAnalyzer {
                   "Add an explicit type annotation or provide an initializer.");
         }
 
-        if (node->isReadOnlyBinding()) {
+        if (isInlineBinding) {
+            if (!isSupportedInlineValueType(type)) {
+                errorUnsupportedInlineType(node->loc, toStringRef(node->getName()),
+                                           type);
+            }
+            auto *folded =
+                requireInlineConstantExpr(init, toStringRef(node->getName()),
+                                          node->getInitVal()
+                                              ? node->getInitVal()->loc
+                                              : node->loc);
+            bindInlineValue(binding, folded);
+            return nullptr;
+        }
+
+        if (node->isConstBinding()) {
             if (isRefBinding) {
                 internalError(
                     node->loc,
@@ -5736,13 +6769,6 @@ class FunctionAnalyzer {
             type = typeMgr->createConstType(type);
         }
 
-        auto *binding = resolved.variable(node);
-        if (!binding) {
-            internalError(node->loc,
-                          "missing resolved variable binding for `" +
-                              toStdString(node->getName()) + "`",
-                          "Run name resolution before HIR lowering.");
-        }
         auto *obj =
             type->newObj(Object::VARIABLE |
                          (isRefBinding ? Object::REF_ALIAS : Object::EMPTY));
@@ -6017,7 +7043,8 @@ public:
     FunctionAnalyzer(TypeTable *typeMgr, GlobalScope *global,
                      HIRModule *ownerModule, const CompilationUnit *unit,
                      const ResolvedFunction &resolved,
-                     AnalysisLookupCache *lookupCache)
+                     AnalysisLookupCache *lookupCache,
+                     TopLevelInlineEvalContext *topLevelInlineEval = nullptr)
         : typeMgr(typeMgr),
           global(global),
           unit(unit),
@@ -6026,7 +7053,9 @@ public:
           ownerModule(ownerModule),
           hirFunc(nullptr),
           localLookupCache_(unit),
-          lookupCache(lookupCache ? lookupCache : &localLookupCache_) {}
+          lookupCache(lookupCache ? lookupCache : &localLookupCache_),
+          topLevelInlineEval_(topLevelInlineEval ? topLevelInlineEval
+                                                 : &localTopLevelInlineEval_) {}
 
 private:
     void prepareFunctionShell() {

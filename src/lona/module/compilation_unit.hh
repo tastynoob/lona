@@ -186,6 +186,10 @@ public:
     const string *findLocalGlobal(const std::string &localName) const {
         return findLocalGlobal(string(localName));
     }
+    const AstVarDef *findTopLevelInline(const ::string &localName) const;
+    const AstVarDef *findTopLevelInline(const std::string &localName) const {
+        return findTopLevelInline(string(localName));
+    }
     TopLevelLookup lookupTopLevelName(const ::string &name) const;
     TopLevelLookup lookupTopLevelName(const std::string &name) const {
         return lookupTopLevelName(string(name));

@@ -59,6 +59,7 @@ public:
     enum class Kind {
         Invalid,
         LocalBinding,
+        InlineGlobal,
         GlobalValue,
         GenericFunction,
         Type,
@@ -70,9 +71,11 @@ public:
 private:
     Kind kind_ = Kind::Invalid;
     const ResolvedLocalBinding *localBinding_ = nullptr;
+    const AstVarDef *inlineDecl_ = nullptr;
     const ModuleInterface::FunctionDecl *functionDecl_ = nullptr;
     const ModuleInterface::TypeDecl *typeDecl_ = nullptr;
     const ModuleInterface *ownerInterface_ = nullptr;
+    const CompilationUnit *ownerUnit_ = nullptr;
     string resolvedName_;
 
 public:
@@ -82,6 +85,17 @@ public:
         ResolvedEntityRef ref;
         ref.kind_ = Kind::LocalBinding;
         ref.localBinding_ = binding;
+        return ref;
+    }
+
+    static ResolvedEntityRef inlineGlobal(
+        string name, const AstVarDef *inlineDecl,
+        const CompilationUnit *ownerUnit = nullptr) {
+        ResolvedEntityRef ref;
+        ref.kind_ = Kind::InlineGlobal;
+        ref.inlineDecl_ = inlineDecl;
+        ref.ownerUnit_ = ownerUnit;
+        ref.resolvedName_ = std::move(name);
         return ref;
     }
 
@@ -138,11 +152,13 @@ public:
     Kind kind() const { return kind_; }
     bool valid() const { return kind_ != Kind::Invalid; }
     const ResolvedLocalBinding *localBinding() const { return localBinding_; }
+    const AstVarDef *inlineDecl() const { return inlineDecl_; }
     const ModuleInterface::FunctionDecl *functionDecl() const {
         return functionDecl_;
     }
     const ModuleInterface::TypeDecl *typeDecl() const { return typeDecl_; }
     const ModuleInterface *ownerInterface() const { return ownerInterface_; }
+    const CompilationUnit *ownerUnit() const { return ownerUnit_; }
     const string &resolvedName() const { return resolvedName_; }
 };
 

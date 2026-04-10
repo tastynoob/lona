@@ -81,6 +81,7 @@ NUMERIC_LITERAL ((0b{BIN_DIGITS}|0o{OCT_DIGITS}|0x{HEX_DIGITS}|{DEC_FLOAT}|{DEC_
 	(global) { RETURN_PLAIN_TOKEN(token::GLOBAL); }
 	(ref) { RETURN_PLAIN_TOKEN(token::REF); }
 	(const) { RETURN_PLAIN_TOKEN(token::TYPE_CONST); }
+	(inline) { RETURN_PLAIN_TOKEN(token::INLINE); }
 (cast) { RETURN_PLAIN_TOKEN(token::CAST); }
 (sizeof) { RETURN_PLAIN_TOKEN(token::SIZEOF); }
 

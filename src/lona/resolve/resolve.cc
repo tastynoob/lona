@@ -1594,6 +1594,15 @@ class FunctionResolver {
 
         auto memberName = toStdString(node->field->text);
         auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
+        if (auto *inlineDecl =
+                moduleNamespace->unit
+                    ? moduleNamespace->unit->findTopLevelInline(memberName)
+                    : nullptr) {
+            resolved_.bindDotLike(
+                node, ResolvedEntityRef::inlineGlobal(
+                          memberName, inlineDecl, moduleNamespace->unit));
+            return;
+        }
         if (lookup.isGlobal()) {
             resolved_.bindDotLike(
                 node, ResolvedEntityRef::globalValue(lookup.resolvedName));
@@ -1633,8 +1642,8 @@ class FunctionResolver {
               "unknown module member `" +
                   toStdString(parentBinding->resolvedName()) + "." +
                   memberName + "`",
-              "Only directly imported top-level functions, globals, types, "
-              "and traits are available through `file.xxx`.");
+              "Only directly imported top-level inline constants, functions, "
+              "globals, types, and traits are available through `file.xxx`.");
     }
 
     void resolveStmt(const AstNode *node) {
@@ -1733,6 +1742,15 @@ class FunctionResolver {
                 if (unit_) {
                     auto lookup =
                         unit_->lookupTopLevelName(toStdString(field->name));
+                    if (auto *inlineDecl =
+                            unit_->findTopLevelInline(
+                                toStdString(field->name))) {
+                        resolved_.bindField(
+                            field, ResolvedEntityRef::inlineGlobal(
+                                       toStdString(field->name), inlineDecl,
+                                       unit_));
+                        return;
+                    }
                     if (lookup.isFunction()) {
                         if (lookup.functionDecl &&
                             lookup.functionDecl->isGeneric()) {

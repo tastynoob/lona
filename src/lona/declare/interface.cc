@@ -895,6 +895,18 @@ class InterfaceCollector {
                   ".xxx` continues to refer to the imported module.");
     }
 
+    void validateImportAliasConflict(AstVarDef *inlineDecl) {
+        const auto name = toStdString(inlineDecl->getName());
+        if (!unit_.importsModule(name)) {
+            return;
+        }
+        error(inlineDecl->loc,
+              "inline constant `" + name +
+                  "` conflicts with imported module alias `" + name + "`",
+              "Rename the inline constant so `" + name +
+                  ".xxx` continues to refer to the imported module.");
+    }
+
     TypeClass *resolveType(TypeNode *node, bool validateLayout = true) {
         return resolveType(node, unit_, validateLayout);
     }
@@ -1498,6 +1510,22 @@ class InterfaceCollector {
                     topLevelDecls_, toStdString(globalDecl->getName()),
                     TopLevelDeclKind::Global, globalDecl->loc);
                 globalDecls_.push_back(globalDecl);
+            } else if (auto *varDef = dynamic_cast<AstVarDef *>(stmt)) {
+                if (!varDef->isInlineBinding()) {
+                    continue;
+                }
+                validateImportAliasConflict(varDef);
+                const auto inlineName = toStdString(varDef->getName());
+                if (auto found = topLevelDecls_.find(inlineName);
+                    found != topLevelDecls_.end() &&
+                    found->second.first == TopLevelDeclKind::Inline) {
+                    error(varDef->loc,
+                          "duplicate inline constant `" + inlineName + "`",
+                          "Choose a distinct top-level inline constant name "
+                          "in this module.");
+                }
+                recordTopLevelDeclName(topLevelDecls_, inlineName,
+                                       TopLevelDeclKind::Inline, varDef->loc);
             }
         }
     }

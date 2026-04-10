@@ -419,6 +419,7 @@ void
 AstVarDef::toJson(Json &root) {
     root["type"] = "VarDef";
     root["bindingKind"] = bindingKindKeyword(this->bindingKind);
+    root["storageKind"] = varStorageKindKeyword(this->getStorageKind());
     root["readOnlyBinding"] = this->isReadOnlyBinding();
     root["field"] = this->field.tochara();
     if (this->typeNode != nullptr) {

@@ -25,6 +25,7 @@
 #include <llvm-18/llvm/IR/Type.h>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,42 @@ traitWitnessSymbolName(llvm::StringRef traitName, llvm::StringRef selfTypeName) 
            mangleModuleEntryComponent(selfTypeName);
 }
 
+using ByteStringGlobalCache =
+    std::unordered_map<struct ByteStringGlobalKey, llvm::GlobalVariable *,
+                       struct ByteStringGlobalKeyHash>;
+
+struct ByteStringGlobalKey {
+    std::string bytes;
+    std::string sourcePath;
+    int beginLine = 0;
+    int beginColumn = 0;
+    int endLine = 0;
+    int endColumn = 0;
+
+    bool operator==(const ByteStringGlobalKey &other) const {
+        return bytes == other.bytes && sourcePath == other.sourcePath &&
+               beginLine == other.beginLine &&
+               beginColumn == other.beginColumn && endLine == other.endLine &&
+               endColumn == other.endColumn;
+    }
+};
+
+struct ByteStringGlobalKeyHash {
+    std::size_t operator()(const ByteStringGlobalKey &key) const {
+        auto hashCombine = [](std::size_t seed, std::size_t value) {
+            return seed ^ (value + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+        };
+
+        std::size_t seed = std::hash<std::string>{}(key.bytes);
+        seed = hashCombine(seed, std::hash<std::string>{}(key.sourcePath));
+        seed = hashCombine(seed, std::hash<int>{}(key.beginLine));
+        seed = hashCombine(seed, std::hash<int>{}(key.beginColumn));
+        seed = hashCombine(seed, std::hash<int>{}(key.endLine));
+        seed = hashCombine(seed, std::hash<int>{}(key.endColumn));
+        return seed;
+    }
+};
+
 class FunctionCompiler {
     struct LoopContext {
         llvm::BasicBlock *continueBlock = nullptr;
@@ -107,6 +144,7 @@ class FunctionCompiler {
     location currentLocation;
     bool hasCurrentLocation = false;
     std::vector<LoopContext> loopStack;
+    ByteStringGlobalCache &byteStringGlobals_;
 
     [[noreturn]] void error(const std::string &message) {
         if (hasCurrentLocation) {
@@ -163,6 +201,40 @@ class FunctionCompiler {
                                      llvm::GlobalValue::PrivateLinkage,
                                      initializer, nextByteStringGlobalName());
         globalValue->setAlignment(llvm::MaybeAlign(1));
+        return globalValue;
+    }
+
+    ByteStringGlobalKey
+    byteStringGlobalKey(const HIRByteStringLiteral *byteString) const {
+        ByteStringGlobalKey key;
+        if (!byteString) {
+            return key;
+        }
+
+        key.bytes = toStdString(byteString->getBytes());
+        const auto &loc = byteString->getLocation();
+        if (loc.begin.filename) {
+            key.sourcePath = *loc.begin.filename;
+        }
+        key.beginLine = loc.begin.line;
+        key.beginColumn = loc.begin.column;
+        key.endLine = loc.end.line;
+        key.endColumn = loc.end.column;
+        return key;
+    }
+
+    llvm::GlobalVariable *
+    getOrCreateByteStringGlobal(const HIRByteStringLiteral *byteString) {
+        if (!byteString) {
+            return nullptr;
+        }
+        auto key = byteStringGlobalKey(byteString);
+        auto found = byteStringGlobals_.find(key);
+        if (found != byteStringGlobals_.end()) {
+            return found->second;
+        }
+        auto *globalValue = createByteStringGlobal(byteString->getBytes());
+        byteStringGlobals_.emplace(std::move(key), globalValue);
         return globalValue;
     }
 
@@ -589,7 +661,7 @@ class FunctionCompiler {
         }
         if (auto *byteString = dynamic_cast<HIRByteStringLiteral *>(expr)) {
             setLocation(byteString);
-            auto *globalValue = createByteStringGlobal(byteString->getBytes());
+            auto *globalValue = getOrCreateByteStringGlobal(byteString);
             auto *llvmArrayType =
                 llvm::cast<llvm::ArrayType>(globalValue->getValueType());
             auto *zero =
@@ -1553,6 +1625,7 @@ class FunctionCompiler {
 
 public:
     FunctionCompiler(TypeTable *typeMgr, GlobalScope *global, HIRFunc *hirFunc,
+                     ByteStringGlobalCache &byteStringGlobals,
                      DebugInfoContext *debug = nullptr,
                      const CompilationUnit *unit = nullptr,
                      const ModuleGraph *moduleGraph = nullptr)
@@ -1563,7 +1636,8 @@ public:
           context(global->module.getContext()),
           debug(debug),
           unit(unit),
-          moduleGraph(moduleGraph) {
+          moduleGraph(moduleGraph),
+          byteStringGlobals_(byteStringGlobals) {
         if (!hirFunc) {
             error("missing HIR function");
         }
@@ -1729,6 +1803,7 @@ class ModuleCompiler {
     DebugInfoContext *debug;
     const CompilationUnit *unit;
     const ModuleGraph *moduleGraph;
+    ByteStringGlobalCache byteStringGlobals_;
 
 public:
     ModuleCompiler(GlobalScope *global, HIRModule *module,
@@ -1741,7 +1816,8 @@ public:
           unit(unit),
           moduleGraph(moduleGraph) {
         for (auto *func : module->getFunctions()) {
-            FunctionCompiler(typeMgr, global, func, debug, unit, moduleGraph);
+            FunctionCompiler(typeMgr, global, func, byteStringGlobals_, debug,
+                             unit, moduleGraph);
         }
     }
 };

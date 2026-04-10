@@ -21,6 +21,8 @@ topLevelDeclKindName(TopLevelDeclKind kind) {
             return "top-level function";
         case TopLevelDeclKind::Global:
             return "global";
+        case TopLevelDeclKind::Inline:
+            return "inline constant";
     }
     return "top-level declaration";
 }

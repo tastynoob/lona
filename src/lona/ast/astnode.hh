@@ -45,6 +45,12 @@ enum class BindingKind {
     Ref,
 };
 
+enum class VarStorageKind {
+    Var,
+    Const,
+    Inline,
+};
+
 enum class AbiKind {
     Native,
     C,
@@ -122,6 +128,19 @@ structDeclKindKeyword(StructDeclKind kind) {
 inline const char *
 bindingKindKeyword(BindingKind kind) {
     return kind == BindingKind::Ref ? "ref" : "var";
+}
+
+inline const char *
+varStorageKindKeyword(VarStorageKind kind) {
+    switch (kind) {
+        case VarStorageKind::Var:
+            return "var";
+        case VarStorageKind::Const:
+            return "const";
+        case VarStorageKind::Inline:
+            return "inline";
+    }
+    return "var";
 }
 
 class AstTag {
@@ -640,26 +659,26 @@ public:
 
 class AstVarDef : public AstNode {
     BindingKind const bindingKind;
-    bool const readOnlyBinding;
+    VarStorageKind const storageKind;
     string const field;
     TypeNode *const typeNode;
     AstNode *const initVal;
 
 public:
     AstVarDef(AstVarDecl *vardecl, AstNode *initVal = nullptr,
-              bool readOnlyBinding = false)
+              VarStorageKind storageKind = VarStorageKind::Var)
         : AstNode(AstKind::VarDef, vardecl->loc),
           bindingKind(vardecl->bindingKind),
-          readOnlyBinding(readOnlyBinding),
+          storageKind(storageKind),
           field(vardecl->field),
           typeNode(vardecl->typeNode),
           initVal(initVal) {}
 
     AstVarDef(AstToken &field, AstNode *initVal = nullptr,
-              bool readOnlyBinding = false)
+              VarStorageKind storageKind = VarStorageKind::Var)
         : AstNode(AstKind::VarDef, field.loc),
           bindingKind(BindingKind::Value),
-          readOnlyBinding(readOnlyBinding),
+          storageKind(storageKind),
           field(field.text),
           typeNode(nullptr),
           initVal(initVal) {}
@@ -667,7 +686,15 @@ public:
     auto &getName() const { return field; }
     BindingKind getBindingKind() const { return bindingKind; }
     bool isRefBinding() const { return bindingKind == BindingKind::Ref; }
-    bool isReadOnlyBinding() const { return readOnlyBinding; }
+    VarStorageKind getStorageKind() const { return storageKind; }
+    bool isReadOnlyBinding() const {
+        return storageKind == VarStorageKind::Const ||
+               storageKind == VarStorageKind::Inline;
+    }
+    bool isConstBinding() const { return storageKind == VarStorageKind::Const; }
+    bool isInlineBinding() const {
+        return storageKind == VarStorageKind::Inline;
+    }
     TypeNode *getTypeNode() const { return typeNode; }
     AstNode *getInitVal() const { return initVal; }
 
