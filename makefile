@@ -7,7 +7,7 @@ CLANG ?= clang-18
 
 CXX ?= ccache clang++
 CXXFLAGS := -std=c++20 -g
-OUT_DIR := $(ROOT)/build
+OUT_DIR := build
 LONA_LANGUAGE_VERSION := 0.1 beta
 INCLUDE_PATHS = -I $(ROOT)/src -I $(ROOT)/build
 LEX_FILE = grammar/lexer.lex
@@ -16,6 +16,7 @@ GENERATED_PARSER_SOURCES = $(OUT_DIR)/parser.cc $(OUT_DIR)/parser.hh $(OUT_DIR)/
 GENERATED_LEXER_SOURCE = $(OUT_DIR)/scanner.cc
 GENERATED_VERSION_SOURCE = $(OUT_DIR)/version.cc
 GENERATED_VERSION_STAMP = $(OUT_DIR)/version.stamp
+GENERATED_PARSER_STAMP = $(OUT_DIR)/parser.stamp
 GENERATED_PARSER_HEADERS = $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
 GENERATED_SUPPORT_SOURCES = $(GENERATED_LEXER_SOURCE) $(OUT_DIR)/parser.cc $(GENERATED_VERSION_SOURCE)
 PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
@@ -28,7 +29,10 @@ PARSER_SUPPORT_SOURCES = $(ROOT)/src/main.cc \
 	$(ROOT)/src/lona/util/string.cc
 SOURCE_FILES = $(shell find $(ROOT)/src -name "*.cc") $(GENERATED_SUPPORT_SOURCES)
 FRONTEND_SOURCE_FILES = $(PARSER_SUPPORT_SOURCES) $(GENERATED_SUPPORT_SOURCES)
-LIBRARY_SOURCE_FILES = $(filter-out $(ROOT)/src/main.cc,$(SOURCE_FILES))
+MAIN_SOURCE = $(ROOT)/src/main.cc
+QUERY_MAIN_SOURCE = $(ROOT)/src/tooling/main.cc
+LIBRARY_SOURCE_FILES = $(filter-out $(MAIN_SOURCE) $(QUERY_MAIN_SOURCE),$(SOURCE_FILES))
+CORE_LIBRARY_SOURCE_FILES = $(LIBRARY_SOURCE_FILES)
 SESSION_RUNNER_SOURCES = $(ROOT)/tests/session_runner.cc
 VERSION_SOURCE_DEPS = $(ROOT)/makefile \
 	$(ROOT)/src/lona/version.hh \
@@ -39,13 +43,18 @@ LIBS = $(shell llvm-config-18 --libs core native asmparser linker)
 LD_FLAGS = $(shell llvm-config-18 --ldflags)
 CXXFLAGS += $(shell llvm-config-18 --cppflags)
 
-OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SOURCE_FILES))
+MAIN_OBJECT = $(patsubst %.cc, $(OUT_DIR)/%.o, $(MAIN_SOURCE))
+QUERY_MAIN_OBJECT = $(patsubst %.cc, $(OUT_DIR)/%.o, $(QUERY_MAIN_SOURCE))
+OBJECTS = $(CORE_LIBRARY_OBJECTS) $(MAIN_OBJECT)
 FRONTEND_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(FRONTEND_SOURCE_FILES))
 LIBRARY_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(LIBRARY_SOURCE_FILES))
+CORE_LIBRARY_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(CORE_LIBRARY_SOURCE_FILES))
+QUERY_OBJECTS = $(CORE_LIBRARY_OBJECTS) $(QUERY_MAIN_OBJECT)
 SESSION_RUNNER_OBJECTS = $(patsubst %.cc, $(OUT_DIR)/%.o, $(SESSION_RUNNER_SOURCES))
 target = $(OUT_DIR)/lona-ir
 frontend_target = $(OUT_DIR)/lona-ir-frontend
 session_runner_target = $(OUT_DIR)/lona-session-runner
+query_target = $(OUT_DIR)/lona-query
 
 # require llvm-18
 ifeq ($(shell llvm-config-18 --version),)
@@ -60,7 +69,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default gram_check frontend acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
+.PHONY: clean format default gram_check frontend query api acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -69,6 +78,10 @@ default:
 all: $(target)
 
 frontend: $(frontend_target)
+
+query: $(query_target)
+
+api: query
 
 acceptance: $(target)
 	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance
@@ -90,18 +103,23 @@ template_random: $(target)
 ai_test:
 	$(PYTHON) $(ROOT)/tests/test_agent.py
 
-install: $(target)
+install: $(target) $(query_target)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 755 $(target) $(DESTDIR)$(BINDIR)/lona-ir
+	$(INSTALL) -m 755 $(query_target) $(DESTDIR)$(BINDIR)/lona-query
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac.sh $(DESTDIR)$(BINDIR)/lac
 	$(INSTALL) -m 755 $(ROOT)/scripts/lac-native.sh $(DESTDIR)$(BINDIR)/lac-native
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/lona-ir
+	rm -f $(DESTDIR)$(BINDIR)/lona-query
 	rm -f $(DESTDIR)$(BINDIR)/lac
 	rm -f $(DESTDIR)$(BINDIR)/lac-native
 
 $(target): $(OBJECTS)
+	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
+
+$(query_target): $(QUERY_OBJECTS)
 	$(CXX) $^ $(CXXFLAGS) $(INCLUDE_PATHS) $(LIBS) $(LD_FLAGS) -o $@
 
 $(frontend_target): $(FRONTEND_OBJECTS)
@@ -120,6 +138,7 @@ $(OUT_DIR)/%.o: %.cc | $(GENERATED_PARSER_HEADERS)
 
 ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 -include $(OBJECTS:.o=.d)
+-include $(QUERY_OBJECTS:.o=.d)
 -include $(FRONTEND_OBJECTS:.o=.d)
 -include $(SESSION_RUNNER_OBJECTS:.o=.d)
 endif
@@ -152,11 +171,15 @@ $(GENERATED_VERSION_SOURCE) $(GENERATED_VERSION_STAMP) &: $(VERSION_SOURCE_DEPS)
 	rm -f $(GENERATED_VERSION_SOURCE).tmp
 	touch $(GENERATED_VERSION_STAMP)
 
-$(GENERATED_PARSER_SOURCES) &: $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
+$(GENERATED_PARSER_STAMP): $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
 	mkdir -p $(OUT_DIR)
 	python3 scripts/multi_yacc.py
 	echo "Generating parser.cc"
 	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -Werror -rall --report-file=report.txt
+	touch $(GENERATED_PARSER_STAMP)
+
+$(GENERATED_PARSER_SOURCES): $(GENERATED_PARSER_STAMP)
+	@:
 
 gram_check:
 	mkdir -p $(OUT_DIR)

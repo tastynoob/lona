@@ -534,12 +534,16 @@ AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
 
 void
 AstStatList::push(AstNode *node) {
-    this->body.push_back(node);
+    if (node) {
+        this->body.push_back(node);
+    }
 }
 
 AstStatList::AstStatList(AstNode *node)
     : AstNode(AstKind::StatList, node ? node->loc : location()) {
-    this->body.push_back(node);
+    if (node) {
+        this->body.push_back(node);
+    }
 }
 
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,

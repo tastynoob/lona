@@ -28,4 +28,20 @@ Driver::parse() {
     return nullptr;
 }
 
+void
+Driver::reportSyntaxError(const Parser::location_type &loc,
+                          const std::string &rawMessage) {
+    DiagnosticError diagnostic(
+        DiagnosticError::Category::Syntax, loc,
+        friendlySyntaxMessage(rawMessage),
+        "Check for a missing separator, unmatched delimiter, or mistyped "
+        "keyword near here.");
+    if (!diagnostics_) {
+        throw diagnostic;
+    }
+    if (!diagnostics_->add(std::move(diagnostic))) {
+        throw DiagnosticLimitReached(diagnostics_->maxErrors());
+    }
+}
+
 }  // namespace lona

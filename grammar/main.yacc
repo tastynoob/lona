@@ -213,6 +213,10 @@ stat
     | stat_for {
         $$ = $1;
     }
+    | error NEWLINE {
+        $$ = nullptr;
+        yyerrok;
+    }
     ;
 
 stat_compound
@@ -221,6 +225,10 @@ stat_compound
     }
     | '{' '}' {
         $$ = new AstStatList();
+    }
+    | '{' error '}' {
+        $$ = new AstStatList();
+        yyerrok;
     }
     ;
 
@@ -435,6 +443,10 @@ struct_stat
     | tag_stat {
         $$ = $1;
     }
+    | error NEWLINE {
+        $$ = nullptr;
+        yyerrok;
+    }
     ;
 
 trait_decl
@@ -497,6 +509,10 @@ trait_stat
     }
     | tag_stat {
         $$ = $1;
+    }
+    | error NEWLINE {
+        $$ = nullptr;
+        yyerrok;
     }
     ;
 
@@ -641,12 +657,6 @@ expr
     : expr_binOp { $$ = $1; }
     | expr_unary { $$ = $1; }
     | postfix_expr { $$ = $1; }
-    | error {
-        throw lona::DiagnosticError(
-            lona::DiagnosticError::Category::Syntax, @$,
-            "I couldn't parse this expression.",
-            "Check for a missing operand, separator, or unmatched delimiter near here.");
-    }
     ;
 
 expr_assign
@@ -936,8 +946,5 @@ impl_self_type
 %%
 
 void lona::Parser::error(const location_type &l, const std::string &err_message) {
-    throw lona::DiagnosticError(
-        lona::DiagnosticError::Category::Syntax, l,
-        lona::friendlySyntaxMessage(err_message),
-        "Check for a missing separator, unmatched delimiter, or mistyped keyword near here.");
+    driver.reportSyntaxError(l, err_message);
 }
