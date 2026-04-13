@@ -349,6 +349,7 @@ WorkspaceLoader::parseUnit(CompilationUnit &unit) const {
     NonOwningStringStreamBuf inputBuffer(unit.source().content());
     std::istream input(&inputBuffer);
     Driver driver;
+    driver.setDiagnosticBag(diagnostics_);
     driver.input(&input, unit.source());
     auto *tree = driver.parse();
     if (tree != nullptr) {
@@ -389,14 +390,15 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
 }
 
 void
-WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
-    auto *root = workspace_.moduleGraph().root();
-    if (root == nullptr) {
+WorkspaceLoader::loadTransitiveUnitsFrom(const std::string &path,
+                                         ParseObserver observer) const {
+    auto *startUnit = workspace_.moduleGraph().find(path);
+    if (startUnit == nullptr) {
         return;
     }
 
-    std::vector<string> pending = {root->path()};
-    std::unordered_set<string> queued = {root->path()};
+    std::vector<string> pending = {startUnit->path()};
+    std::unordered_set<string> queued = {startUnit->path()};
     for (std::size_t index = 0; index < pending.size(); ++index) {
         auto &loadedUnit = workspace_.loadUnit(pending[index]);
         auto parseStart = Clock::now();
@@ -406,13 +408,18 @@ WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
             observer(loadedUnit, parseMs, 0.0);
         }
         if (tree == nullptr) {
+            if (diagnostics_ != nullptr) {
+                return;
+            }
             throw DiagnosticError(DiagnosticError::Category::Syntax,
                                   "I couldn't parse this file.");
         }
-        auto dependencyScanStart = Clock::now();
-        discoverUnitDependencies(loadedUnit);
-        auto dependencyScanMs =
-            elapsedMillis(dependencyScanStart, Clock::now());
+        auto dependencyScanMs = 0.0;
+        if (!loadedUnit.dependenciesScanned()) {
+            auto dependencyScanStart = Clock::now();
+            discoverUnitDependencies(loadedUnit);
+            dependencyScanMs = elapsedMillis(dependencyScanStart, Clock::now());
+        }
         if (observer) {
             observer(loadedUnit, 0.0, dependencyScanMs);
         }
@@ -423,6 +430,15 @@ WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
             }
         }
     }
+}
+
+void
+WorkspaceLoader::loadTransitiveUnits(ParseObserver observer) const {
+    auto *root = workspace_.moduleGraph().root();
+    if (root == nullptr) {
+        return;
+    }
+    loadTransitiveUnitsFrom(toStdString(root->path()), std::move(observer));
 }
 
 std::vector<std::string>
