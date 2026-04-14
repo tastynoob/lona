@@ -111,13 +111,10 @@ AstTag::toJson(Json &root) const {
     if (!args) {
         return;
     }
-    for (auto *arg : *args) {
-        if (!arg) {
-            continue;
-        }
+    for (const auto &arg : *args) {
         Json value = Json::object();
-        value["type"] = tokenTypeToStr(arg->type);
-        value["value"] = arg->text.tochara();
+        value["type"] = tokenTypeToStr(arg.type);
+        value["value"] = arg.text.tochara();
         root["args"].push_back(value);
     }
 }
@@ -570,7 +567,7 @@ AstDotLike::toJson(Json &root) {
     root["type"] = "DotLike";
     root["parent"] = Json::object();
     this->parent->toJson(root["parent"]);
-    root["field"] = this->field->text.tochara();
+    root["field"] = this->field.text.tochara();
 }
 
 }  // namespace lona

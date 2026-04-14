@@ -82,7 +82,7 @@ class GlobalDefinitionEmitter {
 
     llvm::Constant *emitScalarValue(HIRValue *value, const location &loc,
                                     const std::string &name) {
-        auto *object = value ? value->getValue() : nullptr;
+        auto *object = value ? value->getValue().get() : nullptr;
         auto *constant =
             object
                 ? llvm::dyn_cast_or_null<llvm::Constant>(object->get(global_))

@@ -126,13 +126,19 @@
 %type <node> tag_stat type_bracket_item
 %type <typeNode> impl_self_type impl_self_type_atom
 
+%destructor { delete $$; } <tag> <generic_param> <node> <stat_list> <var_decl> <typeNode>
+%destructor { lona::deletePointerVector($$); } <seq> <tags> <generic_param_seq> <type_seq>
+%destructor { delete $$; } <token_seq>
+
 %start pragram
 
 %%
 
 pragram
     : pragram_statlist {
-        driver.tree = $$ = new AstProgram($1);
+        auto *program = new AstProgram($1);
+        driver.tree = program;
+        $$ = nullptr;
     }
     ;
 
@@ -303,6 +309,9 @@ generic_param
         $$ = new AstGenericParam(*$1, $2);
     }
     | FIELD dot_like_name '+' opt_newlines dot_like_name {
+        (void)$2;
+        (void)$5;
+        $$ = nullptr;
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "generic v0 only supports a single trait bound per type parameter",
@@ -749,9 +758,18 @@ expr_paren
 atom_expr
     : variable { $$ = $1; }
     | CONST { $$ = new AstConst(*$1); }
-    | TRUE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "true", @$)); }
-    | FALSE { $$ = new AstConst(*new AstToken(TokenType::ConstBool, "false", @$)); }
-    | NULL_KW { $$ = new AstConst(*new AstToken(TokenType::ConstNull, "null", @$)); }
+    | TRUE {
+        AstToken token(TokenType::ConstBool, "true", @$);
+        $$ = new AstConst(token);
+    }
+    | FALSE {
+        AstToken token(TokenType::ConstBool, "false", @$);
+        $$ = new AstConst(token);
+    }
+    | NULL_KW {
+        AstToken token(TokenType::ConstNull, "null", @$);
+        $$ = new AstConst(token);
+    }
     | func_ref_expr { $$ = $1; }
     | cast_expr { $$ = $1; }
     | sizeof_expr { $$ = $1; }

@@ -51,9 +51,10 @@ class HIRValue : public HIRExpr {
 
 public:
     explicit HIRValue(ObjectPtr value, const location &loc = location())
-        : HIRExpr(value ? value->getType() : nullptr, loc), value(value) {}
+        : HIRExpr(value ? value->getType() : nullptr, loc),
+          value(std::move(value)) {}
 
-    ObjectPtr getValue() const { return value; }
+    const ObjectPtr &getValue() const { return value; }
 };
 
 class HIRTupleLiteral : public HIRExpr {
@@ -287,10 +288,13 @@ class HIRVarDef : public HIRNode {
 public:
     HIRVarDef(string name, ObjectPtr object, HIRExpr *init = nullptr,
               const location &loc = location())
-        : HIRNode(loc), name(std::move(name)), object(object), init(init) {}
+        : HIRNode(loc),
+          name(std::move(name)),
+          object(std::move(object)),
+          init(init) {}
 
     const string &getName() const { return name; }
-    ObjectPtr getObject() const { return object; }
+    const ObjectPtr &getObject() const { return object; }
     HIRExpr *getInit() const { return init; }
 };
 

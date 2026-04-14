@@ -13,7 +13,7 @@ class GenericInstanceRegistry;
 class Scope {
 protected:
     std::stack<ObjectPtr> opStack;
-    llvm::StringMap<Object *> variables;
+    llvm::StringMap<ObjectPtr> variables;
     Scope *parent = nullptr;
     TypeTable *typeTable = nullptr;
 
@@ -29,7 +29,7 @@ public:
           parent(parent),
           typeTable(parent->typeTable) {}
 
-    ~Scope();
+    virtual ~Scope() = default;
 
     virtual std::string getName() = 0;
     virtual llvm::Value *allocate(TypeClass *, bool t = false) { throw ""; };
@@ -42,8 +42,8 @@ public:
                             Function *func);
     Function *getMethodFunction(const StructType *parent,
                                 llvm::StringRef name) const;
-    void addObj(llvm::StringRef name, Object *var);
-    void addObj(const ::string &name, Object *var) {
+    void addObj(llvm::StringRef name, ObjectPtr var);
+    void addObj(const ::string &name, ObjectPtr var) {
         addObj(llvm::StringRef(name.tochara(), name.size()), var);
     }
 
@@ -92,7 +92,7 @@ class FuncScope : public Scope {
     friend class LocalScope;
 
     llvm::Instruction *alloc_point = nullptr;
-    Object *ret_val = nullptr;
+    ObjectPtr ret_val;
     llvm::BasicBlock *ret_block = nullptr;
     bool returned = false;
 
@@ -110,11 +110,12 @@ public:
           ret_block(parent->ret_block) {}
     FuncScope(GlobalScope *parent) : Scope(parent) {}
 
-    void initRetVal(Object *ret_val) {
+    void initRetVal(ObjectPtr ret_val) {
         assert(!this->ret_val);
-        this->ret_val = ret_val;
+        this->ret_val = std::move(ret_val);
     }
-    Object *retVal() { return ret_val; }
+    Object *retVal() { return ret_val.get(); }
+    const ObjectPtr &retValObject() const { return ret_val; }
 
     void initRetBlock(llvm::BasicBlock *ret_block) {
         assert(!this->ret_block);

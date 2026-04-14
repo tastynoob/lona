@@ -17,7 +17,7 @@ public:
           paramNames_(std::move(paramNames)),
           hasImplicitSelf_(hasImplicitSelf) {}
 
-    Object *call(Scope *scope, std::vector<Object *> &args);
+    ObjectPtr call(Scope *scope, const std::vector<ObjectPtr> &args);
     const std::vector<string> &paramNames() const { return paramNames_; }
     bool hasImplicitSelf() const { return hasImplicitSelf_; }
 
@@ -28,8 +28,9 @@ public:
     }
 };
 
-Object *
+ObjectPtr
 emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
-                 std::vector<Object *> &args, bool hasImplicitSelf = false);
+                 const std::vector<ObjectPtr> &args,
+                 bool hasImplicitSelf = false);
 
 }

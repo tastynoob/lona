@@ -25,12 +25,17 @@ single_type
     }
     | TYPE { $$ = new BaseTypeNode($1->text, @$); }
     | dot_like_name '<' opt_newlines type_name_seq opt_newlines '>' {
+        (void)$1;
+        (void)$4;
+        $$ = nullptr;
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "generic apply uses `[...]`, not `<>`",
             "Write `Name[T]` instead of `Name<T>` in type strings.");
     }
     | TYPE '<' opt_newlines type_name_seq opt_newlines '>' {
+        (void)$4;
+        $$ = nullptr;
         throw lona::DiagnosticError(
             lona::DiagnosticError::Category::Syntax, @$,
             "generic apply uses `[...]`, not `<>`",

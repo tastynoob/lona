@@ -2,12 +2,6 @@
 #include <llvm-18/llvm/IR/BasicBlock.h>
 
 namespace lona {
-Scope::~Scope() {
-    for (auto &it : variables) {
-        delete it.second;
-    }
-}
-
 llvm::Type *
 Scope::getLLVMType(TypeClass *type) const {
     assert(typeTable);
@@ -34,12 +28,12 @@ Scope::getMethodFunction(const StructType *parent, llvm::StringRef name) const {
 }
 
 void
-Scope::addObj(llvm::StringRef name, Object *var) {
+Scope::addObj(llvm::StringRef name, ObjectPtr var) {
     if (variables.find(name) != variables.end()) {
         throw "variable already exists";
     }
     assert(var);
-    variables[name] = var;
+    variables[name] = std::move(var);
 }
 
 bool
@@ -49,13 +43,14 @@ Scope::hasLocalObj(llvm::StringRef name) const {
 
 Object *
 Scope::getObj(llvm::StringRef name) {
-    if (variables.find(name) == variables.end()) {
+    auto found = variables.find(name);
+    if (found == variables.end()) {
         if (parent) {
             return parent->getObj(name);
         }
         return nullptr;
     }
-    return variables[name];
+    return found->second.get();
 }
 
 llvm::Value *

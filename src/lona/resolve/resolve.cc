@@ -743,8 +743,8 @@ class FunctionResolver {
             }
             case AstKind::DotLike: {
                 auto *dotLike = static_cast<const AstDotLike *>(node);
-                auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
-                                                 dotLike->field->text.size());
+                auto fieldName = llvm::StringRef(dotLike->field.text.tochara(),
+                                                 dotLike->field.text.size());
                 auto *parent = dotLike->parent;
                 if (parent && parent->kind() == AstKind::Field) {
                     auto *parentField = static_cast<const AstField *>(parent);
@@ -972,8 +972,8 @@ class FunctionResolver {
         }
         auto *callee = static_cast<const AstDotLike *>(callTarget);
         std::unordered_map<std::string, GenericCapabilityInfo> substs;
-        auto fieldName = llvm::StringRef(callee->field->text.tochara(),
-                                         callee->field->text.size());
+        auto fieldName = llvm::StringRef(callee->field.text.tochara(),
+                                         callee->field.text.size());
         auto *methodDecl = resolveVisibleMethodDecl(
             projectionOwnerTypeNode(callee->parent), fieldName, &substs);
         if (!methodDecl || !methodDecl->retType) {
@@ -1073,8 +1073,8 @@ class FunctionResolver {
                     binding && binding->valid()) {
                     return noGenericCapability();
                 }
-                auto fieldName = llvm::StringRef(dotLike->field->text.tochara(),
-                                                 dotLike->field->text.size());
+                auto fieldName = llvm::StringRef(dotLike->field.text.tochara(),
+                                                 dotLike->field.text.size());
                 auto *parent = dotLike->parent;
                 if (parent && parent->kind() == AstKind::Field) {
                     auto *parentField = static_cast<const AstField *>(parent);
@@ -1306,7 +1306,7 @@ class FunctionResolver {
         if (!traitDecl) {
             return false;
         }
-        return traitDecl->findMethod(dotLike->field->text) != nullptr;
+        return traitDecl->findMethod(dotLike->field.text) != nullptr;
     }
 
     void resolveCalledSelector(const AstDotLike *dotLike) {
@@ -1320,8 +1320,8 @@ class FunctionResolver {
             !allowsBoundGenericMethodUse(dotLike, info)) {
             errorUnconstrainedGenericMemberUse(
                 dotLike->loc, info,
-                llvm::StringRef(dotLike->field->text.tochara(),
-                                dotLike->field->text.size()));
+                llvm::StringRef(dotLike->field.text.tochara(),
+                                dotLike->field.text.size()));
         }
     }
 
@@ -1592,7 +1592,7 @@ class FunctionResolver {
                           "This looks like a compiler name-resolution bug.");
         }
 
-        auto memberName = toStdString(node->field->text);
+        auto memberName = toStdString(node->field.text);
         auto lookup = unit_->lookupTopLevelName(*moduleNamespace, memberName);
         if (auto *inlineDecl =
                 moduleNamespace->unit
@@ -1949,8 +1949,8 @@ class FunctionResolver {
                 if (info.isDirectValue()) {
                     errorUnconstrainedGenericMemberUse(
                         dotLike->loc, info,
-                        llvm::StringRef(dotLike->field->text.tochara(),
-                                        dotLike->field->text.size()));
+                        llvm::StringRef(dotLike->field.text.tochara(),
+                                        dotLike->field.text.size()));
                 }
                 return;
             }
@@ -2080,16 +2080,16 @@ class ModuleResolver {
         std::make_unique<ResolvedModule>();
 
     ResolvedFunction *createResolvedFunction(
-        const AstFuncDecl *decl, const AstNode *body, string functionName,
-        string methodParentTypeName, const location &loc, bool topLevelEntry,
-        bool languageEntry, bool guaranteedReturn,
+        const AstFuncDecl *decl, const AstNode *body, bool ownsBody,
+        string functionName, string methodParentTypeName, const location &loc,
+        bool topLevelEntry, bool languageEntry, bool guaranteedReturn,
         bool templateValidationOnly = false,
         std::vector<string> genericTypeParams = {},
         std::unordered_map<std::string, std::string> genericTypeParamBounds = {},
         const ModuleInterface *genericOwnerInterface = nullptr,
         std::unordered_map<std::string, TypeClass *> concreteGenericTypes = {}) {
         auto *resolved = module_->createFunction(
-            decl, body, std::move(functionName),
+            decl, body, ownsBody, std::move(functionName),
             std::move(methodParentTypeName), loc, topLevelEntry, languageEntry,
             guaranteedReturn, templateValidationOnly,
             std::move(genericTypeParams), std::move(genericTypeParamBounds),
@@ -2152,7 +2152,7 @@ class ModuleResolver {
         genericTypeParamBounds.insert(ownGenericTypeParamBounds.begin(),
                                       ownGenericTypeParamBounds.end());
         auto *resolved = createResolvedFunction(
-            node, node->body,
+            node, node->body, false,
             methodParent ? std::move(resolvedFunctionName)
                          : (templateValidationOnly ? string()
                                                    : std::move(resolvedFunctionName)),
@@ -2235,7 +2235,7 @@ class ModuleResolver {
                     if (moduleLookup.isModule() && moduleLookup.importedModule) {
                         auto traitLookup = unit_->lookupTopLevelName(
                             *moduleLookup.importedModule,
-                            toStdString(traitDot->field->text));
+                            toStdString(traitDot->field.text));
                         if (traitLookup.isTrait()) {
                             resolvedTraitName = traitLookup.resolvedName;
                         }
@@ -2272,7 +2272,7 @@ class ModuleResolver {
     }
 
     void resolveTopLevel(AstStatList *body) {
-        auto *execBody = new AstStatList();
+        auto *execBody = new AstStatList(false);
         bool hasImports = false;
         for (auto *stmt : body->getBody()) {
             if (!stmt) {
@@ -2307,7 +2307,8 @@ class ModuleResolver {
         }
 
         auto *resolved = createResolvedFunction(
-            nullptr, execBody, std::string(), std::string(), execBody->loc,
+            nullptr, execBody, true, std::string(), std::string(),
+            execBody->loc,
             true, rootModule_, execBody->hasTerminator());
         FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
             .resolve();
@@ -2364,7 +2365,8 @@ ResolvedModule::createLocalBinding(ResolvedLocalBinding::Kind kind,
 
 ResolvedFunction *
     ResolvedModule::createFunction(const AstFuncDecl *decl, const AstNode *body,
-                                   string functionName, string methodParentTypeName,
+                                   bool ownsBody, string functionName,
+                                   string methodParentTypeName,
                                    const location &loc, bool topLevelEntry,
                                    bool languageEntry, bool guaranteedReturn,
                                    bool templateValidationOnly,
@@ -2375,7 +2377,8 @@ ResolvedFunction *
                                    std::unordered_map<std::string, TypeClass *>
                                        concreteGenericTypes) {
     functions_.push_back(std::make_unique<ResolvedFunction>(
-        decl, body, std::move(functionName), std::move(methodParentTypeName),
+        decl, body, ownsBody, std::move(functionName),
+        std::move(methodParentTypeName),
         loc, topLevelEntry, languageEntry, guaranteedReturn,
         templateValidationOnly, std::move(genericTypeParams),
         std::move(genericTypeParamBounds),
@@ -2439,7 +2442,8 @@ resolveGenericFunctionInstance(
 
     auto module = std::make_unique<ResolvedModule>();
     auto *resolved = module->createFunction(
-        decl, decl->body, std::move(resolvedFunctionName), string(), decl->loc,
+        decl, decl->body, false, std::move(resolvedFunctionName), string(),
+        decl->loc,
         false, false, decl->body && decl->body->hasTerminator(), false,
         std::move(genericTypeParams), std::move(genericTypeParamBounds),
         genericOwnerInterface,
@@ -2478,7 +2482,7 @@ resolveGenericMethodInstance(
 
     auto module = std::make_unique<ResolvedModule>();
     auto *resolved = module->createFunction(
-        decl, decl->body, std::move(resolvedFunctionName),
+        decl, decl->body, false, std::move(resolvedFunctionName),
         std::move(methodParentTypeName), decl->loc, false, false,
         decl->body && decl->body->hasTerminator(), false,
         std::move(genericTypeParams), std::move(genericTypeParamBounds),

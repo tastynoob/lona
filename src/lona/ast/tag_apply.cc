@@ -23,6 +23,17 @@ tagName(const AstTag *tag) {
     return tag ? tokenText(&tag->name) : std::string();
 }
 
+void
+deleteTagList(std::vector<AstTag *> *tags) {
+    if (!tags) {
+        return;
+    }
+    for (auto *tag : *tags) {
+        delete tag;
+    }
+    delete tags;
+}
+
 std::string
 describeTagTarget(const AstNode *target) {
     if (auto *funcDecl = dynamic_cast<const AstFuncDecl *>(target)) {
@@ -70,17 +81,16 @@ requireStringTagArg(const AstTag *tag, std::size_t index, AstNode *target,
     if (!tag || !tag->args || index >= tag->args->size()) {
         requireTagArgCount(tag, index + 1, target, usage);
     }
-    auto *arg = (*tag->args)[index];
-    if (!arg || arg->type != TokenType::ConstStr) {
+    const auto &arg = (*tag->args)[index];
+    if (arg.type != TokenType::ConstStr) {
         throw DiagnosticError(
-            DiagnosticError::Category::Semantic,
-            arg ? arg->loc : (tag ? tag->name.loc : location()),
+            DiagnosticError::Category::Semantic, arg.loc,
             "invalid arguments for tag `" + tagName(tag) + "` on " +
                 describeTagTarget(target) + ": argument " +
                 std::to_string(index) + " must be a string literal",
             usage);
     }
-    return tokenText(arg);
+    return tokenText(&arg);
 }
 
 [[noreturn]] void
@@ -233,37 +243,47 @@ applyBuiltinTagList(AstNode *target, std::vector<AstTag *> *tags) {
 [[noreturn]] void
 errorDanglingTags(std::vector<AstTag *> *tags) {
     auto *tag = tags && !tags->empty() ? (*tags)[0] : nullptr;
+    auto loc = tag ? tag->name.loc : location();
+    auto name = tagName(tag);
+    deleteTagList(tags);
     throw DiagnosticError(
-        DiagnosticError::Category::Semantic, tag ? tag->name.loc : location(),
-        "tag `" + tagName(tag) +
+        DiagnosticError::Category::Semantic, loc,
+        "tag `" + name +
             "` must be followed by a function declaration, struct declaration, "
             "global declaration, or variable definition",
         "Move the tagged declaration directly below the tag line.");
 }
 
 [[noreturn]] void
-errorNonTopLevelTag(const AstTagNode *tagNode) {
+errorNonTopLevelTag(AstTagNode *tagNode) {
     auto *tag = tagNode && tagNode->tags && !tagNode->tags->empty()
                     ? (*tagNode->tags)[0]
                     : nullptr;
+    auto loc = tag ? tag->name.loc : (tagNode ? tagNode->loc : location());
+    auto name = tagName(tag);
+    delete tagNode;
     throw DiagnosticError(
-        DiagnosticError::Category::Semantic,
-        tag ? tag->name.loc : (tagNode ? tagNode->loc : location()),
-        "tag `" + tagName(tag) + "` is only allowed on top-level declarations",
+        DiagnosticError::Category::Semantic, loc,
+        "tag `" + name + "` is only allowed on top-level declarations",
         "Move the tagged declaration to module scope. Tags are not supported "
         "inside functions, structs, or control-flow blocks.");
 }
 
 void
-appendPendingTags(std::vector<AstTag *> *&pending, const AstTagNode *tagNode) {
-    if (!tagNode || !tagNode->tags) {
+appendPendingTags(std::vector<AstTag *> *&pending, AstTagNode *tagNode) {
+    if (!tagNode) {
+        return;
+    }
+    auto *released = tagNode->releaseTags();
+    if (!released) {
         return;
     }
     if (!pending) {
-        pending = new std::vector<AstTag *>;
+        pending = released;
+        return;
     }
-    pending->insert(pending->end(), tagNode->tags->begin(),
-                    tagNode->tags->end());
+    pending->insert(pending->end(), released->begin(), released->end());
+    delete released;
 }
 
 void
@@ -355,12 +375,19 @@ normalizeBuiltinTagsImpl(AstNode *node, bool allowTagsInList) {
                         errorNonTopLevelTag(tagNode);
                     }
                     appendPendingTags(pendingTags, tagNode);
+                    delete tagNode;
                     continue;
                 }
 
                 auto *normalizedStmt = normalizeBuiltinTagsImpl(stmt, false);
                 if (pendingTags) {
-                    applyBuiltinTagList(normalizedStmt, pendingTags);
+                    try {
+                        applyBuiltinTagList(normalizedStmt, pendingTags);
+                    } catch (...) {
+                        deleteTagList(pendingTags);
+                        throw;
+                    }
+                    deleteTagList(pendingTags);
                     pendingTags = nullptr;
                 }
                 validateBuiltinTagTarget(normalizedStmt);

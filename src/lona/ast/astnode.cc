@@ -193,6 +193,91 @@ using astnode_impl::fitsUnsigned;
 using astnode_impl::parseNumericLiteralToken;
 using astnode_impl::tokenText;
 
+namespace {
+
+template<typename T>
+void
+deleteOwnedSequence(std::vector<T *> *items) {
+    if (!items) {
+        return;
+    }
+    for (auto *item : *items) {
+        delete item;
+    }
+    delete items;
+}
+
+template<typename T>
+void
+deleteOwnedSequence(std::vector<T *> &items) {
+    for (auto *item : items) {
+        delete item;
+    }
+    items.clear();
+}
+
+template<typename T>
+void
+deleteOwnedSequence(std::list<T *> &items) {
+    for (auto *item : items) {
+        delete item;
+    }
+    items.clear();
+}
+
+}  // namespace
+
+AstTag::~AstTag() {
+    delete args;
+}
+
+AstGenericParam::~AstGenericParam() {
+    delete boundTrait;
+}
+
+BaseTypeNode::~BaseTypeNode() {
+    delete syntax;
+}
+
+AppliedTypeNode::~AppliedTypeNode() {
+    delete base;
+    deleteOwnedSequence(args);
+}
+
+DynTypeNode::~DynTypeNode() {
+    delete base;
+}
+
+ConstTypeNode::~ConstTypeNode() {
+    delete base;
+}
+
+PointerTypeNode::~PointerTypeNode() {
+    delete base;
+}
+
+IndexablePointerTypeNode::~IndexablePointerTypeNode() {
+    delete base;
+}
+
+ArrayTypeNode::~ArrayTypeNode() {
+    delete base;
+    deleteOwnedSequence(dim);
+}
+
+TupleTypeNode::~TupleTypeNode() {
+    deleteOwnedSequence(items);
+}
+
+FuncPtrTypeNode::~FuncPtrTypeNode() {
+    deleteOwnedSequence(args);
+    delete ret;
+}
+
+FuncParamTypeNode::~FuncParamTypeNode() {
+    delete type;
+}
+
 FuncPtrTypeNode *
 findFuncPtrTypeNode(TypeNode *node) {
     if (node == nullptr) {
@@ -291,6 +376,14 @@ AstProgram::AstProgram(AstNode *body)
     : AstNode(AstKind::Program, body ? body->loc : location()),
       body(body->as<AstStatList>()) {
     assert(body->is<AstStatList>());
+}
+
+AstTagNode::~AstTagNode() {
+    deleteOwnedSequence(tags);
+}
+
+AstProgram::~AstProgram() {
+    delete body;
 }
 
 AstConst::AstConst(AstToken &token) : AstNode(AstKind::Const, token.loc) {
@@ -489,6 +582,70 @@ AstConst::AstConst(AstToken &token) : AstNode(AstKind::Const, token.loc) {
     }
 }
 
+AstConst::~AstConst() {
+    if (!buf) {
+        return;
+    }
+    switch (vtype) {
+        case Type::I8:
+            if (requiresUnaryMinusForSignedMin) {
+                delete static_cast<std::uint64_t *>(buf);
+            } else {
+                delete static_cast<std::int8_t *>(buf);
+            }
+            return;
+        case Type::U8:
+            delete static_cast<std::uint8_t *>(buf);
+            return;
+        case Type::I16:
+            if (requiresUnaryMinusForSignedMin) {
+                delete static_cast<std::uint64_t *>(buf);
+            } else {
+                delete static_cast<std::int16_t *>(buf);
+            }
+            return;
+        case Type::U16:
+            delete static_cast<std::uint16_t *>(buf);
+            return;
+        case Type::I32:
+            if (requiresUnaryMinusForSignedMin) {
+                delete static_cast<std::uint64_t *>(buf);
+            } else {
+                delete static_cast<std::int32_t *>(buf);
+            }
+            return;
+        case Type::U32:
+            delete static_cast<std::uint32_t *>(buf);
+            return;
+        case Type::I64:
+            if (requiresUnaryMinusForSignedMin) {
+                delete static_cast<std::uint64_t *>(buf);
+            } else {
+                delete static_cast<std::int64_t *>(buf);
+            }
+            return;
+        case Type::U64:
+        case Type::USIZE:
+            delete static_cast<std::uint64_t *>(buf);
+            return;
+        case Type::F32:
+            delete static_cast<float *>(buf);
+            return;
+        case Type::F64:
+            delete static_cast<double *>(buf);
+            return;
+        case Type::STRING:
+        case Type::CHAR:
+            delete static_cast<string *>(buf);
+            return;
+        case Type::BOOL:
+            delete static_cast<bool *>(buf);
+            return;
+        case Type::NULLPTR:
+            return;
+    }
+}
+
 void
 AstConst::setNumericLiteral(Type type, bool explicitType, void *value,
                             bool unaryMinusOnly) {
@@ -503,11 +660,20 @@ AstField::AstField(AstToken &token)
     assert(token.type == TokenType::Field);
 }
 
+AstFuncRef::~AstFuncRef() {
+    delete value;
+}
+
 AstAssign::AstAssign(AstNode *left, AstNode *right)
     : AstNode(AstKind::Assign,
               left ? left->loc : (right ? right->loc : location())),
       left(left),
       right(right) {}
+
+AstAssign::~AstAssign() {
+    delete left;
+    delete right;
+}
 
 AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
     : AstNode(AstKind::BinOper,
@@ -516,10 +682,65 @@ AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
       op(op),
       right(right) {}
 
+AstBinOper::~AstBinOper() {
+    delete left;
+    delete right;
+}
+
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)
     : AstNode(AstKind::UnaryOper, expr ? expr->loc : location()),
       op(op),
       expr(expr) {}
+
+AstUnaryOper::~AstUnaryOper() {
+    delete expr;
+}
+
+AstRefExpr::~AstRefExpr() {
+    delete expr;
+}
+
+AstTupleLiteral::~AstTupleLiteral() {
+    deleteOwnedSequence(items);
+}
+
+AstBraceInitItem::~AstBraceInitItem() {
+    delete value;
+}
+
+AstBraceInit::~AstBraceInit() {
+    deleteOwnedSequence(items);
+}
+
+AstNamedCallArg::~AstNamedCallArg() {
+    delete value;
+}
+
+AstTypeApply::~AstTypeApply() {
+    delete value;
+    deleteOwnedSequence(typeArgs);
+}
+
+AstStructDecl::~AstStructDecl() {
+    deleteOwnedSequence(typeParams);
+    delete body;
+}
+
+AstTraitDecl::~AstTraitDecl() {
+    delete body;
+}
+
+AstTraitImplDecl::~AstTraitImplDecl() {
+    deleteOwnedSequence(typeParams);
+    delete selfType;
+    delete trait;
+    delete body;
+}
+
+AstGlobalDecl::~AstGlobalDecl() {
+    delete typeNode_;
+    delete initVal_;
+}
 
 AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
                        TypeNode *typeNode, AstNode *right,
@@ -532,6 +753,27 @@ AstVarDecl::AstVarDecl(BindingKind bindingKind, AstToken &field,
       typeNode(typeNode),
       right(right) {}
 
+AstVarDecl::~AstVarDecl() {
+    delete typeNode;
+    delete right;
+}
+
+AstVarDef::AstVarDef(AstVarDecl *vardecl, AstNode *initVal,
+                     VarStorageKind storageKind)
+    : AstNode(AstKind::VarDef, vardecl->loc),
+      bindingKind(vardecl->bindingKind),
+      storageKind(storageKind),
+      field(vardecl->field),
+      typeNode(vardecl->takeTypeNode()),
+      initVal(initVal ? initVal : vardecl->takeRight()) {
+    delete vardecl;
+}
+
+AstVarDef::~AstVarDef() {
+    delete typeNode;
+    delete initVal;
+}
+
 void
 AstStatList::push(AstNode *node) {
     if (node) {
@@ -539,10 +781,19 @@ AstStatList::push(AstNode *node) {
     }
 }
 
-AstStatList::AstStatList(AstNode *node)
-    : AstNode(AstKind::StatList, node ? node->loc : location()) {
+AstStatList::AstStatList(AstNode *node, bool ownsElements)
+    : AstNode(AstKind::StatList, node ? node->loc : location()),
+      ownsElements(ownsElements) {
     if (node) {
         this->body.push_back(node);
+    }
+}
+
+AstStatList::~AstStatList() {
+    if (ownsElements) {
+        deleteOwnedSequence(body);
+    } else {
+        body.clear();
     }
 }
 
@@ -559,8 +810,19 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
       abiKind(abiKind),
       receiverAccess(receiverAccess) {}
 
+AstFuncDecl::~AstFuncDecl() {
+    deleteOwnedSequence(typeParams);
+    deleteOwnedSequence(args);
+    delete body;
+    delete retType;
+}
+
 AstRet::AstRet(const location &loc, AstNode *expr)
     : AstNode(AstKind::Ret, loc), expr(expr) {}
+
+AstRet::~AstRet() {
+    delete expr;
+}
 
 AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
     : AstNode(AstKind::If, condition ? condition->loc : location()),
@@ -568,16 +830,47 @@ AstIf::AstIf(AstNode *condition, AstNode *then, AstNode *els)
       then(then),
       els(els) {}
 
+AstIf::~AstIf() {
+    delete condition;
+    delete then;
+    delete els;
+}
+
 AstFor::AstFor(AstNode *expr, AstNode *body, AstNode *els)
     : AstNode(AstKind::For, expr ? expr->loc : location()),
       expr(expr),
       body(body),
       els(els) {}
 
+AstFor::~AstFor() {
+    delete expr;
+    delete body;
+    delete els;
+}
+
+AstCastExpr::~AstCastExpr() {
+    delete targetType;
+    delete value;
+}
+
+AstSizeofExpr::~AstSizeofExpr() {
+    delete targetType;
+    delete value;
+}
+
 AstFieldCall::AstFieldCall(AstNode *value, std::vector<AstNode *> *args)
     : AstNode(AstKind::FieldCall, value ? value->loc : location()),
       value(value),
       args(args) {}
+
+AstFieldCall::~AstFieldCall() {
+    delete value;
+    deleteOwnedSequence(args);
+}
+
+AstDotLike::~AstDotLike() {
+    delete parent;
+}
 
 std::string
 describeDotLikeSyntax(const AstNode *node, std::string_view nullDescription) {
@@ -589,7 +882,7 @@ describeDotLikeSyntax(const AstNode *node, std::string_view nullDescription) {
     }
     if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
         auto parent = describeDotLikeSyntax(dotLike->parent, nullDescription);
-        auto fieldName = tokenText(*dotLike->field);
+        auto fieldName = tokenText(dotLike->field);
         if (parent.empty()) {
             return fieldName;
         }
@@ -612,7 +905,7 @@ collectDotLikeSegments(const AstNode *node,
         if (!collectDotLikeSegments(dotLike->parent, segments)) {
             return false;
         }
-        segments.push_back(tokenText(*dotLike->field));
+        segments.push_back(tokenText(dotLike->field));
         return true;
     }
     return false;

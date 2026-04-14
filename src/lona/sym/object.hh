@@ -8,8 +8,10 @@
 #include <llvm-18/llvm/IR/Type.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
+#include <cstdint>
 #include <string>
 #include <sys/types.h>
+#include <utility>
 
 namespace lona {
 
@@ -25,6 +27,7 @@ protected:
     TypeClass *type;
     llvm::Value *val = nullptr;
     uint32_t specifiers;
+    std::uint32_t refCount_ = 0;
 
 public:
     enum Specifier : uint32_t {
@@ -40,6 +43,17 @@ public:
 
     Object(llvm::Value *val, TypeClass *type, uint32_t specifiers = EMPTY)
         : val(val), type(type), specifiers(specifiers) {}
+
+    virtual ~Object() = default;
+
+    void retain() { ++refCount_; }
+    void release() {
+        assert(refCount_ > 0);
+        if (--refCount_ == 0) {
+            delete this;
+        }
+    }
+    std::uint32_t refCount() const { return refCount_; }
 
     template<class T>
     T *as() {
@@ -72,7 +86,80 @@ public:
     virtual void set(Scope *scope, Object *src);
 };
 
-using ObjectPtr = Object *;
+class ObjectPtr {
+    Object *ptr_ = nullptr;
+
+    void retain() const {
+        if (ptr_) {
+            ptr_->retain();
+        }
+    }
+
+    void release() const {
+        if (ptr_) {
+            ptr_->release();
+        }
+    }
+
+public:
+    ObjectPtr() = default;
+    ObjectPtr(std::nullptr_t) {}
+    ObjectPtr(Object *ptr) : ptr_(ptr) { retain(); }
+
+    ObjectPtr(const ObjectPtr &other) : ptr_(other.ptr_) { retain(); }
+
+    ObjectPtr(ObjectPtr &&other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+
+    ~ObjectPtr() { release(); }
+
+    ObjectPtr &operator=(std::nullptr_t) {
+        reset();
+        return *this;
+    }
+
+    ObjectPtr &operator=(const ObjectPtr &other) {
+        if (this == &other) {
+            return *this;
+        }
+        if (other.ptr_) {
+            other.ptr_->retain();
+        }
+        release();
+        ptr_ = other.ptr_;
+        return *this;
+    }
+
+    ObjectPtr &operator=(ObjectPtr &&other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        release();
+        ptr_ = other.ptr_;
+        other.ptr_ = nullptr;
+        return *this;
+    }
+
+    void reset(Object *ptr = nullptr) {
+        if (ptr) {
+            ptr->retain();
+        }
+        release();
+        ptr_ = ptr;
+    }
+
+    Object *get() const { return ptr_; }
+    Object &operator*() const {
+        assert(ptr_);
+        return *ptr_;
+    }
+    Object *operator->() const {
+        assert(ptr_);
+        return ptr_;
+    }
+    explicit operator bool() const { return ptr_ != nullptr; }
+};
 
 // i32, i64 ...
 class BaseVar : public Object {
@@ -100,7 +187,8 @@ class PointerVar : public Object {
 
 public:
     PointerVar(ObjectPtr obj)
-        : Object(obj->getType(), obj->getSpecifiers()), pointee(obj) {}
+        : Object(obj->getType(), obj->getSpecifiers()), pointee(std::move(obj)) {
+    }
     void set(Scope *scope, Object *src) override { assert(false); }
     llvm::Value *get(Scope *scope) override { return val; }
 };
@@ -110,7 +198,7 @@ public:
     TupleVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
 
-    Object *getField(Scope *scope, const ::string &name);
+    ObjectPtr getField(Scope *scope, const ::string &name);
 };
 
 class StructVar : public Object {
@@ -118,7 +206,7 @@ public:
     StructVar(TypeClass *type, uint32_t specifiers = EMPTY)
         : Object(type, specifiers) {}
 
-    Object *getField(Scope *scope, const ::string &name);
+    ObjectPtr getField(Scope *scope, const ::string &name);
 
     void set(Scope *scope, Object *src) override;
 };

@@ -95,6 +95,7 @@ private:
 
 public:
     explicit CompilationUnit(const SourceBuffer &source);
+    ~CompilationUnit();
 
     const string &path() const { return path_; }
     const string &moduleKey() const { return moduleKey_; }

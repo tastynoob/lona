@@ -2272,10 +2272,10 @@ materializeDeclaredGlobal(Scope &scope, TypeTable *typeMgr, TypeClass *type,
         reportGlobalConflict(unit, llvmName, nullptr, type);
     }
 
-    auto *obj = type->newObj(Object::VARIABLE);
+    auto obj = type->newObj(Object::VARIABLE);
     obj->setllvmValue(llvmGlobal);
     scope.addObj(llvmName, obj);
-    return obj;
+    return obj.get();
 }
 
 void

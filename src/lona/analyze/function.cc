@@ -460,7 +460,8 @@ class FunctionAnalyzer {
 
     ConstVar *constScalarValue(HIRExpr *expr) const {
         auto *value = dynamic_cast<HIRValue *>(expr);
-        return value ? dynamic_cast<ConstVar *>(value->getValue()) : nullptr;
+        return value ? dynamic_cast<ConstVar *>(value->getValue().get())
+                     : nullptr;
     }
 
     HIRExpr *makeInlineConstExpr(TypeClass *type, std::any value,
@@ -1274,7 +1275,7 @@ class FunctionAnalyzer {
 
     Function *requireGlobalFunction(const ::string &name, const location &loc,
                                     const std::string &context) {
-        auto *obj = requireGlobalObject(name, loc, context);
+        auto obj = requireGlobalObject(name, loc, context);
         auto *func = obj->as<Function>();
         if (!func) {
             internalError(
@@ -2888,7 +2889,7 @@ class FunctionAnalyzer {
             return EntityRef::invalid();
         }
         if (auto *valueExpr = dynamic_cast<HIRValue *>(expr)) {
-            auto *value = valueExpr->getValue();
+            auto *value = valueExpr->getValue().get();
             if (!value) {
                 return EntityRef::invalid();
             }
@@ -3800,8 +3801,8 @@ class FunctionAnalyzer {
                     binding->ownerUnit() ? binding->ownerUnit() : unit, loc,
                     toStringRef(binding->resolvedName()));
             case ResolvedEntityRef::Kind::GlobalValue: {
-                auto *obj = requireGlobalObject(binding->resolvedName(), loc,
-                                                "global identifier");
+                auto obj = requireGlobalObject(binding->resolvedName(), loc,
+                                               "global identifier");
                 return makeHIR<HIRValue>(obj, loc);
             }
             case ResolvedEntityRef::Kind::GenericFunction:
@@ -3829,7 +3830,8 @@ class FunctionAnalyzer {
         auto resolution = classifyEntity(callee).applyCall(std::move(callArgs));
 
         if (auto *calleeValue = dynamic_cast<HIRValue *>(callee)) {
-            if (auto *typeObject = calleeValue->getValue()->as<TypeObject>()) {
+            if (auto *typeObject =
+                    calleeValue->getValue()->as<TypeObject>()) {
                 auto *declaredType = typeObject->declaredType();
                 auto *structType = asUnqualified<StructType>(declaredType);
                 if (structType) {
@@ -4685,7 +4687,7 @@ class FunctionAnalyzer {
             return false;
         }
         if (auto *value = dynamic_cast<HIRValue *>(expr)) {
-            auto *object = value->getValue();
+            auto *object = value->getValue().get();
             return object && object->isVariable() && !object->isRegVal();
         }
         if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
@@ -4839,7 +4841,7 @@ class FunctionAnalyzer {
                 auto *itemType = item ? item->getType() : nullptr;
                 if (!itemType) {
                     auto *value = dynamic_cast<HIRValue *>(item);
-                    auto *object = value ? value->getValue() : nullptr;
+                    auto *object = value ? value->getValue().get() : nullptr;
                     if (object && object->as<TypeObject>()) {
                         error(node->items->at(i)->loc,
                               "type names can't be stored as tuple elements",
@@ -5872,7 +5874,7 @@ class FunctionAnalyzer {
 
         auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
         auto *receiver = requireExpr(calleeSyntax->parent);
-        auto methodName = toStdString(calleeSyntax->field->text);
+        auto methodName = toStdString(calleeSyntax->field.text);
         auto receiverAttempt = lookupMemberWithImplicitDeref(
             receiver, methodName, calleeSyntax->loc,
             !isExplicitDerefSyntax(calleeSyntax->parent));
@@ -6114,7 +6116,7 @@ class FunctionAnalyzer {
             traitBinding, calleeSyntax ? calleeSyntax->loc : node->loc,
             calleeSyntax ? calleeSyntax->parent : nullptr);
         const auto fieldName = toStdString(
-            calleeSyntax ? calleeSyntax->field->text : string());
+            calleeSyntax ? calleeSyntax->field.text : string());
         const auto *traitMethod =
             traitDecl->findMethod(fieldName);
         if (!traitMethod) {
@@ -6231,12 +6233,12 @@ class FunctionAnalyzer {
         }
 
         auto *traitDecl =
-            findVisibleReceiverTraitDecl(toStringRef(traitSelector->field->text));
+            findVisibleReceiverTraitDecl(toStringRef(traitSelector->field.text));
         if (!traitDecl) {
             return nullptr;
         }
 
-        auto fieldName = toStdString(calleeSyntax->field->text);
+        auto fieldName = toStdString(calleeSyntax->field.text);
         const auto *traitMethod =
             findTraitMethodDecl(*traitDecl, toStringRef(fieldName));
         if (!traitMethod) {
@@ -6251,7 +6253,7 @@ class FunctionAnalyzer {
 
         auto *receiverExpr = requireExpr(traitSelector->parent);
         auto receiverAttempt = lookupMemberWithImplicitDeref(
-            receiverExpr, toStdString(traitSelector->field->text),
+            receiverExpr, toStdString(traitSelector->field.text),
             traitSelector->loc, !isExplicitDerefSyntax(traitSelector->parent));
         if (receiverAttempt.lookup.result.kind != LookupResultKind::NotFound) {
             return nullptr;
@@ -6323,7 +6325,7 @@ class FunctionAnalyzer {
 
         auto *traitDecl = requireVisibleDynTraitDecl(
             receiver->getType(), calleeSyntax->loc, "trait object call");
-        const auto methodName = toStdString(calleeSyntax->field->text);
+        const auto methodName = toStdString(calleeSyntax->field.text);
         std::size_t slotIndex = 0;
         const auto *traitMethod =
             findTraitMethodDecl(*traitDecl, toStringRef(methodName), &slotIndex);
@@ -6442,7 +6444,7 @@ class FunctionAnalyzer {
                         "This looks like a generic instantiation bug.");
                 }
                 auto *pointerType = typeMgr->createPointerType(funcType);
-                auto *value =
+                auto value =
                     pointerType->newObj(Object::REG_VAL | Object::READONLY);
                 value->bindllvmValue(func->getllvmValue());
                 return makeHIR<HIRValue>(value, node->loc);
@@ -6463,7 +6465,7 @@ class FunctionAnalyzer {
         }
 
         auto *pointerType = typeMgr->createPointerType(funcType);
-        auto *value = pointerType->newObj(Object::REG_VAL | Object::READONLY);
+        auto value = pointerType->newObj(Object::REG_VAL | Object::READONLY);
         value->bindllvmValue(func->getllvmValue());
         return makeHIR<HIRValue>(value, node->loc);
     }
@@ -6725,7 +6727,7 @@ class FunctionAnalyzer {
                           "null`.");
                 }
                 auto *value = dynamic_cast<HIRValue *>(init);
-                auto *object = value ? value->getValue() : nullptr;
+                auto *object = value ? value->getValue().get() : nullptr;
                 if (object && object->as<TypeObject>()) {
                     error(node->loc,
                           "type names can't be stored as runtime values",
@@ -6769,7 +6771,7 @@ class FunctionAnalyzer {
             type = typeMgr->createConstType(type);
         }
 
-        auto *obj =
+        auto obj =
             type->newObj(Object::VARIABLE |
                          (isRefBinding ? Object::REF_ALIAS : Object::EMPTY));
         bindObject(binding, obj);
@@ -6842,7 +6844,7 @@ class FunctionAnalyzer {
                   "trait-qualified member selectors can only be used as "
                   "direct call callees",
                   "Write `" + toStdString(traitBinding->resolvedName()) +
-                      "." + toStdString(node->field->text) +
+                      "." + toStdString(node->field.text) +
                       "(&value, ...)`.");
         }
         if (auto *resolvedDotLike = analyzeResolvedDotLike(node)) {
@@ -6853,7 +6855,7 @@ class FunctionAnalyzer {
         if (auto *dynTraitType = asUnqualified<DynTraitType>(parent->getType())) {
             auto *traitDecl = requireVisibleDynTraitDecl(
                 dynTraitType, node->loc, "trait object member lookup");
-            auto fieldName = toStdString(node->field->text);
+            auto fieldName = toStdString(node->field.text);
             if (traitDecl->findMethod(fieldName)) {
                 error(node->loc,
                       "trait-object method selectors can only be used as "
@@ -6868,7 +6870,7 @@ class FunctionAnalyzer {
                   "Check the trait method name, or update the trait "
                   "declaration.");
         }
-        auto fieldName = toStdString(node->field->text);
+        auto fieldName = toStdString(node->field.text);
         auto attempt = lookupMemberWithImplicitDeref(
             parent, fieldName, node->loc, !isExplicitDerefSyntax(node->parent));
         if (auto *expr = materializeMemberExpr(attempt.parent, fieldName,
@@ -6999,7 +7001,7 @@ class FunctionAnalyzer {
                     return analyzeTraitObjectCall(node, dotLikeNode,
                                                   traitObjectReceiver);
                 }
-                auto fieldName = toStdString(dotLikeNode->field->text);
+                auto fieldName = toStdString(dotLikeNode->field.text);
                 auto attempt = lookupMemberWithImplicitDeref(
                     receiver, fieldName, node->loc,
                     !isExplicitDerefSyntax(dotLikeNode->parent));
@@ -7098,7 +7100,7 @@ private:
                     : static_cast<TypeClass *>(
                           typeMgr->createConstType(methodParent));
             auto *selfType = typeMgr->createPointerType(receiverPointee);
-            auto *selfObj = selfType->newObj(Object::VARIABLE);
+            auto selfObj = selfType->newObj(Object::VARIABLE);
             bindObject(resolved.selfBinding(), selfObj);
             hirFunc->setSelfBinding(HIRBinding{
                 resolved.selfBinding()->name(),
@@ -7123,7 +7125,7 @@ private:
                 decl->typeNode ? decl->typeNode->loc : paramBinding->loc(),
                 "unknown function argument type for `" +
                     toStdString(paramBinding->name()) + "`");
-            auto *argObj =
+            auto argObj =
                 type->newObj(Object::VARIABLE |
                              (paramBinding->isRefBinding() ? Object::REF_ALIAS
                                                            : Object::EMPTY));

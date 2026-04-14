@@ -335,8 +335,8 @@ class FunctionCompiler {
             llvm::Twine(symbolName));
     }
 
-    Object *materializeLocal(TypeClass *type, Object *initVal) {
-        auto *obj = type->newObj(Object::VARIABLE);
+    ObjectPtr materializeLocal(TypeClass *type, Object *initVal) {
+        auto obj = type->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
         if (initVal != nullptr) {
             obj->set(scope, initVal);
@@ -344,8 +344,8 @@ class FunctionCompiler {
         return obj;
     }
 
-    Object *emitTraitObjectCast(HIRTraitObjectCast *cast) {
-        auto *source = compileExpr(cast->getSource());
+    ObjectPtr emitTraitObjectCast(HIRTraitObjectCast *cast) {
+        auto source = compileExpr(cast->getSource());
         if (!source) {
             error("trait object cast requires a source value");
         }
@@ -383,8 +383,8 @@ class FunctionCompiler {
         return makeReadonlyValue(cast->getType(), aggregate);
     }
 
-    Object *emitTraitObjectCall(HIRTraitObjectCall *call) {
-        auto *receiver = compileExpr(call->getReceiver());
+    ObjectPtr emitTraitObjectCall(HIRTraitObjectCall *call) {
+        auto receiver = compileExpr(call->getReceiver());
         if (!receiver) {
             error("trait object call requires a receiver value");
         }
@@ -422,12 +422,12 @@ class FunctionCompiler {
         auto *slotValue =
             scope->builder.CreateLoad(ptrType, slotPtr, "trait.slot");
 
-        std::vector<Object *> args;
+        std::vector<ObjectPtr> args;
         args.reserve(1 + call->getArgs().size());
         args.push_back(
             makeReadonlyValue(slotFuncType->getArgTypes().front(), dataPtr));
         for (auto *argExpr : call->getArgs()) {
-            auto *arg = compileExpr(argExpr);
+            auto arg = compileExpr(argExpr);
             if (!arg) {
                 error("trait object call argument did not produce a value");
             }
@@ -436,7 +436,7 @@ class FunctionCompiler {
         return emitFunctionCall(scope, slotValue, slotFuncType, args, true);
     }
 
-    Object *materializeBinding(Object *obj, Object *initVal = nullptr) {
+    ObjectPtr materializeBinding(const ObjectPtr &obj, Object *initVal = nullptr) {
         if (!obj) {
             error("missing binding object");
         }
@@ -462,25 +462,25 @@ class FunctionCompiler {
         return obj;
     }
 
-    Object *materializeIndirectValueBinding(Object *obj,
-                                            llvm::Value *incomingPtr) {
+    ObjectPtr materializeIndirectValueBinding(const ObjectPtr &obj,
+                                              llvm::Value *incomingPtr) {
         if (!obj || !incomingPtr) {
             error("indirect value binding requires an incoming pointer");
         }
-        auto *bound = materializeBinding(obj);
+        auto bound = materializeBinding(obj);
         auto *value = scope->builder.CreateLoad(
             scope->getLLVMType(obj->getType()), incomingPtr);
         scope->builder.CreateStore(value, bound->getllvmValue());
         return bound;
     }
 
-    Object *materializeDirectValueBinding(Object *obj,
-                                          llvm::Value *incomingValue,
-                                          bool packedRegisterAggregate) {
+    ObjectPtr materializeDirectValueBinding(const ObjectPtr &obj,
+                                            llvm::Value *incomingValue,
+                                            bool packedRegisterAggregate) {
         if (!obj || !incomingValue) {
             error("direct value binding requires an incoming value");
         }
-        auto *bound = materializeBinding(obj);
+        auto bound = materializeBinding(obj);
         if (packedRegisterAggregate) {
             storeNativeAbiDirectValue(scope->builder, *typeMgr, obj->getType(),
                                       incomingValue, bound->getllvmValue());
@@ -550,7 +550,7 @@ class FunctionCompiler {
         return loopStack.back();
     }
 
-    Object *compileExpr(HIRExpr *expr) {
+    ObjectPtr compileExpr(HIRExpr *expr) {
         if (!expr) {
             return nullptr;
         }
@@ -570,7 +570,7 @@ class FunctionCompiler {
                 error("tuple literal item count mismatch during lowering");
             }
             for (size_t i = 0; i < tuple->getItems().size(); ++i) {
-                auto *item = compileExpr(tuple->getItems()[i]);
+                auto item = compileExpr(tuple->getItems()[i]);
                 if (!item) {
                     error("tuple literal item did not produce a value");
                 }
@@ -581,7 +581,7 @@ class FunctionCompiler {
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, itemValue, {static_cast<unsigned>(i)});
             }
-            auto *result =
+            auto result =
                 tupleType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
@@ -614,7 +614,7 @@ class FunctionCompiler {
 
             llvm::Value *aggregate = llvm::UndefValue::get(llvmStructType);
             for (size_t i = 0; i < structLiteral->getFields().size(); ++i) {
-                auto *field = compileExpr(structLiteral->getFields()[i]);
+                auto field = compileExpr(structLiteral->getFields()[i]);
                 if (!field) {
                     error("struct literal field did not produce a value");
                 }
@@ -625,7 +625,7 @@ class FunctionCompiler {
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, field->get(scope), {static_cast<unsigned>(i)});
             }
-            auto *result =
+            auto result =
                 structType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
@@ -643,7 +643,7 @@ class FunctionCompiler {
             llvm::Value *aggregate =
                 llvm::Constant::getNullValue(scope->getLLVMType(arrayType));
             for (std::size_t i = 0; i < arrayInit->getItems().size(); ++i) {
-                auto *item = compileExpr(arrayInit->getItems()[i]);
+                auto item = compileExpr(arrayInit->getItems()[i]);
                 if (!item) {
                     error("array initializer item did not produce a value");
                 }
@@ -654,7 +654,7 @@ class FunctionCompiler {
                 aggregate = scope->builder.CreateInsertValue(
                     aggregate, item->get(scope), {static_cast<unsigned>(i)});
             }
-            auto *result =
+            auto result =
                 arrayType->newObj(Object::REG_VAL | Object::READONLY);
             result->bindllvmValue(aggregate);
             return result;
@@ -694,12 +694,12 @@ class FunctionCompiler {
         }
         if (auto *assign = dynamic_cast<HIRAssign *>(expr)) {
             setLocation(assign);
-            auto *dst = compileExpr(assign->getLeft());
-            auto *src = compileExpr(assign->getRight());
+            auto dst = compileExpr(assign->getLeft());
+            auto src = compileExpr(assign->getRight());
             if (!dst || !src) {
                 error("assignment requires values");
             }
-            dst->set(scope, src);
+            dst->set(scope, src.get());
             return dst;
         }
         if (auto *bin = dynamic_cast<HIRBinOper *>(expr)) {
@@ -707,18 +707,19 @@ class FunctionCompiler {
             if (bin->getBinding().shortCircuit) {
                 return emitShortCircuitBinary(bin);
             }
-            auto *left = compileExpr(bin->getLeft());
-            auto *right = compileExpr(bin->getRight());
-            return emitBinaryOperator(bin->getBinding(), left, right);
+            auto left = compileExpr(bin->getLeft());
+            auto right = compileExpr(bin->getRight());
+            return emitBinaryOperator(bin->getBinding(), left.get(),
+                                      right.get());
         }
         if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
             setLocation(unary);
-            auto *value = compileExpr(unary->getExpr());
-            return emitUnaryOperator(unary->getBinding(), value);
+            auto value = compileExpr(unary->getExpr());
+            return emitUnaryOperator(unary->getBinding(), value.get());
         }
         if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
             setLocation(selector);
-            auto *parent = compileExpr(selector->getParent());
+            auto parent = compileExpr(selector->getParent());
             auto fieldName = selector->getFieldName();
             if (auto *tupleParent = parent->as<TupleVar>()) {
                 if (!selector->isValueFieldSelector()) {
@@ -736,15 +737,16 @@ class FunctionCompiler {
         }
         if (auto *call = dynamic_cast<HIRCall *>(expr)) {
             setLocation(call);
-            std::vector<Object *> args;
+            std::vector<ObjectPtr> args;
             llvm::Value *calleeValue = nullptr;
             FuncType *funcType = nullptr;
             bool hasImplicitSelf = false;
 
             if (auto *selector = dynamic_cast<HIRSelector *>(call->getCallee());
                 selector && selector->isMethodSelector()) {
-                auto *parent = compileExpr(selector->getParent());
-                auto *structType = asUnqualified<StructType>(parent->getType());
+                auto parent = compileExpr(selector->getParent());
+                Object *parentObj = parent.get();
+                auto *structType = asUnqualified<StructType>(parentObj->getType());
                 if (!structType) {
                     error("selector call parent must be a struct value");
                 }
@@ -778,9 +780,12 @@ class FunctionCompiler {
                 if (!calleeValue || !funcType) {
                     error("unknown struct method");
                 }
-                if (!parent->isVariable() || parent->isRegVal() ||
-                    !parent->getllvmValue()) {
-                    parent = materializeLocal(parent->getType(), parent);
+                ObjectPtr materializedParent;
+                if (!parentObj->isVariable() || parentObj->isRegVal() ||
+                    !parentObj->getllvmValue()) {
+                    materializedParent =
+                        materializeLocal(parentObj->getType(), parentObj);
+                    parentObj = materializedParent.get();
                 }
                 auto *selfType = funcType && !funcType->getArgTypes().empty()
                                      ? funcType->getArgTypes().front()
@@ -788,11 +793,11 @@ class FunctionCompiler {
                 auto *selfPointeeType = getRawPointerPointeeType(selfType);
                 if (!selfType || !selfPointeeType ||
                     !isConstQualificationConvertible(selfPointeeType,
-                                                     parent->getType())) {
+                                                     parentObj->getType())) {
                     error("method lowering expected an implicit self pointer");
                 }
                 args.push_back(
-                    makeReadonlyValue(selfType, parent->getllvmValue()));
+                    makeReadonlyValue(selfType, parentObj->getllvmValue()));
                 hasImplicitSelf = true;
             } else if (auto *callee =
                            getDirectFunctionCallee(call->getCallee())) {
@@ -800,7 +805,7 @@ class FunctionCompiler {
                 calleeValue = callee->getllvmValue();
                 hasImplicitSelf = callee->hasImplicitSelf();
             } else {
-                auto *calleeObj = compileExpr(call->getCallee());
+                auto calleeObj = compileExpr(call->getCallee());
                 if (!calleeObj) {
                     error("call target did not produce a value");
                 }
@@ -815,7 +820,7 @@ class FunctionCompiler {
 
             args.reserve(args.size() + call->getArgs().size());
             for (auto *arg : call->getArgs()) {
-                auto *value = compileExpr(arg);
+                auto value = compileExpr(arg);
                 if (!value) {
                     error("call argument did not produce a value");
                 }
@@ -830,7 +835,7 @@ class FunctionCompiler {
         }
         if (auto *index = dynamic_cast<HIRIndex *>(expr)) {
             setLocation(index);
-            auto *target = compileExpr(index->getTarget());
+            auto target = compileExpr(index->getTarget());
             if (!target) {
                 error("array indexing target did not produce a value");
             }
@@ -871,7 +876,7 @@ class FunctionCompiler {
                     scope->getLLVMType(indexableType->getElementType());
             }
             for (auto *argExpr : index->getIndices()) {
-                auto *arg = compileExpr(argExpr);
+                auto arg = compileExpr(argExpr);
                 if (!arg || arg->getType() != i32Ty) {
                     error("array indexing expects `i32` indices");
                 }
@@ -884,14 +889,14 @@ class FunctionCompiler {
             }
             auto *elementPtr = scope->builder.CreateInBoundsGEP(
                 gepSourceType, targetPtr, gepIndices);
-            auto *result = resultType->newObj(Object::VARIABLE);
+            auto result = resultType->newObj(Object::VARIABLE);
             result->setllvmValue(elementPtr);
             return result;
         }
         error("unsupported HIR expression");
     }
 
-    Object *compileNode(HIRNode *node) {
+    ObjectPtr compileNode(HIRNode *node) {
         if (!node) {
             return nullptr;
         }
@@ -900,13 +905,13 @@ class FunctionCompiler {
         }
         if (auto *varDef = dynamic_cast<HIRVarDef *>(node)) {
             setLocation(varDef);
-            Object *initVal = nullptr;
+            ObjectPtr initVal;
             if (varDef->getInit()) {
                 initVal = compileExpr(varDef->getInit());
             }
-            auto *obj = materializeBinding(varDef->getObject(), initVal);
+            auto obj = materializeBinding(varDef->getObject(), initVal.get());
             scope->addObj(varDef->getName(), obj);
-            emitDebugDeclare(debug, funcScope, debugSubprogram, obj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, obj.get(),
                              toStringRef(varDef->getName()), obj->getType(),
                              varDef->getLocation());
             return obj;
@@ -915,12 +920,12 @@ class FunctionCompiler {
             setLocation(ret);
             auto *retSlot = funcScope->retVal();
             if (ret->getExpr()) {
-                auto *value = compileExpr(ret->getExpr());
+                auto value = compileExpr(ret->getExpr());
                 if (!retSlot) {
                     error(ret->getLocation(),
                           "unexpected return value in void function");
                 }
-                retSlot->set(scope, value);
+                retSlot->set(scope, value.get());
             } else if (retSlot) {
                 error(ret->getLocation(), "missing return value");
             }
@@ -933,7 +938,7 @@ class FunctionCompiler {
                 scope->builder.CreateRetVoid();
             }
             funcScope->setReturned();
-            return retSlot;
+            return funcScope->retValObject();
         }
         if (auto *breakNode = dynamic_cast<HIRBreak *>(node)) {
             setLocation(breakNode);
@@ -947,7 +952,7 @@ class FunctionCompiler {
         }
         if (auto *ifNode = dynamic_cast<HIRIf *>(node)) {
             setLocation(ifNode);
-            auto *condObj = compileExpr(ifNode->getCondition());
+            auto condObj = compileExpr(ifNode->getCondition());
             auto *llvmFunc = scope->builder.GetInsertBlock()->getParent();
 
             auto *thenBB =
@@ -957,7 +962,8 @@ class FunctionCompiler {
                                ? llvm::BasicBlock::Create(context, "if.else")
                                : mergeBB;
 
-            scope->builder.CreateCondBr(emitBoolCast(condObj), thenBB, elseBB);
+            scope->builder.CreateCondBr(emitBoolCast(condObj.get()), thenBB,
+                                        elseBB);
 
             scope->builder.SetInsertPoint(thenBB);
             compileBlock(ifNode->getThenBlock());
@@ -992,8 +998,9 @@ class FunctionCompiler {
             scope->builder.CreateBr(condBB);
 
             scope->builder.SetInsertPoint(condBB);
-            auto *condObj = compileExpr(forNode->getCondition());
-            scope->builder.CreateCondBr(emitBoolCast(condObj), bodyBB, elseBB);
+            auto condObj = compileExpr(forNode->getCondition());
+            scope->builder.CreateCondBr(emitBoolCast(condObj.get()), bodyBB,
+                                        elseBB);
 
             llvmFunc->insert(llvmFunc->end(), bodyBB);
             scope->builder.SetInsertPoint(bodyBB);
@@ -1023,8 +1030,8 @@ class FunctionCompiler {
         error("unsupported HIR node");
     }
 
-    Object *compileBlock(HIRBlock *block, bool introduceScope = true) {
-        Object *last = nullptr;
+    ObjectPtr compileBlock(HIRBlock *block, bool introduceScope = true) {
+        ObjectPtr last;
         if (!block) {
             return last;
         }
@@ -1077,7 +1084,7 @@ class FunctionCompiler {
         error("unsupported condition type");
     }
 
-    Object *makeReadonlyValue(TypeClass *type, llvm::Value *value) {
+    ObjectPtr makeReadonlyValue(TypeClass *type, llvm::Value *value) {
         if (isBoolStorageType(type) && value) {
             auto *boolLLVMType = scope->getLLVMType(boolTy);
             if (value->getType() != boolLLVMType) {
@@ -1092,13 +1099,13 @@ class FunctionCompiler {
                 }
             }
         }
-        auto *obj = type->newObj(Object::REG_VAL | Object::READONLY);
+        auto obj = type->newObj(Object::REG_VAL | Object::READONLY);
         obj->bindllvmValue(value);
         return obj;
     }
 
-    Object *emitNumericCast(HIRNumericCast *cast) {
-        auto *source = compileExpr(cast->getExpr());
+    ObjectPtr emitNumericCast(HIRNumericCast *cast) {
+        auto source = compileExpr(cast->getExpr());
         if (!source || !source->getType() || !cast->getType()) {
             error("numeric cast requires concrete source and target types");
         }
@@ -1161,8 +1168,8 @@ class FunctionCompiler {
         return makeReadonlyValue(targetType, result);
     }
 
-    Object *emitBitCopyCast(HIRBitCast *cast) {
-        auto *source = compileExpr(cast->getExpr());
+    ObjectPtr emitBitCopyCast(HIRBitCast *cast) {
+        auto source = compileExpr(cast->getExpr());
         if (!source || !source->getType() || !cast->getType()) {
             error("bit-copy cast requires concrete source and target types");
         }
@@ -1277,8 +1284,8 @@ class FunctionCompiler {
         return makeReadonlyValue(targetType, result);
     }
 
-    Object *emitUnaryOperator(const UnaryOperatorBinding &binding,
-                              Object *value) {
+    ObjectPtr emitUnaryOperator(const UnaryOperatorBinding &binding,
+                                Object *value) {
         auto *llvmValue = binding.kind == UnaryOperatorKind::AddressOf
                               ? value->getllvmValue()
                               : (binding.kind == UnaryOperatorKind::Dereference
@@ -1306,7 +1313,7 @@ class FunctionCompiler {
                 }
                 return makeReadonlyValue(binding.resultType, llvmValue);
             case UnaryOperatorKind::Dereference: {
-                auto *result = binding.resultType->newObj(Object::VARIABLE);
+                auto result = binding.resultType->newObj(Object::VARIABLE);
                 result->setllvmValue(llvmValue);
                 return result;
             }
@@ -1315,8 +1322,8 @@ class FunctionCompiler {
         }
     }
 
-    Object *emitBinaryOperator(const BinaryOperatorBinding &binding,
-                               Object *left, Object *right) {
+    ObjectPtr emitBinaryOperator(const BinaryOperatorBinding &binding,
+                                 Object *left, Object *right) {
         auto *lhs = left->get(scope);
         auto *rhs = right->get(scope);
         if (binding.leftClass == OperatorOperandClass::Bool &&
@@ -1434,10 +1441,10 @@ class FunctionCompiler {
         return makeReadonlyValue(binding.resultType, result);
     }
 
-    Object *emitShortCircuitBinary(HIRBinOper *bin) {
+    ObjectPtr emitShortCircuitBinary(HIRBinOper *bin) {
         const auto &binding = bin->getBinding();
-        auto *left = compileExpr(bin->getLeft());
-        auto *lhsBool = emitBoolCast(left);
+        auto left = compileExpr(bin->getLeft());
+        auto *lhsBool = emitBoolCast(left.get());
 
         auto &context = scope->builder.getContext();
         auto *function = scope->builder.GetInsertBlock()
@@ -1465,8 +1472,8 @@ class FunctionCompiler {
         auto *shortEnd = scope->builder.GetInsertBlock();
 
         scope->builder.SetInsertPoint(rhsBB);
-        auto *right = compileExpr(bin->getRight());
-        auto *rhsBool = emitBoolCast(right);
+        auto right = compileExpr(bin->getRight());
+        auto *rhsBool = emitBoolCast(right.get());
         scope->builder.CreateBr(mergeBB);
         auto *rhsEnd = scope->builder.GetInsertBlock();
 
@@ -1692,14 +1699,14 @@ public:
             auto &binding = hirFunc->getSelfBinding();
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
-            Object *selfObj = nullptr;
+            ObjectPtr selfObj;
             const auto &argInfo = abiSignature.argInfo(0);
             auto passKind = argInfo.passKind;
             if (passKind == AbiPassKind::IndirectRef) {
-                auto *incomingSelf =
+                auto incomingSelf =
                     binding.object->getType()->newObj(Object::VARIABLE);
                 incomingSelf->setllvmValue(&*argIt);
-                selfObj = materializeBinding(binding.object, incomingSelf);
+                selfObj = materializeBinding(binding.object, incomingSelf.get());
             } else if (passKind == AbiPassKind::IndirectValue) {
                 selfObj =
                     materializeIndirectValueBinding(binding.object, &*argIt);
@@ -1708,14 +1715,14 @@ public:
                     binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, selfObj);
-            emitDebugDeclare(debug, funcScope, debugSubprogram, selfObj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, selfObj.get(),
                              toStringRef(binding.name), selfObj->getType(),
                              binding.loc, 1);
             ++llvmArgIndex;
         }
 
         if (retType) {
-            Object *retSlot = nullptr;
+            ObjectPtr retSlot;
             if (returnByPointer) {
                 if (llvmFunc->arg_size() < 1) {
                     functionError(
@@ -1732,7 +1739,8 @@ public:
             }
             funcScope->initRetVal(retSlot);
             if (hirFunc->isTopLevelEntry() && retType == i32Ty) {
-                retSlot->set(scope, new ConstVar(i32Ty, int32_t(0)));
+                auto defaultResult = ObjectPtr(new ConstVar(i32Ty, int32_t(0)));
+                retSlot->set(scope, defaultResult.get());
             }
             auto *retBB = llvm::BasicBlock::Create(context, "return", llvmFunc);
             funcScope->initRetBlock(retBB);
@@ -1752,14 +1760,14 @@ public:
         for (const auto &binding : hirFunc->getParams()) {
             auto argIt = llvmFunc->arg_begin();
             std::advance(argIt, llvmArgIndex);
-            Object *argObj = nullptr;
+            ObjectPtr argObj;
             const auto &argInfo = abiSignature.argInfo(sourceParamIndex);
             auto passKind = argInfo.passKind;
             if (passKind == AbiPassKind::IndirectRef) {
-                auto *incomingArg =
+                auto incomingArg =
                     binding.object->getType()->newObj(Object::VARIABLE);
                 incomingArg->setllvmValue(&*argIt);
-                argObj = materializeBinding(binding.object, incomingArg);
+                argObj = materializeBinding(binding.object, incomingArg.get());
             } else if (passKind == AbiPassKind::IndirectValue) {
                 argObj =
                     materializeIndirectValueBinding(binding.object, &*argIt);
@@ -1768,7 +1776,7 @@ public:
                     binding.object, &*argIt, argInfo.packedRegisterAggregate);
             }
             scope->addObj(binding.name, argObj);
-            emitDebugDeclare(debug, funcScope, debugSubprogram, argObj,
+            emitDebugDeclare(debug, funcScope, debugSubprogram, argObj.get(),
                              toStringRef(binding.name), argObj->getType(),
                              binding.loc, debugArgIndex);
             ++llvmArgIndex;

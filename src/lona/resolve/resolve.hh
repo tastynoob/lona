@@ -165,6 +165,7 @@ public:
 class ResolvedFunction {
     const AstFuncDecl *decl_ = nullptr;
     const AstNode *body_ = nullptr;
+    bool ownsBody_ = false;
     string functionName_;
     string methodParentTypeName_;
     location loc_;
@@ -187,6 +188,7 @@ class ResolvedFunction {
 
 public:
     ResolvedFunction(const AstFuncDecl *decl, const AstNode *body,
+                     bool ownsBody,
                      string functionName, string methodParentTypeName,
                      const location &loc, bool topLevelEntry,
                      bool languageEntry, bool guaranteedReturn,
@@ -199,6 +201,7 @@ public:
                          concreteGenericTypes = {})
         : decl_(decl),
           body_(body),
+          ownsBody_(ownsBody),
           functionName_(std::move(functionName)),
           methodParentTypeName_(std::move(methodParentTypeName)),
           loc_(loc),
@@ -210,9 +213,15 @@ public:
           genericTypeParamBounds_(std::move(genericTypeParamBounds)),
           genericOwnerInterface_(genericOwnerInterface),
           concreteGenericTypes_(std::move(concreteGenericTypes)) {}
+    ~ResolvedFunction() {
+        if (ownsBody_) {
+            delete body_;
+        }
+    }
 
     const AstFuncDecl *decl() const { return decl_; }
     const AstNode *body() const { return body_; }
+    bool ownsBody() const { return ownsBody_; }
     bool hasDeclaredFunction() const { return !functionName_.empty(); }
     const string &functionName() const { return functionName_; }
     bool isMethod() const { return !methodParentTypeName_.empty(); }
@@ -299,7 +308,8 @@ public:
         const AstNode *node, const location &loc);
 
     ResolvedFunction *createFunction(const AstFuncDecl *decl,
-                                     const AstNode *body, string functionName,
+                                     const AstNode *body, bool ownsBody,
+                                     string functionName,
                                      string methodParentTypeName,
                                      const location &loc, bool topLevelEntry,
                                      bool languageEntry,

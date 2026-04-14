@@ -76,6 +76,7 @@ public:
     int typeSize = 0;  // the size of the type in bytes
 
     TypeClass(string full_name) : full_name(full_name) {}
+    virtual ~TypeClass() = default;
 
     template<typename T>
     T *as() {
@@ -138,7 +139,7 @@ public:
         if (!baseType) {
             return TypeClass::newObj(specifiers);
         }
-        auto *obj = baseType->newObj(specifiers);
+        auto obj = baseType->newObj(specifiers);
         if (obj) {
             obj->setType(this);
         }

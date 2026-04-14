@@ -2,6 +2,7 @@
 #include "lona/diag/diagnostic_bag.hh"
 #include "scanner.hh"
 #include <string>
+#include <vector>
 
 namespace lona {
 
@@ -15,9 +16,13 @@ class Driver {
     AstNode *tree = nullptr;  // finally astTree
     const SourceBuffer *source = nullptr;
     DiagnosticBag *diagnostics_ = nullptr;
+    std::vector<AstToken *> trackedTokens_;
+
+    void clearTrackedTokens();
 
 public:
     Driver();
+    ~Driver();
 
     void input(std::istream *in, const SourceBuffer &source);
     void setDiagnosticBag(DiagnosticBag *diagnostics) {

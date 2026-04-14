@@ -351,7 +351,7 @@ hashInlineExpr(std::uint64_t &seed, const AstNode *node) {
     if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
         hashText(seed, "inline-expr:dot");
         hashInlineExpr(seed, dotLike->parent);
-        hashText(seed, toStdString(dotLike->field->text));
+        hashText(seed, toStdString(dotLike->field.text));
         return;
     }
     if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
@@ -1431,6 +1431,10 @@ CompilationUnit::CompilationUnit(const SourceBuffer &source) {
     refreshSource(source);
 }
 
+CompilationUnit::~CompilationUnit() {
+    delete syntaxTree_;
+}
+
 const SourceBuffer &
 CompilationUnit::source() const {
     assert(source_ != nullptr);
@@ -1497,12 +1501,13 @@ CompilationUnit::refreshSource(const SourceBuffer &source) {
                                   newHash);
     }
     if (changed) {
-        syntaxTree_ = nullptr;
-        stage_ = CompilationUnitStage::Discovered;
         clearImportedModules();
         clearLocalBindings();
         invalidateCaches();
         clearInterface();
+        delete syntaxTree_;
+        syntaxTree_ = nullptr;
+        stage_ = CompilationUnitStage::Discovered;
     }
 }
 
@@ -1540,7 +1545,11 @@ CompilationUnit::setModulePath(string modulePath) {
 
 void
 CompilationUnit::setSyntaxTree(AstNode *tree) {
-    syntaxTree_ = normalizeBuiltinTags(tree);
+    auto *normalized = normalizeBuiltinTags(tree);
+    if (syntaxTree_ != normalized) {
+        delete syntaxTree_;
+    }
+    syntaxTree_ = normalized;
     invalidateCaches();
     stage_ =
         tree ? CompilationUnitStage::Parsed : CompilationUnitStage::Discovered;

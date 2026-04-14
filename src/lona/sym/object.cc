@@ -181,7 +181,7 @@ ConstVar::get(Scope *scope) {
     throw "unsupported const type";
 }
 
-Object *
+ObjectPtr
 TupleVar::getField(Scope *scope, const ::string &name) {
     auto &builder = scope->builder;
     auto *tupleType = asUnqualified<TupleType>(type);
@@ -196,19 +196,19 @@ TupleVar::getField(Scope *scope, const ::string &name) {
     auto fieldIndex = static_cast<unsigned>(member.second);
     if (isRegVal()) {
         auto *aggregate = get(scope);
-        auto *field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
+        auto field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
         field->bindllvmValue(
             builder.CreateExtractValue(aggregate, {fieldIndex}));
         return field;
     }
 
-    auto *field = fieldType->newObj(Object::VARIABLE);
+    auto field = fieldType->newObj(Object::VARIABLE);
     field->setllvmValue(
         builder.CreateStructGEP(scope->getLLVMType(type), val, fieldIndex));
     return field;
 }
 
-Object *
+ObjectPtr
 StructVar::getField(Scope *scope, const ::string &name) {
     auto &builder = scope->builder;
     auto *structType = asUnqualified<StructType>(type);
@@ -221,13 +221,13 @@ StructVar::getField(Scope *scope, const ::string &name) {
     auto *fieldType = member->first;
     if (isRegVal()) {
         auto *aggregate = get(scope);
-        auto *field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
+        auto field = fieldType->newObj(Object::REG_VAL | Object::READONLY);
         field->bindllvmValue(builder.CreateExtractValue(
             aggregate, {static_cast<unsigned>(member->second)}));
         return field;
     }
 
-    auto *field = fieldType->newObj(Object::VARIABLE);
+    auto field = fieldType->newObj(Object::VARIABLE);
     field->setllvmValue(
         builder.CreateStructGEP(scope->getLLVMType(type), val, member->second));
     return field;
@@ -285,9 +285,9 @@ TypeObject::set(Scope *scope, Object *src) {
     throw "type name is read-only";
 }
 
-Object *
+ObjectPtr
 emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
-                 std::vector<Object *> &args, bool hasImplicitSelf) {
+                 const std::vector<ObjectPtr> &args, bool hasImplicitSelf) {
     auto &builder = scope->builder;
     auto abiSignature =
         classifyFunctionAbi(*scope->types(), funcType, hasImplicitSelf);
@@ -295,7 +295,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     auto *retType = funcType->getRetType();
     const auto &argTypes = funcType->getArgTypes();
     std::vector<llvm::Value *> llvmargs;
-    Object *retval = nullptr;
+    ObjectPtr retval;
 
     if (retType && abiSignature.hasIndirectResult) {
         retval = retType->newObj(Object::VARIABLE);
@@ -307,7 +307,7 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     }
 
     auto appendSourceArgument = [&](std::size_t index) {
-        auto *arg = args[index];
+        auto arg = args[index];
         auto *expectedType = argTypes[index];
         if (!isByteCopyCompatible(expectedType, arg->getType())) {
             throw "Call argument type mismatch";
@@ -323,9 +323,9 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
         }
         if (passKind == AbiPassKind::IndirectValue) {
             if (!arg->isVariable() || arg->isRegVal() || !arg->getllvmValue()) {
-                auto *spill = expectedType->newObj(Object::VARIABLE);
+                auto spill = expectedType->newObj(Object::VARIABLE);
                 spill->createllvmValue(scope);
-                spill->set(scope, arg);
+                spill->set(scope, arg.get());
                 arg = spill;
             }
             llvmargs.push_back(arg->getllvmValue());
@@ -342,7 +342,8 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
             }
             return;
         }
-        llvmargs.push_back(coerceObjectValueToType(scope, arg, expectedType));
+        llvmargs.push_back(
+            coerceObjectValueToType(scope, arg.get(), expectedType));
     };
 
     std::size_t startIndex = 0;
@@ -364,13 +365,13 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     if (retType && abiSignature.hasIndirectResult) {
         return retval;
     } else if (retType && abiSignature.resultInfo.packedRegisterAggregate) {
-        auto *obj = retType->newObj(Object::VARIABLE);
+        auto obj = retType->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
         storeNativeAbiDirectValue(builder, *scope->types(), retType, ret,
                                   obj->getllvmValue());
         return obj;
     } else if (retType && abiSignature.hasDirectAggregateResult) {
-        auto *obj = retType->newObj(Object::VARIABLE);
+        auto obj = retType->newObj(Object::VARIABLE);
         obj->createllvmValue(scope);
         storeNativeAbiDirectValue(builder, *scope->types(), retType, ret,
                                   obj->getllvmValue());
@@ -387,8 +388,8 @@ emitFunctionCall(Scope *scope, llvm::Value *calleeValue, FuncType *funcType,
     return nullptr;
 }
 
-Object *
-Function::call(Scope *scope, std::vector<Object *> &args) {
+ObjectPtr
+Function::call(Scope *scope, const std::vector<ObjectPtr> &args) {
     auto *funcType = type->as<FuncType>();
     return emitFunctionCall(scope, val, funcType, args, hasImplicitSelf_);
 }

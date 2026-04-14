@@ -15,7 +15,7 @@ getFunctionPointerTarget(TypeClass *type) {
 inline Function *
 getDirectFunctionCallee(HIRExpr *callee) {
     auto *calleeValue = dynamic_cast<HIRValue *>(callee);
-    auto *value = calleeValue ? calleeValue->getValue() : nullptr;
+    auto *value = calleeValue ? calleeValue->getValue().get() : nullptr;
     return value ? value->as<Function>() : nullptr;
 }
 

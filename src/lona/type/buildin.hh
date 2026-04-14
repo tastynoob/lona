@@ -13,7 +13,7 @@ public:
         return type == I8 || type == I16 || type == I32 || type == I64;
     }
 
-    void binaryOperation(llvm::IRBuilder<>& builder, Object* left,
+    void binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr left,
                          token_type op, ObjectPtr right, ObjectPtr& res);
     void unaryOperation(llvm::IRBuilder<>& builder, token_type op,
                         ObjectPtr value, ObjectPtr& res);
