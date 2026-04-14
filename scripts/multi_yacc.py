@@ -1,8 +1,9 @@
-
 import os
-import glob
 
-with open("build/gen.yacc", "w") as gen:
+out_dir = os.environ.get("LONA_BUILD_DIR", "build")
+os.makedirs(out_dir, exist_ok=True)
+
+with open(os.path.join(out_dir, "gen.yacc"), "w") as gen:
     with open("grammar/main.yacc") as f:
         main_yacc = f.readlines()
 
@@ -17,13 +18,3 @@ with open("build/gen.yacc", "w") as gen:
                 raise FileNotFoundError(f"File {include_file} does not exist")
         else:
             gen.write(line)
-
-
-
-
-
-
-
-
-
-

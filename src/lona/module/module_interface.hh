@@ -2,7 +2,6 @@
 
 #include "lona/ast/astnode.hh"
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -150,7 +149,7 @@ private:
     string modulePath_;
     std::uint64_t sourceHash_ = 0;
     bool collected_ = false;
-    std::vector<std::unique_ptr<TypeClass>> ownedTypes_;
+    std::vector<TypeClass *> ownedTypes_;
     std::unordered_map<string, TypeClass *> derivedTypes_;
     std::unordered_map<string, TypeDecl> localTypes_;
     std::unordered_map<string, TraitDecl> localTraits_;
@@ -163,6 +162,8 @@ private:
     string functionSymbolNameFor(const ::string &localName,
                                  AbiKind abiKind) const;
     string globalSymbolNameFor(const ::string &localName, bool isExtern) const;
+    TypeClass *ownType(TypeClass *type);
+    void releaseOwnedTypes();
 
 public:
     ModuleInterface(string sourcePath, string moduleKey, string moduleName,

@@ -2523,6 +2523,7 @@ void
 Session::resetQueryState() {
     diagnostics_.clear();
     symbols_.clear();
+    analysisBuild_.reset();
     resolvedModule_.reset();
     analyzedModule_.reset();
     analyzedFunctions_.clear();
@@ -2710,6 +2711,7 @@ Session::rebuildSymbolIndex() {
 
 void
 Session::tryCollectSemanticDiagnostics(CompilationUnit &unit) {
+    analysisBuild_.reset();
     resolvedModule_.reset();
     analyzedModule_.reset();
     analyzedFunctions_.clear();
@@ -2718,7 +2720,9 @@ Session::tryCollectSemanticDiagnostics(CompilationUnit &unit) {
     }
 
     try {
-        IRBuildState build(unit, defaultTargetTriple());
+        analysisBuild_ =
+            std::make_unique<IRBuildState>(unit, defaultTargetTriple());
+        auto &build = *analysisBuild_;
         std::unordered_set<string> directDependencyPaths;
         for (const auto &dependencyPath :
              workspace_.moduleGraph().dependenciesOf(unit.path())) {
@@ -2747,6 +2751,7 @@ Session::tryCollectSemanticDiagnostics(CompilationUnit &unit) {
             resolveModule(&build.global, unit.syntaxTree(), &unit, true);
         analyzedModule_ = analyzeModule(&build.global, *resolvedModule_, &unit);
         if (!analyzedModule_) {
+            analysisBuild_.reset();
             return;
         }
         auto hirIndex = std::size_t{0};
@@ -2768,8 +2773,10 @@ Session::tryCollectSemanticDiagnostics(CompilationUnit &unit) {
             analyzedFunctions_.clear();
         }
     } catch (const DiagnosticError &error) {
+        analysisBuild_.reset();
         (void)diagnostics_.add(error);
     } catch (const DiagnosticLimitReached &) {
+        analysisBuild_.reset();
     }
 }
 

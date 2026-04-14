@@ -2272,7 +2272,7 @@ class ModuleResolver {
     }
 
     void resolveTopLevel(AstStatList *body) {
-        auto *execBody = new AstStatList(false);
+        auto execBody = std::make_unique<AstStatList>(false);
         bool hasImports = false;
         for (auto *stmt : body->getBody()) {
             if (!stmt) {
@@ -2306,10 +2306,12 @@ class ModuleResolver {
             return;
         }
 
+        const auto execBodyLoc = execBody->loc;
+        const bool execBodyHasTerminator = execBody->hasTerminator();
         auto *resolved = createResolvedFunction(
-            nullptr, execBody, true, std::string(), std::string(),
-            execBody->loc,
-            true, rootModule_, execBody->hasTerminator());
+            nullptr, execBody.release(), true, std::string(), std::string(),
+            execBodyLoc,
+            true, rootModule_, execBodyHasTerminator);
         FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
             .resolve();
     }

@@ -74,9 +74,19 @@ class TypeClass {
 public:
     string const full_name;
     int typeSize = 0;  // the size of the type in bytes
+    std::uint32_t refCount_ = 0;
 
     TypeClass(string full_name) : full_name(full_name) {}
     virtual ~TypeClass() = default;
+
+    void retain() { ++refCount_; }
+    void release() {
+        assert(refCount_ > 0);
+        if (--refCount_ == 0) {
+            delete this;
+        }
+    }
+    std::uint32_t refCount() const { return refCount_; }
 
     template<typename T>
     T *as() {
@@ -608,6 +618,9 @@ bool
 isConstQualifiedType(TypeClass *type);
 bool
 isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType);
+bool
+isConstQualificationConvertibleFromValue(TypeClass *targetType,
+                                         TypeClass *sourceType);
 TypeClass *
 materializeValueType(TypeTable *typeTable, TypeClass *type);
 bool
@@ -634,6 +647,7 @@ class TypeTable {
     std::size_t instanceId_;
 
     llvm::StringMap<TypeMap> typeMap;
+    std::vector<TypeClass *> ownedTypes_;
     std::unordered_map<const TypeClass *, llvm::Type *> llvmTypes_;
     struct MethodBindingKey {
         const StructType *parent = nullptr;
@@ -653,6 +667,17 @@ class TypeTable {
         methodFunctions_;
     std::unordered_set<llvm::StructType *> materializingStructBodies_;
     std::unordered_set<const StructType *> interningStructContents_;
+    std::unordered_set<const TypeClass *> retainedTypes_;
+
+    void retainOwnedType(TypeClass *type) {
+        if (!type) {
+            return;
+        }
+        if (retainedTypes_.insert(type).second) {
+            type->retain();
+            ownedTypes_.push_back(type);
+        }
+    }
 
     void completeStructBodyIfNeeded(StructType *structType,
                                     llvm::StructType *llvmStruct) {
@@ -687,6 +712,11 @@ class TypeTable {
 public:
     TypeTable(llvm::Module &module)
         : module(module), instanceId_(nextInstanceId()) {}
+    ~TypeTable() {
+        for (auto *type : ownedTypes_) {
+            type->release();
+        }
+    }
 
     llvm::LLVMContext &getContext() { return module.getContext(); }
     llvm::Module &getModule() { return module; }
@@ -755,6 +785,7 @@ public:
             return false;
         }
         typeMap[name] = type;
+        retainOwnedType(type);
         return true;
     }
 
@@ -1367,8 +1398,7 @@ isNumericStorageType(TypeClass *type) {
 inline bool
 isByteCopyCompatible(TypeClass *dstType, TypeClass *srcType) {
     return dstType && srcType &&
-           isConstQualificationConvertible(
-               dstType, materializeValueType(nullptr, srcType));
+           isConstQualificationConvertibleFromValue(dstType, srcType);
 }
 
 inline DynTraitType *

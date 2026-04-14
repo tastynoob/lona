@@ -213,10 +213,8 @@ findBinaryRule(const RuleContainer &rules, token_type token,
             continue;
         }
         if (rule.requireSameType &&
-            !isConstQualificationConvertible(
-                leftType, materializeValueType(nullptr, rightType)) &&
-            !isConstQualificationConvertible(
-                rightType, materializeValueType(nullptr, leftType))) {
+            !isConstQualificationConvertibleFromValue(leftType, rightType) &&
+            !isConstQualificationConvertibleFromValue(rightType, leftType)) {
             continue;
         }
         return &rule;

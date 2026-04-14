@@ -257,6 +257,73 @@ isConstQualificationConvertible(TypeClass *targetType, TypeClass *sourceType) {
 }
 
 bool
+isConstQualificationConvertibleFromValue(TypeClass *targetType,
+                                         TypeClass *sourceType) {
+    if (!targetType || !sourceType) {
+        return false;
+    }
+    if (targetType == sourceType) {
+        return true;
+    }
+
+    auto *targetConst = targetType->as<ConstType>();
+    auto *sourceConst = sourceType->as<ConstType>();
+    if (targetConst) {
+        return isConstQualificationConvertibleFromValue(
+            targetConst->getBaseType(), sourceType);
+    }
+    if (sourceConst) {
+        return isConstQualificationConvertibleFromValue(
+            targetType, sourceConst->getBaseType());
+    }
+
+    if (auto *targetPointer = targetType->as<PointerType>()) {
+        auto *sourcePointer = sourceType->as<PointerType>();
+        return sourcePointer &&
+               isConstQualificationConvertibleFromValue(
+                   targetPointer->getPointeeType(),
+                   sourcePointer->getPointeeType());
+    }
+    if (auto *targetIndexable = targetType->as<IndexablePointerType>()) {
+        auto *sourceIndexable = sourceType->as<IndexablePointerType>();
+        return sourceIndexable &&
+               isConstQualificationConvertibleFromValue(
+                   targetIndexable->getElementType(),
+                   sourceIndexable->getElementType());
+    }
+    if (auto *targetArray = targetType->as<ArrayType>()) {
+        auto *sourceArray = sourceType->as<ArrayType>();
+        return sourceArray &&
+               targetArray->getDimensions() == sourceArray->getDimensions() &&
+               isConstQualificationConvertibleFromValue(
+                   targetArray->getElementType(),
+                   sourceArray->getElementType());
+    }
+    if (auto *targetTuple = targetType->as<TupleType>()) {
+        auto *sourceTuple = sourceType->as<TupleType>();
+        if (!sourceTuple || targetTuple->getItemTypes().size() !=
+                                sourceTuple->getItemTypes().size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < targetTuple->getItemTypes().size(); ++i) {
+            if (!isConstQualificationConvertibleFromValue(
+                    targetTuple->getItemTypes()[i],
+                    sourceTuple->getItemTypes()[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (auto *targetDyn = targetType->as<DynTraitType>()) {
+        auto *sourceDyn = sourceType->as<DynTraitType>();
+        return sourceDyn && targetDyn->traitName() == sourceDyn->traitName() &&
+               (!sourceDyn->hasReadOnlyDataPtr() ||
+                targetDyn->hasReadOnlyDataPtr());
+    }
+    return targetType == sourceType;
+}
+
+bool
 isFullyWritableValueType(TypeClass *type) {
     if (!type) {
         return false;

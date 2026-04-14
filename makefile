@@ -8,8 +8,9 @@ CLANG ?= clang-18
 CXX ?= ccache clang++
 CXXFLAGS := -std=c++20 -g
 OUT_DIR := build
+ASAN_OUT_DIR ?= build/asan
 LONA_LANGUAGE_VERSION := 0.1 beta
-INCLUDE_PATHS = -I $(ROOT)/src -I $(ROOT)/build
+INCLUDE_PATHS = -I $(ROOT)/src -I $(ROOT)/$(OUT_DIR)
 LEX_FILE = grammar/lexer.lex
 YACC_FILE = $(shell find $(ROOT)/grammar -name "*.yacc")
 GENERATED_PARSER_SOURCES = $(OUT_DIR)/parser.cc $(OUT_DIR)/parser.hh $(OUT_DIR)/location.hh
@@ -42,6 +43,8 @@ LIBS = $(shell llvm-config-18 --libs core native asmparser linker)
 
 LD_FLAGS = $(shell llvm-config-18 --ldflags)
 CXXFLAGS += $(shell llvm-config-18 --cppflags)
+ASAN_CXXFLAGS := -std=c++20 -g -fsanitize=address -fno-omit-frame-pointer $(shell llvm-config-18 --cppflags)
+ASAN_LD_FLAGS := $(shell llvm-config-18 --ldflags) -fsanitize=address
 
 MAIN_OBJECT = $(patsubst %.cc, $(OUT_DIR)/%.o, $(MAIN_SOURCE))
 QUERY_MAIN_OBJECT = $(patsubst %.cc, $(OUT_DIR)/%.o, $(QUERY_MAIN_SOURCE))
@@ -69,7 +72,7 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default gram_check frontend query api acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
+.PHONY: clean format default gram_check frontend query query_memcheck api acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
@@ -80,6 +83,10 @@ all: $(target)
 frontend: $(frontend_target)
 
 query: $(query_target)
+
+query_memcheck:
+	$(MAKE) query OUT_DIR=$(ASAN_OUT_DIR) CXXFLAGS='$(ASAN_CXXFLAGS)' LD_FLAGS='$(ASAN_LD_FLAGS)'
+	LONA_QUERY_MEMCHECK_BIN=$(ASAN_OUT_DIR)/lona-query ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 $(PYTHON) -m pytest -q $(ROOT)/tests/test_query_memory.py
 
 api: query
 
@@ -136,7 +143,7 @@ $(OUT_DIR)/%.o: %.cc | $(GENERATED_PARSER_HEADERS)
 	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDE_PATHS) -c $< -o $@
 
-ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
+ifeq ($(filter clean query_memcheck,$(MAKECMDGOALS)),)
 -include $(OBJECTS:.o=.d)
 -include $(QUERY_OBJECTS:.o=.d)
 -include $(FRONTEND_OBJECTS:.o=.d)
@@ -173,7 +180,7 @@ $(GENERATED_VERSION_SOURCE) $(GENERATED_VERSION_STAMP) &: $(VERSION_SOURCE_DEPS)
 
 $(GENERATED_PARSER_STAMP): $(YACC_FILE) $(ROOT)/scripts/multi_yacc.py
 	mkdir -p $(OUT_DIR)
-	python3 scripts/multi_yacc.py
+	LONA_BUILD_DIR=$(OUT_DIR) python3 scripts/multi_yacc.py
 	echo "Generating parser.cc"
 	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -Werror -rall --report-file=report.txt
 	touch $(GENERATED_PARSER_STAMP)
@@ -184,7 +191,7 @@ $(GENERATED_PARSER_SOURCES): $(GENERATED_PARSER_STAMP)
 gram_check:
 	mkdir -p $(OUT_DIR)
 	flex -o $(GENERATED_LEXER_SOURCE) $(LEX_FILE)
-	python3 scripts/multi_yacc.py
+	LONA_BUILD_DIR=$(OUT_DIR) python3 scripts/multi_yacc.py
 	echo "Generating parser.cc"
 	bison -d -o $(OUT_DIR)/parser.cc $(OUT_DIR)/gen.yacc -Wcounterexamples -Werror -rall --report-file=report.txt
 

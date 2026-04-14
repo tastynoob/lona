@@ -48,7 +48,9 @@ ModuleInterface::ModuleInterface(string sourcePath, string moduleKey,
       modulePath_(std::move(modulePath)),
       sourceHash_(sourceHash) {}
 
-ModuleInterface::~ModuleInterface() = default;
+ModuleInterface::~ModuleInterface() {
+    releaseOwnedTypes();
+}
 
 string
 ModuleInterface::exportedNameFor(const ::string &localName) const {
@@ -98,7 +100,7 @@ ModuleInterface::exportNamespacePrefix() const {
 void
 ModuleInterface::clear() {
     collected_ = false;
-    ownedTypes_.clear();
+    releaseOwnedTypes();
     derivedTypes_.clear();
     localTypes_.clear();
     localTraits_.clear();
@@ -106,6 +108,24 @@ ModuleInterface::clear() {
     localFunctions_.clear();
     localGlobals_.clear();
     importedModules_.clear();
+}
+
+TypeClass *
+ModuleInterface::ownType(TypeClass *type) {
+    if (!type) {
+        return nullptr;
+    }
+    type->retain();
+    ownedTypes_.push_back(type);
+    return type;
+}
+
+void
+ModuleInterface::releaseOwnedTypes() {
+    for (auto *type : ownedTypes_) {
+        type->release();
+    }
+    ownedTypes_.clear();
 }
 
 StructType *
@@ -125,9 +145,8 @@ ModuleInterface::declareStructType(const ::string &localName,
     }
 
     auto exportedName = exportedNameFor(localName);
-    auto type = std::make_unique<StructType>(exportedName, declKind);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<StructType *>(
+        ownType(new StructType(exportedName, declKind)));
     derivedTypes_[exportedName] = typePtr;
     localTypes_.emplace(localName, TypeDecl{localName, exportedName, declKind,
                                             typePtr, std::move(typeParams)});
@@ -235,9 +254,7 @@ ModuleInterface::getOrCreateAnyType() {
         return found->second->as<AnyType>();
     }
 
-    auto type = std::make_unique<AnyType>();
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<AnyType *>(ownType(new AnyType()));
     derivedTypes_[kAnyTypeName] = typePtr;
     return typePtr->as<AnyType>();
 }
@@ -261,11 +278,9 @@ ModuleInterface::getOrCreateAppliedStructType(const ::string &appliedName,
         return structType;
     }
 
-    auto type = std::make_unique<StructType>(
+    auto *typePtr = static_cast<StructType *>(ownType(new StructType(
         appliedName, declKind, std::move(appliedTemplateName),
-        std::move(appliedTypeArgs));
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+        std::move(appliedTypeArgs))));
     derivedTypes_[appliedName] = typePtr;
     return typePtr->as<StructType>();
 }
@@ -282,9 +297,8 @@ ModuleInterface::getOrCreatePointerType(TypeClass *pointeeType) {
         return found->second->as<PointerType>();
     }
 
-    auto type = std::make_unique<PointerType>(pointeeType);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr =
+        static_cast<PointerType *>(ownType(new PointerType(pointeeType)));
     derivedTypes_[pointerTypeName] = typePtr;
     return typePtr->as<PointerType>();
 }
@@ -301,9 +315,8 @@ ModuleInterface::getOrCreateIndexablePointerType(TypeClass *elementType) {
         return found->second->as<IndexablePointerType>();
     }
 
-    auto type = std::make_unique<IndexablePointerType>(elementType);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<IndexablePointerType *>(
+        ownType(new IndexablePointerType(elementType)));
     derivedTypes_[typeName] = typePtr;
     return typePtr->as<IndexablePointerType>();
 }
@@ -317,9 +330,8 @@ ModuleInterface::getOrCreateDynTraitType(const ::string &traitName,
         return found->second->as<DynTraitType>();
     }
 
-    auto type = std::make_unique<DynTraitType>(traitName, readOnlyDataPtr);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<DynTraitType *>(
+        ownType(new DynTraitType(traitName, readOnlyDataPtr)));
     derivedTypes_[typeName] = typePtr;
     return typePtr->as<DynTraitType>();
 }
@@ -339,9 +351,8 @@ ModuleInterface::getOrCreateConstType(TypeClass *baseType) {
         return found->second->as<ConstType>();
     }
 
-    auto type = std::make_unique<ConstType>(baseType);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr =
+        static_cast<ConstType *>(ownType(new ConstType(baseType)));
     derivedTypes_[typeName] = typePtr;
     return typePtr->as<ConstType>();
 }
@@ -359,9 +370,8 @@ ModuleInterface::getOrCreateArrayType(TypeClass *elementType,
         return found->second->as<ArrayType>();
     }
 
-    auto type = std::make_unique<ArrayType>(elementType, std::move(dimensions));
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<ArrayType *>(
+        ownType(new ArrayType(elementType, std::move(dimensions))));
     derivedTypes_[arrayName] = typePtr;
     return typePtr->as<ArrayType>();
 }
@@ -375,10 +385,8 @@ ModuleInterface::getOrCreateTupleType(
         return found->second->as<TupleType>();
     }
 
-    auto type =
-        std::make_unique<TupleType>(std::vector<TypeClass *>(itemTypes));
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<TupleType *>(ownType(
+        new TupleType(std::vector<TypeClass *>(itemTypes))));
     derivedTypes_[tupleName] = typePtr;
     return typePtr->as<TupleType>();
 }
@@ -412,11 +420,9 @@ ModuleInterface::getOrCreateFunctionType(
         return found->second->as<FuncType>();
     }
 
-    auto type = std::make_unique<FuncType>(std::vector<TypeClass *>(argTypes),
-                                           retType, funcTypeName,
-                                           std::move(argBindingKinds), abiKind);
-    auto *typePtr = type.get();
-    ownedTypes_.push_back(std::move(type));
+    auto *typePtr = static_cast<FuncType *>(ownType(new FuncType(
+        std::vector<TypeClass *>(argTypes), retType, funcTypeName,
+        std::move(argBindingKinds), abiKind)));
     derivedTypes_[funcTypeName] = typePtr;
     return typePtr->as<FuncType>();
 }

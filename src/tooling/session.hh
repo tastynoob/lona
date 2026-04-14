@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lona/diag/diagnostic_bag.hh"
+#include "lona/pass/compile_pipeline.hh"
 #include "lona/resolve/resolve.hh"
 #include "lona/sema/hir.hh"
 #include "lona/workspace/workspace.hh"
@@ -45,6 +46,7 @@ class Session {
     AstNode *syntaxTree_ = nullptr;
     DiagnosticBag diagnostics_;
     std::vector<SymbolRecord> symbols_;
+    std::unique_ptr<IRBuildState> analysisBuild_;
     std::unique_ptr<ResolvedModule> resolvedModule_;
     std::unique_ptr<HIRModule> analyzedModule_;
     std::vector<AnalyzedFunctionRecord> analyzedFunctions_;

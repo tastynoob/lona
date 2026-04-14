@@ -15,6 +15,7 @@
 - [smoke/test_examples.py](smoke/test_examples.py): 基于 `pytest` 的样例编译 smoke，并实际运行 system-level `C FFI` 示例，锁住文档样例可用性。
 - [smoke/test_system.py](smoke/test_system.py): 基于 `pytest` 的 `lac` hosted 路线 smoke，覆盖入口包装、C harness 互调、system-level C FFI 场景，以及 `--lto full` slow path。
 - [smoke/test_native.py](smoke/test_native.py): 基于 `pytest` 的 `lac-native` bare 路线 smoke，也覆盖 `--lto full` slow path。
+- `make query_memcheck`: 单独构建 ASan `lona-query`，运行一次“打开文件、修改、reload、退出”的内存回归测试。
 - [template_random.py](template_random.py): 模板随机拼接测试；生成支持的语法组合并验证 LLVM IR 和 clang object 编译。
 
 ## Perf
@@ -37,3 +38,4 @@
 - [tools/expect_diag.py](tools/expect_diag.py): 断言某个 `.lo` 编译失败并包含指定诊断子串。
 - [test_skill.md](test_skill.md): AI 生成测试样例时应遵守的约束和工作流。
 - [test_agent.py](test_agent.py): 调用 `codex` 按 `test_skill.md` 自动生成并验证测试样例的入口。
+- [test_query_memory.py](test_query_memory.py): `lona-query` 的 ASan/LSan 内存回归；覆盖打开源码、修改文件、`reload`、退出进程。

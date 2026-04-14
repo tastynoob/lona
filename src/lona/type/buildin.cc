@@ -4,6 +4,17 @@
 
 namespace lona {
 
+namespace {
+
+void
+pinBuiltinType(TypeClass *type) {
+    if (type) {
+        type->retain();
+    }
+}
+
+}  // namespace
+
 void
 IntType::binaryOperation(llvm::IRBuilder<>& builder, ObjectPtr left,
                          token_type op, ObjectPtr right, ObjectPtr& res) {
@@ -132,6 +143,18 @@ initBuildinType(Scope* scope) {
         f32Ty = new FLoatType(BaseType::F32, "f32");
         f64Ty = new FLoatType(BaseType::F64, "f64");
         boolTy = new BoolType();
+        pinBuiltinType(u8Ty);
+        pinBuiltinType(i8Ty);
+        pinBuiltinType(u16Ty);
+        pinBuiltinType(i16Ty);
+        pinBuiltinType(u32Ty);
+        pinBuiltinType(i32Ty);
+        pinBuiltinType(u64Ty);
+        pinBuiltinType(i64Ty);
+        pinBuiltinType(usizeTy);
+        pinBuiltinType(f32Ty);
+        pinBuiltinType(f64Ty);
+        pinBuiltinType(boolTy);
     }
 
     typeTable->addType(string("u8"), u8Ty);
