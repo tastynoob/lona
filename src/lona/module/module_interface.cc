@@ -196,6 +196,7 @@ ModuleInterface::declareFunction(string localName, FuncType *type,
                                  TypeNode *returnTypeNode,
                                  string returnTypeSpelling,
                                  std::vector<GenericParamDecl> typeParams) {
+    type = static_cast<FuncType *>(ownType(type));
     auto abiKind = type ? type->getAbiKind() : AbiKind::Native;
     return localFunctions_
         .emplace(
@@ -239,6 +240,7 @@ ModuleInterface::declareImportedModule(string localName, string moduleKey,
 bool
 ModuleInterface::declareGlobal(string localName, TypeClass *type,
                                bool isExtern) {
+    type = ownType(type);
     return localGlobals_
         .emplace(localName,
                  GlobalDecl{localName, globalSymbolNameFor(localName, isExtern),

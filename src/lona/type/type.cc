@@ -266,31 +266,11 @@ isConstQualificationConvertibleFromValue(TypeClass *targetType,
         return true;
     }
 
-    auto *targetConst = targetType->as<ConstType>();
-    auto *sourceConst = sourceType->as<ConstType>();
-    if (targetConst) {
-        return isConstQualificationConvertibleFromValue(
-            targetConst->getBaseType(), sourceType);
-    }
-    if (sourceConst) {
-        return isConstQualificationConvertibleFromValue(
-            targetType, sourceConst->getBaseType());
+    if (auto *sourceConst = sourceType->as<ConstType>()) {
+        return isConstQualificationConvertible(targetType,
+                                               sourceConst->getBaseType());
     }
 
-    if (auto *targetPointer = targetType->as<PointerType>()) {
-        auto *sourcePointer = sourceType->as<PointerType>();
-        return sourcePointer &&
-               isConstQualificationConvertibleFromValue(
-                   targetPointer->getPointeeType(),
-                   sourcePointer->getPointeeType());
-    }
-    if (auto *targetIndexable = targetType->as<IndexablePointerType>()) {
-        auto *sourceIndexable = sourceType->as<IndexablePointerType>();
-        return sourceIndexable &&
-               isConstQualificationConvertibleFromValue(
-                   targetIndexable->getElementType(),
-                   sourceIndexable->getElementType());
-    }
     if (auto *targetArray = targetType->as<ArrayType>()) {
         auto *sourceArray = sourceType->as<ArrayType>();
         return sourceArray &&
@@ -314,13 +294,7 @@ isConstQualificationConvertibleFromValue(TypeClass *targetType,
         }
         return true;
     }
-    if (auto *targetDyn = targetType->as<DynTraitType>()) {
-        auto *sourceDyn = sourceType->as<DynTraitType>();
-        return sourceDyn && targetDyn->traitName() == sourceDyn->traitName() &&
-               (!sourceDyn->hasReadOnlyDataPtr() ||
-                targetDyn->hasReadOnlyDataPtr());
-    }
-    return targetType == sourceType;
+    return isConstQualificationConvertible(targetType, sourceType);
 }
 
 bool
