@@ -102,20 +102,6 @@ public:
     }
 };
 
-inline void
-retainTypeRef(TypeClass *type) {
-    if (type) {
-        type->retain();
-    }
-}
-
-inline void
-releaseTypeRef(TypeClass *type) {
-    if (type) {
-        type->release();
-    }
-}
-
 class BaseType : public TypeClass {
 public:
     enum Type {
@@ -153,11 +139,8 @@ public:
                         : string("<unknown> const");
     }
 
-    explicit ConstType(TypeClass *baseType)
-        : TypeClass(buildName(baseType)), baseType(baseType) {
-        retainTypeRef(baseType);
-    }
-    ~ConstType() override { releaseTypeRef(baseType); }
+    explicit ConstType(TypeClass *baseType);
+    ~ConstType() override;
 
     TypeClass *getBaseType() const { return baseType; }
 
@@ -220,55 +203,22 @@ private:
     std::vector<TypeClass *> appliedTypeArgs;
     const CompilationUnit *appliedTemplateOwnerUnit = nullptr;
 
-    void retainMemberTypes() {
-        for (const auto &entry : members) {
-            retainTypeRef(entry.second.first);
-        }
-    }
-
-    void releaseMemberTypes() {
-        for (const auto &entry : members) {
-            releaseTypeRef(entry.second.first);
-        }
-    }
-
+    void retainMemberTypes();
+    void releaseMemberTypes();
     void releaseMethodTypes();
     void releaseTraitMethodTypes();
-
-    void retainAppliedTypeArgs() {
-        for (auto *typeArg : appliedTypeArgs) {
-            retainTypeRef(typeArg);
-        }
-    }
-
-    void releaseAppliedTypeArgs() {
-        for (auto *typeArg : appliedTypeArgs) {
-            releaseTypeRef(typeArg);
-        }
-    }
+    void retainAppliedTypeArgs();
+    void releaseAppliedTypeArgs();
 
 public:
     StructType(llvm::StringMap<ValueTy> &&members, string full_name,
-               StructDeclKind declKind = StructDeclKind::Native)
-        : TypeClass(full_name),
-          members(std::move(members)),
-          opaque(false),
-          declKind(declKind) {
-        retainMemberTypes();
-    }
+               StructDeclKind declKind = StructDeclKind::Native);
 
     // create opaque struct
     StructType(string full_name,
                StructDeclKind declKind = StructDeclKind::Native,
                string appliedTemplateName = {},
-               std::vector<TypeClass *> appliedTypeArgs = {})
-        : TypeClass(full_name),
-          opaque(true),
-          declKind(declKind),
-          appliedTemplateName(std::move(appliedTemplateName)),
-          appliedTypeArgs(std::move(appliedTypeArgs)) {
-        retainAppliedTypeArgs();
-    }
+               std::vector<TypeClass *> appliedTypeArgs = {});
     ~StructType() override;
 
     bool isOpaque() const { return opaque; }
@@ -287,28 +237,11 @@ public:
     }
     void setAppliedTemplateInfo(string templateName,
                                 std::vector<TypeClass *> typeArgs,
-                                const CompilationUnit *templateOwnerUnit = nullptr) {
-        for (auto *typeArg : typeArgs) {
-            retainTypeRef(typeArg);
-        }
-        releaseAppliedTypeArgs();
-        appliedTemplateName = std::move(templateName);
-        appliedTypeArgs = std::move(typeArgs);
-        appliedTemplateOwnerUnit = templateOwnerUnit;
-    }
+                                const CompilationUnit *templateOwnerUnit = nullptr);
 
     void complete(const llvm::StringMap<ValueTy> &newMembers,
                   const llvm::StringMap<AccessKind> &newMemberAccess = {},
-                  const llvm::StringSet<> &newEmbeddedMembers = {}) {
-        for (const auto &entry : newMembers) {
-            retainTypeRef(entry.second.first);
-        }
-        releaseMemberTypes();
-        members = newMembers;
-        memberAccess = newMemberAccess;
-        embeddedMembers = newEmbeddedMembers;
-        opaque = false;
-    }
+                  const llvm::StringSet<> &newEmbeddedMembers = {});
 
     void addMethodType(llvm::StringRef name, FuncType *funcType,
                        std::vector<string> paramNames = {});
@@ -463,17 +396,8 @@ public:
         return "_" + std::to_string(index + 1);
     }
 
-    explicit TupleType(std::vector<TypeClass *> itemTypes)
-        : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {
-        for (auto *itemType : this->itemTypes) {
-            retainTypeRef(itemType);
-        }
-    }
-    ~TupleType() override {
-        for (auto *itemType : itemTypes) {
-            releaseTypeRef(itemType);
-        }
-    }
+    explicit TupleType(std::vector<TypeClass *> itemTypes);
+    ~TupleType() override;
 
     const std::vector<TypeClass *> &getItemTypes() const { return itemTypes; }
     bool getMember(llvm::StringRef name, ValueTy &member) const;
@@ -530,77 +454,11 @@ public:
 
     FuncType(std::vector<TypeClass *> &&args, TypeClass *retType,
              string full_name, std::vector<BindingKind> argBindingKinds = {},
-             AbiKind abiKind = AbiKind::Native)
-        : TypeClass(full_name),
-          argTypes(args),
-          argBindingKinds(std::move(argBindingKinds)),
-          retType(retType),
-          abiKind(abiKind) {
-        for (auto *argType : argTypes) {
-            retainTypeRef(argType);
-        }
-        retainTypeRef(retType);
-        if (this->argBindingKinds.empty()) {
-            this->argBindingKinds.resize(argTypes.size(), BindingKind::Value);
-        }
-        assert(this->argBindingKinds.size() == argTypes.size());
-        // if hasSroa, the first arg is the return value
-    }
-    ~FuncType() override {
-        for (auto *argType : argTypes) {
-            releaseTypeRef(argType);
-        }
-        releaseTypeRef(retType);
-    }
+             AbiKind abiKind = AbiKind::Native);
+    ~FuncType() override;
 
     llvm::Type *buildLLVMType(TypeTable &types) override;
 };
-
-inline StructType::~StructType() {
-    releaseMemberTypes();
-    releaseMethodTypes();
-    releaseTraitMethodTypes();
-    releaseAppliedTypeArgs();
-}
-
-inline void
-StructType::releaseMethodTypes() {
-    for (const auto &entry : methodTypes) {
-        releaseTypeRef(entry.second);
-    }
-}
-
-inline void
-StructType::releaseTraitMethodTypes() {
-    for (const auto &entry : traitMethodTypes) {
-        releaseTypeRef(entry.second.funcType);
-    }
-}
-
-inline void
-StructType::addMethodType(llvm::StringRef name, FuncType *funcType,
-                          std::vector<string> paramNames) {
-    retainTypeRef(funcType);
-    if (auto found = methodTypes.find(name); found != methodTypes.end()) {
-        releaseTypeRef(found->second);
-    }
-    methodTypes[name] = funcType;
-    methodParamNames[name] = std::move(paramNames);
-}
-
-inline void
-StructType::addTraitMethodType(llvm::StringRef traitName,
-                               llvm::StringRef methodName, FuncType *funcType,
-                               std::vector<string> paramNames) {
-    auto key = traitMethodSlotKey(traitName, methodName);
-    retainTypeRef(funcType);
-    if (auto found = traitMethodTypes.find(key); found != traitMethodTypes.end()) {
-        releaseTypeRef(found->second.funcType);
-    }
-    traitMethodTypes[key] = TraitMethodEntry{
-        string(traitName.str()), string(methodName.str()), funcType,
-        std::move(paramNames)};
-}
 
 class PointerType : public TypeClass {
     TypeClass *pointeeType;
@@ -641,11 +499,8 @@ public:
                            : string("<unknown>*");
     }
 
-    PointerType(TypeClass *pointeeType)
-        : TypeClass(buildName(pointeeType)), pointeeType(pointeeType) {
-        retainTypeRef(pointeeType);
-    }
-    ~PointerType() override { releaseTypeRef(pointeeType); }
+    explicit PointerType(TypeClass *pointeeType);
+    ~PointerType() override;
     TypeClass *getPointeeType() { return pointeeType; }
 
     llvm::Type *buildLLVMType(TypeTable &types) override;
@@ -660,11 +515,8 @@ public:
                            : string("<unknown>[*]");
     }
 
-    explicit IndexablePointerType(TypeClass *elementType)
-        : TypeClass(buildName(elementType)), elementType(elementType) {
-        retainTypeRef(elementType);
-    }
-    ~IndexablePointerType() override { releaseTypeRef(elementType); }
+    explicit IndexablePointerType(TypeClass *elementType);
+    ~IndexablePointerType() override;
 
     TypeClass *getElementType() { return elementType; }
     llvm::Type *buildLLVMType(TypeTable &types) override;
@@ -682,13 +534,8 @@ public:
         return name;
     }
 
-    ArrayType(TypeClass *elementType, std::vector<AstNode *> dimensions = {})
-        : TypeClass(buildName(elementType, dimensions)),
-          elementType(elementType),
-          dimensions(std::move(dimensions)) {
-        retainTypeRef(elementType);
-    }
-    ~ArrayType() override { releaseTypeRef(elementType); }
+    ArrayType(TypeClass *elementType, std::vector<AstNode *> dimensions = {});
+    ~ArrayType() override;
 
     TypeClass *getElementType() { return elementType; }
     const std::vector<AstNode *> &getDimensions() const { return dimensions; }

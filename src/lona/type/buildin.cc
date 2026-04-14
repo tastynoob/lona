@@ -143,18 +143,20 @@ initBuildinType(Scope* scope) {
         f32Ty = new FLoatType(BaseType::F32, "f32");
         f64Ty = new FLoatType(BaseType::F64, "f64");
         boolTy = new BoolType();
-        pinBuiltinType(u8Ty);
-        pinBuiltinType(i8Ty);
-        pinBuiltinType(u16Ty);
-        pinBuiltinType(i16Ty);
-        pinBuiltinType(u32Ty);
-        pinBuiltinType(i32Ty);
-        pinBuiltinType(u64Ty);
-        pinBuiltinType(i64Ty);
-        pinBuiltinType(usizeTy);
-        pinBuiltinType(f32Ty);
-        pinBuiltinType(f64Ty);
-        pinBuiltinType(boolTy);
+        for (auto *type : {static_cast<TypeClass *>(u8Ty),
+                           static_cast<TypeClass *>(i8Ty),
+                           static_cast<TypeClass *>(u16Ty),
+                           static_cast<TypeClass *>(i16Ty),
+                           static_cast<TypeClass *>(u32Ty),
+                           static_cast<TypeClass *>(i32Ty),
+                           static_cast<TypeClass *>(u64Ty),
+                           static_cast<TypeClass *>(i64Ty),
+                           static_cast<TypeClass *>(usizeTy),
+                           static_cast<TypeClass *>(f32Ty),
+                           static_cast<TypeClass *>(f64Ty),
+                           static_cast<TypeClass *>(boolTy)}) {
+            pinBuiltinType(type);
+        }
     }
 
     typeTable->addType(string("u8"), u8Ty);

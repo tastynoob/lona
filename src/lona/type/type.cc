@@ -11,6 +11,70 @@
 
 namespace lona {
 
+namespace {
+
+void
+retainTypeRef(TypeClass *type) {
+    if (type) {
+        type->retain();
+    }
+}
+
+void
+releaseTypeRef(TypeClass *type) {
+    if (type) {
+        type->release();
+    }
+}
+
+template<typename Range>
+void
+retainTypeRange(const Range &types) {
+    for (auto *type : types) {
+        retainTypeRef(type);
+    }
+}
+
+template<typename Range>
+void
+releaseTypeRange(const Range &types) {
+    for (auto *type : types) {
+        releaseTypeRef(type);
+    }
+}
+
+void
+retainStructMembers(const llvm::StringMap<StructType::ValueTy> &members) {
+    for (const auto &entry : members) {
+        retainTypeRef(entry.second.first);
+    }
+}
+
+void
+releaseStructMembers(const llvm::StringMap<StructType::ValueTy> &members) {
+    for (const auto &entry : members) {
+        releaseTypeRef(entry.second.first);
+    }
+}
+
+void
+releaseStructMethods(const llvm::StringMap<FuncType *> &methods) {
+    for (const auto &entry : methods) {
+        releaseTypeRef(entry.second);
+    }
+}
+
+void
+releaseStructTraitMethods(
+    const std::unordered_map<std::string, StructType::TraitMethodEntry>
+        &methods) {
+    for (const auto &entry : methods) {
+        releaseTypeRef(entry.second.funcType);
+    }
+}
+
+}  // namespace
+
 struct TypeTargetLayout {
     std::string triple;
     llvm::Reloc::Model relocModel;
@@ -381,6 +445,15 @@ AnyType::buildLLVMType(TypeTable &types) {
     return llvm::Type::getInt8Ty(types.getContext());
 }
 
+ConstType::ConstType(TypeClass *baseType)
+    : TypeClass(buildName(baseType)), baseType(baseType) {
+    retainTypeRef(baseType);
+}
+
+ConstType::~ConstType() {
+    releaseTypeRef(baseType);
+}
+
 llvm::Type *
 ConstType::buildLLVMType(TypeTable &types) {
     return baseType ? types.getLLVMType(baseType) : nullptr;
@@ -393,9 +466,123 @@ DynTraitType::buildLLVMType(TypeTable &types) {
                                  false);
 }
 
+StructType::StructType(llvm::StringMap<ValueTy> &&members, string full_name,
+                       StructDeclKind declKind)
+    : TypeClass(full_name),
+      members(std::move(members)),
+      opaque(false),
+      declKind(declKind) {
+    retainMemberTypes();
+}
+
+StructType::StructType(string full_name, StructDeclKind declKind,
+                       string appliedTemplateName,
+                       std::vector<TypeClass *> appliedTypeArgs)
+    : TypeClass(full_name),
+      opaque(true),
+      declKind(declKind),
+      appliedTemplateName(std::move(appliedTemplateName)),
+      appliedTypeArgs(std::move(appliedTypeArgs)) {
+    retainAppliedTypeArgs();
+}
+
+StructType::~StructType() {
+    releaseMemberTypes();
+    releaseMethodTypes();
+    releaseTraitMethodTypes();
+    releaseAppliedTypeArgs();
+}
+
+void
+StructType::retainMemberTypes() {
+    retainStructMembers(members);
+}
+
+void
+StructType::releaseMemberTypes() {
+    releaseStructMembers(members);
+}
+
+void
+StructType::releaseMethodTypes() {
+    releaseStructMethods(methodTypes);
+}
+
+void
+StructType::releaseTraitMethodTypes() {
+    releaseStructTraitMethods(traitMethodTypes);
+}
+
+void
+StructType::retainAppliedTypeArgs() {
+    retainTypeRange(appliedTypeArgs);
+}
+
+void
+StructType::releaseAppliedTypeArgs() {
+    releaseTypeRange(appliedTypeArgs);
+}
+
+void
+StructType::setAppliedTemplateInfo(string templateName,
+                                   std::vector<TypeClass *> typeArgs,
+                                   const CompilationUnit *templateOwnerUnit) {
+    retainTypeRange(typeArgs);
+    releaseAppliedTypeArgs();
+    appliedTemplateName = std::move(templateName);
+    appliedTypeArgs = std::move(typeArgs);
+    appliedTemplateOwnerUnit = templateOwnerUnit;
+}
+
+void
+StructType::complete(const llvm::StringMap<ValueTy> &newMembers,
+                     const llvm::StringMap<AccessKind> &newMemberAccess,
+                     const llvm::StringSet<> &newEmbeddedMembers) {
+    retainStructMembers(newMembers);
+    releaseMemberTypes();
+    members = newMembers;
+    memberAccess = newMemberAccess;
+    embeddedMembers = newEmbeddedMembers;
+    opaque = false;
+}
+
+void
+StructType::addMethodType(llvm::StringRef name, FuncType *funcType,
+                          std::vector<string> paramNames) {
+    retainTypeRef(funcType);
+    if (auto found = methodTypes.find(name); found != methodTypes.end()) {
+        releaseTypeRef(found->second);
+    }
+    methodTypes[name] = funcType;
+    methodParamNames[name] = std::move(paramNames);
+}
+
+void
+StructType::addTraitMethodType(llvm::StringRef traitName,
+                               llvm::StringRef methodName, FuncType *funcType,
+                               std::vector<string> paramNames) {
+    auto key = traitMethodSlotKey(traitName, methodName);
+    retainTypeRef(funcType);
+    if (auto found = traitMethodTypes.find(key); found != traitMethodTypes.end()) {
+        releaseTypeRef(found->second.funcType);
+    }
+    traitMethodTypes[key] = TraitMethodEntry{
+        string(traitName.str()), string(methodName.str()), funcType,
+        std::move(paramNames)};
+}
+
 llvm::Type *
 StructType::buildLLVMType(TypeTable &types) {
     return llvm::StructType::create(types.getContext(), full_name.tochara());
+}
+
+TupleType::TupleType(std::vector<TypeClass *> itemTypes)
+    : TypeClass(buildName(itemTypes)), itemTypes(std::move(itemTypes)) {
+    retainTypeRange(this->itemTypes);
+}
+
+TupleType::~TupleType() {
+    releaseTypeRange(itemTypes);
 }
 
 llvm::Type *
@@ -413,9 +600,39 @@ TupleType::newObj(uint32_t specifiers) {
     return new TupleVar(this, specifiers);
 }
 
+FuncType::FuncType(std::vector<TypeClass *> &&args, TypeClass *retType,
+                   string full_name, std::vector<BindingKind> argBindingKinds,
+                   AbiKind abiKind)
+    : TypeClass(full_name),
+      argTypes(std::move(args)),
+      argBindingKinds(std::move(argBindingKinds)),
+      retType(retType),
+      abiKind(abiKind) {
+    retainTypeRange(argTypes);
+    retainTypeRef(retType);
+    if (this->argBindingKinds.empty()) {
+        this->argBindingKinds.resize(argTypes.size(), BindingKind::Value);
+    }
+    assert(this->argBindingKinds.size() == argTypes.size());
+}
+
+FuncType::~FuncType() {
+    releaseTypeRange(argTypes);
+    releaseTypeRef(retType);
+}
+
 llvm::Type *
 FuncType::buildLLVMType(TypeTable &types) {
     return getFunctionAbiLLVMType(types, this, false);
+}
+
+PointerType::PointerType(TypeClass *pointeeType)
+    : TypeClass(buildName(pointeeType)), pointeeType(pointeeType) {
+    retainTypeRef(pointeeType);
+}
+
+PointerType::~PointerType() {
+    releaseTypeRef(pointeeType);
 }
 
 llvm::Type *
@@ -423,9 +640,29 @@ PointerType::buildLLVMType(TypeTable &types) {
     return llvm::PointerType::getUnqual(types.getLLVMType(pointeeType));
 }
 
+IndexablePointerType::IndexablePointerType(TypeClass *elementType)
+    : TypeClass(buildName(elementType)), elementType(elementType) {
+    retainTypeRef(elementType);
+}
+
+IndexablePointerType::~IndexablePointerType() {
+    releaseTypeRef(elementType);
+}
+
 llvm::Type *
 IndexablePointerType::buildLLVMType(TypeTable &types) {
     return llvm::PointerType::getUnqual(types.getLLVMType(elementType));
+}
+
+ArrayType::ArrayType(TypeClass *elementType, std::vector<AstNode *> dimensions)
+    : TypeClass(buildName(elementType, dimensions)),
+      elementType(elementType),
+      dimensions(std::move(dimensions)) {
+    retainTypeRef(elementType);
+}
+
+ArrayType::~ArrayType() {
+    releaseTypeRef(elementType);
 }
 
 llvm::Type *
