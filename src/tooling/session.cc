@@ -2382,8 +2382,8 @@ splitMemberQuery(std::string_view query, std::string &owner,
 }
 
 bool
-lookupTopLevelGlobalValueType(const CompilationUnit &unit, std::string_view query,
-                              TypeClass *&type) {
+lookupTopLevelGlobalValueType(const CompilationUnit &unit,
+                             std::string_view query, TypeClass *&type) {
     const auto cleanedQuery = trimCopy(query);
     if (cleanedQuery.empty() || cleanedQuery.find('.') != std::string::npos) {
         return false;
@@ -2398,10 +2398,10 @@ lookupTopLevelGlobalValueType(const CompilationUnit &unit, std::string_view quer
 }
 
 bool
-lookupVisibleValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
-                       const std::vector<AnalyzedFunctionRecord> &records,
-                       const std::string &fallbackPath, int line,
-                       std::string_view query, TypeClass *&type) {
+lookupDirectValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
+                      const std::vector<AnalyzedFunctionRecord> &records,
+                      const std::string &fallbackPath, int line,
+                      std::string_view query, TypeClass *&type) {
     type = nullptr;
     ValueBindingMatch binding;
     if (lookupVisibleLocalBinding(syntaxTree, records, fallbackPath, line,
@@ -2423,6 +2423,77 @@ enum class ValueMemberLookupStatus {
     OwnerFoundMissingMember,
 };
 
+TypeClass *
+stripConstQualifiedType(TypeClass *type) {
+    auto *current = type;
+    while (auto *constType = current ? current->as<ConstType>() : nullptr) {
+        current = constType->getBaseType();
+    }
+    return current;
+}
+
+ValueMemberLookupStatus
+lookupProjectedMemberType(TypeClass *ownerType, std::string_view memberName,
+                          TypeClass *&memberType, AccessKind &access,
+                          bool &embedded) {
+    auto *baseType = stripConstQualifiedType(ownerType);
+    if (!baseType) {
+        return ValueMemberLookupStatus::OwnerFoundMissingMember;
+    }
+
+    memberType = nullptr;
+    access = AccessKind::GetOnly;
+    embedded = false;
+    if (auto *structType = baseType->as<StructType>()) {
+        auto *member = structType->getMember(memberName);
+        if (!member) {
+            return ValueMemberLookupStatus::OwnerFoundMissingMember;
+        }
+        memberType = member->first;
+        access = structType->getMemberAccess(memberName);
+        embedded = structType->isEmbeddedMember(memberName);
+        return ValueMemberLookupStatus::Found;
+    }
+    if (auto *tupleType = baseType->as<TupleType>()) {
+        TupleType::ValueTy member;
+        if (!tupleType->getMember(llvm::StringRef(memberName), member)) {
+            return ValueMemberLookupStatus::OwnerFoundMissingMember;
+        }
+        memberType = member.first;
+        return ValueMemberLookupStatus::Found;
+    }
+    return ValueMemberLookupStatus::OwnerFoundMissingMember;
+}
+
+ValueMemberLookupStatus
+lookupValuePathType(const CompilationUnit &unit, const AstNode *syntaxTree,
+                    const std::vector<AnalyzedFunctionRecord> &records,
+                    const std::string &fallbackPath, int line,
+                    std::string_view query, TypeClass *&type) {
+    type = nullptr;
+    std::string ownerName;
+    std::string memberName;
+    if (!splitMemberQuery(query, ownerName, memberName)) {
+        return lookupDirectValueType(unit, syntaxTree, records, fallbackPath,
+                                     line, query, type)
+                   ? ValueMemberLookupStatus::Found
+                   : ValueMemberLookupStatus::NoOwner;
+    }
+
+    TypeClass *ownerType = nullptr;
+    auto ownerStatus = lookupValuePathType(unit, syntaxTree, records,
+                                           fallbackPath, line, ownerName,
+                                           ownerType);
+    if (ownerStatus != ValueMemberLookupStatus::Found) {
+        return ownerStatus;
+    }
+
+    AccessKind access = AccessKind::GetOnly;
+    bool embedded = false;
+    return lookupProjectedMemberType(ownerType, memberName, type, access,
+                                     embedded);
+}
+
 ValueMemberLookupStatus
 lookupValueMemberPrintItem(const CompilationUnit &unit,
                            const AstNode *syntaxTree,
@@ -2431,44 +2502,26 @@ lookupValueMemberPrintItem(const CompilationUnit &unit,
                            std::string_view query, Json &item) {
     std::string ownerName;
     std::string memberName;
-    if (!splitMemberQuery(query, ownerName, memberName) ||
-        ownerName.find('.') != std::string::npos ||
-        unit.importsModule(ownerName)) {
+    if (!splitMemberQuery(query, ownerName, memberName)) {
         return ValueMemberLookupStatus::NoOwner;
     }
 
     TypeClass *ownerType = nullptr;
-    if (!lookupVisibleValueType(unit, syntaxTree, records, fallbackPath, line,
-                                ownerName, ownerType)) {
-        return ValueMemberLookupStatus::NoOwner;
-    }
-
-    while (auto *constType = ownerType ? ownerType->as<ConstType>() : nullptr) {
-        ownerType = constType->getBaseType();
-    }
-    if (!ownerType) {
-        return ValueMemberLookupStatus::OwnerFoundMissingMember;
+    auto ownerStatus = lookupValuePathType(unit, syntaxTree, records,
+                                           fallbackPath, line, ownerName,
+                                           ownerType);
+    if (ownerStatus != ValueMemberLookupStatus::Found) {
+        return ownerStatus;
     }
 
     TypeClass *memberType = nullptr;
     AccessKind access = AccessKind::GetOnly;
     bool embedded = false;
-    if (auto *structType = ownerType->as<StructType>()) {
-        auto *member = structType->getMember(memberName);
-        if (!member) {
-            return ValueMemberLookupStatus::OwnerFoundMissingMember;
-        }
-        memberType = member->first;
-        access = structType->getMemberAccess(memberName);
-        embedded = structType->isEmbeddedMember(memberName);
-    } else if (auto *tupleType = ownerType->as<TupleType>()) {
-        TupleType::ValueTy member;
-        if (!tupleType->getMember(llvm::StringRef(memberName), member)) {
-            return ValueMemberLookupStatus::OwnerFoundMissingMember;
-        }
-        memberType = member.first;
-    } else {
-        return ValueMemberLookupStatus::OwnerFoundMissingMember;
+    auto memberStatus =
+        lookupProjectedMemberType(ownerType, memberName, memberType, access,
+                                  embedded);
+    if (memberStatus != ValueMemberLookupStatus::Found) {
+        return memberStatus;
     }
 
     item = makeMemberValuePrintItem(ownerName, memberName, ownerType,

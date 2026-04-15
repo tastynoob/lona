@@ -187,6 +187,7 @@ goto 42
 pv self
 pv local_name
 pv box.value
+pv box.inner.leaf.value
 find field value
 find func fib
 ```
@@ -199,7 +200,7 @@ find func fib
 4. 顶层 func / global
 5. 字段
 
-`pv obj.member` 会把 `obj` 当作当前可见的 value 绑定来解析，并输出该成员的 value 信息和类型。
+`pv obj.member` 会把 `obj` 当作当前可见的 value 绑定来解析，并输出该成员的 value 信息和类型。这个 value path 也支持更长的链，比如 `pv a.b.c.d`。
 
 `pt <name>` 默认查询 type / trait 命名空间；当名称写成 `module.member` 时，它还会查询当前活动文件已导入模块里的 type / trait / func，并按成员表或函数签名输出。
 

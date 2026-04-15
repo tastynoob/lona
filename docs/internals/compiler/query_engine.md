@@ -76,6 +76,7 @@
   - `info local`
   - 局部 `pv`
   - 对象成员的 `pv obj.member`
+  - 多段 value path 的 `pv a.b.c.d`
 
 现在的实现不是“纯 AST 查询”：
 

@@ -762,3 +762,77 @@ def test_query_pv_can_print_object_members_as_values(
     if proc.stderr is not None:
         stderr = proc.stderr.read()
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_pv_can_print_nested_object_member_chains(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Leaf {",
+                "    value i32",
+                "}",
+                "",
+                "struct Inner {",
+                "    leaf Leaf",
+                "}",
+                "",
+                "struct Outer {",
+                "    inner Inner",
+                "}",
+                "",
+                "def main() i32 {",
+                "    var box = Outer(inner = Inner(leaf = Leaf(value = 7)))",
+                "    ret box.inner.leaf.value",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        line = send_command(proc, "goto 14")
+        assert line["ok"] is True, line
+
+        printed_member = send_command(proc, "pv box.inner.leaf.value")
+        assert printed_member["ok"] is True, printed_member
+        assert printed_member["result"]["item"]["kind"] == "member", printed_member
+        assert (
+            printed_member["result"]["item"]["qualifiedName"]
+            == "box.inner.leaf.value"
+        ), printed_member
+        assert printed_member["result"]["item"]["owner"] == "box.inner.leaf", printed_member
+        assert printed_member["result"]["item"]["type"] == "i32", printed_member
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
