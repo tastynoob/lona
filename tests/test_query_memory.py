@@ -63,9 +63,9 @@ def test_query_reload_does_not_leak_memory(tmp_path: Path) -> None:
     )
 
     try:
-        gotom = send_command(proc, "gotom reload_memcheck")
-        assert gotom["ok"] is True, gotom
-        assert gotom["result"]["path"] == str(source_path), gotom
+        opened = send_command(proc, "open reload_memcheck")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(source_path), opened
 
         status = send_command(proc, "status")
         assert status["ok"] is True, status
@@ -95,7 +95,7 @@ def test_query_reload_does_not_leak_memory(tmp_path: Path) -> None:
         reload_reply = send_command(proc, "reload")
         assert reload_reply["ok"] is True, reload_reply
         assert reload_reply["result"]["hasAnalysis"] is True, reload_reply
-        printed_box = send_command(proc, "print Box")
+        printed_box = send_command(proc, "pt Box")
         assert printed_box["ok"] is True, printed_box
         assert printed_box["result"]["item"]["kind"] == "type", printed_box
         members = printed_box["result"]["item"]["typeInfo"]["members"]

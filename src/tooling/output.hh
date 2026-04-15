@@ -43,7 +43,8 @@ public:
                   std::string_view kindFilter,
                   std::string_view pattern) const;
     CommandOutcome emitPrint(std::string_view command, const Session &session,
-                             std::string_view name) const;
+                             std::string_view name,
+                             PrintQueryKind kind) const;
 
     void printPrompt() const;
     void printRetryHint() const;

@@ -69,11 +69,11 @@
 - 顶层与项目级查询
   - `info global`
   - `find`
-  - 顶层 `print`
+  - 顶层 `pv` / `pt`
 - 局部和语义相关查询
   - `goto`
   - `info local`
-  - 局部 `print`
+  - 局部 `pv`
 
 现在的实现不是“纯 AST 查询”：
 
@@ -90,8 +90,8 @@
 
 - `root <path...>`
   - 选择一组 root paths，并清空已加载 entry modules
-- `gotom <module>`
-  - 切换当前活动模块；如果模块未加载，则把它加入 entry 集合并增量加载依赖闭包
+- `open <module>`
+  - 打开当前活动模块；如果模块未加载，则把它加入 entry 集合并增量加载依赖闭包
 - `reload`
   - 重新加载当前已加载 entry modules 及其依赖图
 - `reload <module>`
@@ -110,7 +110,7 @@
 - entry module 路径集合
   - 决定当前已经加载并会参与诊断的模块子图
 - active module 路径
-  - 决定 `ast`、`print`、`goto`、`info local` 这些查询当前落在哪个模块上
+  - 决定 `ast`、`pv`、`pt`、`goto`、`info local` 这些查询当前落在哪个模块上
 
 这一步已经足够支撑项目级静态分析和外层 LSP 原型，但还不是细粒度增量前端。
 

@@ -15,6 +15,12 @@
 
 namespace lona::tooling {
 
+enum class PrintQueryKind {
+    Any,
+    Value,
+    Type,
+};
+
 struct SourceLocation {
     std::string path;
     int line = 0;
@@ -99,7 +105,8 @@ public:
     Json symbolsJson() const;
     Json findResultsJson(std::string_view kindFilter,
                          std::string_view pattern) const;
-    Json fieldInfoJson(std::string_view fieldName) const;
+    Json printItemJson(std::string_view query,
+                       PrintQueryKind kind = PrintQueryKind::Any) const;
     Json infoLocalJson(int line = 0) const;
 
     void printAst(std::ostream &out) const;
@@ -107,7 +114,8 @@ public:
     void printSymbols(std::ostream &out) const;
     void printFindResults(std::ostream &out, std::string_view kindFilter,
                           std::string_view pattern) const;
-    void printFieldInfo(std::ostream &out, std::string_view fieldName) const;
+    void printItem(std::ostream &out, std::string_view query,
+                   PrintQueryKind kind = PrintQueryKind::Any) const;
     void printInfoLocal(std::ostream &out, int line = 0) const;
 };
 

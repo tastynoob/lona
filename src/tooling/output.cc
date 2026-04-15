@@ -238,13 +238,14 @@ OutputFormatter::emitFind(std::string_view command, const Session &session,
 
 CommandOutcome
 OutputFormatter::emitPrint(std::string_view command, const Session &session,
-                           std::string_view name) const {
-    auto result = session.fieldInfoJson(name);
+                           std::string_view name,
+                           PrintQueryKind kind) const {
+    auto result = session.printItemJson(name, kind);
     if (!result["found"].get<bool>()) {
         if (isJson()) {
             emitJsonResponse(false, command, std::move(result));
         } else {
-            session.printFieldInfo(out_, name);
+            session.printItem(out_, name, kind);
         }
         return CommandOutcome{true, 1};
     }
@@ -252,7 +253,7 @@ OutputFormatter::emitPrint(std::string_view command, const Session &session,
     if (isJson()) {
         emitJsonResponse(true, command, std::move(result));
     } else {
-        session.printFieldInfo(out_, name);
+        session.printItem(out_, name, kind);
     }
     return {};
 }

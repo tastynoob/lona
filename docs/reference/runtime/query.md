@@ -101,8 +101,8 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
 - `root <path...>`
   - 设置当前会话的 root paths
   - 这一步不会自动打开任何模块
-- `gotom <module>`
-  - 切换当前活动模块
+- `open <module>`
+  - 打开并切换当前活动模块
   - 如果模块尚未加载，会按 root paths 解析并增量加载该模块及其依赖闭包
   - 这里的 `<module>` 必须使用 canonical 模块路径，也就是“相对于 root paths 的路径，去掉 `.lo` 后缀”
 - `reload`
@@ -113,17 +113,17 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
 
 边界：
 
-- `gotom <module>` 只适用于 file-backed root-path 会话
-- `gotom <module>` 不接受绝对路径
-- `gotom <module>` 不接受 `.lo` 后缀
-- `gotom <module>` 如果在多个 root paths 下同时命中，会直接报冲突，而不是按顺序挑一个
+- `open <module>` 只适用于 file-backed root-path 会话
+- `open <module>` 不接受绝对路径
+- `open <module>` 不接受 `.lo` 后缀
+- `open <module>` 如果在多个 root paths 下同时命中，会直接报冲突，而不是按顺序挑一个
 - `reload <module>` 只适用于 file-backed root-path 会话
 - `reload <module>` 不接受绝对路径
 - `reload <module>` 不接受 `.lo` 后缀
 - `reload <module>` 如果在多个 root paths 下同时命中，会直接报冲突，而不是按顺序挑一个
 - 如果当前是 `--source` 内存源码模式，只能使用不带参数的 `reload`
 - 当前支持的是模块级重载，还不支持函数级局部重载
-- 如果一个模块还没被 `gotom` 打开过，它不属于当前已加载集合；这时它的诊断也不会自动出现
+- 如果一个模块还没被 `open` 打开过，它不属于当前已加载集合；这时它的诊断也不会自动出现
 
 ## 5. 当前命令
 
@@ -133,8 +133,8 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
   - 打印当前会话状态
 - `root <path...>`
   - 设置 root paths
-- `gotom <module>`
-  - 切换当前活动模块
+- `open <module>`
+  - 打开并切换当前活动模块
 - `reload [module]`
   - 重新加载当前已加载集合，或重新加载一个 canonical 模块路径及其依赖方
 - `goto <line>`
@@ -147,8 +147,10 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
   - 打印当前行可见的局部变量、参数和 `self`
 - `ast`
   - 打印当前活动模块的 AST JSON
-- `print <name>`
-  - 精确打印一个符号或字段
+- `pv <name>`
+  - 精确打印一个 value 名称或字段
+- `pt <name>`
+  - 精确打印一个 type 或 trait 名称
 - `find [kind] [pattern]`
   - 模糊搜索已索引符号
 - `quit`
@@ -166,34 +168,36 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
 - `import`
 - `all`
 
-## 6. `print` 与 `find`
+## 6. `pv` / `pt` 与 `find`
 
-`print` 适合做精确查询，`find` 适合做模糊搜索。
+`pv` / `pt` 适合做精确查询，`find` 适合做模糊搜索。
 
 例如：
 
 ```text
 root src third_party/modules
-gotom main
-print Complex
-print Trait
-print value
-gotom helper
+open main
+pt Complex
+pt Trait
+pv value
+open helper
 goto 42
-print self
-print local_name
+pv self
+pv local_name
 find field value
 find func fib
 ```
 
-`print <name>` 当前会按下面的顺序尝试解析：
+`pv <name>` 当前会按下面的顺序尝试解析：
 
 1. 当前作用域可见的局部变量、参数、`self`
 2. 顶层变量 / 全局定义
-3. 顶层 type / trait / func
+3. 顶层 func / global
 4. 字段
 
-如果名称有歧义，应当使用更明确的查询上下文，或者先用 `find` 缩小范围。
+`pt <name>` 当前只会查询 type / trait 命名空间。
+
+如果一个名称在 value 和 type 命名空间里同时存在，应当分别使用 `pv` 和 `pt`，而不是依赖旧的混合查询行为。
 
 ## 7. 当前边界
 

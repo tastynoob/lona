@@ -2059,6 +2059,63 @@ lookupQualifiedPrintItem(const CompilationUnit &unit, std::string_view query,
 }
 
 bool
+lookupQualifiedValuePrintItem(const CompilationUnit &unit,
+                              std::string_view query, Json &item) {
+    auto lookup = lookupQualifiedTopLevelName(unit, query);
+    if (lookup.isFunction() && lookup.functionDecl) {
+        item = makeFunctionPrintItem(*lookup.functionDecl);
+        return true;
+    }
+    if (lookup.isGlobal() && lookup.globalDecl) {
+        item = makeGlobalPrintItem(*lookup.globalDecl);
+        return true;
+    }
+    return false;
+}
+
+bool
+lookupQualifiedTypePrintItem(const CompilationUnit &unit, std::string_view query,
+                             Json &item) {
+    auto lookup = lookupQualifiedTopLevelName(unit, query);
+    if (lookup.isType() && lookup.typeDecl) {
+        item = makeTypePrintItem(*lookup.typeDecl);
+        return true;
+    }
+    if (lookup.isTrait() && lookup.traitDecl) {
+        item = makeTraitPrintItem(*lookup.traitDecl);
+        return true;
+    }
+    return false;
+}
+
+const char *
+printQueryKindKeyword(PrintQueryKind kind) {
+    switch (kind) {
+        case PrintQueryKind::Any:
+            return "any";
+        case PrintQueryKind::Value:
+            return "value";
+        case PrintQueryKind::Type:
+            return "type";
+    }
+    return "any";
+}
+
+std::string
+unknownPrintQueryMessage(PrintQueryKind kind, std::string_view query) {
+    const auto cleaned = trimCopy(query);
+    switch (kind) {
+        case PrintQueryKind::Any:
+            return "unknown symbol: " + cleaned;
+        case PrintQueryKind::Value:
+            return "unknown value: " + cleaned;
+        case PrintQueryKind::Type:
+            return "unknown type: " + cleaned;
+    }
+    return "unknown symbol: " + cleaned;
+}
+
+bool
 lookupVisibleLocalPrintItem(const AstNode *syntaxTree,
                             const std::vector<AnalyzedFunctionRecord> &records,
                             const std::string &fallbackPath, int line,
@@ -2806,7 +2863,7 @@ Session::rebuildProjectFromModule(const std::string &path) {
                 DiagnosticError::Category::Driver,
                 "module `" + normalizedPath +
                     "` is not part of the current loaded module set",
-                "Open the module with `gotom <module>` before reloading it."));
+                "Open the module with `open <module>` before reloading it."));
             hardFailure = true;
         } else {
             invalidateModuleAndDependents(normalizedPath);
@@ -2844,7 +2901,7 @@ bool
 Session::gotoModule(const std::string &path, std::string *errorMessage) {
     if (!currentSourceIsFile_ || moduleRoots_.empty()) {
         if (errorMessage) {
-            *errorMessage = "gotom requires configured root paths";
+            *errorMessage = "open requires configured root paths";
         }
         return false;
     }
@@ -3167,7 +3224,7 @@ Session::findResultsJson(std::string_view kindFilter,
 }
 
 Json
-Session::fieldInfoJson(std::string_view fieldName) const {
+Session::printItemJson(std::string_view fieldName, PrintQueryKind kind) const {
     Json root = Json::object();
     if (currentPath_.empty()) {
         root["path"] = nullptr;
@@ -3175,6 +3232,7 @@ Session::fieldInfoJson(std::string_view fieldName) const {
         root["path"] = currentPath_;
     }
     root["query"] = trimCopy(fieldName);
+    root["queryKind"] = printQueryKindKeyword(kind);
     root["found"] = false;
     root["ambiguous"] = false;
     root["item"] = nullptr;
@@ -3189,48 +3247,66 @@ Session::fieldInfoJson(std::string_view fieldName) const {
 
     const auto query = trimCopy(fieldName);
     if (query.empty()) {
-        root["error"] = "empty print query";
+        root["error"] = std::string("empty ") + printQueryKindKeyword(kind) +
+                        " query";
         return root;
     }
 
     Json printItem = Json::object();
-    if (lookupVisibleLocalPrintItem(syntaxTree_, analyzedFunctions_,
-                                    currentPath_, currentLine_, query,
-                                    printItem)) {
+    if (kind != PrintQueryKind::Type) {
+        if (lookupVisibleLocalPrintItem(syntaxTree_, analyzedFunctions_,
+                                        currentPath_, currentLine_, query,
+                                        printItem)) {
+            root["found"] = true;
+            root["item"] = std::move(printItem);
+            return root;
+        }
+
+        if (lookupTopLevelVarPrintItem(syntaxTree_, analyzedFunctions_,
+                                       currentPath_, query, printItem)) {
+            root["found"] = true;
+            root["item"] = std::move(printItem);
+            return root;
+        }
+    }
+
+    if (kind == PrintQueryKind::Any) {
+        if (lookupQualifiedPrintItem(*currentUnit_, query, printItem)) {
+            root["found"] = true;
+            root["item"] = std::move(printItem);
+            return root;
+        }
+    } else if (kind == PrintQueryKind::Value) {
+        if (lookupQualifiedValuePrintItem(*currentUnit_, query, printItem)) {
+            root["found"] = true;
+            root["item"] = std::move(printItem);
+            return root;
+        }
+    } else if (lookupQualifiedTypePrintItem(*currentUnit_, query, printItem)) {
         root["found"] = true;
         root["item"] = std::move(printItem);
         return root;
     }
 
-    if (lookupTopLevelVarPrintItem(syntaxTree_, analyzedFunctions_,
-                                   currentPath_, query, printItem)) {
-        root["found"] = true;
-        root["item"] = std::move(printItem);
-        return root;
+    if (kind != PrintQueryKind::Type) {
+        auto fieldMatches = findFieldCandidates(*currentUnit_, query);
+        if (fieldMatches.size() == 1) {
+            root["found"] = true;
+            root["item"] = makeFieldPrintItem(fieldMatches.front());
+            return root;
+        }
+        if (!fieldMatches.empty()) {
+            root["ambiguous"] = true;
+            root["error"] = "ambiguous field: " + query;
+            for (const auto &candidate : fieldMatches) {
+                root["candidates"].push_back(
+                    makeFieldCandidateSummaryJson(candidate));
+            }
+            return root;
+        }
     }
 
-    if (lookupQualifiedPrintItem(*currentUnit_, query, printItem)) {
-        root["found"] = true;
-        root["item"] = std::move(printItem);
-        return root;
-    }
-
-    auto fieldMatches = findFieldCandidates(*currentUnit_, query);
-    if (fieldMatches.size() == 1) {
-        root["found"] = true;
-        root["item"] = makeFieldPrintItem(fieldMatches.front());
-        return root;
-    }
-    if (fieldMatches.empty()) {
-        root["error"] = "unknown symbol: " + query;
-        return root;
-    }
-
-    root["ambiguous"] = true;
-    root["error"] = "ambiguous field: " + query;
-    for (const auto &candidate : fieldMatches) {
-        root["candidates"].push_back(makeFieldCandidateSummaryJson(candidate));
-    }
+    root["error"] = unknownPrintQueryMessage(kind, query);
     return root;
 }
 
@@ -3343,8 +3419,9 @@ Session::printFindResults(std::ostream &out, std::string_view kindFilter,
 }
 
 void
-Session::printFieldInfo(std::ostream &out, std::string_view fieldName) const {
-    auto root = fieldInfoJson(fieldName);
+Session::printItem(std::ostream &out, std::string_view fieldName,
+                   PrintQueryKind kind) const {
+    auto root = printItemJson(fieldName, kind);
     if (!root["found"].get<bool>()) {
         if (!root["error"].is_null()) {
             out << root["error"].get<std::string>() << '\n';
@@ -3360,14 +3437,14 @@ Session::printFieldInfo(std::ostream &out, std::string_view fieldName) const {
     }
 
     const auto &item = root["item"];
-    const auto kind = item["kind"].get<std::string>();
-    if (kind == "field") {
+    const auto itemKind = item["kind"].get<std::string>();
+    if (itemKind == "field") {
         out << "field " << item["qualifiedName"].get<std::string>() << '\n';
         out << "type: " << item["type"].get<std::string>() << '\n';
         printFieldMembers(out, item["typeInfo"], 0);
         return;
     }
-    if (kind == "type") {
+    if (itemKind == "type") {
         out << "type " << item["name"].get<std::string>() << " ["
             << item["declKind"].get<std::string>() << "]\n";
         out << "type: " << item["type"].get<std::string>() << '\n';
@@ -3375,23 +3452,23 @@ Session::printFieldInfo(std::ostream &out, std::string_view fieldName) const {
         printMethodItems(out, item["methods"]);
         return;
     }
-    if (kind == "trait") {
+    if (itemKind == "trait") {
         out << "trait " << item["name"].get<std::string>() << '\n';
         printMethodItems(out, item["methods"]);
         return;
     }
-    if (kind == "func") {
+    if (itemKind == "func") {
         out << "func " << item["name"].get<std::string>() << ' '
             << item["signature"].get<std::string>() << '\n';
         return;
     }
-    if (kind == "global") {
+    if (itemKind == "global") {
         out << "global " << item["name"].get<std::string>() << ' '
             << item["type"].get<std::string>() << '\n';
         return;
     }
-    if (kind == "local" || kind == "param" || kind == "self") {
-        out << kind << ' ' << item["qualifiedName"].get<std::string>() << '\n';
+    if (itemKind == "local" || itemKind == "param" || itemKind == "self") {
+        out << itemKind << ' ' << item["qualifiedName"].get<std::string>() << '\n';
         if (!item["detail"].get<std::string>().empty()) {
             out << "detail: " << item["detail"].get<std::string>() << '\n';
         }
@@ -3399,7 +3476,7 @@ Session::printFieldInfo(std::ostream &out, std::string_view fieldName) const {
         printFieldMembers(out, item["typeInfo"], 0);
         return;
     }
-    if (kind == "top-level-var") {
+    if (itemKind == "top-level-var") {
         out << "top-level-var " << item["qualifiedName"].get<std::string>()
             << '\n';
         if (!item["detail"].get<std::string>().empty()) {
@@ -3409,7 +3486,7 @@ Session::printFieldInfo(std::ostream &out, std::string_view fieldName) const {
         printFieldMembers(out, item["typeInfo"], 0);
         return;
     }
-    out << "unknown item kind: " << kind << '\n';
+    out << "unknown item kind: " << itemKind << '\n';
 }
 
 void

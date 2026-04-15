@@ -65,21 +65,21 @@ def test_query_can_switch_active_module_and_reload_by_canonical_path(
         assert status["result"]["entryModules"] == [], status
         assert status["result"]["path"] is None, status
 
-        gotom = send_command(proc, "gotom helper")
-        assert gotom["ok"] is True, gotom
-        assert gotom["result"]["rootPaths"] == [str(app_dir), str(lib_dir)], gotom
-        assert gotom["result"]["path"] == str(helper_path), gotom
-        assert gotom["result"]["cursorLine"] is None, gotom
+        opened = send_command(proc, "open helper")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["rootPaths"] == [str(app_dir), str(lib_dir)], opened
+        assert opened["result"]["path"] == str(helper_path), opened
+        assert opened["result"]["cursorLine"] is None, opened
 
-        gotom_root = send_command(proc, "gotom main")
-        assert gotom_root["ok"] is True, gotom_root
-        assert gotom_root["result"]["path"] == str(root_path), gotom_root
+        opened_root = send_command(proc, "open main")
+        assert opened_root["ok"] is True, opened_root
+        assert opened_root["result"]["path"] == str(root_path), opened_root
 
         ast_reply = send_command(proc, "ast")
         assert ast_reply["ok"] is True, ast_reply
         assert ast_reply["result"]["path"] == str(root_path), ast_reply
 
-        print_reply = send_command(proc, "print main")
+        print_reply = send_command(proc, "pv main")
         assert print_reply["ok"] is True, print_reply
         assert print_reply["result"]["item"]["kind"] == "func", print_reply
         assert print_reply["result"]["item"]["name"] == "main", print_reply
@@ -91,7 +91,7 @@ def test_query_can_switch_active_module_and_reload_by_canonical_path(
         assert bad_suffix["ok"] is False, bad_suffix
         assert "omit the file suffix" in bad_suffix["result"]["error"], bad_suffix
 
-        bad_abs = send_command(proc, f"gotom {helper_path}")
+        bad_abs = send_command(proc, f"open {helper_path}")
         assert bad_abs["ok"] is False, bad_abs
         assert "canonical module paths" in bad_abs["result"]["error"], bad_abs
 
@@ -155,11 +155,11 @@ def test_query_reload_from_dependency_keeps_root_semantic_diagnostics(
     )
 
     try:
-        open_root = send_command(proc, "gotom main")
+        open_root = send_command(proc, "open main")
         assert open_root["ok"] is True, open_root
 
-        gotom = send_command(proc, "gotom helper")
-        assert gotom["ok"] is True, gotom
+        opened = send_command(proc, "open helper")
+        assert opened["ok"] is True, opened
 
         helper_path.write_text(
             "\n".join(
@@ -250,19 +250,19 @@ def test_query_analyzes_clean_dependency_even_with_root_semantic_error(
     )
 
     try:
-        open_root = send_command(proc, "gotom main")
+        open_root = send_command(proc, "open main")
         assert open_root["ok"] is True, open_root
 
         status = send_command(proc, "status")
         assert status["ok"] is True, status
         assert status["result"]["diagnosticCount"] >= 1, status
 
-        gotom = send_command(proc, "gotom helper")
-        assert gotom["ok"] is True, gotom
-        assert gotom["result"]["path"] == str(helper_path), gotom
-        assert gotom["result"]["hasAnalysis"] is True, gotom
+        opened = send_command(proc, "open helper")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(helper_path), opened
+        assert opened["result"]["hasAnalysis"] is True, opened
 
-        print_reply = send_command(proc, "print value")
+        print_reply = send_command(proc, "pv value")
         assert print_reply["ok"] is True, print_reply
         assert print_reply["result"]["item"]["kind"] == "func", print_reply
         assert print_reply["result"]["item"]["name"] == "value", print_reply
@@ -283,7 +283,7 @@ def test_query_analyzes_clean_dependency_even_with_root_semantic_error(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
-def test_query_gotom_tracks_new_broken_entry_for_diagnostics(
+def test_query_open_tracks_new_broken_entry_for_diagnostics(
     query_bin: Path, tmp_path: Path
 ) -> None:
     app_dir = tmp_path / "app"
@@ -315,11 +315,11 @@ def test_query_gotom_tracks_new_broken_entry_for_diagnostics(
     )
 
     try:
-        gotom = send_command(proc, "gotom helper")
-        assert gotom["ok"] is True, gotom
-        assert gotom["result"]["path"] == str(helper_path), gotom
-        assert str(helper_path) in gotom["result"]["entryModules"], gotom
-        assert gotom["result"]["diagnosticCount"] >= 1, gotom
+        opened = send_command(proc, "open helper")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(helper_path), opened
+        assert str(helper_path) in opened["result"]["entryModules"], opened
+        assert opened["result"]["diagnosticCount"] >= 1, opened
 
         diagnostics = send_command(proc, "diagnostics")
         assert diagnostics["ok"] is True, diagnostics
@@ -390,10 +390,10 @@ def test_query_reload_refreshes_later_entries_after_earlier_failure(
     )
 
     try:
-        helper_open = send_command(proc, "gotom helper")
+        helper_open = send_command(proc, "open helper")
         assert helper_open["ok"] is True, helper_open
 
-        root_open = send_command(proc, "gotom main")
+        root_open = send_command(proc, "open main")
         assert root_open["ok"] is True, root_open
         assert root_open["result"]["path"] == str(root_path), root_open
 
@@ -427,11 +427,11 @@ def test_query_reload_refreshes_later_entries_after_earlier_failure(
         assert reload_reply["result"]["path"] == str(root_path), reload_reply
         assert reload_reply["result"]["diagnosticCount"] >= 1, reload_reply
 
-        print_renamed = send_command(proc, "print renamed")
+        print_renamed = send_command(proc, "pv renamed")
         assert print_renamed["ok"] is True, print_renamed
         assert print_renamed["result"]["item"]["name"] == "renamed", print_renamed
 
-        print_old = send_command(proc, "print main")
+        print_old = send_command(proc, "pv main")
         assert print_old["ok"] is False, print_old
 
         diagnostics = send_command(proc, "diagnostics")
@@ -440,6 +440,76 @@ def test_query_reload_refreshes_later_entries_after_earlier_failure(
         assert (
             diagnostics["result"]["items"][0]["location"]["path"] == str(helper_path)
         ), diagnostics
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_distinguishes_pv_and_pt_for_same_name_symbols(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Box {",
+                "    value i32",
+                "}",
+                "",
+                "def main() i32 {",
+                "    var Box = 7",
+                "    ret Box",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+
+        line = send_command(proc, "goto 6")
+        assert line["ok"] is True, line
+
+        print_value = send_command(proc, "pv Box")
+        assert print_value["ok"] is True, print_value
+        assert print_value["result"]["item"]["kind"] == "local", print_value
+        assert print_value["result"]["item"]["name"] == "Box", print_value
+        assert print_value["result"]["item"]["type"] == "i32", print_value
+
+        print_type = send_command(proc, "pt Box")
+        assert print_type["ok"] is True, print_type
+        assert print_type["result"]["item"]["kind"] == "type", print_type
+        assert print_type["result"]["item"]["name"] == "Box", print_type
+
+        missing_value = send_command(proc, "pv missing_type_only")
+        assert missing_value["ok"] is False, missing_value
+        assert "unknown value" in missing_value["result"]["error"], missing_value
 
         assert proc.stdin is not None
         proc.stdin.write("quit\n")

@@ -130,7 +130,7 @@ handleReload(Session &session, const ParsedCommand &command,
         if (session.currentSourceIsFile() && session.loadedEntryPaths().empty()) {
             return formatter.emitError(
                 command.raw,
-                "reload requires at least one loaded module; use gotom first");
+                "reload requires at least one loaded module; use open first");
         }
 
         const auto reloaded = session.reload();
@@ -158,11 +158,11 @@ handleReload(Session &session, const ParsedCommand &command,
 }
 
 CommandOutcome
-handleGotoModule(Session &session, const ParsedCommand &command,
+handleOpenModule(Session &session, const ParsedCommand &command,
                  OutputFormatter &formatter, const CommandRegistry &) {
     if (command.args.empty()) {
         return formatter.emitError(command.raw,
-                                   "gotom requires a canonical module path");
+                                   "open requires a canonical module path");
     }
 
     std::string error;
@@ -233,12 +233,34 @@ handleInfoGlobal(Session &session, const ParsedCommand &command,
 }
 
 CommandOutcome
-handlePrint(Session &session, const ParsedCommand &command,
-            OutputFormatter &formatter, const CommandRegistry &) {
+handlePrintValue(Session &session, const ParsedCommand &command,
+                 OutputFormatter &formatter, const CommandRegistry &) {
+    if (command.args.empty()) {
+        return formatter.emitError(command.raw, "pv requires a value name");
+    }
+    return formatter.emitPrint(command.raw, session, command.args,
+                               PrintQueryKind::Value);
+}
+
+CommandOutcome
+handlePrintType(Session &session, const ParsedCommand &command,
+                OutputFormatter &formatter, const CommandRegistry &) {
+    if (command.args.empty()) {
+        return formatter.emitError(command.raw,
+                                   "pt requires a type or trait name");
+    }
+    return formatter.emitPrint(command.raw, session, command.args,
+                               PrintQueryKind::Type);
+}
+
+CommandOutcome
+handlePrintCompat(Session &session, const ParsedCommand &command,
+                  OutputFormatter &formatter, const CommandRegistry &) {
     if (command.args.empty()) {
         return formatter.emitError(command.raw, "print requires a symbol name");
     }
-    return formatter.emitPrint(command.raw, session, command.args);
+    return formatter.emitPrint(command.raw, session, command.args,
+                               PrintQueryKind::Any);
 }
 
 CommandOutcome
@@ -398,9 +420,12 @@ buildCommandRegistry() {
     registry.add({"reload", "reload [module]",
                   "reload all loaded modules or one canonical module path",
                   CommandArgumentPolicy::Optional, false, handleReload});
+    registry.add({"open", "open <module>",
+                  "open the active module using a canonical module path",
+                  CommandArgumentPolicy::Required, false, handleOpenModule});
     registry.add({"gotom", "gotom <module>",
                   "switch the active module using a canonical module path",
-                  CommandArgumentPolicy::Required, false, handleGotoModule});
+                  CommandArgumentPolicy::Required, true, handleOpenModule});
     registry.add({"goto", "goto <line>", "move the analysis point to a source line",
                   CommandArgumentPolicy::Required, false, handleGoto});
     registry.add({"info global", "info global", "print indexed non-local symbols",
@@ -410,9 +435,13 @@ buildCommandRegistry() {
     registry.add({"info local", "info local [line]",
                   "print locals visible at the current line",
                   CommandArgumentPolicy::Optional, false, handleInfoLocal});
+    registry.add({"pv", "pv <name>", "print one resolved value or field",
+                  CommandArgumentPolicy::Required, false, handlePrintValue});
+    registry.add({"pt", "pt <name>", "print one resolved type or trait",
+                  CommandArgumentPolicy::Required, false, handlePrintType});
     registry.add({"print", "print <name>",
                   "print one resolved symbol or field",
-                  CommandArgumentPolicy::Required, false, handlePrint});
+                  CommandArgumentPolicy::Required, true, handlePrintCompat});
     registry.add({"ast", "ast", "print the parsed AST as JSON",
                   CommandArgumentPolicy::None, false, handleAst});
     registry.add({"find", "find [kind] [pattern]", "search indexed symbols",
