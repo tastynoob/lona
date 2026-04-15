@@ -37,6 +37,7 @@ struct AnalyzedFunctionRecord {
 class Session {
     CompilerWorkspace workspace_;
     WorkspaceLoader loader_;
+    std::string rootPath_;
     std::string currentPath_;
     std::vector<std::string> currentIncludePaths_;
     std::string currentSource_;
@@ -56,8 +57,13 @@ class Session {
     bool rebuildProject();
     bool rebuildProjectFromModule(const std::string &path);
     void rebuildSymbolIndex();
-    void tryCollectSemanticDiagnostics(CompilationUnit &unit);
+    void collectProjectSemanticDiagnostics();
+    void rebuildActiveSemanticState(CompilationUnit &unit);
     void invalidateModuleAndDependents(const std::string &path);
+    bool moduleBelongsToCurrentProject(const std::string &path) const;
+    void finalizeActiveUnit(bool resetLine);
+    bool activateFileModule(const std::string &path, bool resetLine,
+                            std::string *errorMessage = nullptr);
 
 public:
     explicit Session(std::size_t errorLimit = 20);
@@ -67,7 +73,10 @@ public:
     bool setSourceText(std::string path, std::string sourceText);
     bool reload();
     bool reloadFile(const std::string &path);
+    bool gotoModule(const std::string &path,
+                    std::string *errorMessage = nullptr);
 
+    const std::string &rootPath() const { return rootPath_; }
     const std::string &currentPath() const { return currentPath_; }
     const std::vector<std::string> &currentIncludePaths() const {
         return currentIncludePaths_;

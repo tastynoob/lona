@@ -72,6 +72,13 @@ struct FieldLookupResult {
     std::vector<const FieldQueryRecord *> candidates;
 };
 
+struct SemanticAnalysisResult {
+    std::unique_ptr<IRBuildState> analysisBuild;
+    std::unique_ptr<ResolvedModule> resolvedModule;
+    std::unique_ptr<HIRModule> analyzedModule;
+    std::vector<AnalyzedFunctionRecord> analyzedFunctions;
+};
+
 std::string
 trimCopy(std::string_view text) {
     std::size_t start = 0;
@@ -2487,6 +2494,75 @@ collectDependentClosure(const ModuleGraph &moduleGraph, const string &path) {
     return pending;
 }
 
+std::optional<SemanticAnalysisResult>
+analyzeUnitSemantics(WorkspaceLoader &loader, CompilerWorkspace &workspace,
+                     CompilationUnit &unit,
+                     std::optional<DiagnosticError> *errorOut = nullptr) {
+    try {
+        SemanticAnalysisResult result;
+        result.analysisBuild =
+            std::make_unique<IRBuildState>(unit, defaultTargetTriple());
+        auto &build = *result.analysisBuild;
+        std::unordered_set<string> directDependencyPaths;
+        for (const auto &dependencyPath :
+             workspace.moduleGraph().dependenciesOf(unit.path())) {
+            directDependencyPaths.insert(dependencyPath);
+        }
+        for (const auto &dependencyPath :
+             workspace.moduleGraph().postOrderFrom(unit.path())) {
+            if (dependencyPath == unit.path()) {
+                continue;
+            }
+            auto *loadedUnit = workspace.moduleGraph().find(dependencyPath);
+            if (loadedUnit == nullptr) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Internal,
+                    "module graph dependency references a missing unit",
+                    "This looks like a tooling/module graph bug.");
+            }
+            loader.validateImportedUnit(*loadedUnit);
+            collectUnitDeclarations(
+                &build.global, *loadedUnit, true,
+                directDependencyPaths.contains(dependencyPath));
+        }
+        collectUnitDeclarations(&build.global, unit, false, false);
+        defineUnitGlobals(&build.global, unit);
+        result.resolvedModule =
+            resolveModule(&build.global, unit.syntaxTree(), &unit, true);
+        result.analyzedModule =
+            analyzeModule(&build.global, *result.resolvedModule, &unit);
+        if (!result.analyzedModule) {
+            result.analysisBuild.reset();
+            return result;
+        }
+        auto hirIndex = std::size_t{0};
+        for (const auto &resolvedFunction : result.resolvedModule->functions()) {
+            if (resolvedFunction->isTemplateValidationOnly()) {
+                continue;
+            }
+            if (hirIndex >= result.analyzedModule->getFunctions().size()) {
+                result.analyzedFunctions.clear();
+                break;
+            }
+            result.analyzedFunctions.push_back(
+                {resolvedFunction.get(),
+                 result.analyzedModule->getFunctions()[hirIndex]});
+            ++hirIndex;
+        }
+        if (!result.analyzedFunctions.empty() &&
+            hirIndex != result.analyzedModule->getFunctions().size()) {
+            result.analyzedFunctions.clear();
+        }
+        return result;
+    } catch (const DiagnosticError &error) {
+        if (errorOut != nullptr) {
+            *errorOut = error;
+        }
+    } catch (const DiagnosticLimitReached &) {
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 Session::Session(std::size_t errorLimit)
@@ -2495,6 +2571,7 @@ Session::Session(std::size_t errorLimit)
 bool
 Session::setRootFile(const std::string &path,
                      std::vector<std::string> includePaths) {
+    rootPath_ = path;
     currentPath_ = path;
     currentIncludePaths_ = std::move(includePaths);
     currentSource_.clear();
@@ -2505,8 +2582,8 @@ Session::setRootFile(const std::string &path,
 
 bool
 Session::setSourceText(std::string path, std::string sourceText) {
-    currentPath_ =
-        path.empty() ? std::string("<memory>.lo") : std::move(path);
+    rootPath_ = path.empty() ? std::string("<memory>.lo") : std::move(path);
+    currentPath_ = rootPath_;
     currentIncludePaths_.clear();
     currentSource_ = std::move(sourceText);
     currentSourceIsFile_ = false;
@@ -2516,7 +2593,7 @@ Session::setSourceText(std::string path, std::string sourceText) {
 
 bool
 Session::reload() {
-    if (currentPath_.empty()) {
+    if (rootPath_.empty()) {
         return false;
     }
     return rebuildProject();
@@ -2543,20 +2620,20 @@ Session::rebuildProject() {
     try {
         if (currentSourceIsFile_) {
             loader_.setDiagnosticBag(&diagnostics_);
-            auto &unit = loader_.loadRootUnit(currentPath_);
-            currentUnit_ = &unit;
-            currentPath_ = toStdString(unit.path());
-            sourceAvailable_ = true;
-            if (currentLine_ > static_cast<int>(unit.source().lineCount())) {
-                currentLine_ = static_cast<int>(unit.source().lineCount());
-            }
+            auto &unit = loader_.loadRootUnit(rootPath_);
+            rootPath_ = toStdString(unit.path());
             loader_.loadTransitiveUnits();
-            syntaxTree_ = unit.syntaxTree();
+            collectProjectSemanticDiagnostics();
+            auto desiredPath = currentPath_.empty() ? rootPath_ : currentPath_;
+            if (!activateFileModule(desiredPath, false)) {
+                currentPath_ = rootPath_;
+                (void)activateFileModule(rootPath_, false);
+            }
         } else {
             const auto &source = workspace_.sourceManager().addSource(
-                currentPath_, currentSource_);
-            currentPath_ = source.path();
-            sourceAvailable_ = true;
+                rootPath_, currentSource_);
+            rootPath_ = source.path();
+            currentPath_ = rootPath_;
 
             auto &unit = workspace_.moduleGraph().getOrCreate(source);
             currentUnit_ = &unit;
@@ -2565,9 +2642,6 @@ Session::rebuildProject() {
                 unit.modulePath()));
             workspace_.moduleGraph().markRoot(unit.path());
             unit.setSyntaxTree(nullptr);
-            if (currentLine_ > static_cast<int>(source.lineCount())) {
-                currentLine_ = static_cast<int>(source.lineCount());
-            }
 
             std::istringstream input(unit.source().content());
             Driver driver;
@@ -2576,20 +2650,19 @@ Session::rebuildProject() {
             auto *tree = driver.parse();
             if (tree) {
                 unit.setSyntaxTree(tree);
-                syntaxTree_ = tree;
             }
+            finalizeActiveUnit(false);
         }
     } catch (const DiagnosticLimitReached &) {
     } catch (const DiagnosticError &error) {
         (void)diagnostics_.add(error);
     }
 
-    if (currentUnit_) {
-        syntaxTree_ = currentUnit_->syntaxTree();
-    }
-    rebuildSymbolIndex();
-    if (currentUnit_) {
-        tryCollectSemanticDiagnostics(*currentUnit_);
+    if (currentSourceIsFile_) {
+        if (!currentUnit_ && !rootPath_.empty()) {
+            currentPath_ = rootPath_;
+            (void)activateFileModule(rootPath_, false);
+        }
     }
     return sourceAvailable_;
 }
@@ -2614,20 +2687,21 @@ Session::rebuildProjectFromModule(const std::string &path) {
     sourceAvailable_ = currentUnit_ != nullptr;
     bool hardFailure = false;
     loader_.setIncludePaths(currentIncludePaths_);
+    const auto desiredActivePath = currentPath_;
 
     try {
         loader_.setDiagnosticBag(&diagnostics_);
         const auto resolvedPath =
-            loader_.resolveModuleFilePath(currentPath_, path);
+            loader_.resolveModuleFilePath(rootPath_, path);
         const auto &source = workspace_.sourceManager().loadFile(resolvedPath);
         const auto &normalizedPath = source.path();
-        if (normalizedPath == currentPath_) {
+        if (normalizedPath == rootPath_) {
             return rebuildProject();
         }
 
         auto *loadedUnit = workspace_.moduleGraph().find(normalizedPath);
         auto reachablePaths =
-            workspace_.moduleGraph().postOrderFrom(string(currentPath_));
+            workspace_.moduleGraph().postOrderFrom(string(rootPath_));
         const auto isReachable =
             std::find(reachablePaths.begin(), reachablePaths.end(),
                       string(normalizedPath)) != reachablePaths.end();
@@ -2650,26 +2724,86 @@ Session::rebuildProjectFromModule(const std::string &path) {
         hardFailure = error.category() == DiagnosticError::Category::Driver;
     }
 
-    currentUnit_ = workspace_.moduleGraph().root();
-    syntaxTree_ = currentUnit_ ? currentUnit_->syntaxTree() : nullptr;
-    sourceAvailable_ = currentUnit_ != nullptr;
-    if (currentUnit_ &&
-        currentLine_ > static_cast<int>(currentUnit_->source().lineCount())) {
-        currentLine_ = static_cast<int>(currentUnit_->source().lineCount());
-    }
-    rebuildSymbolIndex();
-    if (currentUnit_) {
-        tryCollectSemanticDiagnostics(*currentUnit_);
+    collectProjectSemanticDiagnostics();
+    if (!activateFileModule(desiredActivePath, false)) {
+        currentPath_ = rootPath_;
+        (void)activateFileModule(rootPath_, false);
     }
     return !hardFailure;
 }
 
 bool
 Session::reloadFile(const std::string &path) {
-    if (!currentSourceIsFile_ || currentPath_.empty()) {
+    if (!currentSourceIsFile_ || rootPath_.empty()) {
         return false;
     }
     return rebuildProjectFromModule(path);
+}
+
+bool
+Session::gotoModule(const std::string &path, std::string *errorMessage) {
+    if (!currentSourceIsFile_ || rootPath_.empty()) {
+        if (errorMessage) {
+            *errorMessage = "gotom requires a file-backed root project";
+        }
+        return false;
+    }
+
+    try {
+        auto resolvedPath = loader_.resolveModuleFilePath(rootPath_, path);
+        return activateFileModule(resolvedPath, true, errorMessage);
+    } catch (const DiagnosticError &error) {
+        if (errorMessage) {
+            *errorMessage = error.what();
+        }
+        return false;
+    }
+}
+
+bool
+Session::moduleBelongsToCurrentProject(const std::string &path) const {
+    if (rootPath_.empty()) {
+        return false;
+    }
+    const auto reachablePaths =
+        workspace_.moduleGraph().postOrderFrom(string(rootPath_));
+    return std::find(reachablePaths.begin(), reachablePaths.end(), string(path)) !=
+           reachablePaths.end();
+}
+
+void
+Session::finalizeActiveUnit(bool resetLine) {
+    syntaxTree_ = currentUnit_ ? currentUnit_->syntaxTree() : nullptr;
+    sourceAvailable_ = currentUnit_ != nullptr;
+    if (resetLine) {
+        currentLine_ = 0;
+    }
+    if (currentUnit_ &&
+        currentLine_ > static_cast<int>(currentUnit_->source().lineCount())) {
+        currentLine_ = static_cast<int>(currentUnit_->source().lineCount());
+    }
+    rebuildSymbolIndex();
+    if (currentUnit_) {
+        rebuildActiveSemanticState(*currentUnit_);
+    }
+}
+
+bool
+Session::activateFileModule(const std::string &path, bool resetLine,
+                            std::string *errorMessage) {
+    auto *unit = workspace_.moduleGraph().find(path);
+    if (unit == nullptr || !moduleBelongsToCurrentProject(path)) {
+        if (errorMessage) {
+            *errorMessage =
+                "module `" + path + "` is not part of the current root project";
+        }
+        return false;
+    }
+
+    currentPath_ = path;
+    currentUnit_ = unit;
+    finalizeActiveUnit(resetLine);
+    return true;
 }
 
 bool
@@ -2717,85 +2851,63 @@ Session::rebuildSymbolIndex() {
 }
 
 void
-Session::tryCollectSemanticDiagnostics(CompilationUnit &unit) {
+Session::collectProjectSemanticDiagnostics() {
+    if (!currentSourceIsFile_ || rootPath_.empty() || diagnostics_.full() ||
+        diagnostics_.hasCategory(DiagnosticError::Category::Lexical) ||
+        diagnostics_.hasCategory(DiagnosticError::Category::Syntax) ||
+        diagnostics_.hasCategory(DiagnosticError::Category::Driver) ||
+        diagnostics_.hasCategory(DiagnosticError::Category::Internal)) {
+        return;
+    }
+
+    auto *rootUnit = workspace_.moduleGraph().root();
+    if (rootUnit == nullptr || rootUnit->syntaxTree() == nullptr) {
+        return;
+    }
+
+    std::optional<DiagnosticError> error;
+    auto result = analyzeUnitSemantics(loader_, workspace_, *rootUnit, &error);
+    if (!result && error.has_value()) {
+        (void)diagnostics_.add(std::move(*error));
+    }
+}
+
+void
+Session::rebuildActiveSemanticState(CompilationUnit &unit) {
     analysisBuild_.reset();
     resolvedModule_.reset();
     analyzedModule_.reset();
     analyzedFunctions_.clear();
-    if (!syntaxTree_ || diagnostics_.hasDiagnostics() || diagnostics_.full()) {
+    if (!syntaxTree_) {
         return;
     }
 
-    try {
-        analysisBuild_ =
-            std::make_unique<IRBuildState>(unit, defaultTargetTriple());
-        auto &build = *analysisBuild_;
-        std::unordered_set<string> directDependencyPaths;
-        for (const auto &dependencyPath :
-             workspace_.moduleGraph().dependenciesOf(unit.path())) {
-            directDependencyPaths.insert(dependencyPath);
-        }
-        for (const auto &dependencyPath :
-             workspace_.moduleGraph().postOrderFrom(unit.path())) {
-            if (dependencyPath == unit.path()) {
-                continue;
-            }
-            auto *loadedUnit = workspace_.moduleGraph().find(dependencyPath);
-            if (loadedUnit == nullptr) {
-                throw DiagnosticError(
-                    DiagnosticError::Category::Internal,
-                    "module graph dependency references a missing unit",
-                    "This looks like a tooling/module graph bug.");
-            }
-            loader_.validateImportedUnit(*loadedUnit);
-            collectUnitDeclarations(
-                &build.global, *loadedUnit, true,
-                directDependencyPaths.contains(dependencyPath));
-        }
-        collectUnitDeclarations(&build.global, unit, false, false);
-        defineUnitGlobals(&build.global, unit);
-        resolvedModule_ =
-            resolveModule(&build.global, unit.syntaxTree(), &unit, true);
-        analyzedModule_ = analyzeModule(&build.global, *resolvedModule_, &unit);
-        if (!analyzedModule_) {
-            analysisBuild_.reset();
-            return;
-        }
-        auto hirIndex = std::size_t{0};
-        for (const auto &resolvedFunction : resolvedModule_->functions()) {
-            if (resolvedFunction->isTemplateValidationOnly()) {
-                continue;
-            }
-            if (hirIndex >= analyzedModule_->getFunctions().size()) {
-                analyzedFunctions_.clear();
-                break;
-            }
-            analyzedFunctions_.push_back(
-                {resolvedFunction.get(),
-                 analyzedModule_->getFunctions()[hirIndex]});
-            ++hirIndex;
-        }
-        if (!analyzedFunctions_.empty() &&
-            hirIndex != analyzedModule_->getFunctions().size()) {
-            analyzedFunctions_.clear();
-        }
-    } catch (const DiagnosticError &error) {
-        analysisBuild_.reset();
-        (void)diagnostics_.add(error);
-    } catch (const DiagnosticLimitReached &) {
-        analysisBuild_.reset();
+    auto result = analyzeUnitSemantics(loader_, workspace_, unit);
+    if (!result.has_value()) {
+        return;
     }
+    analysisBuild_ = std::move(result->analysisBuild);
+    resolvedModule_ = std::move(result->resolvedModule);
+    analyzedModule_ = std::move(result->analyzedModule);
+    analyzedFunctions_ = std::move(result->analyzedFunctions);
 }
 
 Json
 Session::statusJson() const {
     Json root = Json::object();
     root["loaded"] = sourceAvailable_;
+    if (rootPath_.empty()) {
+        root["rootPath"] = nullptr;
+    } else {
+        root["rootPath"] = rootPath_;
+    }
     if (currentPath_.empty()) {
         root["path"] = nullptr;
+        root["activePath"] = nullptr;
         root["sourceKind"] = "none";
     } else {
         root["path"] = currentPath_;
+        root["activePath"] = currentPath_;
         root["sourceKind"] = currentSourceIsFile_ ? "file" : "memory";
     }
     root["includePaths"] = Json::array();

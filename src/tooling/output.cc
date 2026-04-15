@@ -36,6 +36,9 @@ printHelp(std::ostream &out, const CommandRegistry &registry) {
 void
 printStatus(std::ostream &out, const Session &session) {
     out << "root: "
+        << (session.rootPath().empty() ? "<none>" : session.rootPath())
+        << '\n';
+    out << "module: "
         << (session.currentPath().empty() ? "<none>" : session.currentPath())
         << '\n';
     out << "include-paths: ";
@@ -78,6 +81,8 @@ printStatus(std::ostream &out, const Session &session) {
 void
 printLoadSummary(std::ostream &out, const Session &session) {
     out << (session.hasLoadedSource() ? "loaded root " : "unavailable root ")
+        << (session.rootPath().empty() ? "<none>" : session.rootPath())
+        << "; active="
         << (session.currentPath().empty() ? "<none>" : session.currentPath())
         << "; include-paths=" << session.currentIncludePaths().size()
         << "; syntax-tree=" << (session.hasTree() ? "yes" : "no")

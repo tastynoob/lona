@@ -131,7 +131,7 @@ CommandOutcome
 handleReload(Session &session, const ParsedCommand &command,
              OutputFormatter &formatter, const CommandRegistry &) {
     if (command.args.empty()) {
-        if (session.currentPath().empty()) {
+        if (session.rootPath().empty()) {
             return formatter.emitError(command.raw,
                                        "reload requires a root source");
         }
@@ -147,7 +147,7 @@ handleReload(Session &session, const ParsedCommand &command,
 
     if (!session.currentSourceIsFile() || session.currentPath().empty()) {
         return formatter.emitError(
-            command.raw, "reload <path> requires a file-backed root project");
+            command.raw, "reload <module> requires a file-backed root project");
     }
 
     const auto reloaded = session.reloadFile(command.args);
@@ -156,6 +156,22 @@ handleReload(Session &session, const ParsedCommand &command,
                                    loadFailureMessage(session, "reload failed"));
     }
     formatter.emitLoadSummary(command.raw, session);
+    return {};
+}
+
+CommandOutcome
+handleGotoModule(Session &session, const ParsedCommand &command,
+                 OutputFormatter &formatter, const CommandRegistry &) {
+    if (command.args.empty()) {
+        return formatter.emitError(command.raw,
+                                   "gotom requires a canonical module path");
+    }
+
+    std::string error;
+    if (!session.gotoModule(command.args, &error)) {
+        return formatter.emitError(command.raw, error);
+    }
+    formatter.emitStatus(command.raw, session);
     return {};
 }
 
@@ -384,6 +400,9 @@ buildCommandRegistry() {
     registry.add({"reload", "reload [module]",
                   "reload the whole project or one canonical module path",
                   CommandArgumentPolicy::Optional, false, handleReload});
+    registry.add({"gotom", "gotom <module>",
+                  "switch the active module using a canonical module path",
+                  CommandArgumentPolicy::Required, false, handleGotoModule});
     registry.add({"goto", "goto <line>", "move the analysis point to a source line",
                   CommandArgumentPolicy::Required, false, handleGoto});
     registry.add({"info global", "info global", "print indexed non-local symbols",

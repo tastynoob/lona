@@ -102,6 +102,9 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
 
 - `root <path> [include path...]`
   - 设置当前项目的顶层模块；如果给出额外参数，则它们会被记录成 include roots
+- `gotom <module>`
+  - 切换当前活动模块
+  - 这里的 `<module>` 必须使用 canonical 模块路径，也就是“相对于 root 源目录或 include root 的路径，去掉 `.lo` 后缀”
 - `reload`
   - 重新加载整个当前项目
 - `reload <module>`
@@ -110,6 +113,10 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
 
 边界：
 
+- `gotom <module>` 只适用于 file-backed root 项目
+- `gotom <module>` 不接受绝对路径
+- `gotom <module>` 不接受 `.lo` 后缀
+- `gotom <module>` 如果在多个 roots 下同时命中，会直接报冲突，而不是按顺序挑一个
 - `reload <module>` 只适用于 file-backed root 项目
 - `reload <module>` 不接受绝对路径
 - `reload <module>` 不接受 `.lo` 后缀
@@ -125,6 +132,8 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
   - 打印当前会话状态
 - `root <path> [include path...]`
   - 设置 root 模块和可选 include roots
+- `gotom <module>`
+  - 切换当前活动模块
 - `reload [module]`
   - 重新加载整个项目，或重新加载一个 canonical 模块路径及其依赖方
 - `goto <line>`
@@ -166,6 +175,7 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
 print Complex
 print Trait
 print value
+gotom helper
 goto 42
 print self
 print local_name

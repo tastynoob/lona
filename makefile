@@ -91,7 +91,7 @@ query_memcheck:
 acceptance: $(target)
 	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance
 
-smoke: $(target)
+smoke: $(target) $(query_target)
 	$(PYTHON) -m pytest -q -s $(ROOT)/tests/smoke
 
 test: acceptance smoke incremental_smoke template_random

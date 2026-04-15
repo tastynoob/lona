@@ -24,6 +24,16 @@ def compiler_bin(repo_root: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
+def query_bin(repo_root: Path) -> Path:
+    path = repo_root / "build" / "lona-query"
+    if not path.is_file():
+        pytest.fail(f"missing query binary: {path}")
+    if not os.access(path, os.X_OK):
+        pytest.fail(f"query binary is not executable: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
 def fixtures_dir(repo_root: Path) -> Path:
     return repo_root / "tests" / "fixtures"
 

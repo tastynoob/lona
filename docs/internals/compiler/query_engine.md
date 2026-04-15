@@ -90,6 +90,8 @@
 
 - `root <path>`
   - 选择顶层模块并重建整个项目查询状态
+- `gotom <module>`
+  - 切换当前活动模块，但不改变 root 项目
 - `reload`
   - 重新加载整个当前项目
 - `reload <module>`
@@ -100,6 +102,13 @@
 - 变更模块的源码和模块缓存会刷新
 - 依赖它的模块语义状态会失效
 - 最终仍然从当前 root 重建可查询状态
+
+当前 `Session` 里需要区分两类路径：
+
+- root 路径
+  - 决定项目、模块 roots 和 transitive imports
+- active module 路径
+  - 决定 `ast`、`print`、`goto`、`info local` 这些查询当前落在哪个模块上
 
 这一步已经足够支撑项目级静态分析和外层 LSP 原型，但还不是细粒度增量前端。
 
