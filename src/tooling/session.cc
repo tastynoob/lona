@@ -2905,11 +2905,24 @@ addDiagnosticIfMissing(DiagnosticBag &bag, DiagnosticError diagnostic) {
     (void)bag.add(std::move(diagnostic));
 }
 
+void
+clearResolvedTypeCachesForAnalysis(CompilerWorkspace &workspace,
+                                   CompilationUnit &unit) {
+    for (const auto &path : workspace.moduleGraph().postOrderFrom(unit.path())) {
+        auto *loadedUnit = workspace.moduleGraph().find(path);
+        if (!loadedUnit) {
+            continue;
+        }
+        loadedUnit->clearResolvedTypes();
+    }
+}
+
 std::optional<SemanticAnalysisResult>
 analyzeUnitSemantics(WorkspaceLoader &loader, CompilerWorkspace &workspace,
                      CompilationUnit &unit,
                      std::optional<DiagnosticError> *errorOut = nullptr) {
     try {
+        clearResolvedTypeCachesForAnalysis(workspace, unit);
         SemanticAnalysisResult result;
         result.analysisBuild =
             std::make_unique<IRBuildState>(unit, defaultTargetTriple());
