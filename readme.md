@@ -108,6 +108,10 @@ flowchart LR
 
 - `lona-ir`
   - 专注做一件事：把 `.lo` 编译成目标相关的文本 LLVM IR、bundle/object 产物，或显式 LTO 的最终 object
+- `lona-query`
+  - 面向静态分析、编辑器工具和后续 LSP 外壳的查询前端
+  - 复用 parser、模块加载、`resolve` 和 `analysis`
+  - 提供文本 REPL 和单行 JSON 两种输出方式
 - `lac`
   - `lona compiler`
   - 默认走 `x86_64-unknown-linux-gnu`
@@ -154,7 +158,7 @@ make install
 
 说明：
 
-- `make install` 只安装 `lona-ir`、`lac`、`lac-native`
+- `make install` 安装 `lona-ir`、`lona-query`、`lac`、`lac-native`
 - bare runtime 资产不安装进系统目录
 - system 路径直接复用系统 CRT
 - bare 路径如果使用安装后的 `lac-native`，需要用户自己提供 `STARTUP_SRC` 和 `LINKER_SCRIPT`，或者直接在仓库 checkout 里运行 `scripts/lac-native.sh`
@@ -166,13 +170,15 @@ lona-ir --version
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
 lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.manifest
 lona-ir --emit linked-obj --lto full --target x86_64-unknown-linux-gnu input.lo output.o
+lona-query input.lo
+lona-query --format json --command status input.lo
 lac input.lo output/program
 lac-native input.lo output/program
 ```
 
 ### AI Skill 生成
 
-仓库提供了一个 skill 生成器，用来把当前语言语法 / 语义文档整理成一份适合 Codex 使用的 skill：
+仓库提供了一个 skill 生成器，用来把当前语言语法 / 语义文档，以及运行 / 查询文档整理成一份适合 Codex 使用的 skill：
 
 ```bash
 python3 scripts/build_lona_skill.py
@@ -190,6 +196,7 @@ agent安装提示词：
 
 - [文档目录](docs/README.md)
 - [编译器架构](docs/internals/compiler/compiler_architecture.md)
+- [`lona-query` 使用](docs/reference/runtime/query.md)
 - [目标模式与执行边界](docs/internals/runtime/target_modes.md)
 - [本地构建与运行](docs/reference/runtime/native_build.md)
 
