@@ -1918,8 +1918,78 @@ collectTypeMethodsJson(const ModuleInterface::TypeDecl &decl) {
     return methods;
 }
 
+const AstStructDecl *
+findTopLevelStructDeclForType(const CompilationUnit &ownerUnit,
+                              const ModuleInterface::TypeDecl &decl) {
+    auto *root = ownerUnit.syntaxTree();
+    if (!root) {
+        return nullptr;
+    }
+    if (auto *program = dynamic_cast<const AstProgram *>(root)) {
+        root = program->body;
+    }
+    auto *list = dynamic_cast<const AstStatList *>(root);
+    if (!list) {
+        return nullptr;
+    }
+
+    for (auto *stmt : list->body) {
+        auto *structDecl = dynamic_cast<const AstStructDecl *>(stmt);
+        if (!structDecl) {
+            continue;
+        }
+        if (toStdString(structDecl->name) == toStdString(decl.localName)) {
+            return structDecl;
+        }
+    }
+    return nullptr;
+}
+
 Json
-makeTypePrintItem(const ModuleInterface::TypeDecl &decl) {
+makeDeclaredTypeInfoJson(const ModuleInterface::TypeDecl &decl,
+                         const CompilationUnit &ownerUnit) {
+    Json root = Json::object();
+    root["spelling"] = toStdString(decl.exportedName);
+    root["kind"] = "struct";
+    root["hasMembers"] = false;
+    root["members"] = Json::array();
+    root["recursive"] = false;
+
+    auto *structDecl = findTopLevelStructDeclForType(ownerUnit, decl);
+    if (!structDecl) {
+        return root;
+    }
+    const auto fallbackPath = toStdString(ownerUnit.path());
+
+    std::vector<FieldQueryRecord> fields;
+    std::vector<NamedTypeRecord> namedTypes;
+    collectFieldQueryData(ownerUnit.syntaxTree(), fallbackPath, fields,
+                          namedTypes);
+
+    std::unordered_set<std::string> activeTypes;
+    activeTypes.emplace(toStdString(decl.localName));
+
+    auto *body = dynamic_cast<const AstStatList *>(structDecl->body);
+    if (!body) {
+        return root;
+    }
+
+    const auto ownerName = toStdString(decl.exportedName);
+    for (auto *stmt : body->body) {
+        auto *field = dynamic_cast<const AstVarDecl *>(stmt);
+        if (!field) {
+            continue;
+        }
+        root["members"].push_back(makeFieldTypeMemberJson(
+            field, ownerName, namedTypes, fallbackPath, activeTypes));
+    }
+    root["hasMembers"] = !root["members"].empty();
+    return root;
+}
+
+Json
+makeTypePrintItem(const ModuleInterface::TypeDecl &decl,
+                  const CompilationUnit *ownerUnit = nullptr) {
     Json root = Json::object();
     root["kind"] = "type";
     root["name"] = toStdString(decl.localName);
@@ -1928,8 +1998,12 @@ makeTypePrintItem(const ModuleInterface::TypeDecl &decl) {
                              : toStdString(decl.localName);
     root["declKind"] = structDeclKindKeyword(decl.declKind);
     root["genericParams"] = genericParamsJson(decl.typeParams);
-    std::unordered_set<std::string> activeTypes;
-    root["typeInfo"] = makeResolvedTypeInfoJson(decl.type, activeTypes);
+    if (!decl.typeParams.empty() && ownerUnit != nullptr) {
+        root["typeInfo"] = makeDeclaredTypeInfoJson(decl, *ownerUnit);
+    } else {
+        std::unordered_set<std::string> activeTypes;
+        root["typeInfo"] = makeResolvedTypeInfoJson(decl.type, activeTypes);
+    }
     root["methods"] = collectTypeMethodsJson(decl);
     return root;
 }
@@ -2001,6 +2075,45 @@ makeBindingPrintItem(std::string kind, std::string name,
     return root;
 }
 
+struct ValueBindingMatch {
+    std::string kind;
+    std::string name;
+    std::string qualifiedName;
+    std::string detail;
+    TypeClass *type = nullptr;
+    SourceLocation loc;
+    std::string contextName;
+};
+
+Json
+makeBindingPrintItem(const ValueBindingMatch &binding) {
+    return makeBindingPrintItem(binding.kind, binding.name,
+                                binding.qualifiedName, binding.detail,
+                                binding.type, binding.loc,
+                                binding.contextName);
+}
+
+Json
+makeMemberValuePrintItem(std::string ownerName, std::string memberName,
+                         TypeClass *ownerType, TypeClass *memberType,
+                         AccessKind access, bool embedded) {
+    Json root = Json::object();
+    root["kind"] = "member";
+    root["name"] = std::move(memberName);
+    root["owner"] = std::move(ownerName);
+    root["qualifiedName"] =
+        root["owner"].get<std::string>() + "." + root["name"].get<std::string>();
+    root["detail"] = "field";
+    root["ownerType"] = describeResolvedType(ownerType);
+    root["type"] = describeResolvedType(memberType);
+    root["access"] = accessKindKeyword(access);
+    root["embedded"] = embedded;
+    root["location"] = sourceLocationJson(SourceLocation{});
+    std::unordered_set<std::string> activeTypes;
+    root["typeInfo"] = makeResolvedTypeInfoJson(memberType, activeTypes);
+    return root;
+}
+
 bool
 splitFirstQualifiedComponent(std::string_view query, std::string &head,
                              std::string &tail) {
@@ -2040,7 +2153,9 @@ lookupQualifiedPrintItem(const CompilationUnit &unit, std::string_view query,
                          Json &item) {
     auto lookup = lookupQualifiedTopLevelName(unit, query);
     if (lookup.isType() && lookup.typeDecl) {
-        item = makeTypePrintItem(*lookup.typeDecl);
+        item = makeTypePrintItem(
+            *lookup.typeDecl,
+            lookup.importedModule ? lookup.importedModule->unit : &unit);
         return true;
     }
     if (lookup.isTrait() && lookup.traitDecl) {
@@ -2078,12 +2193,24 @@ lookupQualifiedTypePrintItem(const CompilationUnit &unit, std::string_view query
                              Json &item) {
     auto lookup = lookupQualifiedTopLevelName(unit, query);
     if (lookup.isType() && lookup.typeDecl) {
-        item = makeTypePrintItem(*lookup.typeDecl);
+        item = makeTypePrintItem(
+            *lookup.typeDecl,
+            lookup.importedModule ? lookup.importedModule->unit : &unit);
         return true;
     }
     if (lookup.isTrait() && lookup.traitDecl) {
         item = makeTraitPrintItem(*lookup.traitDecl);
         return true;
+    }
+    std::string namespaceName;
+    std::string memberName;
+    if (lookup.isFunction() && lookup.functionDecl &&
+        splitFirstQualifiedComponent(query, namespaceName, memberName)) {
+        auto namespaceLookup = unit.lookupTopLevelName(namespaceName);
+        if (namespaceLookup.isModule() && namespaceLookup.importedModule) {
+            item = makeFunctionPrintItem(*lookup.functionDecl);
+            return true;
+        }
     }
     return false;
 }
@@ -2116,10 +2243,10 @@ unknownPrintQueryMessage(PrintQueryKind kind, std::string_view query) {
 }
 
 bool
-lookupVisibleLocalPrintItem(const AstNode *syntaxTree,
-                            const std::vector<AnalyzedFunctionRecord> &records,
-                            const std::string &fallbackPath, int line,
-                            std::string_view query, Json &item) {
+lookupVisibleLocalBinding(const AstNode *syntaxTree,
+                         const std::vector<AnalyzedFunctionRecord> &records,
+                         const std::string &fallbackPath, int line,
+                         std::string_view query, ValueBindingMatch &binding) {
     FunctionContext context;
     std::vector<LocalSymbolRecord> locals;
     const AnalyzedFunctionRecord *record = nullptr;
@@ -2145,12 +2272,27 @@ lookupVisibleLocalPrintItem(const AstNode *syntaxTree,
             found != localTypes.end()) {
             type = found->second;
         }
-        item = makeBindingPrintItem(local.kind, local.name, qualifiedName,
-                                    local.detail, type, local.loc,
-                                    context.qualifiedName);
+        binding = ValueBindingMatch{local.kind,       local.name,
+                                    qualifiedName,   local.detail,
+                                    type,            local.loc,
+                                    context.qualifiedName};
         return true;
     }
     return false;
+}
+
+bool
+lookupVisibleLocalPrintItem(const AstNode *syntaxTree,
+                            const std::vector<AnalyzedFunctionRecord> &records,
+                            const std::string &fallbackPath, int line,
+                            std::string_view query, Json &item) {
+    ValueBindingMatch binding;
+    if (!lookupVisibleLocalBinding(syntaxTree, records, fallbackPath, line,
+                                   query, binding)) {
+        return false;
+    }
+    item = makeBindingPrintItem(binding);
+    return true;
 }
 
 const AstStatList *
@@ -2162,10 +2304,10 @@ topLevelStatementListForQuery(const AstNode *root) {
 }
 
 bool
-lookupTopLevelVarPrintItem(const AstNode *syntaxTree,
-                          const std::vector<AnalyzedFunctionRecord> &records,
-                          const std::string &fallbackPath,
-                          std::string_view query, Json &item) {
+lookupTopLevelVarBinding(const AstNode *syntaxTree,
+                        const std::vector<AnalyzedFunctionRecord> &records,
+                        const std::string &fallbackPath,
+                        std::string_view query, ValueBindingMatch &binding) {
     const auto cleanedQuery = trimCopy(query);
     if (cleanedQuery.empty() || cleanedQuery.find('.') != std::string::npos) {
         return false;
@@ -2205,10 +2347,24 @@ lookupTopLevelVarPrintItem(const AstNode *syntaxTree,
         }
     }
 
-    item = makeBindingPrintItem("top-level-var", cleanedQuery, cleanedQuery,
-                                describeVarDefDetail(varDecl), type,
-                                makeSourceLocation(varDecl->loc, fallbackPath),
-                                "<top-level>");
+    binding = ValueBindingMatch{
+        "top-level-var", cleanedQuery, cleanedQuery,
+        describeVarDefDetail(varDecl), type,
+        makeSourceLocation(varDecl->loc, fallbackPath), "<top-level>"};
+    return true;
+}
+
+bool
+lookupTopLevelVarPrintItem(const AstNode *syntaxTree,
+                          const std::vector<AnalyzedFunctionRecord> &records,
+                          const std::string &fallbackPath,
+                          std::string_view query, Json &item) {
+    ValueBindingMatch binding;
+    if (!lookupTopLevelVarBinding(syntaxTree, records, fallbackPath, query,
+                                  binding)) {
+        return false;
+    }
+    item = makeBindingPrintItem(binding);
     return true;
 }
 
@@ -2223,6 +2379,101 @@ splitMemberQuery(std::string_view query, std::string &owner,
     owner = cleaned.substr(0, split);
     member = cleaned.substr(split + 1);
     return true;
+}
+
+bool
+lookupTopLevelGlobalValueType(const CompilationUnit &unit, std::string_view query,
+                              TypeClass *&type) {
+    const auto cleanedQuery = trimCopy(query);
+    if (cleanedQuery.empty() || cleanedQuery.find('.') != std::string::npos) {
+        return false;
+    }
+
+    auto lookup = unit.lookupTopLevelName(cleanedQuery);
+    if (!lookup.isGlobal() || !lookup.globalDecl) {
+        return false;
+    }
+    type = lookup.globalDecl->type;
+    return true;
+}
+
+bool
+lookupVisibleValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
+                       const std::vector<AnalyzedFunctionRecord> &records,
+                       const std::string &fallbackPath, int line,
+                       std::string_view query, TypeClass *&type) {
+    type = nullptr;
+    ValueBindingMatch binding;
+    if (lookupVisibleLocalBinding(syntaxTree, records, fallbackPath, line,
+                                  query, binding)) {
+        type = binding.type;
+        return true;
+    }
+    if (lookupTopLevelVarBinding(syntaxTree, records, fallbackPath, query,
+                                 binding)) {
+        type = binding.type;
+        return true;
+    }
+    return lookupTopLevelGlobalValueType(unit, query, type);
+}
+
+enum class ValueMemberLookupStatus {
+    NoOwner,
+    Found,
+    OwnerFoundMissingMember,
+};
+
+ValueMemberLookupStatus
+lookupValueMemberPrintItem(const CompilationUnit &unit,
+                           const AstNode *syntaxTree,
+                           const std::vector<AnalyzedFunctionRecord> &records,
+                           const std::string &fallbackPath, int line,
+                           std::string_view query, Json &item) {
+    std::string ownerName;
+    std::string memberName;
+    if (!splitMemberQuery(query, ownerName, memberName) ||
+        ownerName.find('.') != std::string::npos ||
+        unit.importsModule(ownerName)) {
+        return ValueMemberLookupStatus::NoOwner;
+    }
+
+    TypeClass *ownerType = nullptr;
+    if (!lookupVisibleValueType(unit, syntaxTree, records, fallbackPath, line,
+                                ownerName, ownerType)) {
+        return ValueMemberLookupStatus::NoOwner;
+    }
+
+    while (auto *constType = ownerType ? ownerType->as<ConstType>() : nullptr) {
+        ownerType = constType->getBaseType();
+    }
+    if (!ownerType) {
+        return ValueMemberLookupStatus::OwnerFoundMissingMember;
+    }
+
+    TypeClass *memberType = nullptr;
+    AccessKind access = AccessKind::GetOnly;
+    bool embedded = false;
+    if (auto *structType = ownerType->as<StructType>()) {
+        auto *member = structType->getMember(memberName);
+        if (!member) {
+            return ValueMemberLookupStatus::OwnerFoundMissingMember;
+        }
+        memberType = member->first;
+        access = structType->getMemberAccess(memberName);
+        embedded = structType->isEmbeddedMember(memberName);
+    } else if (auto *tupleType = ownerType->as<TupleType>()) {
+        TupleType::ValueTy member;
+        if (!tupleType->getMember(llvm::StringRef(memberName), member)) {
+            return ValueMemberLookupStatus::OwnerFoundMissingMember;
+        }
+        memberType = member.first;
+    } else {
+        return ValueMemberLookupStatus::OwnerFoundMissingMember;
+    }
+
+    item = makeMemberValuePrintItem(ownerName, memberName, ownerType,
+                                    memberType, access, embedded);
+    return ValueMemberLookupStatus::Found;
 }
 
 bool
@@ -3277,6 +3528,19 @@ Session::printItemJson(std::string_view fieldName, PrintQueryKind kind) const {
             return root;
         }
     } else if (kind == PrintQueryKind::Value) {
+        switch (lookupValueMemberPrintItem(*currentUnit_, syntaxTree_,
+                                           analyzedFunctions_, currentPath_,
+                                           currentLine_, query, printItem)) {
+            case ValueMemberLookupStatus::Found:
+                root["found"] = true;
+                root["item"] = std::move(printItem);
+                return root;
+            case ValueMemberLookupStatus::OwnerFoundMissingMember:
+                root["error"] = "unknown member: " + query;
+                return root;
+            case ValueMemberLookupStatus::NoOwner:
+                break;
+        }
         if (lookupQualifiedValuePrintItem(*currentUnit_, query, printItem)) {
             root["found"] = true;
             root["item"] = std::move(printItem);
@@ -3440,6 +3704,15 @@ Session::printItem(std::ostream &out, std::string_view fieldName,
     const auto itemKind = item["kind"].get<std::string>();
     if (itemKind == "field") {
         out << "field " << item["qualifiedName"].get<std::string>() << '\n';
+        out << "type: " << item["type"].get<std::string>() << '\n';
+        printFieldMembers(out, item["typeInfo"], 0);
+        return;
+    }
+    if (itemKind == "member") {
+        out << "member " << item["qualifiedName"].get<std::string>() << '\n';
+        if (!item["detail"].get<std::string>().empty()) {
+            out << "detail: " << item["detail"].get<std::string>() << '\n';
+        }
         out << "type: " << item["type"].get<std::string>() << '\n';
         printFieldMembers(out, item["typeInfo"], 0);
         return;

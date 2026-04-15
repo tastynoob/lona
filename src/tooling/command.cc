@@ -435,9 +435,11 @@ buildCommandRegistry() {
     registry.add({"info local", "info local [line]",
                   "print locals visible at the current line",
                   CommandArgumentPolicy::Optional, false, handleInfoLocal});
-    registry.add({"pv", "pv <name>", "print one resolved value or field",
+    registry.add({"pv", "pv <name>",
+                  "print one resolved value or object member",
                   CommandArgumentPolicy::Required, false, handlePrintValue});
-    registry.add({"pt", "pt <name>", "print one resolved type or trait",
+    registry.add({"pt", "pt <name>",
+                  "print one resolved type, trait, or imported module func",
                   CommandArgumentPolicy::Required, false, handlePrintType});
     registry.add({"print", "print <name>",
                   "print one resolved symbol or field",

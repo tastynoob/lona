@@ -70,10 +70,12 @@
   - `info global`
   - `find`
   - 顶层 `pv` / `pt`
+  - 导入模块成员的 `pt module.member`
 - 局部和语义相关查询
   - `goto`
   - `info local`
   - 局部 `pv`
+  - 对象成员的 `pv obj.member`
 
 现在的实现不是“纯 AST 查询”：
 
@@ -111,6 +113,7 @@
   - 决定当前已经加载并会参与诊断的模块子图
 - active module 路径
   - 决定 `ast`、`pv`、`pt`、`goto`、`info local` 这些查询当前落在哪个模块上
+  - 也决定 `pt module.member` 能看到哪些导入模块，以及 `pv obj.member` 用哪个活动语义点解析对象类型
 
 这一步已经足够支撑项目级静态分析和外层 LSP 原型，但还不是细粒度增量前端。
 

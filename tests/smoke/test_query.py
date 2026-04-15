@@ -511,6 +511,243 @@ def test_query_distinguishes_pv_and_pt_for_same_name_symbols(
         assert missing_value["ok"] is False, missing_value
         assert "unknown value" in missing_value["result"]["error"], missing_value
 
+        missing_member = send_command(proc, "pv Box.value")
+        assert missing_member["ok"] is False, missing_member
+        assert "unknown member" in missing_member["result"]["error"], missing_member
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_pt_can_print_imported_module_types_and_funcs(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    lib_dir = tmp_path / "lib"
+    app_dir.mkdir()
+    lib_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    helper_path = lib_dir / "helper.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "import helper",
+                "",
+                "def main() i32 {",
+                "    ret 0",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    helper_path.write_text(
+        "\n".join(
+            [
+                "struct Box {",
+                "    value i32",
+                "}",
+                "",
+                "def make(seed i32) Box {",
+                "    ret Box(value = seed)",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir), str(lib_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        printed_type = send_command(proc, "pt helper.Box")
+        assert printed_type["ok"] is True, printed_type
+        assert printed_type["result"]["item"]["kind"] == "type", printed_type
+        assert printed_type["result"]["item"]["name"] == "Box", printed_type
+        members = printed_type["result"]["item"]["typeInfo"]["members"]
+        assert members, printed_type
+        assert members[0]["name"] == "value", printed_type
+
+        printed_func = send_command(proc, "pt helper.make")
+        assert printed_func["ok"] is True, printed_func
+        assert printed_func["result"]["item"]["kind"] == "func", printed_func
+        assert printed_func["result"]["item"]["name"] == "make", printed_func
+        assert "seed: i32" in printed_func["result"]["item"]["signature"], printed_func
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_pt_prints_generic_types_like_ordinary_types(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    lib_dir = tmp_path / "lib"
+    app_dir.mkdir()
+    lib_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    helper_path = lib_dir / "helper.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "import helper",
+                "",
+                "def main() i32 {",
+                "    ret 0",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    helper_path.write_text(
+        "\n".join(
+            [
+                "struct Box[T] {",
+                "    value T",
+                "}",
+                "",
+                "def id[T](value T) T {",
+                "    ret value",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir), str(lib_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        printed_type = send_command(proc, "pt helper.Box")
+        assert printed_type["ok"] is True, printed_type
+        assert printed_type["result"]["item"]["kind"] == "type", printed_type
+        assert printed_type["result"]["item"]["name"] == "Box", printed_type
+        assert printed_type["result"]["item"]["genericParams"] == [
+            {"name": "T", "boundTrait": None}
+        ], printed_type
+        members = printed_type["result"]["item"]["typeInfo"]["members"]
+        assert members, printed_type
+        assert members[0]["name"] == "value", printed_type
+        assert members[0]["type"] == "T", printed_type
+
+        printed_func = send_command(proc, "pt helper.id")
+        assert printed_func["ok"] is True, printed_func
+        assert printed_func["result"]["item"]["kind"] == "func", printed_func
+        assert printed_func["result"]["item"]["signature"] == "[T](value: T) -> T", printed_func
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_pv_can_print_object_members_as_values(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Box {",
+                "    value i32",
+                "}",
+                "",
+                "def main() i32 {",
+                "    var box = Box(value = 7)",
+                "    ret box.value",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        line = send_command(proc, "goto 6")
+        assert line["ok"] is True, line
+
+        printed_member = send_command(proc, "pv box.value")
+        assert printed_member["ok"] is True, printed_member
+        assert printed_member["result"]["item"]["kind"] == "member", printed_member
+        assert printed_member["result"]["item"]["qualifiedName"] == "box.value", printed_member
+        assert printed_member["result"]["item"]["detail"] == "field", printed_member
+        assert printed_member["result"]["item"]["ownerType"].endswith(
+            "Box"
+        ), printed_member
+        assert printed_member["result"]["item"]["type"] == "i32", printed_member
+
         assert proc.stdin is not None
         proc.stdin.write("quit\n")
         proc.stdin.flush()

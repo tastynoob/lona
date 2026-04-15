@@ -148,9 +148,9 @@ printf 'status\nquit\n' | ./build/lona-query --format json src third_party/modul
 - `ast`
   - 打印当前活动模块的 AST JSON
 - `pv <name>`
-  - 精确打印一个 value 名称或字段
+  - 精确打印一个 value 名称或对象成员
 - `pt <name>`
-  - 精确打印一个 type 或 trait 名称
+  - 精确打印一个 type / trait，或者导入模块里的函数
 - `find [kind] [pattern]`
   - 模糊搜索已索引符号
 - `quit`
@@ -179,11 +179,14 @@ root src third_party/modules
 open main
 pt Complex
 pt Trait
+pt helper.Box
+pt helper.make_box
 pv value
 open helper
 goto 42
 pv self
 pv local_name
+pv box.value
 find field value
 find func fib
 ```
@@ -192,10 +195,13 @@ find func fib
 
 1. 当前作用域可见的局部变量、参数、`self`
 2. 顶层变量 / 全局定义
-3. 顶层 func / global
-4. 字段
+3. 对象成员查询，比如 `pv box.value`
+4. 顶层 func / global
+5. 字段
 
-`pt <name>` 当前只会查询 type / trait 命名空间。
+`pv obj.member` 会把 `obj` 当作当前可见的 value 绑定来解析，并输出该成员的 value 信息和类型。
+
+`pt <name>` 默认查询 type / trait 命名空间；当名称写成 `module.member` 时，它还会查询当前活动文件已导入模块里的 type / trait / func，并按成员表或函数签名输出。
 
 如果一个名称在 value 和 type 命名空间里同时存在，应当分别使用 `pv` 和 `pt`，而不是依赖旧的混合查询行为。
 
