@@ -279,6 +279,82 @@ resolveWorkspaceImportPath(const AstImport &importNode,
             describeModuleRoots(moduleRoots) + ".");
 }
 
+std::string
+resolveWorkspaceModuleQueryPath(const std::string &queryPath,
+                                const std::vector<std::string> &moduleRoots) {
+    namespace fs = std::filesystem;
+    fs::path modulePath(queryPath);
+    if (modulePath.empty()) {
+        throw DiagnosticError(DiagnosticError::Category::Driver,
+                              "reload requires a canonical module path",
+                              "Write `reload path/to/module` using a path "
+                              "relative to the root source directory or an "
+                              "explicit include root.");
+    }
+    if (!modulePath.is_relative()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "reload paths must use canonical module paths, not absolute "
+            "filesystem paths",
+            "Write reload paths like `reload math/ops`, not an absolute "
+            "file path.");
+    }
+    if (modulePath.has_extension()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "reload paths should omit the file suffix",
+            "Write reload paths like `reload math/ops`, not "
+            "`reload math/ops.lo`.");
+    }
+    modulePath += ".lo";
+
+    std::vector<std::string> matches;
+    std::vector<fs::path> candidates;
+    candidates.reserve(moduleRoots.size());
+    for (const auto &moduleRoot : moduleRoots) {
+        candidates.push_back(
+            normalizeModuleFsPath(fs::path(moduleRoot) / modulePath));
+    }
+
+    for (const auto &candidate : candidates) {
+        std::error_code includeError;
+        if (fs::exists(candidate, includeError)) {
+            matches.push_back(candidate.string());
+            continue;
+        }
+        if (includeError) {
+            auto searchedPath = candidate.string();
+            auto includeRoot =
+                candidate.parent_path().lexically_normal().string();
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver,
+                "I couldn't inspect include path `" + includeRoot +
+                    "` while resolving reload path `" + queryPath + "`.",
+                "Check that the include directory exists and that you have "
+                "search permission for `" +
+                    searchedPath + "`.");
+        }
+    }
+
+    if (matches.size() > 1) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "found conflicting modules for reload path `" + queryPath + "`",
+            describeConflictingImportCandidates(matches));
+    }
+
+    if (!matches.empty()) {
+        return matches.front();
+    }
+
+    throw DiagnosticError(
+        DiagnosticError::Category::Driver,
+        "cannot resolve reload path `" + queryPath + "`",
+        "Reload paths must be canonical module paths relative to the root "
+        "source directory or an explicit include root. Known module roots: " +
+            describeModuleRoots(moduleRoots) + ".");
+}
+
 bool
 isValidWorkspaceModuleName(const string &name) {
     auto view = name.view();
@@ -338,6 +414,12 @@ WorkspaceLoader::loadRootUnit(const std::string &path) const {
     unit.setModulePath(
         canonicalWorkspaceModulePath(toStdString(unit.path()), moduleRoots));
     return unit;
+}
+
+std::string
+WorkspaceLoader::resolveModuleFilePath(const std::string &rootPath,
+                                       const std::string &modulePath) const {
+    return resolveWorkspaceModuleQueryPath(modulePath, moduleRootsFor(rootPath));
 }
 
 AstNode *

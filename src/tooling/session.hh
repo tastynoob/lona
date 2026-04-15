@@ -38,6 +38,7 @@ class Session {
     CompilerWorkspace workspace_;
     WorkspaceLoader loader_;
     std::string currentPath_;
+    std::vector<std::string> currentIncludePaths_;
     std::string currentSource_;
     bool currentSourceIsFile_ = false;
     bool sourceAvailable_ = false;
@@ -61,12 +62,16 @@ class Session {
 public:
     explicit Session(std::size_t errorLimit = 20);
 
-    bool setRootFile(const std::string &path);
+    bool setRootFile(const std::string &path,
+                     std::vector<std::string> includePaths = {});
     bool setSourceText(std::string path, std::string sourceText);
     bool reload();
     bool reloadFile(const std::string &path);
 
     const std::string &currentPath() const { return currentPath_; }
+    const std::vector<std::string> &currentIncludePaths() const {
+        return currentIncludePaths_;
+    }
     bool currentSourceIsFile() const { return currentSourceIsFile_; }
     bool hasLoadedSource() const { return sourceAvailable_; }
     int currentLine() const { return currentLine_; }

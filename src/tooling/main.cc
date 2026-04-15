@@ -22,7 +22,11 @@ main(int argc, char *argv[]) {
 
     cli.parse_check(argc, argv);
     const auto &args = cli.rest();
-    if (args.size() > 1) {
+    if (cli.exist("source") && !args.empty()) {
+        std::cerr << cli.usage();
+        return 1;
+    }
+    if (args.empty() == false && args.front().empty()) {
         std::cerr << cli.usage();
         return 1;
     }
@@ -41,7 +45,9 @@ main(int argc, char *argv[]) {
         session.setSourceText(cli.get<std::string>("path"),
                               cli.get<std::string>("source"));
     } else if (!args.empty()) {
-        session.setRootFile(args.front());
+        session.setRootFile(
+            args.front(),
+            std::vector<std::string>(args.begin() + 1, args.end()));
     }
 
     if (cli.exist("command")) {

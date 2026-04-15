@@ -28,6 +28,8 @@ public:
         diagnostics_ = diagnostics;
     }
     CompilationUnit &loadRootUnit(const std::string &path) const;
+    std::string resolveModuleFilePath(const std::string &rootPath,
+                                      const std::string &modulePath) const;
     AstNode *parseUnit(CompilationUnit &unit) const;
     void loadTransitiveUnitsFrom(const std::string &path,
                                  ParseObserver observer = {}) const;

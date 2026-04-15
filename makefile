@@ -72,13 +72,13 @@ ifeq ($(shell flex --version),)
 $(error "flex not found")
 endif
 
-.PHONY: clean format default gram_check frontend query query_memcheck api acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
+.PHONY: clean format default gram_check frontend query query_memcheck acceptance smoke test perf incremental_smoke template_random ai_test install uninstall
 
 default:
 	mkdir -p build
 	bear --output build/compile_commands.json -- $(MAKE) -k all -j8
 
-all: $(target)
+all: $(target) query
 
 frontend: $(frontend_target)
 
@@ -87,8 +87,6 @@ query: $(query_target)
 query_memcheck:
 	$(MAKE) query OUT_DIR=$(ASAN_OUT_DIR) CXXFLAGS='$(ASAN_CXXFLAGS)' LD_FLAGS='$(ASAN_LD_FLAGS)'
 	LONA_QUERY_MEMCHECK_BIN=$(ASAN_OUT_DIR)/lona-query ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 $(PYTHON) -m pytest -q $(ROOT)/tests/test_query_memory.py
-
-api: query
 
 acceptance: $(target)
 	$(PYTHON) -m pytest -q $(ROOT)/tests/acceptance

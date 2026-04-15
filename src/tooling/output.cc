@@ -38,6 +38,18 @@ printStatus(std::ostream &out, const Session &session) {
     out << "root: "
         << (session.currentPath().empty() ? "<none>" : session.currentPath())
         << '\n';
+    out << "include-paths: ";
+    if (session.currentIncludePaths().empty()) {
+        out << "<none>";
+    } else {
+        for (std::size_t i = 0; i < session.currentIncludePaths().size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << session.currentIncludePaths()[i];
+        }
+    }
+    out << '\n';
     out << "source-kind: "
         << (session.currentPath().empty()
                 ? "none"
@@ -67,6 +79,7 @@ void
 printLoadSummary(std::ostream &out, const Session &session) {
     out << (session.hasLoadedSource() ? "loaded root " : "unavailable root ")
         << (session.currentPath().empty() ? "<none>" : session.currentPath())
+        << "; include-paths=" << session.currentIncludePaths().size()
         << "; syntax-tree=" << (session.hasTree() ? "yes" : "no")
         << "; resolved=" << (session.hasResolvedModule() ? "yes" : "no")
         << "; analysis=" << (session.hasAnalysis() ? "yes" : "no")

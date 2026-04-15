@@ -2493,8 +2493,10 @@ Session::Session(std::size_t errorLimit)
     : loader_(workspace_), diagnostics_(errorLimit) {}
 
 bool
-Session::setRootFile(const std::string &path) {
+Session::setRootFile(const std::string &path,
+                     std::vector<std::string> includePaths) {
     currentPath_ = path;
+    currentIncludePaths_ = std::move(includePaths);
     currentSource_.clear();
     currentSourceIsFile_ = true;
     currentLine_ = 0;
@@ -2505,6 +2507,7 @@ bool
 Session::setSourceText(std::string path, std::string sourceText) {
     currentPath_ =
         path.empty() ? std::string("<memory>.lo") : std::move(path);
+    currentIncludePaths_.clear();
     currentSource_ = std::move(sourceText);
     currentSourceIsFile_ = false;
     currentLine_ = 0;
@@ -2535,6 +2538,7 @@ Session::rebuildProject() {
     currentUnit_ = nullptr;
     syntaxTree_ = nullptr;
     sourceAvailable_ = false;
+    loader_.setIncludePaths(currentIncludePaths_);
 
     try {
         if (currentSourceIsFile_) {
@@ -2609,10 +2613,13 @@ Session::rebuildProjectFromModule(const std::string &path) {
     syntaxTree_ = currentUnit_ ? currentUnit_->syntaxTree() : nullptr;
     sourceAvailable_ = currentUnit_ != nullptr;
     bool hardFailure = false;
+    loader_.setIncludePaths(currentIncludePaths_);
 
     try {
         loader_.setDiagnosticBag(&diagnostics_);
-        const auto &source = workspace_.sourceManager().loadFile(path);
+        const auto resolvedPath =
+            loader_.resolveModuleFilePath(currentPath_, path);
+        const auto &source = workspace_.sourceManager().loadFile(resolvedPath);
         const auto &normalizedPath = source.path();
         if (normalizedPath == currentPath_) {
             return rebuildProject();
@@ -2790,6 +2797,10 @@ Session::statusJson() const {
     } else {
         root["path"] = currentPath_;
         root["sourceKind"] = currentSourceIsFile_ ? "file" : "memory";
+    }
+    root["includePaths"] = Json::array();
+    for (const auto &includePath : currentIncludePaths_) {
+        root["includePaths"].push_back(includePath);
     }
     root["hasTree"] = hasTree();
     if (currentLine_ > 0) {

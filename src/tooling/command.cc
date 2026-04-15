@@ -3,10 +3,16 @@
 #include "tooling/session.hh"
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 namespace lona::tooling {
 
 namespace {
+
+struct RootCommandArgs {
+    std::string rootPath;
+    std::vector<std::string> includePaths;
+};
 
 bool
 isKnownKindFilter(std::string_view word) {
@@ -29,6 +35,35 @@ loadFailureMessage(const Session &session, std::string_view fallback) {
         return session.diagnostics().diagnostics().front().what();
     }
     return std::string(fallback);
+}
+
+std::vector<std::string>
+splitWhitespaceArgs(std::string_view text) {
+    std::istringstream input(trimCopy(text));
+    std::vector<std::string> parts;
+    std::string part;
+    while (input >> part) {
+        parts.push_back(std::move(part));
+    }
+    return parts;
+}
+
+std::optional<RootCommandArgs>
+parseRootCommandArgs(std::string_view text) {
+    auto parts = splitWhitespaceArgs(text);
+    if (parts.empty()) {
+        return std::nullopt;
+    }
+
+    RootCommandArgs args;
+    args.rootPath = std::move(parts.front());
+    if (parts.size() > 1) {
+        args.includePaths.reserve(parts.size() - 1);
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            args.includePaths.push_back(std::move(parts[i]));
+        }
+    }
+    return args;
 }
 
 bool
@@ -76,11 +111,14 @@ handleStatus(Session &session, const ParsedCommand &command,
 CommandOutcome
 handleRoot(Session &session, const ParsedCommand &command,
            OutputFormatter &formatter, const CommandRegistry &) {
-    if (command.args.empty()) {
-        return formatter.emitError(command.raw, "root requires a path");
+    auto rootArgs = parseRootCommandArgs(command.args);
+    if (!rootArgs) {
+        return formatter.emitError(
+            command.raw, "root requires a module path");
     }
 
-    const auto rooted = session.setRootFile(command.args);
+    const auto rooted = session.setRootFile(rootArgs->rootPath,
+                                            std::move(rootArgs->includePaths));
     if (!rooted) {
         return formatter.emitError(command.raw,
                                    loadFailureMessage(session, "root failed"));
@@ -340,10 +378,11 @@ buildCommandRegistry() {
                   CommandArgumentPolicy::None, false, handleHelp});
     registry.add({"status", "status", "show current session status",
                   CommandArgumentPolicy::None, false, handleStatus});
-    registry.add({"root", "root <path>", "set the top-level module for this project",
+    registry.add({"root", "root <path> [include path...]",
+                  "set the top-level module and optional include roots",
                   CommandArgumentPolicy::Required, false, handleRoot});
-    registry.add({"reload", "reload [path]",
-                  "reload the whole project or one module and its dependents",
+    registry.add({"reload", "reload [module]",
+                  "reload the whole project or one canonical module path",
                   CommandArgumentPolicy::Optional, false, handleReload});
     registry.add({"goto", "goto <line>", "move the analysis point to a source line",
                   CommandArgumentPolicy::Required, false, handleGoto});

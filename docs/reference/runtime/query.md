@@ -29,6 +29,7 @@ lona-query main.lo
 ```bash
 make query
 ./build/lona-query main.lo
+./build/lona-query main.lo third_party/modules vendor/modules
 ```
 
 直接加载内存源码：
@@ -60,6 +61,8 @@ make query
 
 - `<root-file>`
   - 初始 root 模块路径
+- `[include path...]`
+  - 初始 include roots，语义等同于后续执行一次 `root <root-file> [include path...]`
 
 ## 3. 文本模式与 JSON 模式
 
@@ -97,16 +100,20 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
 
 `lona-query` 按“项目 root 模块”组织查询状态。
 
-- `root <path>`
-  - 设置当前项目的顶层模块
+- `root <path> [include path...]`
+  - 设置当前项目的顶层模块；如果给出额外参数，则它们会被记录成 include roots
 - `reload`
   - 重新加载整个当前项目
-- `reload <path>`
+- `reload <module>`
   - 重新加载指定模块，并失效依赖它的模块，再从当前 root 重建查询状态
+  - 这里的 `<module>` 必须使用 canonical 模块路径，也就是“相对于 root 源目录或 include root 的路径，去掉 `.lo` 后缀”
 
 边界：
 
-- `reload <path>` 只适用于 file-backed root 项目
+- `reload <module>` 只适用于 file-backed root 项目
+- `reload <module>` 不接受绝对路径
+- `reload <module>` 不接受 `.lo` 后缀
+- `reload <module>` 如果在多个 roots 下同时命中，会直接报冲突，而不是按顺序挑一个
 - 如果当前是 `--source` 内存源码模式，只能使用不带参数的 `reload`
 - 当前支持的是模块级重载，还不支持函数级局部重载
 
@@ -116,10 +123,10 @@ printf 'status\nquit\n' | ./build/lona-query --format json main.lo
   - 打印命令列表
 - `status`
   - 打印当前会话状态
-- `root <path>`
-  - 设置 root 模块
-- `reload [path]`
-  - 重新加载整个项目，或重新加载一个模块及其依赖方
+- `root <path> [include path...]`
+  - 设置 root 模块和可选 include roots
+- `reload [module]`
+  - 重新加载整个项目，或重新加载一个 canonical 模块路径及其依赖方
 - `goto <line>`
   - 把当前分析点移动到某一行
 - `diagnostics`
