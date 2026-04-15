@@ -531,6 +531,85 @@ def test_query_distinguishes_pv_and_pt_for_same_name_symbols(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_keeps_function_local_scope_on_blank_lines(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "def main() i32 {",
+                "",
+                "    var x = 1",
+                "",
+                "    ret x",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        line = send_command(proc, "goto 2")
+        assert line["ok"] is True, line
+        assert line["result"]["hasLocalScope"] is True, line
+        assert line["result"]["context"]["kind"] == "func", line
+        assert line["result"]["context"]["name"] == "main", line
+
+        locals_on_leading_blank = send_command(proc, "info local")
+        assert locals_on_leading_blank["ok"] is True, locals_on_leading_blank
+        assert locals_on_leading_blank["result"]["hasLocalScope"] is True, locals_on_leading_blank
+        assert locals_on_leading_blank["result"]["count"] == 0, locals_on_leading_blank
+
+        line = send_command(proc, "goto 4")
+        assert line["ok"] is True, line
+        assert line["result"]["hasLocalScope"] is True, line
+        assert line["result"]["context"]["name"] == "main", line
+
+        locals_between_statements = send_command(proc, "info local")
+        assert locals_between_statements["ok"] is True, locals_between_statements
+        assert locals_between_statements["result"]["hasLocalScope"] is True, locals_between_statements
+        assert locals_between_statements["result"]["count"] == 1, locals_between_statements
+        assert locals_between_statements["result"]["items"][0]["name"] == "x", locals_between_statements
+        assert locals_between_statements["result"]["items"][0]["type"], locals_between_statements
+
+        print_value = send_command(proc, "pv x")
+        assert print_value["ok"] is True, print_value
+        assert print_value["result"]["item"]["kind"] == "local", print_value
+        assert print_value["result"]["item"]["name"] == "x", print_value
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_pt_can_print_imported_module_types_and_funcs(
     query_bin: Path, tmp_path: Path
 ) -> None:

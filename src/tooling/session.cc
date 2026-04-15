@@ -413,8 +413,162 @@ locationContainsLine(const location &loc, int line) {
 }
 
 bool
-nodeContainsLine(const AstNode *node, int line) {
-    return node && locationContainsLine(node->loc, line);
+subtreeContainsLine(const AstNode *node, int line);
+
+int
+subtreeEndLine(const AstNode *node) {
+    if (!node) {
+        return 0;
+    }
+
+    auto end = locationEndLine(node->loc);
+    if (auto *program = dynamic_cast<const AstProgram *>(node)) {
+        return std::max(end, subtreeEndLine(program->body));
+    }
+    if (auto *list = dynamic_cast<const AstStatList *>(node)) {
+        for (auto *stmt : list->body) {
+            end = std::max(end, subtreeEndLine(stmt));
+        }
+        return end;
+    }
+    if (auto *funcDecl = dynamic_cast<const AstFuncDecl *>(node)) {
+        if (funcDecl->args) {
+            for (auto *arg : *funcDecl->args) {
+                end = std::max(end, subtreeEndLine(arg));
+            }
+        }
+        return std::max(end, subtreeEndLine(funcDecl->body));
+    }
+    if (auto *structDecl = dynamic_cast<const AstStructDecl *>(node)) {
+        return std::max(end, subtreeEndLine(structDecl->body));
+    }
+    if (auto *traitDecl = dynamic_cast<const AstTraitDecl *>(node)) {
+        return std::max(end, subtreeEndLine(traitDecl->body));
+    }
+    if (auto *traitImplDecl = dynamic_cast<const AstTraitImplDecl *>(node)) {
+        return std::max(end, subtreeEndLine(traitImplDecl->body));
+    }
+    if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
+        end = std::max(end, subtreeEndLine(ifNode->condition));
+        end = std::max(end, subtreeEndLine(ifNode->then));
+        end = std::max(end, subtreeEndLine(ifNode->els));
+        return end;
+    }
+    if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
+        end = std::max(end, subtreeEndLine(forNode->expr));
+        end = std::max(end, subtreeEndLine(forNode->body));
+        end = std::max(end, subtreeEndLine(forNode->els));
+        return end;
+    }
+    if (auto *assign = dynamic_cast<const AstAssign *>(node)) {
+        end = std::max(end, subtreeEndLine(assign->left));
+        end = std::max(end, subtreeEndLine(assign->right));
+        return end;
+    }
+    if (auto *binOp = dynamic_cast<const AstBinOper *>(node)) {
+        end = std::max(end, subtreeEndLine(binOp->left));
+        end = std::max(end, subtreeEndLine(binOp->right));
+        return end;
+    }
+    if (auto *unary = dynamic_cast<const AstUnaryOper *>(node)) {
+        return std::max(end, subtreeEndLine(unary->expr));
+    }
+    if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
+        return std::max(end, subtreeEndLine(refExpr->expr));
+    }
+    if (auto *ret = dynamic_cast<const AstRet *>(node)) {
+        return std::max(end, subtreeEndLine(ret->expr));
+    }
+    if (auto *fieldCall = dynamic_cast<const AstFieldCall *>(node)) {
+        end = std::max(end, subtreeEndLine(fieldCall->value));
+        if (fieldCall->args) {
+            for (auto *arg : *fieldCall->args) {
+                end = std::max(end, subtreeEndLine(arg));
+            }
+        }
+        return end;
+    }
+    if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+        return std::max(end, subtreeEndLine(dotLike->parent));
+    }
+    if (auto *funcRef = dynamic_cast<const AstFuncRef *>(node)) {
+        return std::max(end, subtreeEndLine(funcRef->value));
+    }
+    if (auto *varDef = dynamic_cast<const AstVarDef *>(node)) {
+        return std::max(end, subtreeEndLine(varDef->getInitVal()));
+    }
+    if (auto *globalDecl = dynamic_cast<const AstGlobalDecl *>(node)) {
+        return std::max(end, subtreeEndLine(globalDecl->getInitVal()));
+    }
+    if (auto *varDecl = dynamic_cast<const AstVarDecl *>(node)) {
+        return std::max(end, subtreeEndLine(varDecl->right));
+    }
+    if (auto *tuple = dynamic_cast<const AstTupleLiteral *>(node)) {
+        if (!tuple->items) {
+            return end;
+        }
+        for (auto *item : *tuple->items) {
+            end = std::max(end, subtreeEndLine(item));
+        }
+        return end;
+    }
+    if (auto *braceInit = dynamic_cast<const AstBraceInit *>(node)) {
+        if (!braceInit->items) {
+            return end;
+        }
+        for (auto *item : *braceInit->items) {
+            end = std::max(end, subtreeEndLine(item));
+        }
+        return end;
+    }
+    if (auto *braceItem = dynamic_cast<const AstBraceInitItem *>(node)) {
+        return std::max(end, subtreeEndLine(braceItem->value));
+    }
+    if (auto *namedArg = dynamic_cast<const AstNamedCallArg *>(node)) {
+        return std::max(end, subtreeEndLine(namedArg->value));
+    }
+    if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
+        return std::max(end, subtreeEndLine(castExpr->value));
+    }
+    if (auto *sizeofExpr = dynamic_cast<const AstSizeofExpr *>(node)) {
+        return std::max(end, subtreeEndLine(sizeofExpr->value));
+    }
+    if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node)) {
+        return std::max(end, subtreeEndLine(typeApply->value));
+    }
+    return end;
+}
+
+bool
+nodeStructurallyContainsLine(const AstNode *node, int line) {
+    if (!node) {
+        return false;
+    }
+    auto begin = locationBeginLine(node->loc);
+    auto end = subtreeEndLine(node);
+    if (begin <= 0 || end <= 0) {
+        return false;
+    }
+    if (end < begin) {
+        std::swap(begin, end);
+    }
+    return line >= begin && line <= end;
+}
+
+bool
+branchContainsLine(const AstNode *branch, int line, int beginHint = 0) {
+    if (!branch) {
+        return false;
+    }
+    auto begin = beginHint > 0 ? beginHint : locationBeginLine(branch->loc);
+    auto end = subtreeEndLine(branch);
+    if (begin <= 0 || end <= 0) {
+        return false;
+    }
+    if (end < begin) {
+        end = begin;
+    }
+    return line >= begin && line <= end;
 }
 
 bool
@@ -422,7 +576,7 @@ subtreeContainsLine(const AstNode *node, int line) {
     if (!node) {
         return false;
     }
-    if (nodeContainsLine(node, line)) {
+    if (nodeStructurallyContainsLine(node, line)) {
         return true;
     }
 
@@ -585,7 +739,7 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *structDecl = dynamic_cast<const AstStructDecl *>(node)) {
-        if (!subtreeContainsLine(structDecl, line)) {
+        if (!nodeStructurallyContainsLine(structDecl, line)) {
             return;
         }
         auto ownerLabel = describeStructHeader(structDecl);
@@ -595,7 +749,7 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *traitDecl = dynamic_cast<const AstTraitDecl *>(node)) {
-        if (!subtreeContainsLine(traitDecl, line)) {
+        if (!nodeStructurallyContainsLine(traitDecl, line)) {
             return;
         }
         auto ownerLabel = toStdString(traitDecl->name);
@@ -605,7 +759,7 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *traitImplDecl = dynamic_cast<const AstTraitImplDecl *>(node)) {
-        if (!subtreeContainsLine(traitImplDecl, line)) {
+        if (!nodeStructurallyContainsLine(traitImplDecl, line)) {
             return;
         }
         auto ownerLabel = describeTraitImplHeader(traitImplDecl);
@@ -616,7 +770,7 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *funcDecl = dynamic_cast<const AstFuncDecl *>(node)) {
-        if (!subtreeContainsLine(funcDecl, line)) {
+        if (!nodeStructurallyContainsLine(funcDecl, line)) {
             return;
         }
         result.decl = funcDecl;
@@ -633,11 +787,16 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
-        if (ifNode->then && subtreeContainsLine(ifNode->then, line)) {
+        auto begin = locationBeginLine(ifNode->loc);
+        if (ifNode->then && branchContainsLine(ifNode->then, line, begin)) {
             findFunctionContextAtLine(ifNode->then, line, methodOwnerLabel,
                                       selfDetail, result);
+            return;
         }
-        if (ifNode->els && subtreeContainsLine(ifNode->els, line)) {
+        auto elseBegin = subtreeEndLine(ifNode->then);
+        if (ifNode->els &&
+            branchContainsLine(ifNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
             findFunctionContextAtLine(ifNode->els, line, methodOwnerLabel,
                                       selfDetail, result);
         }
@@ -645,11 +804,16 @@ findFunctionContextAtLine(const AstNode *node, int line,
     }
 
     if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
-        if (forNode->body && subtreeContainsLine(forNode->body, line)) {
+        auto begin = locationBeginLine(forNode->loc);
+        if (forNode->body && branchContainsLine(forNode->body, line, begin)) {
             findFunctionContextAtLine(forNode->body, line, methodOwnerLabel,
                                       selfDetail, result);
+            return;
         }
-        if (forNode->els && subtreeContainsLine(forNode->els, line)) {
+        auto elseBegin = subtreeEndLine(forNode->body);
+        if (forNode->els &&
+            branchContainsLine(forNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
             findFunctionContextAtLine(forNode->els, line, methodOwnerLabel,
                                       selfDetail, result);
         }
@@ -697,12 +861,16 @@ collectLocalsInBlock(const AstStatList *list, int line, int scopeDepth,
         }
 
         if (auto *ifNode = dynamic_cast<const AstIf *>(stmt)) {
-            if (ifNode->then && subtreeContainsLine(ifNode->then, line)) {
+            auto begin = locationBeginLine(ifNode->loc);
+            if (ifNode->then && branchContainsLine(ifNode->then, line, begin)) {
                 collectLocalsInNode(ifNode->then, line, scopeDepth + 1,
                                     fallbackPath, locals);
                 return;
             }
-            if (ifNode->els && subtreeContainsLine(ifNode->els, line)) {
+            auto elseBegin = subtreeEndLine(ifNode->then);
+            if (ifNode->els &&
+                branchContainsLine(ifNode->els, line,
+                                   elseBegin > 0 ? elseBegin + 1 : begin)) {
                 collectLocalsInNode(ifNode->els, line, scopeDepth + 1,
                                     fallbackPath, locals);
                 return;
@@ -711,12 +879,17 @@ collectLocalsInBlock(const AstStatList *list, int line, int scopeDepth,
         }
 
         if (auto *forNode = dynamic_cast<const AstFor *>(stmt)) {
-            if (forNode->body && subtreeContainsLine(forNode->body, line)) {
+            auto begin = locationBeginLine(forNode->loc);
+            if (forNode->body &&
+                branchContainsLine(forNode->body, line, begin)) {
                 collectLocalsInNode(forNode->body, line, scopeDepth + 1,
                                     fallbackPath, locals);
                 return;
             }
-            if (forNode->els && subtreeContainsLine(forNode->els, line)) {
+            auto elseBegin = subtreeEndLine(forNode->body);
+            if (forNode->els &&
+                branchContainsLine(forNode->els, line,
+                                   elseBegin > 0 ? elseBegin + 1 : begin)) {
                 collectLocalsInNode(forNode->els, line, scopeDepth + 1,
                                     fallbackPath, locals);
                 return;
@@ -737,24 +910,32 @@ collectLocalsInNode(const AstNode *node, int line, int scopeDepth,
         return;
     }
     if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
-        if (ifNode->then && subtreeContainsLine(ifNode->then, line)) {
+        auto begin = locationBeginLine(ifNode->loc);
+        if (ifNode->then && branchContainsLine(ifNode->then, line, begin)) {
             collectLocalsInNode(ifNode->then, line, scopeDepth + 1,
                                 fallbackPath, locals);
             return;
         }
-        if (ifNode->els && subtreeContainsLine(ifNode->els, line)) {
+        auto elseBegin = subtreeEndLine(ifNode->then);
+        if (ifNode->els &&
+            branchContainsLine(ifNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
             collectLocalsInNode(ifNode->els, line, scopeDepth + 1,
                                 fallbackPath, locals);
         }
         return;
     }
     if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
-        if (forNode->body && subtreeContainsLine(forNode->body, line)) {
+        auto begin = locationBeginLine(forNode->loc);
+        if (forNode->body && branchContainsLine(forNode->body, line, begin)) {
             collectLocalsInNode(forNode->body, line, scopeDepth + 1,
                                 fallbackPath, locals);
             return;
         }
-        if (forNode->els && subtreeContainsLine(forNode->els, line)) {
+        auto elseBegin = subtreeEndLine(forNode->body);
+        if (forNode->els &&
+            branchContainsLine(forNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
             collectLocalsInNode(forNode->els, line, scopeDepth + 1,
                                 fallbackPath, locals);
         }
@@ -795,8 +976,76 @@ hirNodeStartsAfterLine(const HIRNode *node, int line) {
 }
 
 bool
+hirNodeContainsLine(const HIRNode *node, int line);
+
+int
+hirSubtreeEndLine(const HIRNode *node) {
+    if (!node) {
+        return 0;
+    }
+
+    auto end = locationEndLine(node->getLocation());
+    if (auto *block = dynamic_cast<const HIRBlock *>(node)) {
+        for (auto *child : block->getBody()) {
+            end = std::max(end, hirSubtreeEndLine(child));
+        }
+        return end;
+    }
+    if (auto *ifNode = dynamic_cast<const HIRIf *>(node)) {
+        end = std::max(end, hirSubtreeEndLine(ifNode->getCondition()));
+        end = std::max(end, hirSubtreeEndLine(ifNode->getThenBlock()));
+        if (ifNode->hasElseBlock()) {
+            end = std::max(end, hirSubtreeEndLine(ifNode->getElseBlock()));
+        }
+        return end;
+    }
+    if (auto *forNode = dynamic_cast<const HIRFor *>(node)) {
+        end = std::max(end, hirSubtreeEndLine(forNode->getCondition()));
+        end = std::max(end, hirSubtreeEndLine(forNode->getBody()));
+        if (forNode->hasElseBlock()) {
+            end = std::max(end, hirSubtreeEndLine(forNode->getElseBlock()));
+        }
+        return end;
+    }
+    return end;
+}
+
+bool
+hirNodeStructurallyContainsLine(const HIRNode *node, int line) {
+    if (!node) {
+        return false;
+    }
+    auto begin = locationBeginLine(node->getLocation());
+    auto end = hirSubtreeEndLine(node);
+    if (begin <= 0 || end <= 0) {
+        return false;
+    }
+    if (end < begin) {
+        std::swap(begin, end);
+    }
+    return line >= begin && line <= end;
+}
+
+bool
+hirBranchContainsLine(const HIRNode *branch, int line, int beginHint = 0) {
+    if (!branch) {
+        return false;
+    }
+    auto begin =
+        beginHint > 0 ? beginHint : locationBeginLine(branch->getLocation());
+    auto end = hirSubtreeEndLine(branch);
+    if (begin <= 0 || end <= 0) {
+        return false;
+    }
+    if (end < begin) {
+        end = begin;
+    }
+    return line >= begin && line <= end;
+}
+
+bool
 hirNodeContainsLine(const HIRNode *node, int line) {
-    return node && locationContainsLine(node->getLocation(), line);
+    return node && hirNodeStructurallyContainsLine(node, line);
 }
 
 void
@@ -846,14 +1095,17 @@ collectSemanticLocalsInBlock(const HIRBlock *block, int line,
         }
 
         if (auto *ifNode = dynamic_cast<const HIRIf *>(node)) {
+            auto begin = locationBeginLine(ifNode->getLocation());
             if (ifNode->getThenBlock() &&
-                hirNodeContainsLine(ifNode->getThenBlock(), line)) {
+                hirBranchContainsLine(ifNode->getThenBlock(), line, begin)) {
                 collectSemanticLocalsInNode(ifNode->getThenBlock(), line,
                                             fallbackPath, locals);
                 return;
             }
+            auto elseBegin = hirSubtreeEndLine(ifNode->getThenBlock());
             if (ifNode->hasElseBlock() &&
-                hirNodeContainsLine(ifNode->getElseBlock(), line)) {
+                hirBranchContainsLine(ifNode->getElseBlock(), line,
+                                      elseBegin > 0 ? elseBegin + 1 : begin)) {
                 collectSemanticLocalsInNode(ifNode->getElseBlock(), line,
                                             fallbackPath, locals);
                 return;
@@ -862,13 +1114,17 @@ collectSemanticLocalsInBlock(const HIRBlock *block, int line,
         }
 
         if (auto *forNode = dynamic_cast<const HIRFor *>(node)) {
-            if (forNode->getBody() && hirNodeContainsLine(forNode->getBody(), line)) {
+            auto begin = locationBeginLine(forNode->getLocation());
+            if (forNode->getBody() &&
+                hirBranchContainsLine(forNode->getBody(), line, begin)) {
                 collectSemanticLocalsInNode(forNode->getBody(), line,
                                             fallbackPath, locals);
                 return;
             }
+            auto elseBegin = hirSubtreeEndLine(forNode->getBody());
             if (forNode->hasElseBlock() &&
-                hirNodeContainsLine(forNode->getElseBlock(), line)) {
+                hirBranchContainsLine(forNode->getElseBlock(), line,
+                                      elseBegin > 0 ? elseBegin + 1 : begin)) {
                 collectSemanticLocalsInNode(forNode->getElseBlock(), line,
                                             fallbackPath, locals);
                 return;
@@ -889,27 +1145,34 @@ collectSemanticLocalsInNode(const HIRNode *node, int line,
         return;
     }
     if (auto *ifNode = dynamic_cast<const HIRIf *>(node)) {
+        auto begin = locationBeginLine(ifNode->getLocation());
         if (ifNode->getThenBlock() &&
-            hirNodeContainsLine(ifNode->getThenBlock(), line)) {
+            hirBranchContainsLine(ifNode->getThenBlock(), line, begin)) {
             collectSemanticLocalsInNode(ifNode->getThenBlock(), line,
                                         fallbackPath, locals);
             return;
         }
+        auto elseBegin = hirSubtreeEndLine(ifNode->getThenBlock());
         if (ifNode->hasElseBlock() &&
-            hirNodeContainsLine(ifNode->getElseBlock(), line)) {
+            hirBranchContainsLine(ifNode->getElseBlock(), line,
+                                  elseBegin > 0 ? elseBegin + 1 : begin)) {
             collectSemanticLocalsInNode(ifNode->getElseBlock(), line,
                                         fallbackPath, locals);
         }
         return;
     }
     if (auto *forNode = dynamic_cast<const HIRFor *>(node)) {
-        if (forNode->getBody() && hirNodeContainsLine(forNode->getBody(), line)) {
+        auto begin = locationBeginLine(forNode->getLocation());
+        if (forNode->getBody() &&
+            hirBranchContainsLine(forNode->getBody(), line, begin)) {
             collectSemanticLocalsInNode(forNode->getBody(), line, fallbackPath,
                                         locals);
             return;
         }
+        auto elseBegin = hirSubtreeEndLine(forNode->getBody());
         if (forNode->hasElseBlock() &&
-            hirNodeContainsLine(forNode->getElseBlock(), line)) {
+            hirBranchContainsLine(forNode->getElseBlock(), line,
+                                  elseBegin > 0 ? elseBegin + 1 : begin)) {
             collectSemanticLocalsInNode(forNode->getElseBlock(), line,
                                         fallbackPath, locals);
         }
