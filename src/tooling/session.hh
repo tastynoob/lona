@@ -64,6 +64,8 @@ class Session {
     bool rebuildProjectFromModule(const std::string &path);
     void rebuildSymbolIndex();
     void collectLoadedSemanticDiagnostics();
+    std::vector<DiagnosticError> activeImportBridgeDiagnostics() const;
+    std::vector<DiagnosticError> visibleDiagnostics() const;
     void rebuildActiveSemanticState(CompilationUnit &unit);
     void invalidateModuleAndDependents(const std::string &path);
     bool moduleBelongsToLoadedProject(const std::string &path) const;
@@ -93,6 +95,7 @@ public:
     bool hasResolvedModule() const { return resolvedModule_ != nullptr; }
     bool hasAnalysis() const { return analyzedModule_ != nullptr; }
     std::size_t analyzedFunctionCount() const { return analyzedFunctions_.size(); }
+    std::size_t visibleDiagnosticCount() const;
 
     const DiagnosticBag &diagnostics() const { return diagnostics_; }
     const std::vector<SymbolRecord> &symbols() const { return symbols_; }

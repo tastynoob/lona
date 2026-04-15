@@ -9,8 +9,10 @@
 #include "lona/scan/driver.hh"
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <iomanip>
 #include <ios>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <unordered_map>
@@ -3168,6 +3170,59 @@ addDiagnosticIfMissing(DiagnosticBag &bag, DiagnosticError diagnostic) {
     (void)bag.add(std::move(diagnostic));
 }
 
+std::string
+diagnosticLocationPath(const DiagnosticError &diagnostic) {
+    if (!diagnostic.hasLocation()) {
+        return {};
+    }
+    const auto *file = diagnostic.where().begin.filename;
+    return file ? *file : std::string();
+}
+
+std::string
+moduleDisplayPath(const CompilationUnit &unit) {
+    if (!unit.modulePath().empty()) {
+        return toStdString(unit.modulePath());
+    }
+    if (!unit.moduleName().empty()) {
+        return toStdString(unit.moduleName());
+    }
+    return toStdString(unit.path());
+}
+
+std::string
+importAliasForPath(std::string_view importPath) {
+    namespace fs = std::filesystem;
+    auto alias = fs::path(std::string(trimCopy(importPath))).filename().string();
+    if (!alias.empty()) {
+        return alias;
+    }
+    return trimCopy(importPath);
+}
+
+bool
+isImportedModuleDiagnosticCategory(DiagnosticError::Category category) {
+    return category == DiagnosticError::Category::Lexical ||
+           category == DiagnosticError::Category::Syntax ||
+           category == DiagnosticError::Category::Semantic;
+}
+
+DiagnosticError::Category
+bridgeDiagnosticCategory(const DiagnosticError &diagnostic) {
+    if (diagnostic.category() == DiagnosticError::Category::Semantic) {
+        return DiagnosticError::Category::Semantic;
+    }
+    return DiagnosticError::Category::Syntax;
+}
+
+std::string
+bridgeDiagnosticKindLabel(const DiagnosticError &diagnostic) {
+    return bridgeDiagnosticCategory(diagnostic) ==
+                   DiagnosticError::Category::Semantic
+               ? "semantic"
+               : "syntax";
+}
+
 void
 clearResolvedTypeCachesForAnalysis(CompilerWorkspace &workspace,
                                    CompilationUnit &unit) {
@@ -3614,22 +3669,149 @@ Session::collectLoadedSemanticDiagnostics() {
         return;
     }
 
+    std::unordered_set<std::string> analyzedPaths;
     for (const auto &entryPath : loadedEntryPaths_) {
         if (diagnostics_.full()) {
             return;
         }
-        auto *entryUnit = workspace_.moduleGraph().find(entryPath);
-        if (entryUnit == nullptr || entryUnit->syntaxTree() == nullptr) {
+        for (const auto &reachablePath :
+             workspace_.moduleGraph().postOrderFrom(entryPath)) {
+            const auto normalizedPath = toStdString(reachablePath);
+            if (!analyzedPaths.emplace(normalizedPath).second) {
+                continue;
+            }
+            auto *loadedUnit = workspace_.moduleGraph().find(normalizedPath);
+            if (loadedUnit == nullptr || loadedUnit->syntaxTree() == nullptr) {
+                continue;
+            }
+
+            std::optional<DiagnosticError> error;
+            auto result =
+                analyzeUnitSemantics(loader_, workspace_, *loadedUnit, &error);
+            if (!result && error.has_value()) {
+                addDiagnosticIfMissing(diagnostics_, std::move(*error));
+            }
+            if (diagnostics_.full()) {
+                return;
+            }
+        }
+    }
+}
+
+std::vector<DiagnosticError>
+Session::activeImportBridgeDiagnostics() const {
+    if (!currentSourceIsFile_ || diagnostics_.full() || currentUnit_ == nullptr ||
+        syntaxTree_ == nullptr || diagnostics_.diagnostics().empty()) {
+        return {};
+    }
+
+    const auto *body = topLevelStatementListForQuery(syntaxTree_);
+    if (body == nullptr) {
+        return {};
+    }
+
+    std::vector<DiagnosticError> bridges;
+    for (auto *stmt : body->body) {
+        auto *importNode = dynamic_cast<AstImport *>(stmt);
+        if (!importNode) {
             continue;
         }
 
-        std::optional<DiagnosticError> error;
-        auto result =
-            analyzeUnitSemantics(loader_, workspace_, *entryUnit, &error);
-        if (!result && error.has_value()) {
-            addDiagnosticIfMissing(diagnostics_, std::move(*error));
+        auto importAlias = importAliasForPath(importNode->path);
+        auto *importedModule = currentUnit_->findImportedModule(importAlias);
+        if (importedModule == nullptr || importedModule->unit == nullptr) {
+            continue;
+        }
+
+        const auto importedModulePath = toStdString(importedModule->path);
+        std::unordered_set<std::string> dependencyClosure;
+        for (const auto &path :
+             workspace_.moduleGraph().postOrderFrom(importedModule->path)) {
+            dependencyClosure.emplace(toStdString(path));
+        }
+        if (dependencyClosure.empty()) {
+            dependencyClosure.emplace(importedModulePath);
+        }
+
+        const DiagnosticError *matched = nullptr;
+        std::string matchedPath;
+        for (const auto &diagnostic : diagnostics_.diagnostics()) {
+            if (!isImportedModuleDiagnosticCategory(diagnostic.category())) {
+                continue;
+            }
+            auto path = diagnosticLocationPath(diagnostic);
+            if (path.empty() || !dependencyClosure.contains(path)) {
+                continue;
+            }
+            matched = &diagnostic;
+            matchedPath = std::move(path);
+            break;
+        }
+        if (matched == nullptr) {
+            continue;
+        }
+
+        const auto *matchedUnit = workspace_.moduleGraph().find(matchedPath);
+        const auto matchedModuleName =
+            matchedUnit ? moduleDisplayPath(*matchedUnit) : matchedPath;
+        std::string message;
+        if (matchedPath == importedModulePath) {
+            message = "imported module `" + toStdString(importNode->path) +
+                      "` contains " + bridgeDiagnosticKindLabel(*matched) +
+                      " errors";
+        } else {
+            message = "imported module `" + toStdString(importNode->path) +
+                      "` depends on `" + matchedModuleName + "`, which contains " +
+                      bridgeDiagnosticKindLabel(*matched) + " errors";
+        }
+        auto bridge = DiagnosticError(
+            bridgeDiagnosticCategory(*matched), importNode->loc, std::move(message),
+            "See `" + matchedModuleName +
+                "` for the original diagnostic location.");
+
+        bool duplicate = false;
+        for (const auto &existing : diagnostics_.diagnostics()) {
+            if (diagnosticsEquivalent(existing, bridge)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        for (const auto &existing : bridges) {
+            if (diagnosticsEquivalent(existing, bridge)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            bridges.push_back(std::move(bridge));
         }
     }
+    return bridges;
+}
+
+std::vector<DiagnosticError>
+Session::visibleDiagnostics() const {
+    std::vector<DiagnosticError> visible;
+    visible.reserve(diagnostics_.size());
+    for (const auto &diagnostic : diagnostics_.diagnostics()) {
+        visible.push_back(diagnostic);
+    }
+    if (diagnostics_.full()) {
+        return visible;
+    }
+    auto bridges = activeImportBridgeDiagnostics();
+    visible.insert(visible.end(),
+                   std::make_move_iterator(bridges.begin()),
+                   std::make_move_iterator(bridges.end()));
+    return visible;
+}
+
+std::size_t
+Session::visibleDiagnosticCount() const {
+    return visibleDiagnostics().size();
 }
 
 void
@@ -3682,7 +3864,7 @@ Session::statusJson() const {
         root["cursor"] = nullptr;
     }
     root["symbolCount"] = symbols_.size();
-    root["diagnosticCount"] = diagnostics_.size();
+    root["diagnosticCount"] = visibleDiagnosticCount();
     root["diagnosticsTruncated"] = diagnostics_.truncated();
     root["errorLimit"] = diagnostics_.maxErrors();
     root["hasResolvedModule"] = resolvedModule_ != nullptr;
@@ -3747,17 +3929,18 @@ Session::astJson() const {
 
 Json
 Session::diagnosticsJson() const {
+    const auto visible = visibleDiagnostics();
     Json root = Json::object();
     if (currentPath_.empty()) {
         root["path"] = nullptr;
     } else {
         root["path"] = currentPath_;
     }
-    root["count"] = diagnostics_.size();
+    root["count"] = visible.size();
     root["truncated"] = diagnostics_.truncated();
     root["errorLimit"] = diagnostics_.maxErrors();
     root["items"] = Json::array();
-    for (const auto &diagnostic : diagnostics_.diagnostics()) {
+    for (const auto &diagnostic : visible) {
         root["items"].push_back(
             diagnosticJson(diagnostic, workspace_.diagnostics(), currentPath_));
     }
@@ -3966,12 +4149,13 @@ Session::printAst(std::ostream &out) const {
 
 void
 Session::printDiagnostics(std::ostream &out) const {
-    if (!diagnostics_.hasDiagnostics()) {
+    const auto visible = visibleDiagnostics();
+    if (visible.empty()) {
         out << "no diagnostics\n";
         return;
     }
     bool first = true;
-    for (const auto &diagnostic : diagnostics_.diagnostics()) {
+    for (const auto &diagnostic : visible) {
         if (!first) {
             out << '\n';
         }

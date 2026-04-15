@@ -82,7 +82,7 @@ printStatus(std::ostream &out, const Session &session) {
     out << '\n';
     out << "symbols: " << session.symbols().size() << '\n';
     out << "analyzed-functions: " << session.analyzedFunctionCount() << '\n';
-    out << "diagnostics: " << session.diagnostics().size();
+    out << "diagnostics: " << session.visibleDiagnosticCount();
     if (session.diagnostics().truncated()) {
         out << " (truncated at " << session.diagnostics().maxErrors() << ')';
     }
@@ -101,7 +101,7 @@ printLoadSummary(std::ostream &out, const Session &session) {
         << "; analysis=" << (session.hasAnalysis() ? "yes" : "no")
         << "; symbols=" << session.symbols().size()
         << "; analyzed-functions=" << session.analyzedFunctionCount()
-        << "; diagnostics=" << session.diagnostics().size();
+        << "; diagnostics=" << session.visibleDiagnosticCount();
     if (session.diagnostics().truncated()) {
         out << " (truncated)";
     }

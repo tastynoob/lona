@@ -206,6 +206,183 @@ def test_query_reload_from_dependency_keeps_root_semantic_diagnostics(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_surfaces_dependency_semantic_errors_at_active_imports(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    lib_dir = tmp_path / "lib"
+    app_dir.mkdir()
+    lib_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    helper_path = lib_dir / "helper.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "import helper",
+                "",
+                "def main() i32 {",
+                "    ret 0",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    helper_path.write_text(
+        "\n".join(
+            [
+                "def value() i32 {",
+                "    ret missing",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir), str(lib_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+        assert opened["result"]["diagnosticCount"] >= 2, opened
+
+        diagnostics = send_command(proc, "diagnostics")
+        assert diagnostics["ok"] is True, diagnostics
+
+        items = diagnostics["result"]["items"]
+        assert len(items) >= 2, diagnostics
+
+        helper_diagnostic = next(
+            item
+            for item in items
+            if item["location"] is not None
+            and item["location"]["path"] == str(helper_path)
+        )
+        assert helper_diagnostic["category"] == "semantic", helper_diagnostic
+
+        import_bridge = next(
+            item
+            for item in items
+            if item["location"] is not None
+            and item["location"]["path"] == str(root_path)
+            and item["location"]["line"] == 1
+        )
+        assert import_bridge["category"] == "semantic", import_bridge
+        assert "imported module `helper`" in import_bridge["message"], import_bridge
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_surfaces_dependency_syntax_errors_at_active_imports(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    lib_dir = tmp_path / "lib"
+    app_dir.mkdir()
+    lib_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    helper_path = lib_dir / "helper.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "import helper",
+                "",
+                "def main() i32 {",
+                "    ret 0",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    helper_path.write_text(
+        "\n".join(
+            [
+                "def value() i32 {",
+                "    ret 1",
+                "    ret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir), str(lib_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+        assert opened["result"]["diagnosticCount"] >= 2, opened
+
+        diagnostics = send_command(proc, "diagnostics")
+        assert diagnostics["ok"] is True, diagnostics
+
+        items = diagnostics["result"]["items"]
+        assert len(items) >= 2, diagnostics
+
+        helper_diagnostic = next(
+            item
+            for item in items
+            if item["location"] is not None
+            and item["location"]["path"] == str(helper_path)
+        )
+        assert helper_diagnostic["category"] == "syntax", helper_diagnostic
+
+        import_bridge = next(
+            item
+            for item in items
+            if item["location"] is not None
+            and item["location"]["path"] == str(root_path)
+            and item["location"]["line"] == 1
+        )
+        assert import_bridge["category"] == "syntax", import_bridge
+        assert "imported module `helper`" in import_bridge["message"], import_bridge
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_analyzes_clean_dependency_even_with_root_semantic_error(
     query_bin: Path, tmp_path: Path
 ) -> None:
