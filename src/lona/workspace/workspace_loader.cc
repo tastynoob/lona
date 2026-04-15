@@ -86,14 +86,11 @@ isPathUnderRoot(const std::filesystem::path &path,
 }
 
 std::vector<std::string>
-buildWorkspaceModuleRoots(const std::string &rootPath,
-                          const std::vector<std::string> &includePaths) {
+normalizeWorkspaceRoots(const std::vector<std::filesystem::path> &roots) {
     namespace fs = std::filesystem;
 
-    auto normalizedRootPath = normalizeModuleFsPath(fs::path(rootPath));
-    auto implicitRoot = normalizedRootPath.parent_path();
     std::vector<fs::path> normalizedRoots;
-    normalizedRoots.reserve(includePaths.size() + 1);
+    normalizedRoots.reserve(roots.size());
 
     auto addUniqueRoot = [&](const fs::path &root) {
         if (root.empty()) {
@@ -108,20 +105,8 @@ buildWorkspaceModuleRoots(const std::string &rootPath,
         normalizedRoots.push_back(normalized);
     };
 
-    bool rootCoveredByExplicitRoot = false;
-    for (const auto &includePath : includePaths) {
-        auto includeRoot = normalizeModuleFsPath(fs::path(includePath));
-        if (includeRoot.empty()) {
-            continue;
-        }
-        if (isPathUnderRoot(normalizedRootPath, includeRoot)) {
-            rootCoveredByExplicitRoot = true;
-        }
-        addUniqueRoot(includeRoot);
-    }
-
-    if (!rootCoveredByExplicitRoot) {
-        addUniqueRoot(implicitRoot);
+    for (const auto &root : roots) {
+        addUniqueRoot(root);
     }
 
     for (std::size_t i = 0; i < normalizedRoots.size(); ++i) {
@@ -132,21 +117,50 @@ buildWorkspaceModuleRoots(const std::string &rootPath,
             }
             throw DiagnosticError(
                 DiagnosticError::Category::Driver,
-                "module roots must not overlap: `" +
+                "root paths must not overlap: `" +
                     normalizedRoots[i].string() + "` and `" +
                     normalizedRoots[j].string() + "`",
-                "Each module root contributes to one flat canonical module "
-                "namespace. Remove one of the overlapping roots or move the "
-                "sources so no root contains another.");
+                "Each root path contributes to one flat canonical module "
+                "namespace. Remove one of the overlapping root paths or move "
+                "the sources so no root path contains another.");
         }
     }
 
-    std::vector<std::string> roots;
-    roots.reserve(normalizedRoots.size());
+    std::vector<std::string> normalizedStrings;
+    normalizedStrings.reserve(normalizedRoots.size());
     for (const auto &root : normalizedRoots) {
-        roots.push_back(root.string());
+        normalizedStrings.push_back(root.string());
     }
-    return roots;
+    return normalizedStrings;
+}
+
+std::vector<std::string>
+buildWorkspaceModuleRoots(const std::string &rootPath,
+                          const std::vector<std::string> &includePaths) {
+    namespace fs = std::filesystem;
+
+    auto normalizedRootPath = normalizeModuleFsPath(fs::path(rootPath));
+    auto implicitRoot = normalizedRootPath.parent_path();
+    std::vector<fs::path> roots;
+    roots.reserve(includePaths.size() + 1);
+
+    bool rootCoveredByExplicitRoot = false;
+    for (const auto &includePath : includePaths) {
+        auto includeRoot = normalizeModuleFsPath(fs::path(includePath));
+        if (includeRoot.empty()) {
+            continue;
+        }
+        if (isPathUnderRoot(normalizedRootPath, includeRoot)) {
+            rootCoveredByExplicitRoot = true;
+        }
+        roots.push_back(includeRoot);
+    }
+
+    if (!rootCoveredByExplicitRoot) {
+        roots.push_back(implicitRoot);
+    }
+
+    return normalizeWorkspaceRoots(roots);
 }
 
 std::string
@@ -159,7 +173,7 @@ describeConflictingImportCandidates(const std::vector<std::string> &paths) {
         }
         help += "`" + paths[i] + "`";
     }
-    help += ". Remove one of the conflicting module roots or rename one of "
+    help += ". Remove one of the conflicting root paths or rename one of "
             "the modules so their canonical paths are unique.";
     return help;
 }
@@ -181,9 +195,9 @@ canonicalWorkspaceModulePath(const std::string &path,
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
             "module `" + normalized.string() +
-                "` is outside all configured module roots",
-            "The root source directory and explicit `-I` paths define the "
-            "canonical module namespace. Known roots: " +
+                "` is outside all configured root paths",
+            "The configured root paths define the canonical module "
+            "namespace. Known root paths: " +
                 describeModuleRoots(moduleRoots) + ".");
     }
 
@@ -196,9 +210,9 @@ canonicalWorkspaceModulePath(const std::string &path,
         throw DiagnosticError(
             DiagnosticError::Category::Driver,
             "module `" + normalized.string() +
-                "` belongs to multiple module roots",
-            "Overlapping roots make canonical module paths ambiguous. "
-            "Matching roots: " +
+                "` belongs to multiple root paths",
+            "Overlapping root paths make canonical module paths ambiguous. "
+            "Matching root paths: " +
                 describeModuleRoots(matchingRoots) +
                 ".");
     }
@@ -274,8 +288,8 @@ resolveWorkspaceImportPath(const AstImport &importNode,
     throw DiagnosticError(
         DiagnosticError::Category::Semantic, importNode.loc,
         "cannot resolve import `" + importNode.path + "`",
-        "Import paths must be canonical module paths relative to the root "
-        "source directory or an explicit `-I` root. Known module roots: " +
+        "Import paths must be canonical module paths relative to the "
+        "configured root paths. Known root paths: " +
             describeModuleRoots(moduleRoots) + ".");
 }
 
@@ -350,8 +364,8 @@ resolveWorkspaceModuleQueryPath(const std::string &queryPath,
     throw DiagnosticError(
         DiagnosticError::Category::Driver,
         "cannot resolve reload path `" + queryPath + "`",
-        "Reload paths must be canonical module paths relative to the root "
-        "source directory or an explicit include root. Known module roots: " +
+        "Reload paths must be canonical module paths relative to the "
+        "configured root paths. Known root paths: " +
             describeModuleRoots(moduleRoots) + ".");
 }
 
@@ -407,6 +421,49 @@ WorkspaceLoader::setIncludePaths(std::vector<std::string> includePaths) {
     }
 }
 
+void
+WorkspaceLoader::setModuleRoots(std::vector<std::string> moduleRoots) {
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(moduleRoots.size());
+    for (auto &moduleRoot : moduleRoots) {
+        if (moduleRoot.empty()) {
+            continue;
+        }
+        auto path = normalizeModuleFsPath(std::filesystem::path(moduleRoot));
+        std::error_code error;
+        const auto exists = std::filesystem::exists(path, error);
+        if (error) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver,
+                "I couldn't inspect root path `" + path.string() + "`.",
+                "Check that the directory exists and that you have search "
+                "permission for it.");
+        }
+        if (!exists) {
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver,
+                "root path `" + path.string() + "` does not exist",
+                "Create the directory first or choose an existing root path.");
+        }
+        if (!std::filesystem::is_directory(path, error)) {
+            if (error) {
+                throw DiagnosticError(
+                    DiagnosticError::Category::Driver,
+                    "I couldn't inspect root path `" + path.string() + "`.",
+                    "Check that the directory exists and that you have search "
+                    "permission for it.");
+            }
+            throw DiagnosticError(
+                DiagnosticError::Category::Driver,
+                "root path `" + path.string() + "` is not a directory",
+                "Use `root <path...>` with directories, not individual module "
+                "files.");
+        }
+        paths.push_back(std::move(path));
+    }
+    explicitModuleRoots_ = normalizeWorkspaceRoots(paths);
+}
+
 CompilationUnit &
 WorkspaceLoader::loadRootUnit(const std::string &path) const {
     auto &unit = workspace_.loadRootUnit(path);
@@ -414,6 +471,33 @@ WorkspaceLoader::loadRootUnit(const std::string &path) const {
     unit.setModulePath(
         canonicalWorkspaceModulePath(toStdString(unit.path()), moduleRoots));
     return unit;
+}
+
+CompilationUnit &
+WorkspaceLoader::loadEntryUnit(const std::string &path) const {
+    auto &unit = workspace_.loadUnit(path);
+    auto moduleRoots = this->moduleRoots();
+    if (moduleRoots.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "root paths are not configured",
+            "Use `root <path...>` before opening modules from files.");
+    }
+    unit.setModulePath(
+        canonicalWorkspaceModulePath(toStdString(unit.path()), moduleRoots));
+    return unit;
+}
+
+std::string
+WorkspaceLoader::resolveModuleFilePath(const std::string &modulePath) const {
+    auto roots = this->moduleRoots();
+    if (roots.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "root paths are not configured",
+            "Use `root <path...>` before opening modules from files.");
+    }
+    return resolveWorkspaceModuleQueryPath(modulePath, roots);
 }
 
 std::string
@@ -530,6 +614,9 @@ WorkspaceLoader::moduleRootsFor(const std::string &rootPath) const {
 
 std::vector<std::string>
 WorkspaceLoader::moduleRoots() const {
+    if (!explicitModuleRoots_.empty()) {
+        return explicitModuleRoots_;
+    }
     auto *root = workspace_.moduleGraph().root();
     if (root == nullptr) {
         return {};

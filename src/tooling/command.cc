@@ -10,8 +10,7 @@ namespace lona::tooling {
 namespace {
 
 struct RootCommandArgs {
-    std::string rootPath;
-    std::vector<std::string> includePaths;
+    std::vector<std::string> rootPaths;
 };
 
 bool
@@ -56,13 +55,7 @@ parseRootCommandArgs(std::string_view text) {
     }
 
     RootCommandArgs args;
-    args.rootPath = std::move(parts.front());
-    if (parts.size() > 1) {
-        args.includePaths.reserve(parts.size() - 1);
-        for (std::size_t i = 1; i < parts.size(); ++i) {
-            args.includePaths.push_back(std::move(parts[i]));
-        }
-    }
+    args.rootPaths = std::move(parts);
     return args;
 }
 
@@ -113,12 +106,11 @@ handleRoot(Session &session, const ParsedCommand &command,
            OutputFormatter &formatter, const CommandRegistry &) {
     auto rootArgs = parseRootCommandArgs(command.args);
     if (!rootArgs) {
-        return formatter.emitError(
-            command.raw, "root requires a module path");
+        return formatter.emitError(command.raw,
+                                   "root requires one or more root paths");
     }
 
-    const auto rooted = session.setRootFile(rootArgs->rootPath,
-                                            std::move(rootArgs->includePaths));
+    const auto rooted = session.setRootPaths(std::move(rootArgs->rootPaths));
     if (!rooted) {
         return formatter.emitError(command.raw,
                                    loadFailureMessage(session, "root failed"));
@@ -131,9 +123,14 @@ CommandOutcome
 handleReload(Session &session, const ParsedCommand &command,
              OutputFormatter &formatter, const CommandRegistry &) {
     if (command.args.empty()) {
-        if (session.rootPath().empty()) {
+        if (!session.currentSourceIsFile() && !session.hasLoadedSource()) {
             return formatter.emitError(command.raw,
-                                       "reload requires a root source");
+                                       "reload requires a loaded source");
+        }
+        if (session.currentSourceIsFile() && session.loadedEntryPaths().empty()) {
+            return formatter.emitError(
+                command.raw,
+                "reload requires at least one loaded module; use gotom first");
         }
 
         const auto reloaded = session.reload();
@@ -145,9 +142,10 @@ handleReload(Session &session, const ParsedCommand &command,
         return {};
     }
 
-    if (!session.currentSourceIsFile() || session.currentPath().empty()) {
+    if (!session.currentSourceIsFile() || session.moduleRoots().empty()) {
         return formatter.emitError(
-            command.raw, "reload <module> requires a file-backed root project");
+            command.raw,
+            "reload <module> requires configured root paths");
     }
 
     const auto reloaded = session.reloadFile(command.args);
@@ -394,11 +392,11 @@ buildCommandRegistry() {
                   CommandArgumentPolicy::None, false, handleHelp});
     registry.add({"status", "status", "show current session status",
                   CommandArgumentPolicy::None, false, handleStatus});
-    registry.add({"root", "root <path> [include path...]",
-                  "set the top-level module and optional include roots",
+    registry.add({"root", "root <path...>",
+                  "set one or more root paths",
                   CommandArgumentPolicy::Required, false, handleRoot});
     registry.add({"reload", "reload [module]",
-                  "reload the whole project or one canonical module path",
+                  "reload all loaded modules or one canonical module path",
                   CommandArgumentPolicy::Optional, false, handleReload});
     registry.add({"gotom", "gotom <module>",
                   "switch the active module using a canonical module path",

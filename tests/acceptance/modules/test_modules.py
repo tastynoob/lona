@@ -2459,8 +2459,8 @@ def test_overlapping_include_roots_are_rejected(
     ).expect_failed()
     assert_contains(
         result.stderr,
-        "module roots must not overlap",
-        label="overlapping module roots diagnostic",
+        "root paths must not overlap",
+        label="overlapping root paths diagnostic",
     )
 
 

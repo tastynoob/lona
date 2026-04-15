@@ -55,7 +55,7 @@ def test_query_reload_does_not_leak_memory(tmp_path: Path) -> None:
     )
 
     proc = subprocess.Popen(
-        [str(query_bin), "--format", "json", str(source_path)],
+        [str(query_bin), "--format", "json", str(tmp_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -63,6 +63,10 @@ def test_query_reload_does_not_leak_memory(tmp_path: Path) -> None:
     )
 
     try:
+        gotom = send_command(proc, "gotom reload_memcheck")
+        assert gotom["ok"] is True, gotom
+        assert gotom["result"]["path"] == str(source_path), gotom
+
         status = send_command(proc, "status")
         assert status["ok"] is True, status
         assert status["result"]["hasAnalysis"] is True, status

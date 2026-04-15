@@ -45,9 +45,7 @@ main(int argc, char *argv[]) {
         session.setSourceText(cli.get<std::string>("path"),
                               cli.get<std::string>("source"));
     } else if (!args.empty()) {
-        session.setRootFile(
-            args.front(),
-            std::vector<std::string>(args.begin() + 1, args.end()));
+        session.setRootPaths(std::vector<std::string>(args.begin(), args.end()));
     }
 
     if (cli.exist("command")) {

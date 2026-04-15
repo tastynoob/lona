@@ -37,9 +37,9 @@ struct AnalyzedFunctionRecord {
 class Session {
     CompilerWorkspace workspace_;
     WorkspaceLoader loader_;
-    std::string rootPath_;
+    std::vector<std::string> moduleRoots_;
+    std::vector<std::string> loadedEntryPaths_;
     std::string currentPath_;
-    std::vector<std::string> currentIncludePaths_;
     std::string currentSource_;
     bool currentSourceIsFile_ = false;
     bool sourceAvailable_ = false;
@@ -57,10 +57,10 @@ class Session {
     bool rebuildProject();
     bool rebuildProjectFromModule(const std::string &path);
     void rebuildSymbolIndex();
-    void collectProjectSemanticDiagnostics();
+    void collectLoadedSemanticDiagnostics();
     void rebuildActiveSemanticState(CompilationUnit &unit);
     void invalidateModuleAndDependents(const std::string &path);
-    bool moduleBelongsToCurrentProject(const std::string &path) const;
+    bool moduleBelongsToLoadedProject(const std::string &path) const;
     void finalizeActiveUnit(bool resetLine);
     bool activateFileModule(const std::string &path, bool resetLine,
                             std::string *errorMessage = nullptr);
@@ -68,19 +68,18 @@ class Session {
 public:
     explicit Session(std::size_t errorLimit = 20);
 
-    bool setRootFile(const std::string &path,
-                     std::vector<std::string> includePaths = {});
+    bool setRootPaths(std::vector<std::string> paths);
     bool setSourceText(std::string path, std::string sourceText);
     bool reload();
     bool reloadFile(const std::string &path);
     bool gotoModule(const std::string &path,
                     std::string *errorMessage = nullptr);
 
-    const std::string &rootPath() const { return rootPath_; }
-    const std::string &currentPath() const { return currentPath_; }
-    const std::vector<std::string> &currentIncludePaths() const {
-        return currentIncludePaths_;
+    const std::vector<std::string> &moduleRoots() const { return moduleRoots_; }
+    const std::vector<std::string> &loadedEntryPaths() const {
+        return loadedEntryPaths_;
     }
+    const std::string &currentPath() const { return currentPath_; }
     bool currentSourceIsFile() const { return currentSourceIsFile_; }
     bool hasLoadedSource() const { return sourceAvailable_; }
     int currentLine() const { return currentLine_; }

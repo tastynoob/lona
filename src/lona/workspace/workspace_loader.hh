@@ -17,6 +17,7 @@ public:
 private:
     CompilerWorkspace &workspace_;
     std::vector<std::string> includePaths_;
+    std::vector<std::string> explicitModuleRoots_;
     DiagnosticBag *diagnostics_ = nullptr;
 
 public:
@@ -24,10 +25,16 @@ public:
         : workspace_(workspace) {}
 
     void setIncludePaths(std::vector<std::string> includePaths);
+    void setModuleRoots(std::vector<std::string> moduleRoots);
+    const std::vector<std::string> &configuredModuleRoots() const {
+        return explicitModuleRoots_;
+    }
     void setDiagnosticBag(DiagnosticBag *diagnostics) {
         diagnostics_ = diagnostics;
     }
     CompilationUnit &loadRootUnit(const std::string &path) const;
+    CompilationUnit &loadEntryUnit(const std::string &path) const;
+    std::string resolveModuleFilePath(const std::string &modulePath) const;
     std::string resolveModuleFilePath(const std::string &rootPath,
                                       const std::string &modulePath) const;
     AstNode *parseUnit(CompilationUnit &unit) const;

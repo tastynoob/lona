@@ -35,26 +35,35 @@ printHelp(std::ostream &out, const CommandRegistry &registry) {
 
 void
 printStatus(std::ostream &out, const Session &session) {
-    out << "root: "
-        << (session.rootPath().empty() ? "<none>" : session.rootPath())
-        << '\n';
-    out << "module: "
-        << (session.currentPath().empty() ? "<none>" : session.currentPath())
-        << '\n';
-    out << "include-paths: ";
-    if (session.currentIncludePaths().empty()) {
+    out << "root-paths: ";
+    if (session.moduleRoots().empty()) {
         out << "<none>";
     } else {
-        for (std::size_t i = 0; i < session.currentIncludePaths().size(); ++i) {
+        for (std::size_t i = 0; i < session.moduleRoots().size(); ++i) {
             if (i != 0) {
                 out << ", ";
             }
-            out << session.currentIncludePaths()[i];
+            out << session.moduleRoots()[i];
         }
     }
     out << '\n';
+    out << "entry-modules: ";
+    if (session.loadedEntryPaths().empty()) {
+        out << "<none>";
+    } else {
+        for (std::size_t i = 0; i < session.loadedEntryPaths().size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << session.loadedEntryPaths()[i];
+        }
+    }
+    out << '\n';
+    out << "module: "
+        << (session.currentPath().empty() ? "<none>" : session.currentPath())
+        << '\n';
     out << "source-kind: "
-        << (session.currentPath().empty()
+        << (session.currentPath().empty() && !session.currentSourceIsFile()
                 ? "none"
                 : (session.currentSourceIsFile() ? "file" : "memory"))
         << '\n';
@@ -80,11 +89,11 @@ printStatus(std::ostream &out, const Session &session) {
 
 void
 printLoadSummary(std::ostream &out, const Session &session) {
-    out << (session.hasLoadedSource() ? "loaded root " : "unavailable root ")
-        << (session.rootPath().empty() ? "<none>" : session.rootPath())
-        << "; active="
+    out << (session.hasLoadedSource() ? "loaded query state"
+                                      : "updated root paths")
+        << "; root-paths=" << session.moduleRoots().size()
+        << "; entries=" << session.loadedEntryPaths().size() << "; active="
         << (session.currentPath().empty() ? "<none>" : session.currentPath())
-        << "; include-paths=" << session.currentIncludePaths().size()
         << "; syntax-tree=" << (session.hasTree() ? "yes" : "no")
         << "; resolved=" << (session.hasResolvedModule() ? "yes" : "no")
         << "; analysis=" << (session.hasAnalysis() ? "yes" : "no")

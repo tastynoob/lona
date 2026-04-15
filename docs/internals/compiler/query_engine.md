@@ -43,7 +43,7 @@
 `lona-query` 当前直接复用：
 
 - `WorkspaceLoader`
-  - 构建 root 模块和 transitive imports
+  - 构建 root paths、entry modules 和 transitive imports
 - `CompilationUnit`
   - 持有源码、语法树、模块接口和类型缓存
 - `resolve`
@@ -53,8 +53,8 @@
 
 会话内部当前长期持有这些状态：
 
-- 当前 root `CompilationUnit`
-- 当前 root 语法树
+- 当前活动 `CompilationUnit`
+- 当前活动模块语法树
 - `DiagnosticBag`
 - `ResolvedModule`
 - `HIRModule`
@@ -77,7 +77,7 @@
 
 现在的实现不是“纯 AST 查询”：
 
-- 项目 root 和模块关系来自 `WorkspaceLoader`
+- root paths、entry modules 和模块关系来自 `WorkspaceLoader`
 - 顶层声明主要来自当前模块接口和会话索引
 - 局部变量可见性来自词法作用域
 - 局部变量类型信息已经接上 `analysis`
@@ -86,27 +86,29 @@
 
 ## 5. Root 与 `reload`
 
-当前会话以 root 模块为中心：
+当前会话以 root paths 和已加载 entry modules 为中心：
 
-- `root <path>`
-  - 选择顶层模块并重建整个项目查询状态
+- `root <path...>`
+  - 选择一组 root paths，并清空已加载 entry modules
 - `gotom <module>`
-  - 切换当前活动模块，但不改变 root 项目
+  - 切换当前活动模块；如果模块未加载，则把它加入 entry 集合并增量加载依赖闭包
 - `reload`
-  - 重新加载整个当前项目
+  - 重新加载当前已加载 entry modules 及其依赖图
 - `reload <module>`
-  - 使用 canonical 模块路径重新加载指定模块，并失效依赖它的模块，再从当前 root 重建
+  - 使用 canonical 模块路径重新加载指定模块，并失效当前已加载图里依赖它的模块
 
 这里的“只重载一个模块”并不意味着依赖它的模块完全不重算。当前更准确的语义是：
 
 - 变更模块的源码和模块缓存会刷新
 - 依赖它的模块语义状态会失效
-- 最终仍然从当前 root 重建可查询状态
+- 最终仍然从当前已加载 entry 集合重建可查询状态
 
 当前 `Session` 里需要区分两类路径：
 
-- root 路径
-  - 决定项目、模块 roots 和 transitive imports
+- root 路径集合
+  - 决定 canonical module namespace
+- entry module 路径集合
+  - 决定当前已经加载并会参与诊断的模块子图
 - active module 路径
   - 决定 `ast`、`print`、`goto`、`info local` 这些查询当前落在哪个模块上
 

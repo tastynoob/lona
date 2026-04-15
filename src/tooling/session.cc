@@ -2494,6 +2494,56 @@ collectDependentClosure(const ModuleGraph &moduleGraph, const string &path) {
     return pending;
 }
 
+bool
+containsPath(const std::vector<std::string> &paths, std::string_view path) {
+    return std::find(paths.begin(), paths.end(), path) != paths.end();
+}
+
+bool
+moduleBelongsToEntrySet(const ModuleGraph &moduleGraph,
+                        const std::vector<std::string> &entryPaths,
+                        const std::string &path) {
+    for (const auto &entryPath : entryPaths) {
+        const auto reachablePaths = moduleGraph.postOrderFrom(string(entryPath));
+        if (std::find(reachablePaths.begin(), reachablePaths.end(),
+                      string(path)) != reachablePaths.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+diagnosticsEquivalent(const DiagnosticError &lhs, const DiagnosticError &rhs) {
+    if (lhs.category() != rhs.category() || lhs.what() != rhs.what() ||
+        lhs.hint() != rhs.hint() || lhs.hasLocation() != rhs.hasLocation()) {
+        return false;
+    }
+    if (!lhs.hasLocation()) {
+        return true;
+    }
+    const auto &lhsLoc = lhs.where();
+    const auto &rhsLoc = rhs.where();
+    const auto *lhsFile = lhsLoc.begin.filename;
+    const auto *rhsFile = rhsLoc.begin.filename;
+    const auto lhsPath = lhsFile ? *lhsFile : std::string();
+    const auto rhsPath = rhsFile ? *rhsFile : std::string();
+    return lhsPath == rhsPath && lhsLoc.begin.line == rhsLoc.begin.line &&
+           lhsLoc.begin.column == rhsLoc.begin.column &&
+           lhsLoc.end.line == rhsLoc.end.line &&
+           lhsLoc.end.column == rhsLoc.end.column;
+}
+
+void
+addDiagnosticIfMissing(DiagnosticBag &bag, DiagnosticError diagnostic) {
+    for (const auto &existing : bag.diagnostics()) {
+        if (diagnosticsEquivalent(existing, diagnostic)) {
+            return;
+        }
+    }
+    (void)bag.add(std::move(diagnostic));
+}
+
 std::optional<SemanticAnalysisResult>
 analyzeUnitSemantics(WorkspaceLoader &loader, CompilerWorkspace &workspace,
                      CompilationUnit &unit,
@@ -2569,31 +2619,49 @@ Session::Session(std::size_t errorLimit)
     : loader_(workspace_), diagnostics_(errorLimit) {}
 
 bool
-Session::setRootFile(const std::string &path,
-                     std::vector<std::string> includePaths) {
-    rootPath_ = path;
-    currentPath_ = path;
-    currentIncludePaths_ = std::move(includePaths);
+Session::setRootPaths(std::vector<std::string> paths) {
+    resetQueryState();
+    moduleRoots_.clear();
+    loadedEntryPaths_.clear();
+    currentPath_.clear();
     currentSource_.clear();
     currentSourceIsFile_ = true;
+    sourceAvailable_ = false;
     currentLine_ = 0;
-    return rebuildProject();
+    currentUnit_ = nullptr;
+    syntaxTree_ = nullptr;
+    loader_.setIncludePaths({});
+    try {
+        loader_.setModuleRoots(std::move(paths));
+        moduleRoots_ = loader_.configuredModuleRoots();
+    } catch (const DiagnosticError &error) {
+        (void)diagnostics_.add(error);
+        return false;
+    }
+    return !moduleRoots_.empty();
 }
 
 bool
 Session::setSourceText(std::string path, std::string sourceText) {
-    rootPath_ = path.empty() ? std::string("<memory>.lo") : std::move(path);
-    currentPath_ = rootPath_;
-    currentIncludePaths_.clear();
+    moduleRoots_.clear();
+    loadedEntryPaths_.clear();
+    currentPath_ = path.empty() ? std::string("<memory>.lo") : std::move(path);
     currentSource_ = std::move(sourceText);
     currentSourceIsFile_ = false;
     currentLine_ = 0;
+    loader_.setModuleRoots({});
     return rebuildProject();
 }
 
 bool
 Session::reload() {
-    if (rootPath_.empty()) {
+    if (currentSourceIsFile_) {
+        if (moduleRoots_.empty() || loadedEntryPaths_.empty()) {
+            return false;
+        }
+        return rebuildProject();
+    }
+    if (currentPath_.empty()) {
         return false;
     }
     return rebuildProject();
@@ -2615,25 +2683,60 @@ Session::rebuildProject() {
     currentUnit_ = nullptr;
     syntaxTree_ = nullptr;
     sourceAvailable_ = false;
-    loader_.setIncludePaths(currentIncludePaths_);
 
     try {
         if (currentSourceIsFile_) {
+            if (moduleRoots_.empty() || loadedEntryPaths_.empty()) {
+                return false;
+            }
+            loader_.setModuleRoots(moduleRoots_);
             loader_.setDiagnosticBag(&diagnostics_);
-            auto &unit = loader_.loadRootUnit(rootPath_);
-            rootPath_ = toStdString(unit.path());
-            loader_.loadTransitiveUnits();
-            collectProjectSemanticDiagnostics();
-            auto desiredPath = currentPath_.empty() ? rootPath_ : currentPath_;
-            if (!activateFileModule(desiredPath, false)) {
-                currentPath_ = rootPath_;
-                (void)activateFileModule(rootPath_, false);
+            std::vector<std::string> refreshedEntryPaths;
+            for (const auto &entryPath : loadedEntryPaths_) {
+                CompilationUnit *entryUnit = nullptr;
+                try {
+                    invalidateModuleAndDependents(entryPath);
+                    entryUnit = &loader_.loadEntryUnit(entryPath);
+                    loader_.loadTransitiveUnitsFrom(toStdString(entryUnit->path()));
+                } catch (const DiagnosticLimitReached &) {
+                    break;
+                } catch (const DiagnosticError &error) {
+                    addDiagnosticIfMissing(diagnostics_, error);
+                }
+                if (entryUnit &&
+                    !containsPath(refreshedEntryPaths,
+                                  toStdString(entryUnit->path()))) {
+                    refreshedEntryPaths.push_back(toStdString(entryUnit->path()));
+                }
+            }
+            collectLoadedSemanticDiagnostics();
+            const auto activateFromRefreshedEntries =
+                [&](const std::string &path) -> bool {
+                auto *unit = workspace_.moduleGraph().find(path);
+                if (unit == nullptr ||
+                    !moduleBelongsToEntrySet(workspace_.moduleGraph(),
+                                             refreshedEntryPaths, path)) {
+                    return false;
+                }
+                currentPath_ = path;
+                currentUnit_ = unit;
+                finalizeActiveUnit(false);
+                return true;
+            };
+            auto desiredPath =
+                currentPath_.empty() ? loadedEntryPaths_.front() : currentPath_;
+            if (!activateFromRefreshedEntries(desiredPath)) {
+                currentPath_.clear();
+                for (const auto &entryPath : refreshedEntryPaths) {
+                    if (activateFromRefreshedEntries(entryPath)) {
+                        break;
+                    }
+                }
             }
         } else {
             const auto &source = workspace_.sourceManager().addSource(
-                rootPath_, currentSource_);
-            rootPath_ = source.path();
-            currentPath_ = rootPath_;
+                currentPath_, currentSource_);
+            currentPath_ = source.path();
 
             auto &unit = workspace_.moduleGraph().getOrCreate(source);
             currentUnit_ = &unit;
@@ -2658,17 +2761,16 @@ Session::rebuildProject() {
         (void)diagnostics_.add(error);
     }
 
-    if (currentSourceIsFile_) {
-        if (!currentUnit_ && !rootPath_.empty()) {
-            currentPath_ = rootPath_;
-            (void)activateFileModule(rootPath_, false);
-        }
-    }
     return sourceAvailable_;
 }
 
 void
 Session::invalidateModuleAndDependents(const std::string &path) {
+    if (auto *unit = workspace_.moduleGraph().find(path)) {
+        workspace_.moduleGraph().resetDependencies(path);
+        unit->clearImportedModules();
+        unit->setSyntaxTree(nullptr);
+    }
     for (const auto &stalePath :
          collectDependentClosure(workspace_.moduleGraph(), string(path))) {
         auto *unit = workspace_.moduleGraph().find(stalePath);
@@ -2682,40 +2784,33 @@ Session::invalidateModuleAndDependents(const std::string &path) {
 bool
 Session::rebuildProjectFromModule(const std::string &path) {
     resetQueryState();
-    currentUnit_ = workspace_.moduleGraph().root();
-    syntaxTree_ = currentUnit_ ? currentUnit_->syntaxTree() : nullptr;
-    sourceAvailable_ = currentUnit_ != nullptr;
+    currentUnit_ = nullptr;
+    syntaxTree_ = nullptr;
+    sourceAvailable_ = false;
     bool hardFailure = false;
-    loader_.setIncludePaths(currentIncludePaths_);
+    if (moduleRoots_.empty()) {
+        return false;
+    }
+    loader_.setModuleRoots(moduleRoots_);
     const auto desiredActivePath = currentPath_;
 
     try {
         loader_.setDiagnosticBag(&diagnostics_);
-        const auto resolvedPath =
-            loader_.resolveModuleFilePath(rootPath_, path);
+        const auto resolvedPath = loader_.resolveModuleFilePath(path);
         const auto &source = workspace_.sourceManager().loadFile(resolvedPath);
         const auto &normalizedPath = source.path();
-        if (normalizedPath == rootPath_) {
-            return rebuildProject();
-        }
 
         auto *loadedUnit = workspace_.moduleGraph().find(normalizedPath);
-        auto reachablePaths =
-            workspace_.moduleGraph().postOrderFrom(string(rootPath_));
-        const auto isReachable =
-            std::find(reachablePaths.begin(), reachablePaths.end(),
-                      string(normalizedPath)) != reachablePaths.end();
-        if (!loadedUnit || !isReachable) {
+        if (!loadedUnit || !moduleBelongsToLoadedProject(normalizedPath)) {
             (void)diagnostics_.add(DiagnosticError(
                 DiagnosticError::Category::Driver,
                 "module `" + normalizedPath +
-                    "` is not part of the current root project",
-                "Use `root <path>` to select a different top-level module "
-                "before reloading files outside the current project."));
+                    "` is not part of the current loaded module set",
+                "Open the module with `gotom <module>` before reloading it."));
             hardFailure = true;
         } else {
-            auto &reloadedUnit = workspace_.loadUnit(normalizedPath);
             invalidateModuleAndDependents(normalizedPath);
+            auto &reloadedUnit = loader_.loadEntryUnit(normalizedPath);
             loader_.loadTransitiveUnitsFrom(toStdString(reloadedUnit.path()));
         }
     } catch (const DiagnosticLimitReached &) {
@@ -2724,17 +2819,22 @@ Session::rebuildProjectFromModule(const std::string &path) {
         hardFailure = error.category() == DiagnosticError::Category::Driver;
     }
 
-    collectProjectSemanticDiagnostics();
-    if (!activateFileModule(desiredActivePath, false)) {
-        currentPath_ = rootPath_;
-        (void)activateFileModule(rootPath_, false);
+    collectLoadedSemanticDiagnostics();
+    if (!desiredActivePath.empty() &&
+        !activateFileModule(desiredActivePath, false)) {
+        currentPath_.clear();
+        for (const auto &entryPath : loadedEntryPaths_) {
+            if (activateFileModule(entryPath, false)) {
+                break;
+            }
+        }
     }
     return !hardFailure;
 }
 
 bool
 Session::reloadFile(const std::string &path) {
-    if (!currentSourceIsFile_ || rootPath_.empty()) {
+    if (!currentSourceIsFile_ || moduleRoots_.empty()) {
         return false;
     }
     return rebuildProjectFromModule(path);
@@ -2742,17 +2842,35 @@ Session::reloadFile(const std::string &path) {
 
 bool
 Session::gotoModule(const std::string &path, std::string *errorMessage) {
-    if (!currentSourceIsFile_ || rootPath_.empty()) {
+    if (!currentSourceIsFile_ || moduleRoots_.empty()) {
         if (errorMessage) {
-            *errorMessage = "gotom requires a file-backed root project";
+            *errorMessage = "gotom requires configured root paths";
         }
         return false;
     }
 
+    const auto alreadyLoaded = [this](const std::string &resolvedPath) {
+        return moduleBelongsToLoadedProject(resolvedPath);
+    };
+
     try {
-        auto resolvedPath = loader_.resolveModuleFilePath(rootPath_, path);
+        loader_.setModuleRoots(moduleRoots_);
+        loader_.setDiagnosticBag(&diagnostics_);
+        auto resolvedPath = loader_.resolveModuleFilePath(path);
+        if (!alreadyLoaded(resolvedPath)) {
+            if (!containsPath(loadedEntryPaths_, resolvedPath)) {
+                loadedEntryPaths_.push_back(resolvedPath);
+            }
+            currentPath_ = resolvedPath;
+            const auto rebuilt = rebuildProject();
+            if (!rebuilt && errorMessage && !diagnostics_.diagnostics().empty()) {
+                *errorMessage = diagnostics_.diagnostics().front().what();
+            }
+            return rebuilt;
+        }
         return activateFileModule(resolvedPath, true, errorMessage);
     } catch (const DiagnosticError &error) {
+        addDiagnosticIfMissing(diagnostics_, error);
         if (errorMessage) {
             *errorMessage = error.what();
         }
@@ -2761,14 +2879,12 @@ Session::gotoModule(const std::string &path, std::string *errorMessage) {
 }
 
 bool
-Session::moduleBelongsToCurrentProject(const std::string &path) const {
-    if (rootPath_.empty()) {
+Session::moduleBelongsToLoadedProject(const std::string &path) const {
+    if (loadedEntryPaths_.empty()) {
         return false;
     }
-    const auto reachablePaths =
-        workspace_.moduleGraph().postOrderFrom(string(rootPath_));
-    return std::find(reachablePaths.begin(), reachablePaths.end(), string(path)) !=
-           reachablePaths.end();
+    return moduleBelongsToEntrySet(workspace_.moduleGraph(), loadedEntryPaths_,
+                                   path);
 }
 
 void
@@ -2792,10 +2908,10 @@ bool
 Session::activateFileModule(const std::string &path, bool resetLine,
                             std::string *errorMessage) {
     auto *unit = workspace_.moduleGraph().find(path);
-    if (unit == nullptr || !moduleBelongsToCurrentProject(path)) {
+    if (unit == nullptr || !moduleBelongsToLoadedProject(path)) {
         if (errorMessage) {
-            *errorMessage =
-                "module `" + path + "` is not part of the current root project";
+            *errorMessage = "module `" + path +
+                            "` is not part of the current loaded module set";
         }
         return false;
     }
@@ -2851,8 +2967,9 @@ Session::rebuildSymbolIndex() {
 }
 
 void
-Session::collectProjectSemanticDiagnostics() {
-    if (!currentSourceIsFile_ || rootPath_.empty() || diagnostics_.full() ||
+Session::collectLoadedSemanticDiagnostics() {
+    if (!currentSourceIsFile_ || loadedEntryPaths_.empty() ||
+        diagnostics_.full() ||
         diagnostics_.hasCategory(DiagnosticError::Category::Lexical) ||
         diagnostics_.hasCategory(DiagnosticError::Category::Syntax) ||
         diagnostics_.hasCategory(DiagnosticError::Category::Driver) ||
@@ -2860,15 +2977,21 @@ Session::collectProjectSemanticDiagnostics() {
         return;
     }
 
-    auto *rootUnit = workspace_.moduleGraph().root();
-    if (rootUnit == nullptr || rootUnit->syntaxTree() == nullptr) {
-        return;
-    }
+    for (const auto &entryPath : loadedEntryPaths_) {
+        if (diagnostics_.full()) {
+            return;
+        }
+        auto *entryUnit = workspace_.moduleGraph().find(entryPath);
+        if (entryUnit == nullptr || entryUnit->syntaxTree() == nullptr) {
+            continue;
+        }
 
-    std::optional<DiagnosticError> error;
-    auto result = analyzeUnitSemantics(loader_, workspace_, *rootUnit, &error);
-    if (!result && error.has_value()) {
-        (void)diagnostics_.add(std::move(*error));
+        std::optional<DiagnosticError> error;
+        auto result =
+            analyzeUnitSemantics(loader_, workspace_, *entryUnit, &error);
+        if (!result && error.has_value()) {
+            addDiagnosticIfMissing(diagnostics_, std::move(*error));
+        }
     }
 }
 
@@ -2896,23 +3019,22 @@ Json
 Session::statusJson() const {
     Json root = Json::object();
     root["loaded"] = sourceAvailable_;
-    if (rootPath_.empty()) {
-        root["rootPath"] = nullptr;
-    } else {
-        root["rootPath"] = rootPath_;
+    root["rootPaths"] = Json::array();
+    for (const auto &moduleRoot : moduleRoots_) {
+        root["rootPaths"].push_back(moduleRoot);
+    }
+    root["entryModules"] = Json::array();
+    for (const auto &entryPath : loadedEntryPaths_) {
+        root["entryModules"].push_back(entryPath);
     }
     if (currentPath_.empty()) {
         root["path"] = nullptr;
         root["activePath"] = nullptr;
-        root["sourceKind"] = "none";
+        root["sourceKind"] = currentSourceIsFile_ ? "file" : "none";
     } else {
         root["path"] = currentPath_;
         root["activePath"] = currentPath_;
         root["sourceKind"] = currentSourceIsFile_ ? "file" : "memory";
-    }
-    root["includePaths"] = Json::array();
-    for (const auto &includePath : currentIncludePaths_) {
-        root["includePaths"].push_back(includePath);
     }
     root["hasTree"] = hasTree();
     if (currentLine_ > 0) {
