@@ -65,6 +65,7 @@ make query
 ## 3. 文本模式与 JSON 模式
 
 文本模式默认进入 REPL，并输出 `lona-query>` prompt。
+交互式终端里支持基础行编辑和历史浏览，包括左右方向键、上下历史、`Home`、`End`、`Backspace`、`Delete`、`Ctrl-A`、`Ctrl-E`、`Ctrl-B`、`Ctrl-F`。
 
 ```bash
 ./build/lona-query src third_party/modules

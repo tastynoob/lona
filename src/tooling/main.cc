@@ -1,9 +1,11 @@
 #include "cmdline.hpp"
 #include "tooling/command.hh"
+#include "tooling/line_editor.hh"
 #include "tooling/output.hh"
 #include "tooling/session.hh"
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <string>
 
 int
@@ -59,11 +61,24 @@ main(int argc, char *argv[]) {
         formatter.emitLoadSummary("startup", session);
     }
 
-    std::string line;
+    std::optional<lona::tooling::LineEditor> lineEditor;
+    if (!formatter.isJson() && lona::tooling::LineEditor::supported()) {
+        lineEditor.emplace(formatter.promptText());
+    }
+
     while (true) {
-        formatter.printPrompt();
-        if (!std::getline(std::cin, line)) {
-            break;
+        std::string line;
+        if (lineEditor.has_value()) {
+            auto edited = lineEditor->readLine();
+            if (!edited.has_value()) {
+                break;
+            }
+            line = std::move(*edited);
+        } else {
+            formatter.printPrompt();
+            if (!std::getline(std::cin, line)) {
+                break;
+            }
         }
         if (lona::tooling::trimCopy(line).empty()) {
             continue;

@@ -7,6 +7,8 @@ namespace lona::tooling {
 
 namespace {
 
+constexpr std::string_view kTextPrompt = "lona-query> ";
+
 Json
 helpJson(const CommandRegistry &registry) {
     Json root = Json::object();
@@ -258,10 +260,15 @@ OutputFormatter::emitPrint(std::string_view command, const Session &session,
     return {};
 }
 
+std::string_view
+OutputFormatter::promptText() const {
+    return isJson() ? std::string_view{} : kTextPrompt;
+}
+
 void
 OutputFormatter::printPrompt() const {
     if (!isJson()) {
-        out_ << "lona-query> " << std::flush;
+        out_ << promptText() << std::flush;
     }
 }
 

@@ -46,6 +46,7 @@ public:
                              std::string_view name,
                              PrintQueryKind kind) const;
 
+    std::string_view promptText() const;
     void printPrompt() const;
     void printRetryHint() const;
 };
