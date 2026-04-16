@@ -968,6 +968,433 @@ struct SemanticLocalRecord {
     std::string type;
 };
 
+using TemplateBindingTypes =
+    std::unordered_map<const ResolvedLocalBinding *, std::string>;
+using TemplateGenericArgs = std::unordered_map<std::string, std::string>;
+
+std::string
+localTemplateSymbolKey(std::string_view name, const SourceLocation &loc) {
+    std::ostringstream out;
+    out << name << '@' << loc.path << ':' << loc.line << ':' << loc.column;
+    return out.str();
+}
+
+std::string
+substituteTemplateTypeNodeSpelling(const TypeNode *node,
+                                   const TemplateGenericArgs &genericArgs,
+                                   std::string_view nullDescription = "void") {
+    if (!node) {
+        return std::string(nullDescription);
+    }
+    if (auto *param = dynamic_cast<const FuncParamTypeNode *>(node)) {
+        return substituteTemplateTypeNodeSpelling(param->type, genericArgs,
+                                                  nullDescription);
+    }
+    if (dynamic_cast<const AnyTypeNode *>(node)) {
+        return "any";
+    }
+    if (auto *base = dynamic_cast<const BaseTypeNode *>(node)) {
+        auto rawName = baseTypeName(const_cast<BaseTypeNode *>(base));
+        std::string moduleName;
+        std::string memberName;
+        if (!splitBaseTypeName(const_cast<BaseTypeNode *>(base), moduleName,
+                               memberName)) {
+            if (auto found = genericArgs.find(rawName);
+                found != genericArgs.end()) {
+                return found->second;
+            }
+        }
+        return rawName;
+    }
+    if (auto *applied = dynamic_cast<const AppliedTypeNode *>(node)) {
+        std::ostringstream out;
+        out << substituteTemplateTypeNodeSpelling(applied->base, genericArgs,
+                                                  nullDescription)
+            << '[';
+        for (std::size_t i = 0; i < applied->args.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << substituteTemplateTypeNodeSpelling(applied->args[i],
+                                                      genericArgs,
+                                                      nullDescription);
+        }
+        out << ']';
+        return out.str();
+    }
+    if (auto *qualified = dynamic_cast<const ConstTypeNode *>(node)) {
+        return substituteTemplateTypeNodeSpelling(qualified->base, genericArgs,
+                                                  nullDescription) +
+               " const";
+    }
+    if (auto *dynType = dynamic_cast<const DynTypeNode *>(node)) {
+        return substituteTemplateTypeNodeSpelling(dynType->base, genericArgs,
+                                                  nullDescription) +
+               " dyn";
+    }
+    if (auto *pointer = dynamic_cast<const PointerTypeNode *>(node)) {
+        auto name = substituteTemplateTypeNodeSpelling(pointer->base,
+                                                       genericArgs,
+                                                       nullDescription);
+        for (uint32_t i = 0; i < pointer->dim; ++i) {
+            name += '*';
+        }
+        return name;
+    }
+    if (auto *indexable =
+            dynamic_cast<const IndexablePointerTypeNode *>(node)) {
+        return substituteTemplateTypeNodeSpelling(indexable->base, genericArgs,
+                                                  nullDescription) +
+               "[*]";
+    }
+    if (auto *array = dynamic_cast<const ArrayTypeNode *>(node)) {
+        auto name = substituteTemplateTypeNodeSpelling(array->base, genericArgs,
+                                                       nullDescription);
+        name += '[';
+        for (std::size_t i = 0; i < array->dim.size(); ++i) {
+            if (i != 0) {
+                name += ", ";
+            }
+            if (array->dim[i] == nullptr) {
+                name += "<null>";
+            } else {
+                name += "<expr>";
+            }
+        }
+        name += ']';
+        return name;
+    }
+    if (auto *tuple = dynamic_cast<const TupleTypeNode *>(node)) {
+        std::ostringstream out;
+        out << '<';
+        for (std::size_t i = 0; i < tuple->items.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << substituteTemplateTypeNodeSpelling(tuple->items[i],
+                                                      genericArgs,
+                                                      nullDescription);
+        }
+        out << '>';
+        return out.str();
+    }
+    if (auto *func = dynamic_cast<const FuncPtrTypeNode *>(node)) {
+        std::ostringstream out;
+        out << '(';
+        for (std::size_t i = 0; i < func->args.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << substituteTemplateTypeNodeSpelling(func->args[i],
+                                                      genericArgs,
+                                                      nullDescription);
+        }
+        out << ':';
+        if (func->ret) {
+            out << ' ' << substituteTemplateTypeNodeSpelling(func->ret,
+                                                             genericArgs,
+                                                             nullDescription);
+        }
+        out << ')';
+        return out.str();
+    }
+    return describeTypeNode(const_cast<TypeNode *>(node), nullDescription);
+}
+
+TemplateGenericArgs
+templateGenericIdentityArgs(const ResolvedFunction &resolved) {
+    TemplateGenericArgs genericArgs;
+    for (const auto &paramName : resolved.genericTypeParams()) {
+        genericArgs.emplace(toStdString(paramName), toStdString(paramName));
+    }
+    return genericArgs;
+}
+
+const ResolvedEntityRef *
+resolvedTemplateExprEntity(const ResolvedFunction &resolved, const AstNode *node) {
+    if (!node) {
+        return nullptr;
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        return resolved.field(field);
+    }
+    if (auto *dotLike = dynamic_cast<const AstDotLike *>(node)) {
+        return resolved.dotLike(dotLike);
+    }
+    if (auto *typeApply = dynamic_cast<const AstTypeApply *>(node)) {
+        return resolvedTemplateExprEntity(resolved, typeApply->value);
+    }
+    return nullptr;
+}
+
+std::string
+describeTemplateTypeApplySpelling(const AstTypeApply *typeApply,
+                                  const TemplateGenericArgs &genericArgs) {
+    if (!typeApply || !typeApply->value || !typeApply->typeArgs) {
+        return {};
+    }
+
+    std::string baseName;
+    if (auto *field = dynamic_cast<const AstField *>(typeApply->value)) {
+        baseName = toStdString(field->name);
+    } else if (auto *dotLike = dynamic_cast<const AstDotLike *>(typeApply->value)) {
+        baseName = describeDotLikeSyntax(dotLike, "<type>");
+    } else {
+        return {};
+    }
+
+    std::ostringstream out;
+    out << baseName << '[';
+    for (std::size_t i = 0; i < typeApply->typeArgs->size(); ++i) {
+        if (i != 0) {
+            out << ", ";
+        }
+        out << substituteTemplateTypeNodeSpelling(typeApply->typeArgs->at(i),
+                                                  genericArgs);
+    }
+    out << ']';
+    return out.str();
+}
+
+std::string
+inferTemplateExprTypeSpelling(const AstNode *node,
+                              const ResolvedFunction &resolved,
+                              const TemplateBindingTypes &bindingTypes,
+                              const TemplateGenericArgs &genericArgs) {
+    if (!node) {
+        return {};
+    }
+    if (auto *field = dynamic_cast<const AstField *>(node)) {
+        if (auto *binding = resolved.field(field);
+            binding && binding->kind() == ResolvedEntityRef::Kind::LocalBinding &&
+            binding->localBinding() != nullptr) {
+            if (auto found = bindingTypes.find(binding->localBinding());
+                found != bindingTypes.end()) {
+                return found->second;
+            }
+        }
+        return {};
+    }
+    if (auto *castExpr = dynamic_cast<const AstCastExpr *>(node)) {
+        return substituteTemplateTypeNodeSpelling(castExpr->targetType,
+                                                  genericArgs);
+    }
+    if (auto *refExpr = dynamic_cast<const AstRefExpr *>(node)) {
+        auto baseType = inferTemplateExprTypeSpelling(refExpr->expr, resolved,
+                                                      bindingTypes,
+                                                      genericArgs);
+        return baseType.empty() ? std::string() : baseType + '*';
+    }
+    if (auto *fieldCall = dynamic_cast<const AstFieldCall *>(node)) {
+        auto *typeApply = dynamic_cast<const AstTypeApply *>(fieldCall->value);
+        auto *binding = resolvedTemplateExprEntity(resolved, fieldCall->value);
+        if (!binding) {
+            return {};
+        }
+        if (binding->kind() == ResolvedEntityRef::Kind::GenericFunction &&
+            binding->functionDecl() != nullptr && typeApply != nullptr &&
+            typeApply->typeArgs != nullptr &&
+            binding->functionDecl()->typeParams.size() ==
+                typeApply->typeArgs->size()) {
+            TemplateGenericArgs callArgs;
+            for (std::size_t i = 0; i < typeApply->typeArgs->size(); ++i) {
+                callArgs.emplace(
+                    toStdString(binding->functionDecl()->typeParams[i].localName),
+                    substituteTemplateTypeNodeSpelling(
+                        typeApply->typeArgs->at(i), genericArgs));
+            }
+            return substituteTemplateTypeNodeSpelling(
+                binding->functionDecl()->returnTypeNode, callArgs);
+        }
+        if (binding->kind() == ResolvedEntityRef::Kind::GenericType &&
+            typeApply != nullptr) {
+            return describeTemplateTypeApplySpelling(typeApply, genericArgs);
+        }
+        if (binding->kind() == ResolvedEntityRef::Kind::Type) {
+            if (auto *field = dynamic_cast<const AstField *>(
+                    typeApply ? typeApply->value : fieldCall->value)) {
+                return toStdString(field->name);
+            }
+            if (auto *dotLike = dynamic_cast<const AstDotLike *>(
+                    typeApply ? typeApply->value : fieldCall->value)) {
+                return describeDotLikeSyntax(dotLike, "<type>");
+            }
+        }
+    }
+    return {};
+}
+
+void
+collectTemplateVisibleLocalTypesInNode(
+    const AstNode *node, const ResolvedFunction &resolved, int line,
+    const TemplateGenericArgs &genericArgs, const std::string &fallbackPath,
+    TemplateBindingTypes bindingTypes,
+    std::unordered_map<std::string, std::string> &localTypes);
+
+void
+collectTemplateVisibleLocalTypesInBlock(
+    const AstStatList *block, const ResolvedFunction &resolved, int line,
+    const TemplateGenericArgs &genericArgs, const std::string &fallbackPath,
+    TemplateBindingTypes bindingTypes,
+    std::unordered_map<std::string, std::string> &localTypes) {
+    if (!block) {
+        return;
+    }
+
+    for (auto *node : block->body) {
+        if (!node) {
+            continue;
+        }
+        if (nodeStartsAfterLine(node, line)) {
+            break;
+        }
+
+        if (auto *varDef = dynamic_cast<const AstVarDef *>(node)) {
+            auto *binding = resolved.variable(varDef);
+            auto typeSpelling =
+                varDef->getTypeNode()
+                    ? substituteTemplateTypeNodeSpelling(varDef->getTypeNode(),
+                                                         genericArgs)
+                    : inferTemplateExprTypeSpelling(varDef->getInitVal(),
+                                                    resolved, bindingTypes,
+                                                    genericArgs);
+            if (binding != nullptr && !typeSpelling.empty()) {
+                bindingTypes[binding] = typeSpelling;
+                localTypes.emplace(
+                    localTemplateSymbolKey(
+                        toStdString(varDef->getName()),
+                        makeSourceLocation(varDef->loc, fallbackPath)),
+                    std::move(typeSpelling));
+            }
+            continue;
+        }
+
+        if (auto *childBlock = dynamic_cast<const AstStatList *>(node)) {
+            if (subtreeContainsLine(childBlock, line)) {
+                collectTemplateVisibleLocalTypesInNode(
+                    childBlock, resolved, line, genericArgs, fallbackPath,
+                    std::move(bindingTypes), localTypes);
+                return;
+            }
+            continue;
+        }
+
+        if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
+            auto begin = locationBeginLine(ifNode->loc);
+            if (ifNode->then && branchContainsLine(ifNode->then, line, begin)) {
+                collectTemplateVisibleLocalTypesInNode(
+                    ifNode->then, resolved, line, genericArgs, fallbackPath,
+                    std::move(bindingTypes), localTypes);
+                return;
+            }
+            auto elseBegin = subtreeEndLine(ifNode->then);
+            if (ifNode->els &&
+                branchContainsLine(ifNode->els, line,
+                                   elseBegin > 0 ? elseBegin + 1 : begin)) {
+                collectTemplateVisibleLocalTypesInNode(
+                    ifNode->els, resolved, line, genericArgs, fallbackPath,
+                    std::move(bindingTypes), localTypes);
+                return;
+            }
+            continue;
+        }
+
+        if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
+            auto begin = locationBeginLine(forNode->loc);
+            if (forNode->body && branchContainsLine(forNode->body, line, begin)) {
+                collectTemplateVisibleLocalTypesInNode(
+                    forNode->body, resolved, line, genericArgs, fallbackPath,
+                    std::move(bindingTypes), localTypes);
+                return;
+            }
+            auto elseBegin = subtreeEndLine(forNode->body);
+            if (forNode->els &&
+                branchContainsLine(forNode->els, line,
+                                   elseBegin > 0 ? elseBegin + 1 : begin)) {
+                collectTemplateVisibleLocalTypesInNode(
+                    forNode->els, resolved, line, genericArgs, fallbackPath,
+                    std::move(bindingTypes), localTypes);
+                return;
+            }
+        }
+    }
+}
+
+void
+collectTemplateVisibleLocalTypesInNode(
+    const AstNode *node, const ResolvedFunction &resolved, int line,
+    const TemplateGenericArgs &genericArgs, const std::string &fallbackPath,
+    TemplateBindingTypes bindingTypes,
+    std::unordered_map<std::string, std::string> &localTypes) {
+    if (!node) {
+        return;
+    }
+    if (auto *block = dynamic_cast<const AstStatList *>(node)) {
+        collectTemplateVisibleLocalTypesInBlock(block, resolved, line,
+                                                genericArgs, fallbackPath,
+                                                std::move(bindingTypes),
+                                                localTypes);
+        return;
+    }
+    if (auto *ifNode = dynamic_cast<const AstIf *>(node)) {
+        auto begin = locationBeginLine(ifNode->loc);
+        if (ifNode->then && branchContainsLine(ifNode->then, line, begin)) {
+            collectTemplateVisibleLocalTypesInNode(
+                ifNode->then, resolved, line, genericArgs, fallbackPath,
+                std::move(bindingTypes), localTypes);
+            return;
+        }
+        auto elseBegin = subtreeEndLine(ifNode->then);
+        if (ifNode->els &&
+            branchContainsLine(ifNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
+            collectTemplateVisibleLocalTypesInNode(
+                ifNode->els, resolved, line, genericArgs, fallbackPath,
+                std::move(bindingTypes), localTypes);
+        }
+        return;
+    }
+    if (auto *forNode = dynamic_cast<const AstFor *>(node)) {
+        auto begin = locationBeginLine(forNode->loc);
+        if (forNode->body && branchContainsLine(forNode->body, line, begin)) {
+            collectTemplateVisibleLocalTypesInNode(
+                forNode->body, resolved, line, genericArgs, fallbackPath,
+                std::move(bindingTypes), localTypes);
+            return;
+        }
+        auto elseBegin = subtreeEndLine(forNode->body);
+        if (forNode->els &&
+            branchContainsLine(forNode->els, line,
+                               elseBegin > 0 ? elseBegin + 1 : begin)) {
+            collectTemplateVisibleLocalTypesInNode(
+                forNode->els, resolved, line, genericArgs, fallbackPath,
+                std::move(bindingTypes), localTypes);
+        }
+    }
+}
+
+std::unordered_map<std::string, std::string>
+collectTemplateVisibleLocalTypeSpellings(const ResolvedFunction &resolved,
+                                         int line,
+                                         const std::string &fallbackPath) {
+    auto genericArgs = templateGenericIdentityArgs(resolved);
+    TemplateBindingTypes bindingTypes;
+    for (auto *param : resolved.params()) {
+        auto *decl = param ? param->parameterDecl() : nullptr;
+        if (!decl || !decl->typeNode) {
+            continue;
+        }
+        bindingTypes.emplace(
+            param, substituteTemplateTypeNodeSpelling(decl->typeNode, genericArgs));
+    }
+
+    std::unordered_map<std::string, std::string> localTypes;
+    collectTemplateVisibleLocalTypesInNode(resolved.body(), resolved, line,
+                                           genericArgs, fallbackPath,
+                                           std::move(bindingTypes), localTypes);
+    return localTypes;
+}
+
 bool
 hirNodeStartsAfterLine(const HIRNode *node, int line) {
     if (!node) {
@@ -1256,7 +1683,24 @@ enrichLocalsWithAnalysis(const std::vector<AnalyzedFunctionRecord> &records,
                          const std::string &fallbackPath,
                          std::vector<LocalSymbolRecord> &locals) {
     auto *record = findAnalyzedFunctionRecord(records, context.decl);
-    if (!record || !record->hir) {
+    if (!record) {
+        return;
+    }
+    if (!record->hir) {
+        if (!record->resolved || !record->resolved->isTemplateValidationOnly()) {
+            return;
+        }
+        auto localTypes = collectTemplateVisibleLocalTypeSpellings(
+            *record->resolved, line, fallbackPath);
+        for (auto &local : locals) {
+            if (local.kind != "local") {
+                continue;
+            }
+            if (auto found = localTypes.find(localSymbolKey(local.name, local.loc));
+                found != localTypes.end()) {
+                local.type = found->second;
+            }
+        }
         return;
     }
 
@@ -2326,17 +2770,28 @@ Json
 makeBindingPrintItem(std::string kind, std::string name,
                      std::string qualifiedName, std::string detail,
                      TypeClass *type, const SourceLocation &loc,
-                     std::string contextName) {
+                     std::string contextName,
+                     std::string typeDisplay = std::string()) {
     Json root = Json::object();
     root["kind"] = std::move(kind);
     root["name"] = std::move(name);
     root["qualifiedName"] = std::move(qualifiedName);
     root["detail"] = std::move(detail);
-    root["type"] = describeResolvedType(type);
     root["location"] = sourceLocationJson(loc);
     root["context"] = std::move(contextName);
-    std::unordered_set<std::string> activeTypes;
-    root["typeInfo"] = makeResolvedTypeInfoJson(type, activeTypes);
+    if (type != nullptr || typeDisplay.empty()) {
+        root["type"] = describeResolvedType(type);
+        std::unordered_set<std::string> activeTypes;
+        root["typeInfo"] = makeResolvedTypeInfoJson(type, activeTypes);
+    } else {
+        root["type"] = typeDisplay;
+        root["typeInfo"] = Json::object();
+        root["typeInfo"]["spelling"] = typeDisplay;
+        root["typeInfo"]["kind"] = "unknown";
+        root["typeInfo"]["hasMembers"] = false;
+        root["typeInfo"]["members"] = Json::array();
+        root["typeInfo"]["recursive"] = false;
+    }
     return root;
 }
 
@@ -2346,6 +2801,7 @@ struct ValueBindingMatch {
     std::string qualifiedName;
     std::string detail;
     TypeClass *type = nullptr;
+    std::string typeDisplay;
     SourceLocation loc;
     std::string contextName;
 };
@@ -2355,7 +2811,7 @@ makeBindingPrintItem(const ValueBindingMatch &binding) {
     return makeBindingPrintItem(binding.kind, binding.name,
                                 binding.qualifiedName, binding.detail,
                                 binding.type, binding.loc,
-                                binding.contextName);
+                                binding.contextName, binding.typeDisplay);
 }
 
 Json
@@ -2539,7 +2995,8 @@ lookupVisibleLocalBinding(const AstNode *syntaxTree,
         }
         binding = ValueBindingMatch{local.kind,       local.name,
                                     qualifiedName,   local.detail,
-                                    type,            local.loc,
+                                    type,            local.type,
+                                    local.loc,
                                     context.qualifiedName};
         return true;
     }
@@ -2614,7 +3071,7 @@ lookupTopLevelVarBinding(const AstNode *syntaxTree,
 
     binding = ValueBindingMatch{
         "top-level-var", cleanedQuery, cleanedQuery,
-        describeVarDefDetail(varDecl), type,
+        describeVarDefDetail(varDecl), type, std::string(),
         makeSourceLocation(varDecl->loc, fallbackPath), "<top-level>"};
     return true;
 }
@@ -3279,17 +3736,16 @@ analyzeUnitSemantics(WorkspaceLoader &loader, CompilerWorkspace &workspace,
         }
         auto hirIndex = std::size_t{0};
         for (const auto &resolvedFunction : result.resolvedModule->functions()) {
-            if (resolvedFunction->isTemplateValidationOnly()) {
-                continue;
+            HIRFunc *hir = nullptr;
+            if (!resolvedFunction->isTemplateValidationOnly()) {
+                if (hirIndex >= result.analyzedModule->getFunctions().size()) {
+                    result.analyzedFunctions.clear();
+                    break;
+                }
+                hir = result.analyzedModule->getFunctions()[hirIndex];
+                ++hirIndex;
             }
-            if (hirIndex >= result.analyzedModule->getFunctions().size()) {
-                result.analyzedFunctions.clear();
-                break;
-            }
-            result.analyzedFunctions.push_back(
-                {resolvedFunction.get(),
-                 result.analyzedModule->getFunctions()[hirIndex]});
-            ++hirIndex;
+            result.analyzedFunctions.push_back({resolvedFunction.get(), hir});
         }
         if (!result.analyzedFunctions.empty() &&
             hirIndex != result.analyzedModule->getFunctions().size()) {

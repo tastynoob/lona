@@ -954,6 +954,78 @@ def test_query_pt_prints_generic_types_like_ordinary_types(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_pv_tracks_inferred_generic_local_types_in_template_bodies(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Vec[T] {",
+                "    value T",
+                "}",
+                "",
+                "def make[T](value T) Vec[T] {",
+                "    ret Vec[T](value = value)",
+                "}",
+                "",
+                "def foo[T](input T) {",
+                "    var value = make[T](input)",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+        assert opened["result"]["analyzedFunctionCount"] == 2, opened
+
+        moved = send_command(proc, "goto 10")
+        assert moved["ok"] is True, moved
+        assert moved["result"]["hasLocalScope"] is True, moved
+
+        locals_reply = send_command(proc, "info local")
+        assert locals_reply["ok"] is True, locals_reply
+        assert locals_reply["result"]["items"][1]["name"] == "value", locals_reply
+        assert locals_reply["result"]["items"][1]["type"] == "Vec[T]", locals_reply
+
+        printed = send_command(proc, "pv value")
+        assert printed["ok"] is True, printed
+        assert printed["result"]["item"]["kind"] == "local", printed
+        assert printed["result"]["item"]["type"] == "Vec[T]", printed
+        assert printed["result"]["item"]["typeInfo"]["spelling"] == "Vec[T]", printed
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_pv_can_print_object_members_as_values(
     query_bin: Path, tmp_path: Path
 ) -> None:
