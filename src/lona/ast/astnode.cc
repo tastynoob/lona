@@ -675,16 +675,23 @@ AstAssign::~AstAssign() {
     delete right;
 }
 
-AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right)
+AstBinOper::AstBinOper(AstNode *left, token_type op, AstNode *right,
+                       bool ownsLeft, bool ownsRight)
     : AstNode(AstKind::BinOper,
               left ? left->loc : (right ? right->loc : location())),
       left(left),
       op(op),
-      right(right) {}
+      right(right),
+      ownsLeft(ownsLeft),
+      ownsRight(ownsRight) {}
 
 AstBinOper::~AstBinOper() {
-    delete left;
-    delete right;
+    if (ownsLeft) {
+        delete left;
+    }
+    if (ownsRight) {
+        delete right;
+    }
 }
 
 AstUnaryOper::AstUnaryOper(token_type op, AstNode *expr)

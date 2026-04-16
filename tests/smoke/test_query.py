@@ -634,6 +634,71 @@ def test_query_reload_refreshes_later_entries_after_earlier_failure(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_reload_keeps_broken_compound_assign_ast_alive(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    source_path = app_dir / "terminal.lo"
+    source_path.write_text(
+        "\n".join(
+            [
+                "def main() i32 {",
+                "    var value i32 = 0",
+                "    value += 1",
+                "",
+                "    if {",
+                "",
+                "    }",
+                "",
+                "    ret value",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open terminal")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(source_path), opened
+        assert opened["result"]["diagnosticCount"] >= 1, opened
+
+        reload_reply = send_command(proc, "reload")
+        assert reload_reply["ok"] is True, reload_reply
+        assert reload_reply["result"]["path"] == str(source_path), reload_reply
+        assert reload_reply["result"]["diagnosticCount"] >= 1, reload_reply
+
+        diagnostics = send_command(proc, "diagnostics")
+        assert diagnostics["ok"] is True, diagnostics
+        assert diagnostics["result"]["count"] >= 1, diagnostics
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_distinguishes_pv_and_pt_for_same_name_symbols(
     query_bin: Path, tmp_path: Path
 ) -> None:

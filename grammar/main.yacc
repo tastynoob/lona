@@ -671,34 +671,34 @@ expr
 expr_assign
     : expr_assign_left '=' opt_newlines expr { $$ = new AstAssign($1, $4); }
     | expr_assign_left ASSIGN_ADD opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '+', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '+', $4, false));
     }
     | expr_assign_left ASSIGN_SUB opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '-', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '-', $4, false));
     }
     | expr_assign_left ASSIGN_MUL opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '*', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '*', $4, false));
     }
     | expr_assign_left ASSIGN_DIV opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '/', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '/', $4, false));
     }
     | expr_assign_left ASSIGN_MOD opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '%', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '%', $4, false));
     }
     | expr_assign_left ASSIGN_AND opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '&', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '&', $4, false));
     }
     | expr_assign_left ASSIGN_XOR opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '^', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '^', $4, false));
     }
     | expr_assign_left ASSIGN_OR opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, '|', $4));
+        $$ = new AstAssign($1, new AstBinOper($1, '|', $4, false));
     }
     | expr_assign_left ASSIGN_SHL opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_LEFT, $4));
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_LEFT, $4, false));
     }
     | expr_assign_left ASSIGN_SHR opt_newlines expr {
-        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_RIGHT, $4));
+        $$ = new AstAssign($1, new AstBinOper($1, token::SHIFT_RIGHT, $4, false));
     }
     ;
 

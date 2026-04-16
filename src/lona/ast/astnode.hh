@@ -493,7 +493,10 @@ public:
     AstNode *const left;
     token_type const op;
     AstNode *const right;
-    AstBinOper(AstNode *left, token_type op, AstNode *right);
+    bool const ownsLeft;
+    bool const ownsRight;
+    AstBinOper(AstNode *left, token_type op, AstNode *right,
+               bool ownsLeft = true, bool ownsRight = true);
     ~AstBinOper() override;
     void toJson(Json &root) override;
 
