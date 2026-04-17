@@ -125,6 +125,138 @@ def test_trait_v0_impl_for_body_supports_member_static_and_dyn_calls(
     )
 
 
+def test_trait_v0_struct_local_impl_body_sugar_supports_json_and_dispatch(
+    compiler: CompilerHarness,
+) -> None:
+    json_out = _emit_json(
+        compiler,
+        "trait_struct_local_impl_json.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            impl Hash {
+                def hash() i32 {
+                    ret self.value + 1
+                }
+            }
+        }
+        """,
+    )
+    for needle in [
+        '"type": "TraitImplDecl"',
+        '"selfType": "Point"',
+        '"trait": {',
+    ]:
+        assert_contains(json_out, needle, label="trait struct-local impl json")
+
+    ir = _emit_ir(
+        compiler,
+        "trait_struct_local_impl_dispatch.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            impl Hash {
+                def hash() i32 {
+                    ret self.value + 1
+                }
+            }
+        }
+
+        def main() i32 {
+            var point = Point(value = 41)
+            var view Hash dyn = cast[Hash dyn](&point)
+            ret point.hash() + Hash.hash(&point) + view.hash() - 126
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="trait struct-local impl ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Point\.__trait__\..*Hash\.hash\(ptr ",
+        label="trait struct-local impl ir",
+    )
+    assert_contains(
+        ir,
+        "call i32 %trait.slot(ptr %trait.data)",
+        label="trait struct-local impl ir",
+    )
+
+
+def test_trait_v0_struct_local_impl_shorthand_rejects_own_generic_header(
+    compiler: CompilerHarness,
+) -> None:
+    failures = [
+        (
+            "trait_struct_local_impl_local_generic_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Point {
+                value i32
+
+                impl[T Hash] Hash {
+                    def hash() i32 {
+                        ret self.value
+                    }
+                }
+            }
+            """,
+        ),
+        (
+            "trait_struct_local_impl_extra_generic_bad.lo",
+            """
+            trait Hash {
+                def hash() i32
+            }
+
+            struct Num {
+                value i32
+            }
+
+            impl Hash for Num {
+                def hash() i32 {
+                    ret self.value
+                }
+            }
+
+            struct Box[T Hash] {
+                value T
+
+                impl[U Hash] Hash {
+                    def hash() i32 {
+                        ret Hash.hash(&self.value)
+                    }
+                }
+            }
+            """,
+        ),
+    ]
+
+    for name, source in failures:
+        _expect_ir_failure(
+            compiler,
+            name,
+            source,
+            [
+                "struct-local trait impl shorthand cannot declare its own generic parameters",
+                "shorthand impls automatically inherit the enclosing struct's generic parameters",
+                "write a top-level `impl[...] Trait for Type[...] { ... }`",
+            ],
+        )
+
+
 def test_trait_v0_static_qualified_calls_and_impl_validation(
     compiler: CompilerHarness,
 ) -> None:

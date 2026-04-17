@@ -1489,6 +1489,17 @@ class InterfaceCollector {
                     topLevelDecls_, toStdString(structDecl->name),
                     TopLevelDeclKind::StructType, structDecl->loc);
                 structDecls_.push_back(structDecl);
+                auto *structBody =
+                    dynamic_cast<AstStatList *>(structDecl->body);
+                if (!structBody) {
+                    continue;
+                }
+                for (auto *member : structBody->getBody()) {
+                    if (auto *traitImplDecl =
+                            dynamic_cast<AstTraitImplDecl *>(member)) {
+                        traitImplDecls_.push_back(traitImplDecl);
+                    }
+                }
             } else if (auto *traitDecl = dynamic_cast<AstTraitDecl *>(stmt)) {
                 validateImportAliasConflict(traitDecl);
                 recordTopLevelDeclName(topLevelDecls_,

@@ -88,6 +88,47 @@ def test_generic_v0_frontend_rejects_type_args_on_non_generic_box(
     )
 
 
+def test_generic_v0_struct_local_trait_impl_sugar_inherits_enclosing_type_params(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_struct_local_trait_impl.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Num {
+            value i32
+        }
+
+        impl Hash for Num {
+            def hash() i32 {
+                ret self.value
+            }
+        }
+
+        struct Box[T Hash] {
+            value T
+
+            impl Hash {
+                def hash() i32 {
+                    ret Hash.hash(&self.value) + 1
+                }
+            }
+        }
+
+        def main() i32 {
+            var box = Box[Num](value = Num(value = 41))
+            ret box.hash() - 42
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="generic struct-local trait impl ir")
+    assert_contains(ir, "__trait__", label="generic struct-local trait impl ir")
+
+
 def test_generic_v0_same_module_applied_structs_support_by_value_storage(
     compiler: CompilerHarness,
 ) -> None:

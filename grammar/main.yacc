@@ -28,6 +28,88 @@
     #include "lona/ast/type_node_tools.hh"
     #include <string>
 
+    namespace {
+
+    using namespace lona;
+
+    AstNode *
+    cloneDotLikeSyntax(const AstNode *node) {
+        if (!node) {
+            return nullptr;
+        }
+        if (auto *field = dynamic_cast<const AstField *>(node)) {
+            return new AstField(field->name, field->loc);
+        }
+        if (auto *dot = dynamic_cast<const AstDotLike *>(node)) {
+            auto *parent = cloneDotLikeSyntax(dot->parent);
+            AstToken fieldToken(TokenType::Field, dot->field.text, dot->field.loc);
+            return new AstDotLike(parent, &fieldToken);
+        }
+        return nullptr;
+    }
+
+    AstGenericParam *
+    cloneGenericParam(const AstGenericParam *param) {
+        if (!param) {
+            return nullptr;
+        }
+        AstToken nameToken(param->name.type, param->name.text, param->name.loc);
+        return new AstGenericParam(nameToken, cloneDotLikeSyntax(param->boundTrait));
+    }
+
+    std::vector<AstGenericParam *> *
+    cloneGenericParams(const std::vector<AstGenericParam *> *params) {
+        if (!params || params->empty()) {
+            return nullptr;
+        }
+
+        auto *cloned = new std::vector<AstGenericParam *>;
+        cloned->reserve(params->size());
+        for (const auto *param : *params) {
+            cloned->push_back(cloneGenericParam(param));
+        }
+        return cloned;
+    }
+
+    TypeNode *
+    makeStructSelfTypeSyntax(const AstToken &structName,
+                             const std::vector<AstGenericParam *> *typeParams) {
+        auto *base = new BaseTypeNode(structName.text, structName.loc);
+        if (!typeParams || typeParams->empty()) {
+            return base;
+        }
+
+        std::vector<TypeNode *> args;
+        args.reserve(typeParams->size());
+        for (const auto *param : *typeParams) {
+            if (!param) {
+                continue;
+            }
+            args.push_back(new BaseTypeNode(param->name.text, param->name.loc));
+        }
+        return new AppliedTypeNode(base, std::move(args), structName.loc);
+    }
+
+    void
+    desugarStructTraitImplShorthand(
+        const AstToken &structName,
+        const std::vector<AstGenericParam *> *typeParams,
+        AstStatList *body) {
+        if (!body) {
+            return;
+        }
+        for (auto *stmt : body->getBody()) {
+            auto *traitImpl = dynamic_cast<AstTraitImplDecl *>(stmt);
+            if (!traitImpl || traitImpl->hasSelfType()) {
+                continue;
+            }
+            traitImpl->setSelfType(makeStructSelfTypeSyntax(structName, typeParams));
+            traitImpl->setTypeParams(cloneGenericParams(typeParams));
+        }
+    }
+
+    }  // namespace
+
     #undef yylex
     #define yylex driver.token
 
@@ -102,7 +184,7 @@
 %right unary
 
 %type <node> pragram pragram_stat
-%type <node> struct_decl trait_decl impl_decl func_decl trait_func_decl import_stat global_decl
+%type <node> struct_decl trait_decl impl_decl struct_impl_decl func_decl trait_func_decl import_stat global_decl
 %type <node> struct_stat trait_stat stat
 %type <node> stat_if stat_for stat_ret stat_break stat_continue stat_expr
 %type <node> call_like cast_expr sizeof_expr tuple_literal brace_init brace_init_item call_arg named_call_arg
@@ -424,6 +506,7 @@ struct_decl
         $$ = new AstStructDecl(*$2, new AstStatList(), $3);
     }
     | STRUCT FIELD opt_type_params struct_statlist '}' {
+        desugarStructTraitImplShorthand(*$2, $3, $4);
         $$ = new AstStructDecl(*$2, $4, $3);
     }
     ;
@@ -449,12 +532,34 @@ struct_stat
     | func_decl {
         $$ = $1;
     }
+    | struct_impl_decl {
+        $$ = $1;
+    }
     | tag_stat {
         $$ = $1;
     }
     | error NEWLINE {
         $$ = nullptr;
         yyerrok;
+    }
+    ;
+
+struct_impl_decl
+    : IMPL dot_like_name stat_compound {
+        $$ = new AstTraitImplDecl(nullptr, $2, $3, nullptr, @$);
+    }
+    | IMPL '[' generic_param_seq ']' dot_like_name stat_compound {
+        auto shorthandGenericCount = $3 ? $3->size() : 0U;
+        auto traitName = describeDotLikeSyntax($5, "<trait>");
+        (void)$6;
+        $$ = nullptr;
+        lona::error(
+            @3,
+            "struct-local trait impl shorthand cannot declare its own generic parameters",
+            "Remove the `[...]` here when implementing `" + traitName +
+                "` inside a struct; shorthand impls automatically inherit the enclosing struct's generic parameters, so these " +
+                std::to_string(shorthandGenericCount) +
+                " shorthand-only parameter(s) cannot be matched. If you need a different generic impl header, write a top-level `impl[...] Trait for Type[...] { ... }`.");
     }
     ;
 

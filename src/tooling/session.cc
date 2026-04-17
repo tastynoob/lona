@@ -4000,6 +4000,11 @@ class SymbolCollector {
                 collectStruct(nestedStruct, ownerLabel + ".");
                 continue;
             }
+            if (auto *nestedTraitImpl =
+                    dynamic_cast<AstTraitImplDecl *>(stmt)) {
+                collectTraitImpl(nestedTraitImpl, ownerLabel + ".");
+                continue;
+            }
             if (auto *nestedGlobal = dynamic_cast<AstGlobalDecl *>(stmt)) {
                 auto qualified =
                     ownerLabel + "." + toStdString(nestedGlobal->getName());
@@ -4029,9 +4034,12 @@ class SymbolCollector {
         collectOwnedBody(qualified, decl->body);
     }
 
-    void collectTraitImpl(AstTraitImplDecl *decl) {
-        auto qualified = describeTraitImplHeader(decl);
-        append(SymbolKind::Impl, qualified, qualified, "", decl->loc);
+    void collectTraitImpl(AstTraitImplDecl *decl,
+                          const std::string &ownerPrefix = std::string()) {
+        auto header = describeTraitImplHeader(decl);
+        auto qualified =
+            ownerPrefix.empty() ? header : ownerPrefix + header;
+        append(SymbolKind::Impl, header, qualified, "", decl->loc);
         collectOwnedBody(qualified, decl->body);
     }
 

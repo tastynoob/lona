@@ -4,6 +4,7 @@
 
 - `trait` 顶层声明
 - `impl Trait for Type { ... }` 这类带方法体的 impl
+- `struct Type { impl Trait { ... } }` 这类 struct-local shorthand impl
 - `impl[T Trait] Trait for Box[T]` 这类单 bound generic impl
 - `def func[T Trait](value T)` 这类单 trait bound generic function
 - `Trait.method(&value, ...)` / `Trait.method(ptr, ...)` 静态限定调用
@@ -54,7 +55,6 @@ impl Hash for Point {
 
 规则：
 
-- `impl Hash for Point { ... }` 是当前唯一的 trait 实现语法。
 - `impl Hash for Point { ... }` 允许直接在 impl body 里写 trait 方法实现。
 - 这类 impl body 方法属于 trait 专属方法命名空间，不会和普通 inherent method 共用同一个方法槽。
 - `impl[T Trait] Trait for Box[T] { ... }` 表示“对所有满足该单 bound 的具体实例，都提供一份显式 trait 实现”。
@@ -74,6 +74,30 @@ impl Hash for Point {
 - `Trait.method(&value, ...)`、`value.Trait.method(...)` 和 `Trait dyn` 都会绑定到同一份 trait 实现；`obj.method()` 在选择到该 trait 方法时也会命中同一份实现。
 - local concrete type 上，trait impl body 方法可以和 inherent method 同名，也可以和其他 trait 的同名方法并存。
 - impl body 中的方法仍然必须逐项对应 trait 已声明的方法签名。
+
+### 2.1 struct-local shorthand
+
+除了顶层 `impl Trait for Type { ... }`，当前还支持写在结构体 body 里的 shorthand：
+
+```lona
+struct Point {
+    value i32
+
+    impl Hash {
+        def hash() i32 {
+            ret self.value + 1
+        }
+    }
+}
+```
+
+规则：
+
+- `struct Point { impl Hash { ... } }` 等价于在模块顶层写 `impl Hash for Point { ... }`。
+- 如果结构体带 generic parameter，例如 `struct Box[T Hash]`，那么 shorthand impl 会自动继承这些 parameter；也就是说 `impl Hash { ... }` 等价于 `impl[T Hash] Hash for Box[T] { ... }`。
+- shorthand 只绑定到当前结构体自身，不需要也不允许额外再写 `for SelfType`。
+- shorthand 也不能再写自己的 `impl[...]` header generic parameter；如果你需要不同的 impl generic header，请改回顶层 `impl[...] Trait for Type[...] { ... }`。
+- shorthand impl 仍然遵守普通 trait impl 的签名检查、visible impl coherence 和 orphan rule。
 
 ## 3. 静态限定调用
 

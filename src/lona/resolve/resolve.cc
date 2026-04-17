@@ -2196,7 +2196,14 @@ class ModuleResolver {
         auto scopedTypeParams = collectGenericParamNames(node->typeParams);
         auto scopedTypeParamBounds = collectGenericParamBounds(node->typeParams);
         for (auto *stmt : body->getBody()) {
-            if (!stmt || stmt->kind() != AstKind::FuncDecl) {
+            if (!stmt) {
+                continue;
+            }
+            if (stmt->kind() == AstKind::TraitImplDecl) {
+                resolveTraitImpl(static_cast<AstTraitImplDecl *>(stmt));
+                continue;
+            }
+            if (stmt->kind() != AstKind::FuncDecl) {
                 continue;
             }
             auto *func = static_cast<AstFuncDecl *>(stmt);

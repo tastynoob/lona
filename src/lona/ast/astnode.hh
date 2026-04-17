@@ -636,8 +636,8 @@ public:
 
 class AstTraitImplDecl : public AstNode {
 public:
-    std::vector<AstGenericParam *> *const typeParams = nullptr;
-    TypeNode *const selfType;
+    std::vector<AstGenericParam *> *typeParams = nullptr;
+    TypeNode *selfType;
     AstNode *const trait;
     AstNode *const body;
 
@@ -655,6 +655,11 @@ public:
         return typeParams != nullptr && !typeParams->empty();
     }
     bool hasBody() const { return body != nullptr; }
+    bool hasSelfType() const { return selfType != nullptr; }
+    void setSelfType(TypeNode *value) { selfType = value; }
+    void setTypeParams(std::vector<AstGenericParam *> *value) {
+        typeParams = value;
+    }
     void toJson(Json &root) override;
     Object *accept(AstVisitor &visitor) override;
 };
