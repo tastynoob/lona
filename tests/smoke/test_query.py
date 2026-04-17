@@ -1236,6 +1236,268 @@ def test_query_pv_tracks_inferred_generic_local_types_in_template_bodies(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_pv_projects_generic_method_return_types_in_template_bodies(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Slice[T] {",
+                "    value T",
+                "}",
+                "",
+                "struct Vec[T] {",
+                "    value T",
+                "",
+                "    def getslice() Slice[T] {",
+                "        ret Slice[T](value = self.value)",
+                "    }",
+                "}",
+                "",
+                "def makeVec[T](seed T) Vec[T] {",
+                "    ret Vec[T](value = seed)",
+                "}",
+                "",
+                "def foo[T](input T) {",
+                "    var vec = makeVec[T](input)",
+                "    var slice = vec.getslice()",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        moved = send_command(proc, "goto 19")
+        assert moved["ok"] is True, moved
+        assert moved["result"]["hasLocalScope"] is True, moved
+
+        locals_reply = send_command(proc, "info local")
+        assert locals_reply["ok"] is True, locals_reply
+        local_items = {
+            item["name"]: item for item in locals_reply["result"]["items"]
+        }
+        assert local_items["vec"]["type"] == "Vec[T]", locals_reply
+        assert local_items["slice"]["type"] == "Slice[T]", locals_reply
+
+        printed_local = send_command(proc, "pv slice")
+        assert printed_local["ok"] is True, printed_local
+        assert printed_local["result"]["item"]["kind"] == "local", printed_local
+        assert printed_local["result"]["item"]["type"] == "Slice[T]", printed_local
+
+        printed_member = send_command(proc, "pv slice.value")
+        assert printed_member["ok"] is True, printed_member
+        assert printed_member["result"]["item"]["kind"] == "member", printed_member
+        assert printed_member["result"]["item"]["ownerType"] == "Slice[T]", printed_member
+        assert printed_member["result"]["item"]["type"] == "T", printed_member
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_self_uses_pointer_receiver_semantics_for_concrete_methods(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Box {",
+                "    value i32",
+                "",
+                "    def get() i32 {",
+                "        ret self.value",
+                "    }",
+                "",
+                "    set def put(value i32) {",
+                "        self.value = value",
+                "    }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        getter = send_command(proc, "goto 5")
+        assert getter["ok"] is True, getter
+        assert getter["result"]["context"]["selfDetail"] == "Box const*", getter
+
+        getter_locals = send_command(proc, "info local")
+        assert getter_locals["ok"] is True, getter_locals
+        assert getter_locals["result"]["items"][0]["name"] == "self", getter_locals
+        assert getter_locals["result"]["items"][0]["type"] == "main.Box const*", getter_locals
+
+        getter_self = send_command(proc, "pv self")
+        assert getter_self["ok"] is True, getter_self
+        assert getter_self["result"]["item"]["type"] == "main.Box const*", getter_self
+
+        getter_member = send_command(proc, "pv self.value")
+        assert getter_member["ok"] is True, getter_member
+        assert getter_member["result"]["item"]["ownerType"] == "main.Box const*", getter_member
+        assert getter_member["result"]["item"]["type"] == "i32", getter_member
+
+        setter = send_command(proc, "goto 9")
+        assert setter["ok"] is True, setter
+        assert setter["result"]["context"]["selfDetail"] == "Box*", setter
+
+        setter_locals = send_command(proc, "info local")
+        assert setter_locals["ok"] is True, setter_locals
+        assert setter_locals["result"]["items"][0]["name"] == "self", setter_locals
+        assert setter_locals["result"]["items"][0]["type"] == "main.Box*", setter_locals
+
+        setter_self = send_command(proc, "pv self")
+        assert setter_self["ok"] is True, setter_self
+        assert setter_self["result"]["item"]["type"] == "main.Box*", setter_self
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_self_uses_pointer_receiver_semantics_for_generic_methods(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Box[T] {",
+                "    value T",
+                "",
+                "    def get() T {",
+                "        ret self.value",
+                "    }",
+                "",
+                "    set def put(value T) {",
+                "        self.value = value",
+                "    }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+
+        getter = send_command(proc, "goto 5")
+        assert getter["ok"] is True, getter
+        assert getter["result"]["context"]["selfDetail"] == "Box[T] const*", getter
+
+        getter_locals = send_command(proc, "info local")
+        assert getter_locals["ok"] is True, getter_locals
+        assert getter_locals["result"]["items"][0]["name"] == "self", getter_locals
+        assert getter_locals["result"]["items"][0]["type"] == "Box[T] const*", getter_locals
+
+        getter_self = send_command(proc, "pv self")
+        assert getter_self["ok"] is True, getter_self
+        assert getter_self["result"]["item"]["type"] == "Box[T] const*", getter_self
+
+        getter_member = send_command(proc, "pv self.value")
+        assert getter_member["ok"] is True, getter_member
+        assert getter_member["result"]["item"]["ownerType"] == "Box[T] const*", getter_member
+        assert getter_member["result"]["item"]["type"] == "T", getter_member
+
+        setter = send_command(proc, "goto 9")
+        assert setter["ok"] is True, setter
+        assert setter["result"]["context"]["selfDetail"] == "Box[T]*", setter
+
+        setter_locals = send_command(proc, "info local")
+        assert setter_locals["ok"] is True, setter_locals
+        assert setter_locals["result"]["items"][0]["name"] == "self", setter_locals
+        assert setter_locals["result"]["items"][0]["type"] == "Box[T]*", setter_locals
+
+        setter_self = send_command(proc, "pv self")
+        assert setter_self["ok"] is True, setter_self
+        assert setter_self["result"]["item"]["type"] == "Box[T]*", setter_self
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_pv_can_print_object_members_as_values(
     query_bin: Path, tmp_path: Path
 ) -> None:
