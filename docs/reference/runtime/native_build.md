@@ -115,6 +115,14 @@ global __lona_argv u8 const[*][*]
 lac input.lo output/program
 ```
 
+如果 hosted 路径还需要额外库，可以追加 C/C++ 风格的 `-l` 参数：
+
+```bash
+lac -l m input.lo output/program
+lac -L vendor/lib -lsupport input.lo output/program
+lac -lsupport input.lo output/program
+```
+
 如果你要走 bare 路径：
 
 ```bash
@@ -148,6 +156,8 @@ lac-native --target x86_64-none-elf input.lo output/program
 - `--emit entry` 会单独生成 hosted `main(argc, argv) -> __lona_main__` object
 - `--emit entry` 只支持 hosted target；bare target 会直接报错
 - `-I` / `--include-dir` 可以传给 `lona-ir`、`lac` 和 `lac-native`，用于追加模块 root 搜索目录
+- `-L <dir>` / `-L<dir>` 可以传给 `lac`，用于把额外库搜索目录透传到最终 hosted `cc` / `clang` 链接阶段
+- `-l <name>` / `-l<name>` 可以传给 `lac`，用于把额外库透传到最终 hosted `cc` / `clang` 链接阶段
 - 模块搜索根始终包含 root 源文件所在目录；额外 `-I` roots 不能彼此重叠，也不能共同导出同一个 canonical 模块路径
 
 带优化级别：

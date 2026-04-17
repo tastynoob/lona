@@ -36,6 +36,8 @@ Usage: scripts/lac.sh [options] <input.lo> <output>
 Options:
   -O <0-3>       Forward optimization level to lona-ir
   -I <dir>       Add module include search directory (repeatable)
+  -L <dir>       Add an extra hosted library search directory (repeatable)
+  -l <name>      Link an extra library with the hosted linker driver (repeatable)
   --target <triple>
                  Target triple for hosted builds
   --lto <off|full>
@@ -50,6 +52,8 @@ EOF
 
 ARGS=()
 INCLUDE_ARGS=()
+LINK_DIR_ARGS=()
+LINK_LIB_ARGS=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -O)
@@ -62,6 +66,22 @@ while [ "$#" -gt 0 ]; do
             ;;
         -I*)
             INCLUDE_ARGS+=("-I" "${1#-I}")
+            shift
+            ;;
+        -L)
+            LINK_DIR_ARGS+=("-L" "$2")
+            shift 2
+            ;;
+        -L*)
+            LINK_DIR_ARGS+=("$1")
+            shift
+            ;;
+        -l)
+            LINK_LIB_ARGS+=("-l$2")
+            shift 2
+            ;;
+        -l*)
+            LINK_LIB_ARGS+=("$1")
             shift
             ;;
         --include-dir)
@@ -251,4 +271,4 @@ EOF
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
-"$CC_BIN" "${OBJECTS[@]}" -o "$OUTPUT"
+"$CC_BIN" "${OBJECTS[@]}" "${LINK_DIR_ARGS[@]}" "${LINK_LIB_ARGS[@]}" -o "$OUTPUT"

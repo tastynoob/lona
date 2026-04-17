@@ -182,12 +182,27 @@ lac --lto full -O 3 input.lo output/program
 lac --target x86_64-unknown-linux-gnu input.lo output/program
 ```
 
+链接额外库：
+
+```bash
+lac -l m input.lo output/program
+lac -L vendor/lib -lsupport input.lo output/program
+lac -lsupport input.lo output/program
+```
+
 ### 3.2 参数
 
 - `-O <0-3>`
   - 转发给 `lona-ir`
 - `-I <dir>` / `--include-dir <dir>`
   - 转发给 `lona-ir`，追加模块 root 搜索目录
+- `-L <dir>` / `-L<dir>`
+  - 追加一个额外库搜索目录到最终 hosted 链接阶段
+  - 可重复传入，按出现顺序透传给最终 `cc` / `clang` 链接命令
+- `-l <name>` / `-l<name>`
+  - 追加一个额外库到最终 hosted 链接阶段
+  - 可重复传入，按出现顺序透传给最终 `cc` / `clang` 链接命令
+  - 库名解析和搜索规则与 C/C++ 常见 `-L` / `-l` 语义一致
 - `--target <triple>`
   - 指定 hosted target
 - `--lto <off|full>`

@@ -265,6 +265,8 @@ class CompilerHarness:
         lto: str | None = None,
         cache_dir: Path | None = None,
         stats: bool = False,
+        library_paths: list[Path] | None = None,
+        libraries: list[str] | None = None,
         extra_env: dict[str, str] | None = None,
         include_paths: list[Path] | None = None,
     ) -> tuple[CommandResult, Path]:
@@ -280,6 +282,12 @@ class CompilerHarness:
             cmd.extend(["--cache-dir", str(cache_dir)])
         if stats:
             cmd.append("--stats")
+        if library_paths is not None:
+            for library_path in library_paths:
+                cmd.extend(["-L", str(library_path)])
+        if libraries is not None:
+            for library in libraries:
+                cmd.append(f"-l{library}")
         self._extend_include_paths(cmd, include_paths)
         cmd.extend([str(input_path), str(output_path)])
         result = run_command(

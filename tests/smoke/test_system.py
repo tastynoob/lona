@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import textwrap
 from pathlib import Path
 from shutil import which
 
@@ -16,6 +17,14 @@ def _detect_cc() -> str:
         if which(candidate):
             return candidate
     raise AssertionError("C linker driver not found; set CC or install cc/clang")
+
+
+def _detect_ar() -> str:
+    if os.environ.get("AR"):
+        return os.environ["AR"]
+    if which("ar"):
+        return "ar"
+    raise AssertionError("static archiver not found; set AR or install binutils ar")
 
 
 def _run_command(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -33,6 +42,21 @@ def _nm_text(path: Path, *args: str, cwd: Path) -> str:
     result = _run_command(["nm", *args, str(path)], cwd=cwd)
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+def _build_static_library(root: Path, *, name: str, source: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    src = root / f"{name}.c"
+    obj = root / f"{name}.o"
+    archive = root / f"lib{name}.a"
+    src.write_text(textwrap.dedent(source).lstrip("\n"), encoding="utf-8")
+
+    compile_result = _run_command([_detect_cc(), "-c", str(src), "-o", str(obj)], cwd=root)
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    archive_result = _run_command([_detect_ar(), "rcs", str(archive), str(obj)], cwd=root)
+    assert archive_result.returncode == 0, archive_result.stderr
+    return archive
 
 
 def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness, repo_root: Path) -> None:
@@ -83,6 +107,25 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
         var seed i32 = main(7)
         """,
     )
+    static_link_program = compiler.write_source(
+        "system/static_link.lo",
+        """
+        #[extern "C"]
+        def support_answer() i32
+
+        ret support_answer()
+        """,
+    )
+    static_library_root = compiler.output_path("system-static-lib-root")
+    _build_static_library(
+        static_library_root,
+        name="support",
+        source="""
+        int support_answer(void) {
+            return 42;
+        }
+        """,
+    )
 
     build_result, main_exe = compiler.build_system_executable(main_program, output_name="return_9")
     build_result.expect_ok()
@@ -103,6 +146,15 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     build_result, import_c_exe = compiler.build_system_executable(lona_import_c_program, output_name="import_abs")
     build_result.expect_ok()
     compiler.run_executable(import_c_exe).expect_exit_code(9)
+
+    static_link_build, static_link_exe = compiler.build_system_executable(
+        static_link_program,
+        output_name="static_link",
+        library_paths=[static_library_root],
+        libraries=["support"],
+    )
+    static_link_build.expect_ok()
+    compiler.run_executable(static_link_exe).expect_exit_code(42)
 
     bad_main_build, _ = compiler.build_system_executable(bad_main_program, output_name="bad_main")
     bad_main_build.expect_failed()
