@@ -17,10 +17,18 @@
 
 ## 🧭 现在的 lona 是什么
 
-`lona` 目前仍处于设计早期。
+`lona` 仍然处于持续演化阶段，但已经不是一个只有极小子集的“概念验证”。
 
-它今天更接近一个 **简单、可工作的 C 风格语言**。
-能力范围还不大，很多高级特性也还没有完成。
+当前仓库里已经接通了比较完整的一条前端和工具链路径，语言侧也已经覆盖了：
+
+- 模块与 import 解析
+- struct、方法、getter / setter receiver 语义
+- generic v0
+- trait / impl / `Trait dyn`
+- hosted / bare 两条构建路径
+- `lona-query` 查询与静态分析工具
+
+所以今天的 `lona` 更准确地说，是一个**已经具备可用语言前端、查询工具和 native 构建入口的实验性系统语言项目**。
 
 不过，`lona` 的目标并不是在功能数量上与发展了几十年的 C/C++ 比拼。
 它关心的是另一件事：
@@ -132,10 +140,10 @@ flowchart LR
 
 ### 依赖
 
-on debain/ubuntu
+on Debian/Ubuntu
 
 ```bash
-apt install llvm-18-dev bison flex clang nlohmann-json3-dev python3-pytest bear
+apt install llvm-18-dev bison flex libfl-dev clang nlohmann-json3-dev python3-pytest bear
 ```
 
 ### 构建
