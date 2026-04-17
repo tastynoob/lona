@@ -206,6 +206,151 @@ def test_query_reload_from_dependency_keeps_root_semantic_diagnostics(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_exposes_top_level_inline_constants(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    source_path = app_dir / "main.lo"
+    source_path.write_text(
+        "\n".join(
+            [
+                "inline answer i32 = 42",
+                "",
+                "def main() i32 {",
+                "    ret answer",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["symbolCount"] == 2, opened
+
+        symbols = send_command(proc, "info global")
+        assert symbols["ok"] is True, symbols
+        assert symbols["result"]["count"] == 2, symbols
+        inline_items = [
+            item
+            for item in symbols["result"]["items"]
+            if item["kind"] == "global" and item["name"] == "answer"
+        ]
+        assert len(inline_items) == 1, symbols
+        assert inline_items[0]["detail"] == "inline : i32", symbols
+
+        found = send_command(proc, "find all answer")
+        assert found["ok"] is True, found
+        assert found["result"]["count"] == 1, found
+        assert found["result"]["items"][0]["kind"] == "global", found
+
+        printed = send_command(proc, "pv answer")
+        assert printed["ok"] is True, printed
+        assert printed["result"]["item"]["kind"] == "top-level-var", printed
+        assert printed["result"]["item"]["detail"] == "inline", printed
+        assert printed["result"]["item"]["type"] == "i32", printed
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
+def test_query_can_print_imported_inline_constants(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    lib_dir = tmp_path / "lib"
+    app_dir.mkdir()
+    lib_dir.mkdir()
+
+    helper_path = lib_dir / "helper.lo"
+    root_path = app_dir / "main.lo"
+    helper_path.write_text(
+        "\n".join(
+            [
+                "inline answer i32 = 42",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    root_path.write_text(
+        "\n".join(
+            [
+                "import helper",
+                "",
+                "def main() i32 {",
+                "    ret helper.answer",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir), str(lib_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+
+        value_reply = send_command(proc, "pv helper.answer")
+        assert value_reply["ok"] is True, value_reply
+        assert value_reply["result"]["item"]["kind"] == "top-level-var", value_reply
+        assert value_reply["result"]["item"]["qualifiedName"] == "helper.answer", value_reply
+        assert value_reply["result"]["item"]["detail"] == "inline", value_reply
+        assert value_reply["result"]["item"]["type"] == "i32", value_reply
+        assert value_reply["result"]["item"]["location"]["path"] == str(helper_path), value_reply
+
+        compat_reply = send_command(proc, "print helper.answer")
+        assert compat_reply["ok"] is True, compat_reply
+        assert compat_reply["result"]["item"]["qualifiedName"] == "helper.answer", compat_reply
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_surfaces_dependency_semantic_errors_at_active_imports(
     query_bin: Path, tmp_path: Path
 ) -> None:

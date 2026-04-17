@@ -385,6 +385,31 @@ describeVarDefDetail(const AstVarDef *decl) {
     return out.str();
 }
 
+TypeClass *
+resolvedDeclaredVarType(const CompilationUnit *ownerUnit,
+                        const AstVarDef *decl) {
+    if (!ownerUnit || !decl || !decl->getTypeNode()) {
+        return nullptr;
+    }
+    return ownerUnit->findResolvedType(decl->getTypeNode());
+}
+
+std::string
+describeTopLevelVarSymbolDetail(const AstVarDef *decl) {
+    if (!decl) {
+        return {};
+    }
+    auto detail = describeVarDefDetail(decl);
+    auto declaredType = describeDeclaredType(decl->getTypeNode());
+    if (declaredType.empty()) {
+        return detail;
+    }
+    if (detail.empty()) {
+        return declaredType;
+    }
+    return detail + " : " + declaredType;
+}
+
 int
 locationBeginLine(const location &loc) {
     if (loc.begin.line > 0) {
@@ -2848,6 +2873,47 @@ splitFirstQualifiedComponent(std::string_view query, std::string &head,
     return true;
 }
 
+const AstVarDef *
+lookupQualifiedInlineDecl(const CompilationUnit &unit, std::string_view query,
+                          const CompilationUnit *&ownerUnit,
+                          std::string &qualifiedName) {
+    ownerUnit = nullptr;
+    qualifiedName.clear();
+
+    std::string namespaceName;
+    std::string memberName;
+    if (!splitFirstQualifiedComponent(query, namespaceName, memberName)) {
+        return nullptr;
+    }
+
+    auto namespaceLookup = unit.lookupTopLevelName(namespaceName);
+    if (!namespaceLookup.isModule() || !namespaceLookup.importedModule ||
+        namespaceLookup.importedModule->unit == nullptr) {
+        return nullptr;
+    }
+
+    ownerUnit = namespaceLookup.importedModule->unit;
+    auto *inlineDecl = ownerUnit->findTopLevelInline(memberName);
+    if (!inlineDecl) {
+        ownerUnit = nullptr;
+        return nullptr;
+    }
+
+    qualifiedName = namespaceName + "." + memberName;
+    return inlineDecl;
+}
+
+Json
+makeTopLevelVarPrintItem(const AstVarDef *decl, std::string qualifiedName,
+                         const std::string &fallbackPath, TypeClass *type) {
+    return makeBindingPrintItem(
+        "top-level-var", toStdString(decl->getName()), std::move(qualifiedName),
+        describeVarDefDetail(decl), type,
+        makeSourceLocation(decl->loc, fallbackPath), "<top-level>",
+        type == nullptr ? describeDeclaredType(decl->getTypeNode())
+                        : std::string());
+}
+
 CompilationUnit::TopLevelLookup
 lookupQualifiedTopLevelName(const CompilationUnit &unit,
                             std::string_view query) {
@@ -2872,6 +2938,18 @@ lookupQualifiedTopLevelName(const CompilationUnit &unit,
 bool
 lookupQualifiedPrintItem(const CompilationUnit &unit, std::string_view query,
                          Json &item) {
+    const CompilationUnit *inlineOwnerUnit = nullptr;
+    std::string inlineQualifiedName;
+    if (auto *inlineDecl =
+            lookupQualifiedInlineDecl(unit, query, inlineOwnerUnit,
+                                      inlineQualifiedName)) {
+        item = makeTopLevelVarPrintItem(
+            inlineDecl, std::move(inlineQualifiedName),
+            toStdString(inlineOwnerUnit->path()),
+            resolvedDeclaredVarType(inlineOwnerUnit, inlineDecl));
+        return true;
+    }
+
     auto lookup = lookupQualifiedTopLevelName(unit, query);
     if (lookup.isType() && lookup.typeDecl) {
         item = makeTypePrintItem(
@@ -2897,6 +2975,18 @@ lookupQualifiedPrintItem(const CompilationUnit &unit, std::string_view query,
 bool
 lookupQualifiedValuePrintItem(const CompilationUnit &unit,
                               std::string_view query, Json &item) {
+    const CompilationUnit *inlineOwnerUnit = nullptr;
+    std::string inlineQualifiedName;
+    if (auto *inlineDecl =
+            lookupQualifiedInlineDecl(unit, query, inlineOwnerUnit,
+                                      inlineQualifiedName)) {
+        item = makeTopLevelVarPrintItem(
+            inlineDecl, std::move(inlineQualifiedName),
+            toStdString(inlineOwnerUnit->path()),
+            resolvedDeclaredVarType(inlineOwnerUnit, inlineDecl));
+        return true;
+    }
+
     auto lookup = lookupQualifiedTopLevelName(unit, query);
     if (lookup.isFunction() && lookup.functionDecl) {
         item = makeFunctionPrintItem(*lookup.functionDecl);
@@ -3026,7 +3116,8 @@ topLevelStatementListForQuery(const AstNode *root) {
 }
 
 bool
-lookupTopLevelVarBinding(const AstNode *syntaxTree,
+lookupTopLevelVarBinding(const CompilationUnit *ownerUnit,
+                        const AstNode *syntaxTree,
                         const std::vector<AnalyzedFunctionRecord> &records,
                         const std::string &fallbackPath,
                         std::string_view query, ValueBindingMatch &binding) {
@@ -3068,21 +3159,27 @@ lookupTopLevelVarBinding(const AstNode *syntaxTree,
             }
         }
     }
+    if (!type) {
+        type = resolvedDeclaredVarType(ownerUnit, varDecl);
+    }
 
     binding = ValueBindingMatch{
         "top-level-var", cleanedQuery, cleanedQuery,
-        describeVarDefDetail(varDecl), type, std::string(),
+        describeVarDefDetail(varDecl), type,
+        type == nullptr ? describeDeclaredType(varDecl->getTypeNode())
+                        : std::string(),
         makeSourceLocation(varDecl->loc, fallbackPath), "<top-level>"};
     return true;
 }
 
 bool
-lookupTopLevelVarPrintItem(const AstNode *syntaxTree,
+lookupTopLevelVarPrintItem(const CompilationUnit *ownerUnit,
+                          const AstNode *syntaxTree,
                           const std::vector<AnalyzedFunctionRecord> &records,
                           const std::string &fallbackPath,
                           std::string_view query, Json &item) {
     ValueBindingMatch binding;
-    if (!lookupTopLevelVarBinding(syntaxTree, records, fallbackPath, query,
+    if (!lookupTopLevelVarBinding(ownerUnit, syntaxTree, records, fallbackPath, query,
                                   binding)) {
         return false;
     }
@@ -3131,7 +3228,7 @@ lookupDirectValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
         type = binding.type;
         return true;
     }
-    if (lookupTopLevelVarBinding(syntaxTree, records, fallbackPath, query,
+    if (lookupTopLevelVarBinding(&unit, syntaxTree, records, fallbackPath, query,
                                  binding)) {
         type = binding.type;
         return true;
@@ -3480,6 +3577,12 @@ class SymbolCollector {
                        ? describeTypeNode(globalDecl->getTypeNode(), "void")
                        : std::string(),
                    globalDecl->loc);
+            return;
+        }
+        if (auto *varDef = dynamic_cast<AstVarDef *>(node)) {
+            append(SymbolKind::Global, toStdString(varDef->getName()),
+                   toStdString(varDef->getName()),
+                   describeTopLevelVarSymbolDetail(varDef), varDef->loc);
             return;
         }
         if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
@@ -4481,8 +4584,9 @@ Session::printItemJson(std::string_view fieldName, PrintQueryKind kind) const {
             return root;
         }
 
-        if (lookupTopLevelVarPrintItem(syntaxTree_, analyzedFunctions_,
-                                       currentPath_, query, printItem)) {
+        if (lookupTopLevelVarPrintItem(currentUnit_, syntaxTree_,
+                                       analyzedFunctions_, currentPath_, query,
+                                       printItem)) {
             root["found"] = true;
             root["item"] = std::move(printItem);
             return root;
