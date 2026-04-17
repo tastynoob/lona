@@ -2116,6 +2116,19 @@ findTopLevelEntryRecord(const std::vector<AnalyzedFunctionRecord> &records) {
     return nullptr;
 }
 
+const HIRFunc *
+findTopLevelEntryHIR(const HIRModule *module) {
+    if (!module) {
+        return nullptr;
+    }
+    for (auto *func : module->getFunctions()) {
+        if (func && func->isTopLevelEntry()) {
+            return func;
+        }
+    }
+    return nullptr;
+}
+
 void
 enrichLocalsWithAnalysis(const CompilationUnit *unit,
                          const std::vector<AnalyzedFunctionRecord> &records,
@@ -3554,6 +3567,7 @@ bool
 lookupTopLevelVarBinding(const CompilationUnit *ownerUnit,
                         const AstNode *syntaxTree,
                         const std::vector<AnalyzedFunctionRecord> &records,
+                        const HIRModule *analyzedModule,
                         const std::string &fallbackPath,
                         std::string_view query, ValueBindingMatch &binding) {
     const auto cleanedQuery = trimCopy(query);
@@ -3595,6 +3609,19 @@ lookupTopLevelVarBinding(const CompilationUnit *ownerUnit,
         }
     }
     if (!type) {
+        if (auto *hir = findTopLevelEntryHIR(analyzedModule); hir && hir->getBody()) {
+            std::vector<SemanticLocalRecord> locals;
+            collectAllSemanticLocalsInNode(hir->getBody(), fallbackPath, locals);
+            for (const auto &local : locals) {
+                if (local.name == cleanedQuery &&
+                    local.loc.line == varDecl->loc.begin.line) {
+                    type = local.typeRef;
+                    break;
+                }
+            }
+        }
+    }
+    if (!type) {
         type = resolvedDeclaredVarType(ownerUnit, varDecl);
     }
 
@@ -3611,11 +3638,12 @@ bool
 lookupTopLevelVarPrintItem(const CompilationUnit *ownerUnit,
                           const AstNode *syntaxTree,
                           const std::vector<AnalyzedFunctionRecord> &records,
+                          const HIRModule *analyzedModule,
                           const std::string &fallbackPath,
                           std::string_view query, Json &item) {
     ValueBindingMatch binding;
-    if (!lookupTopLevelVarBinding(ownerUnit, syntaxTree, records, fallbackPath, query,
-                                  binding)) {
+    if (!lookupTopLevelVarBinding(ownerUnit, syntaxTree, records, analyzedModule,
+                                  fallbackPath, query, binding)) {
         return false;
     }
     item = makeBindingPrintItem(binding);
@@ -3654,6 +3682,7 @@ lookupTopLevelGlobalValueType(const CompilationUnit &unit, std::string_view quer
 bool
 lookupDirectValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
                       const std::vector<AnalyzedFunctionRecord> &records,
+                      const HIRModule *analyzedModule,
                       const std::string &fallbackPath, int line,
                       std::string_view query, TemplateTypeInfo &type) {
     type = makeTemplateTypeInfo(nullptr, {}, &unit);
@@ -3665,8 +3694,8 @@ lookupDirectValueType(const CompilationUnit &unit, const AstNode *syntaxTree,
             binding.type != nullptr ? std::string() : binding.typeDisplay, &unit);
         return true;
     }
-    if (lookupTopLevelVarBinding(&unit, syntaxTree, records, fallbackPath, query,
-                                 binding)) {
+    if (lookupTopLevelVarBinding(&unit, syntaxTree, records, analyzedModule,
+                                 fallbackPath, query, binding)) {
         type = makeTemplateTypeInfo(
             binding.type,
             binding.type != nullptr ? std::string() : binding.typeDisplay, &unit);
@@ -3750,20 +3779,22 @@ lookupProjectedMemberType(const CompilationUnit &unit,
 ValueMemberLookupStatus
 lookupValuePathType(const CompilationUnit &unit, const AstNode *syntaxTree,
                     const std::vector<AnalyzedFunctionRecord> &records,
+                    const HIRModule *analyzedModule,
                     const std::string &fallbackPath, int line,
                     std::string_view query, TemplateTypeInfo &type) {
     type = makeTemplateTypeInfo(nullptr, {}, &unit);
     std::string ownerName;
     std::string memberName;
     if (!splitMemberQuery(query, ownerName, memberName)) {
-        return lookupDirectValueType(unit, syntaxTree, records, fallbackPath,
-                                     line, query, type)
+        return lookupDirectValueType(unit, syntaxTree, records, analyzedModule,
+                                     fallbackPath, line, query, type)
                    ? ValueMemberLookupStatus::Found
                    : ValueMemberLookupStatus::NoOwner;
     }
 
     TemplateTypeInfo ownerType;
     auto ownerStatus = lookupValuePathType(unit, syntaxTree, records,
+                                           analyzedModule,
                                            fallbackPath, line, ownerName,
                                            ownerType);
     if (ownerStatus != ValueMemberLookupStatus::Found) {
@@ -3780,6 +3811,7 @@ ValueMemberLookupStatus
 lookupValueMemberPrintItem(const CompilationUnit &unit,
                            const AstNode *syntaxTree,
                            const std::vector<AnalyzedFunctionRecord> &records,
+                           const HIRModule *analyzedModule,
                            const std::string &fallbackPath, int line,
                            std::string_view query, Json &item) {
     std::string ownerName;
@@ -3790,6 +3822,7 @@ lookupValueMemberPrintItem(const CompilationUnit &unit,
 
     TemplateTypeInfo ownerType;
     auto ownerStatus = lookupValuePathType(unit, syntaxTree, records,
+                                           analyzedModule,
                                            fallbackPath, line, ownerName,
                                            ownerType);
     if (ownerStatus != ValueMemberLookupStatus::Found) {
@@ -5048,8 +5081,8 @@ Session::printItemJson(std::string_view fieldName, PrintQueryKind kind) const {
         }
 
         if (lookupTopLevelVarPrintItem(currentUnit_, syntaxTree_,
-                                       analyzedFunctions_, currentPath_, query,
-                                       printItem)) {
+                                       analyzedFunctions_, analyzedModule_.get(),
+                                       currentPath_, query, printItem)) {
             root["found"] = true;
             root["item"] = std::move(printItem);
             return root;
@@ -5064,7 +5097,8 @@ Session::printItemJson(std::string_view fieldName, PrintQueryKind kind) const {
         }
     } else if (kind == PrintQueryKind::Value) {
         switch (lookupValueMemberPrintItem(*currentUnit_, syntaxTree_,
-                                           analyzedFunctions_, currentPath_,
+                                           analyzedFunctions_,
+                                           analyzedModule_.get(), currentPath_,
                                            currentLine_, query, printItem)) {
             case ValueMemberLookupStatus::Found:
                 root["found"] = true;

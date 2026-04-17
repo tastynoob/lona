@@ -1236,6 +1236,74 @@ def test_query_pv_tracks_inferred_generic_local_types_in_template_bodies(
     assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
 
 
+def test_query_pv_tracks_inferred_top_level_generic_vars_without_local_scope_records(
+    query_bin: Path, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    root_path = app_dir / "main.lo"
+    root_path.write_text(
+        "\n".join(
+            [
+                "struct Box[T] {",
+                "    value T",
+                "}",
+                "",
+                "def make_box[T](value T) Box[T] {",
+                "    ret Box[T](value = value)",
+                "}",
+                "",
+                "var value = make_box[i32](1)",
+                "ret 0",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        [str(query_bin), "--format", "json", str(app_dir)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        opened = send_command(proc, "open main")
+        assert opened["ok"] is True, opened
+        assert opened["result"]["path"] == str(root_path), opened
+        assert opened["result"]["analyzedFunctionCount"] == 0, opened
+
+        printed = send_command(proc, "pv value")
+        assert printed["ok"] is True, printed
+        assert printed["result"]["item"]["kind"] == "top-level-var", printed
+        assert printed["result"]["item"]["type"] == "Box[i32]", printed
+        assert printed["result"]["item"]["typeInfo"]["spelling"] == "Box[i32]", printed
+
+        member = send_command(proc, "pv value.value")
+        assert member["ok"] is True, member
+        assert member["result"]["item"]["kind"] == "member", member
+        assert member["result"]["item"]["ownerType"] == "Box[i32]", member
+        assert member["result"]["item"]["type"] == "i32", member
+
+        assert proc.stdin is not None
+        proc.stdin.write("quit\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read()
+    assert proc.returncode == 0, stderr or f"unexpected return code {proc.returncode}"
+
+
 def test_query_pv_projects_generic_method_return_types_in_template_bodies(
     query_bin: Path, tmp_path: Path
 ) -> None:
