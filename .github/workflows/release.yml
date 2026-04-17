@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "**"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-release:
+    name: Build And Publish Linux Release
+    runs-on: ubuntu-24.04
+    env:
+      CLANG: clang-18
+      CXX: clang++-18
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bison \
+            clang-18 \
+            flex \
+            libfl-dev \
+            llvm-18-dev \
+            nlohmann-json3-dev \
+            python3-pytest
+
+      - name: Run test suite
+        run: make test
+
+      - name: Package Linux release
+        run: bash scripts/package_release_linux.sh "${{ github.ref_name }}" dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
