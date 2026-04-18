@@ -57,6 +57,24 @@ def test_builtin_casts_and_cast_restrictions(compiler: CompilerHarness) -> None:
     for needle in ["define i32 @main", "ptrtoint ptr %", "inttoptr i64 %"]:
         assert_contains(pointer_rebind_ir, needle, label="pointer rebind cast ir")
 
+    pointer_integer_ir = _emit_ir(
+        compiler,
+        "cast_pointer_integer.lo",
+        """
+        def main() i32 {
+            var addr usize = 1
+            var ptr i32* = cast[i32*](addr)
+            var roundtrip usize = cast[usize](ptr)
+            if roundtrip == 1 {
+                ret 0
+            }
+            ret 1
+        }
+        """,
+    )
+    for needle in ["inttoptr i64", "ptrtoint ptr"]:
+        assert_contains(pointer_integer_ir, needle, label="pointer integer cast ir")
+
 def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
     float_ir = _emit_ir(
         compiler,
@@ -232,6 +250,16 @@ def test_float_numeric_and_tobits_paths(compiler: CompilerHarness) -> None:
             }
             """,
             ["unknown member `i32.tof32`"],
+        ),
+        (
+            "float_pointer_cast_bad.lo",
+            """
+            def main() i32 {
+                var p i32* = cast[i32*](1.5)
+                ret 0
+            }
+            """,
+            ["unsupported builtin cast from `f64` to `i32*`"],
         ),
         (
             "injected_member_bad.lo",

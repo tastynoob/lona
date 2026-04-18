@@ -30,6 +30,8 @@ bool
 canImplicitPointerViewConversion(TypeClass *targetType, TypeClass *sourceType);
 bool
 canExplicitPointerRebindCast(TypeClass *targetType, TypeClass *sourceType);
+bool
+canExplicitPointerIntegerCast(TypeClass *targetType, TypeClass *sourceType);
 
 bool
 isSupportedStaticLiteralInitializerExpr(AstNode *node);

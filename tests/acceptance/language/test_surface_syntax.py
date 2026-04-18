@@ -213,12 +213,12 @@ def test_reports_targeted_diagnostics_for_invalid_pointer_and_aggregate_casts(
             "cast_bad.lo",
             """
             def main() i32 {
-                var value i32 = 1
+                var value f64 = 1.5
                 var raw u8* = cast[u8*](value)
                 ret 0
             }
             """,
-            ["unsupported builtin cast from `i32` to `u8*`"],
+            ["unsupported builtin cast from `f64` to `u8*`"],
         ),
         (
             "cast_tuple_bad.lo",

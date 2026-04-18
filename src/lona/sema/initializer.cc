@@ -379,7 +379,8 @@ nullLiteralHint() {
 std::string
 pointerConversionHint() {
     return "Only conversions between `T[*]` and matching raw pointers `T*` are "
-           "implicit.";
+           "implicit. Integer-to-pointer and pointer-to-integer require an "
+           "explicit `cast[T](expr)`.";
 }
 
 bool
@@ -421,6 +422,20 @@ canExplicitPointerRebindCast(TypeClass *targetType, TypeClass *sourceType) {
            initializer_semantics_impl::
                preservesConstQualificationForPointerRebind(targetElement,
                                                            sourceElement);
+}
+
+bool
+canExplicitPointerIntegerCast(TypeClass *targetType, TypeClass *sourceType) {
+    if (!targetType || !sourceType || targetType == sourceType) {
+        return false;
+    }
+
+    const bool targetPointer = isRawMemoryPointerType(targetType) ||
+                               isIndexablePointerType(targetType);
+    const bool sourcePointer = isRawMemoryPointerType(sourceType) ||
+                               isIndexablePointerType(sourceType);
+    return (targetPointer && isIntegerType(sourceType)) ||
+           (sourcePointer && isIntegerType(targetType));
 }
 
 bool

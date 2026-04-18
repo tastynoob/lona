@@ -4568,6 +4568,10 @@ class FunctionAnalyzer {
             return pointerCast;
         }
 
+        if (canExplicitPointerIntegerCast(targetType, sourceType)) {
+            return makeHIR<HIRBitCast>(value, targetType, node->loc);
+        }
+
         error(node->loc,
               "unsupported builtin cast from `" +
                   describeResolvedType(sourceType) + "` to `" +
