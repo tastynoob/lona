@@ -807,7 +807,8 @@ AstStatList::~AstStatList() {
 AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
                          std::vector<AstGenericParam *> *typeParams,
                          std::vector<AstNode *> *args, TypeNode *retType,
-                         AbiKind abiKind, AccessKind receiverAccess)
+                         AbiKind abiKind, AccessKind receiverAccess,
+                         bool extensionMethod)
     : AstNode(AstKind::FuncDecl, name.loc),
       name(name.text),
       typeParams(typeParams),
@@ -815,7 +816,8 @@ AstFuncDecl::AstFuncDecl(AstToken &name, AstNode *body,
       body(body),
       retType(retType),
       abiKind(abiKind),
-      receiverAccess(receiverAccess) {}
+      receiverAccess(receiverAccess),
+      extensionMethod(extensionMethod) {}
 
 AstFuncDecl::~AstFuncDecl() {
     deleteOwnedSequence(typeParams);

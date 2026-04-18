@@ -2079,6 +2079,19 @@ class ModuleResolver {
     std::unique_ptr<ResolvedModule> module_ =
         std::make_unique<ResolvedModule>();
 
+    const ModuleInterface::ExtensionMethodDecl *findLocalExtensionDecl(
+        const AstFuncDecl *decl) const {
+        if (!decl || !unit_ || !unit_->interface()) {
+            return nullptr;
+        }
+        for (const auto &method : unit_->interface()->extensionMethods()) {
+            if (method.syntaxDecl == decl) {
+                return &method;
+            }
+        }
+        return nullptr;
+    }
+
     ResolvedFunction *createResolvedFunction(
         const AstFuncDecl *decl, const AstNode *body, bool ownsBody,
         string functionName, string methodParentTypeName, const location &loc,
@@ -2164,6 +2177,45 @@ class ModuleResolver {
             std::move(genericTypeParamBounds));
         FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved,
                          methodStructContext)
+            .resolve();
+    }
+
+    void resolveExtensionFunction(AstFuncDecl *node) {
+        if (!node) {
+            return;
+        }
+        auto *extensionDecl = findLocalExtensionDecl(node);
+        if (!extensionDecl) {
+            error(node->loc,
+                  "extension method declaration is missing from the module "
+                  "interface",
+                  "Run interface collection before name resolution.");
+        }
+
+        std::vector<string> scopedTypeParams;
+        appendGenericParamNames(scopedTypeParams, node->typeParams);
+        const bool templateValidationOnly = !scopedTypeParams.empty();
+
+        if (!templateValidationOnly) {
+            auto *obj = global_->getObj(extensionDecl->symbolName);
+            auto *function = obj ? obj->as<Function>() : nullptr;
+            if (!function) {
+                error(node->loc,
+                      "extension method `" +
+                          toStdString(extensionDecl->symbolName) +
+                          "` is missing from the symbol table",
+                      "Run declaration collection before name resolution.");
+            }
+        }
+
+        auto genericTypeParamBounds = collectGenericParamBounds(node->typeParams);
+        auto *resolved = createResolvedFunction(
+            node, node->body, false,
+            templateValidationOnly ? string() : toStdString(extensionDecl->symbolName),
+            string(), node->loc, false, false,
+            node->body && node->body->hasTerminator(), templateValidationOnly,
+            std::move(scopedTypeParams), std::move(genericTypeParamBounds));
+        FunctionResolver(global_, typeMgr_, unit_, *module_, *resolved)
             .resolve();
     }
 
@@ -2299,7 +2351,11 @@ class ModuleResolver {
                     resolveTraitImpl(static_cast<AstTraitImplDecl *>(stmt));
                     continue;
                 case AstKind::FuncDecl:
-                    resolveFunction(static_cast<AstFuncDecl *>(stmt));
+                    if (static_cast<AstFuncDecl *>(stmt)->hasExtensionReceiver()) {
+                        resolveExtensionFunction(static_cast<AstFuncDecl *>(stmt));
+                    } else {
+                        resolveFunction(static_cast<AstFuncDecl *>(stmt));
+                    }
                     continue;
                 default:
                     break;

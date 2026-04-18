@@ -2712,13 +2712,98 @@ class FunctionAnalyzer {
         return func;
     }
 
-    HIRExpr *borrowMethodReceiver(HIRExpr *receiver, const location &loc) {
-        if (!receiver) {
+    struct VisibleExtensionMethod {
+        const ModuleInterface::ExtensionMethodDecl *decl = nullptr;
+        const CompilationUnit::ImportedModule *importedModule = nullptr;
+
+        const CompilationUnit *ownerUnit(
+            const CompilationUnit *currentUnit) const {
+            return importedModule ? importedModule->unit : currentUnit;
+        }
+
+        const ModuleInterface *ownerInterface(
+            const CompilationUnit *currentUnit) const {
+            return importedModule ? importedModule->interface
+                                  : (currentUnit ? currentUnit->interface()
+                                                 : nullptr);
+        }
+    };
+
+    HIRExpr *borrowMethodReceiver(HIRExpr *receiver, TypeClass *pointerType,
+                                  const location &loc) {
+        if (!receiver || !pointerType) {
             return nullptr;
         }
-        auto binding = operatorResolver.resolveUnary(
-            '&', receiver->getType(), isAddressable(receiver), loc);
-        return makeHIR<HIRUnaryOper>(binding, receiver, binding.resultType, loc);
+        auto *rawPointerType = asUnqualified<PointerType>(pointerType);
+        if (!rawPointerType || !rawPointerType->getPointeeType()) {
+            internalError(
+                loc,
+                "borrowed method receiver is missing its pointer type",
+                "This looks like a call-lowering bug.");
+        }
+        return makeHIR<HIRBorrow>(receiver, pointerType, loc);
+    }
+
+    HIRExpr *lowerDirectExtensionMethodCall(
+        const VisibleExtensionMethod &extensionMethod, HIRExpr *receiver,
+        CallArgList normalizedArgs, const location &callLoc,
+        llvm::StringRef methodName) {
+        if (!extensionMethod.decl || !receiver) {
+            internalError(
+                callLoc,
+                "extension method call is missing its callee or receiver",
+                "This looks like an extension-method lowering bug.");
+        }
+        if (extensionMethod.decl->isGeneric()) {
+            error(callLoc,
+                  "generic extension methods are not implemented yet: `" +
+                      methodName.str() + "`",
+                  "Keep this extension monomorphic for now.");
+        }
+
+        auto *func = requireGlobalFunction(
+            toStdString(extensionMethod.decl->symbolName), callLoc,
+            "extension method");
+        auto *funcType = func->getType() ? func->getType()->as<FuncType>() : nullptr;
+        if (!funcType) {
+            internalError(callLoc,
+                          "extension method call is missing its function type",
+                          "This looks like an extension-method declaration bug.");
+        }
+
+        const auto &paramTypes = funcType->getArgTypes();
+        std::vector<FormalCallArg> formals;
+        formals.reserve(paramTypes.size() > 0 ? paramTypes.size() - 1 : 0);
+        for (std::size_t i = 1; i < paramTypes.size(); ++i) {
+            const string *paramName =
+                i - 1 < extensionMethod.decl->paramNames.size()
+                    ? &extensionMethod.decl->paramNames[i - 1]
+                    : nullptr;
+            formals.push_back({paramName, paramTypes[i],
+                               funcType->getArgBindingKind(i),
+                               FormalCallArgKind::FunctionParameter, i - 1});
+        }
+        auto boundArgs =
+            bindCallArgs(normalizedArgs, formals,
+                         {callLoc, CallBindingTargetKind::FunctionCall, nullptr,
+                          !extensionMethod.decl->paramNames.empty()});
+
+        std::vector<HIRExpr *> args;
+        args.reserve(boundArgs.size() + 1);
+        if (extensionMethod.decl->receiverKind ==
+            ExtensionReceiverKind::Value) {
+            args.push_back(receiver);
+        } else {
+            args.push_back(
+                borrowMethodReceiver(receiver, paramTypes.front(), callLoc));
+        }
+        for (const auto &arg : boundArgs) {
+            args.push_back(arg.expr);
+        }
+
+        auto *retType = funcType->getRetType();
+        return makeHIR<HIRCall>(makeHIR<HIRValue>(func, callLoc),
+                                std::move(args), retType, callLoc);
     }
 
     HIRExpr *lowerDirectGenericMethodCall(Function *methodFunc,
@@ -2761,7 +2846,9 @@ class FunctionAnalyzer {
 
         std::vector<HIRExpr *> args;
         args.reserve(boundArgs.size() + 1);
-        args.push_back(borrowMethodReceiver(receiver, callLoc));
+        args.push_back(
+            borrowMethodReceiver(receiver, funcType->getArgTypes().front(),
+                                 callLoc));
         for (const auto &arg : boundArgs) {
             args.push_back(arg.expr);
         }
@@ -2909,12 +2996,14 @@ class FunctionAnalyzer {
         TypeClass *valueType = nullptr;
         TupleType *tupleType = nullptr;
         StructType *structType = nullptr;
+        bool addressable = false;
     };
 
     struct MemberLookup {
         MemberLookupOwner owner;
         LookupResult result;
         std::optional<InjectedMemberBinding> injectedMember;
+        std::optional<VisibleExtensionMethod> extensionMethod;
         std::string resolvedMethodName;
         std::vector<std::string> promotedPath;
         std::vector<std::vector<std::string>> ambiguousPromotedPaths;
@@ -2951,18 +3040,147 @@ class FunctionAnalyzer {
         owner.valueType = owner.entity.valueType();
         owner.tupleType = asUnqualified<TupleType>(owner.valueType);
         owner.structType = asUnqualified<StructType>(owner.valueType);
+        owner.addressable = isAddressable(parent);
         return owner;
+    }
+
+    bool matchesTypeSpelling(TypeClass *type, llvm::StringRef spelling,
+                             bool ignoreTopLevelConst = false) {
+        if (ignoreTopLevelConst) {
+            type = stripTopLevelConst(type);
+        }
+        return type && toStringRef(type->full_name) == spelling;
+    }
+
+    std::vector<VisibleExtensionMethod>
+    collectVisibleExtensionMethods(llvm::StringRef methodName) {
+        std::vector<VisibleExtensionMethod> matches;
+        if (!unit) {
+            return matches;
+        }
+        if (auto *currentInterface = unit->interface()) {
+            for (const auto &method : currentInterface->extensionMethods()) {
+                if (toStringRef(method.localName) == methodName) {
+                    matches.push_back({&method, nullptr});
+                }
+            }
+        }
+        for (const auto &entry : unit->importedModules()) {
+            const auto &imported = entry.second;
+            if (!imported.interface) {
+                continue;
+            }
+            for (const auto &method : imported.interface->extensionMethods()) {
+                if (toStringRef(method.localName) == methodName) {
+                    matches.push_back({&method, &imported});
+                }
+            }
+        }
+        return matches;
+    }
+
+    std::optional<VisibleExtensionMethod>
+    lookupVisibleExtensionMethod(const MemberLookupOwner &owner,
+                                const std::string &fieldName,
+                                const location &loc,
+                                bool suppressValueReceiver = false) {
+        if (!unit || !owner.valueType) {
+            return std::nullopt;
+        }
+
+        const bool pointerLikeSource =
+            asUnqualified<PointerType>(owner.valueType) != nullptr ||
+            asUnqualified<IndexablePointerType>(owner.valueType) != nullptr;
+        const bool allowBorrowedSource =
+            !pointerLikeSource &&
+            (owner.addressable || owner.structType != nullptr);
+        std::optional<VisibleExtensionMethod> valueMatch;
+        std::optional<VisibleExtensionMethod> borrowedMutableMatch;
+        std::optional<VisibleExtensionMethod> borrowedReadOnlyMatch;
+
+        auto rememberUniqueMatch =
+            [&](std::optional<VisibleExtensionMethod> &slot,
+                const VisibleExtensionMethod &candidate) {
+                if (slot.has_value()) {
+                    internalError(
+                        loc,
+                        "visible extension lookup for `" + fieldName +
+                            "` produced multiple equivalent candidates",
+                        "This looks like an extension-method conflict "
+                        "validation bug.");
+                }
+                slot = candidate;
+            };
+
+        for (const auto &candidate : collectVisibleExtensionMethods(fieldName)) {
+            if (!candidate.decl) {
+                continue;
+            }
+            switch (candidate.decl->receiverKind) {
+                case ExtensionReceiverKind::Value:
+                    if (suppressValueReceiver) {
+                        continue;
+                    }
+                    if (pointerLikeSource) {
+                        continue;
+                    }
+                    if (matchesTypeSpelling(owner.valueType,
+                                            toStringRef(candidate.decl
+                                                            ->receiverTypeSpelling),
+                                            true)) {
+                        rememberUniqueMatch(valueMatch, candidate);
+                    }
+                    break;
+                case ExtensionReceiverKind::BorrowedReadOnly:
+                case ExtensionReceiverKind::BorrowedReadWrite:
+                    if (!allowBorrowedSource) {
+                        continue;
+                    }
+                    if (!matchesTypeSpelling(
+                            owner.valueType,
+                            toStringRef(candidate.decl->receiverBaseTypeSpelling),
+                            true)) {
+                        continue;
+                    }
+                    if (candidate.decl->receiverKind ==
+                            ExtensionReceiverKind::BorrowedReadWrite &&
+                        isConstQualifiedType(owner.valueType)) {
+                        continue;
+                    }
+                    if (candidate.decl->receiverKind ==
+                        ExtensionReceiverKind::BorrowedReadWrite) {
+                        rememberUniqueMatch(borrowedMutableMatch, candidate);
+                    } else {
+                        rememberUniqueMatch(borrowedReadOnlyMatch, candidate);
+                    }
+                    break;
+            }
+        }
+
+        if (valueMatch.has_value()) {
+            return valueMatch;
+        }
+        if (borrowedMutableMatch.has_value()) {
+            return borrowedMutableMatch;
+        }
+        return borrowedReadOnlyMatch;
     }
 
     LookupResult lookupDirectValueMember(
         const MemberLookupOwner &owner, const std::string &fieldName,
+        const location &loc,
+        std::optional<VisibleExtensionMethod> *extensionMethod = nullptr,
         std::string *resolvedMethodName = nullptr,
-        std::vector<std::string> *ambiguousTraitNames = nullptr) {
+        std::vector<std::string> *ambiguousTraitNames = nullptr,
+        bool suppressValueExtensions = false) {
         if (resolvedMethodName) {
             resolvedMethodName->clear();
         }
         if (ambiguousTraitNames) {
             ambiguousTraitNames->clear();
+        }
+        if (extensionMethod) {
+            extensionMethod->reset();
         }
         auto result = owner.entity.dot(fieldName);
         if (owner.tupleType) {
@@ -2996,6 +3214,18 @@ class FunctionAnalyzer {
                 result.kind = LookupResultKind::Method;
                 result.resultEntity = EntityRef::typedValue(methodType);
                 return result;
+            }
+            if (extensionMethod) {
+                *extensionMethod =
+                    lookupVisibleExtensionMethod(owner, fieldName, loc,
+                                                suppressValueExtensions);
+                if (extensionMethod->has_value()) {
+                    result.kind = LookupResultKind::ExtensionMethod;
+                    result.resultEntity =
+                        EntityRef::typedValue(extensionMethod->value()
+                                                  .decl->type);
+                    return result;
+                }
             }
             auto traitMethods =
                 owner.structType->findTraitMethodsByLocalName(fieldName);
@@ -3040,6 +3270,16 @@ class FunctionAnalyzer {
             return result;
         }
 
+        if (extensionMethod) {
+            *extensionMethod = lookupVisibleExtensionMethod(
+                owner, fieldName, loc, suppressValueExtensions);
+            if (extensionMethod->has_value()) {
+                result.kind = LookupResultKind::ExtensionMethod;
+                result.resultEntity =
+                    EntityRef::typedValue(extensionMethod->value().decl->type);
+                return result;
+            }
+        }
         result.kind = LookupResultKind::NotFound;
         return result;
     }
@@ -3117,12 +3357,18 @@ class FunctionAnalyzer {
         const MemberLookupOwner &owner, const std::string &fieldName,
         std::vector<std::string> &promotedPath,
         std::vector<std::vector<std::string>> &ambiguousPaths,
+        const location &loc,
+        std::optional<VisibleExtensionMethod> *extensionMethod = nullptr,
         std::string *resolvedMethodName = nullptr,
-        std::vector<std::string> *ambiguousTraitNames = nullptr) {
+        std::vector<std::string> *ambiguousTraitNames = nullptr,
+        bool suppressValueExtensions = false) {
         LookupResult result = owner.entity.dot(fieldName);
         result.kind = LookupResultKind::NotFound;
         promotedPath.clear();
         ambiguousPaths.clear();
+        if (extensionMethod) {
+            extensionMethod->reset();
+        }
         if (resolvedMethodName) {
             resolvedMethodName->clear();
         }
@@ -3139,6 +3385,7 @@ class FunctionAnalyzer {
             struct Candidate {
                 LookupResult result;
                 std::vector<std::string> path;
+                std::optional<VisibleExtensionMethod> extensionMethod;
                 std::string resolvedMethodName;
                 std::vector<std::string> ambiguousTraitNames;
             };
@@ -3150,13 +3397,17 @@ class FunctionAnalyzer {
                 promotedOwner.entity = EntityRef::typedValue(state.valueType);
                 promotedOwner.valueType = state.valueType;
                 promotedOwner.structType = state.structType;
+                promotedOwner.addressable = owner.addressable;
                 Candidate candidate;
                 candidate.path = state.path;
                 auto promotedLookup = lookupDirectValueMember(
-                    promotedOwner, fieldName, &candidate.resolvedMethodName,
-                    &candidate.ambiguousTraitNames);
+                    promotedOwner, fieldName, loc, &candidate.extensionMethod,
+                    &candidate.resolvedMethodName,
+                    &candidate.ambiguousTraitNames,
+                    suppressValueExtensions);
                 if (promotedLookup.kind == LookupResultKind::ValueField ||
-                    promotedLookup.kind == LookupResultKind::Method) {
+                    promotedLookup.kind == LookupResultKind::Method ||
+                    promotedLookup.kind == LookupResultKind::ExtensionMethod) {
                     candidate.result = promotedLookup;
                     candidates.push_back(std::move(candidate));
                 }
@@ -3167,6 +3418,9 @@ class FunctionAnalyzer {
                 promotedPath = candidates.front().path;
                 if (resolvedMethodName) {
                     *resolvedMethodName = candidates.front().resolvedMethodName;
+                }
+                if (extensionMethod) {
+                    *extensionMethod = candidates.front().extensionMethod;
                 }
                 if (ambiguousTraitNames) {
                     *ambiguousTraitNames =
@@ -3188,10 +3442,27 @@ class FunctionAnalyzer {
     }
 
     MemberLookup lookupMember(HIRExpr *parent, const std::string &fieldName,
-                              const location &loc) {
+                              const location &loc,
+                              bool suppressValueExtensions = false) {
         MemberLookup lookup;
         lookup.owner = classifyMemberOwner(parent);
-        (void)loc;
+
+        lookup.result = lookupDirectValueMember(
+            lookup.owner, fieldName, loc, &lookup.extensionMethod,
+            &lookup.resolvedMethodName,
+            &lookup.ambiguousTraitNames, suppressValueExtensions);
+        if (lookup.result.kind != LookupResultKind::NotFound) {
+            return lookup;
+        }
+
+        lookup.result = lookupPromotedValueMember(
+            lookup.owner, fieldName, lookup.promotedPath,
+            lookup.ambiguousPromotedPaths, loc, &lookup.extensionMethod,
+            &lookup.resolvedMethodName, &lookup.ambiguousTraitNames,
+            suppressValueExtensions);
+        if (lookup.result.kind != LookupResultKind::NotFound) {
+            return lookup;
+        }
 
         if (auto binding = resolveInjectedMemberBinding(
                 typeMgr, lookup.owner.valueType, fieldName)) {
@@ -3202,18 +3473,6 @@ class FunctionAnalyzer {
             lookup.injectedMember = binding;
             return lookup;
         }
-
-        lookup.result = lookupDirectValueMember(
-            lookup.owner, fieldName, &lookup.resolvedMethodName,
-            &lookup.ambiguousTraitNames);
-        if (lookup.result.kind != LookupResultKind::NotFound) {
-            return lookup;
-        }
-
-        lookup.result = lookupPromotedValueMember(
-            lookup.owner, fieldName, lookup.promotedPath,
-            lookup.ambiguousPromotedPaths, &lookup.resolvedMethodName,
-            &lookup.ambiguousTraitNames);
         return lookup;
     }
 
@@ -3222,7 +3481,7 @@ class FunctionAnalyzer {
         bool allowImplicitDeref) {
         MemberLookupAttempt attempt;
         attempt.parent = parent;
-        attempt.lookup = lookupMember(parent, fieldName, loc);
+        attempt.lookup = lookupMember(parent, fieldName, loc, false);
         if (!allowImplicitDeref ||
             attempt.lookup.result.kind != LookupResultKind::NotFound) {
             return attempt;
@@ -3234,7 +3493,7 @@ class FunctionAnalyzer {
         }
 
         attempt.parent = derefParent;
-        attempt.lookup = lookupMember(derefParent, fieldName, loc);
+        attempt.lookup = lookupMember(derefParent, fieldName, loc, true);
         return attempt;
     }
 
@@ -3246,7 +3505,8 @@ class FunctionAnalyzer {
         auto *current = parent;
         for (const auto &segment : lookup.promotedPath) {
             auto segmentOwner = classifyMemberOwner(current);
-            auto segmentLookup = lookupDirectValueMember(segmentOwner, segment);
+            auto segmentLookup =
+                lookupDirectValueMember(segmentOwner, segment, loc);
             if (segmentLookup.kind != LookupResultKind::ValueField) {
                 internalError(
                     loc,
@@ -3269,6 +3529,11 @@ class FunctionAnalyzer {
                     lookup.resolvedMethodName.empty() ? fieldName
                                                       : lookup.resolvedMethodName,
                     nullptr, loc, HIRSelectorKind::Method);
+            case LookupResultKind::ExtensionMethod:
+                error(loc,
+                      "extension method `" + fieldName +
+                          "` can only be used as a direct call callee",
+                      "Write `<expr>." + fieldName + "(...)`.");
             case LookupResultKind::InjectedMember:
                 if (allowInjectedMember) {
                     return nullptr;
@@ -7279,6 +7544,19 @@ class FunctionAnalyzer {
                             attempt.lookup.injectedMember->resultType,
                             node->loc);
                     }
+                }
+                if (attempt.lookup.result.kind ==
+                    LookupResultKind::ExtensionMethod) {
+                    if (!attempt.lookup.extensionMethod.has_value()) {
+                        internalError(
+                            node->loc,
+                            "extension method lookup is missing its binding",
+                            "This looks like an extension-method lookup bug.");
+                    }
+                    return lowerDirectExtensionMethodCall(
+                        *attempt.lookup.extensionMethod, attempt.parent,
+                        std::move(normalizedArgs), node->loc,
+                        toStringRef(dotLikeNode->field.text));
                 }
                 if (auto *resolvedCallee = materializeMemberExpr(
                         attempt.parent, fieldName, attempt.lookup,

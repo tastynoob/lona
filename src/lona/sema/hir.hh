@@ -161,6 +161,17 @@ public:
     HIRExpr *getExpr() const { return expr; }
 };
 
+class HIRBorrow : public HIRExpr {
+    HIRExpr *expr_;
+
+public:
+    HIRBorrow(HIRExpr *expr, TypeClass *pointerType,
+              const location &loc = location())
+        : HIRExpr(pointerType, loc), expr_(expr) {}
+
+    HIRExpr *getExpr() const { return expr_; }
+};
+
 class HIRBinOper : public HIRExpr {
     BinaryOperatorBinding binding_;
     HIRExpr *left;

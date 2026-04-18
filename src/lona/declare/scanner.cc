@@ -14,6 +14,7 @@
 namespace lona {
 
 using declarationsupport_impl::declareFunction;
+using declarationsupport_impl::declareExtensionFunction;
 using declarationsupport_impl::declareStructType;
 using declarationsupport_impl::describeStructFieldSyntax;
 using declarationsupport_impl::insertStructMember;
@@ -131,8 +132,12 @@ class TypeCollector : public AstVisitorAny {
                                        TopLevelDeclKind::Trait, decl->loc);
             } else if (it->is<AstFuncDecl>()) {
                 auto *decl = it->as<AstFuncDecl>();
-                recordTopLevelDeclName(topLevelDecls, toStdString(decl->name),
-                                       TopLevelDeclKind::Function, decl->loc);
+                if (!decl->hasExtensionReceiver()) {
+                    recordTopLevelDeclName(topLevelDecls,
+                                           toStdString(decl->name),
+                                           TopLevelDeclKind::Function,
+                                           decl->loc);
+                }
                 funcDecls.push_back(it->as<AstFuncDecl>());
             }
         }
@@ -161,6 +166,11 @@ class TypeCollector : public AstVisitorAny {
 
     Object *visit(AstFuncDecl *node) override {
         if (node->hasTypeParams()) {
+            return nullptr;
+        }
+        if (node->hasExtensionReceiver()) {
+            declareExtensionFunction(*scope, typeMgr, node, unit,
+                                     exportNamespace);
             return nullptr;
         }
         declareFunction(*scope, typeMgr, node, nullptr, unit, exportNamespace);

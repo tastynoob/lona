@@ -452,6 +452,8 @@ hashInterfaceNode(std::uint64_t &seed, AstNode *node) {
     }
     if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(node)) {
         hashText(seed, "func");
+        hashText(seed, funcDecl->hasExtensionReceiver() ? "extension-method"
+                                                        : "ordinary-function");
         hashText(seed, toStdString(funcDecl->name));
         hashText(seed, abiKindKeyword(funcDecl->abiKind));
         hashText(seed, accessKindKeyword(funcDecl->receiverAccess));

@@ -32,10 +32,11 @@ recordTopLevelDeclName(
     const std::string &name, TopLevelDeclKind kind, const location &loc);
 
 std::vector<string>
-extractParamNames(AstFuncDecl *node);
+extractParamNames(AstFuncDecl *node, std::size_t skipLeadingArgs = 0);
 
 std::vector<BindingKind>
-extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf = false);
+extractParamBindingKinds(AstFuncDecl *node, std::size_t skipLeadingArgs = 0,
+                         bool prependImplicitSelf = false);
 
 std::string
 resolveStructMethodOwnerTypeName(StructType *methodParent);
@@ -47,6 +48,24 @@ resolveStructMethodSymbolName(StructType *methodParent,
 std::string
 resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName,
                              llvm::StringRef methodName);
+
+struct ExtensionReceiverInfo {
+    ExtensionReceiverKind kind = ExtensionReceiverKind::Value;
+    TypeClass *receiverType = nullptr;
+    TypeClass *baseType = nullptr;
+    std::string receiverTypeSpelling;
+    std::string baseTypeSpelling;
+};
+
+ExtensionReceiverInfo
+classifyExtensionReceiver(TypeTable *typeMgr, const CompilationUnit *unit,
+                          AstFuncDecl *node);
+
+std::string
+resolveExtensionMethodSymbolName(const CompilationUnit *unit,
+                                 const std::string &receiverTypeSpelling,
+                                 llvm::StringRef methodName,
+                                 bool exportNamespace);
 
 TypeClass *
 methodReceiverPointeeType(TypeTable *typeMgr, StructType *methodParent,
@@ -116,6 +135,11 @@ Function *
 declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 StructType *methodParent, CompilationUnit *unit = nullptr,
                 bool exportNamespace = false);
+
+Function *
+declareExtensionFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
+                         CompilationUnit *unit = nullptr,
+                         bool exportNamespace = false);
 
 }  // namespace declarationsupport_impl
 

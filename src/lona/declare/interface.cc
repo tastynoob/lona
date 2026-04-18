@@ -34,6 +34,7 @@ using declarationsupport_impl::recordTopLevelDeclName;
 using declarationsupport_impl::rejectBareFunctionType;
 using declarationsupport_impl::rejectOpaqueStructByValue;
 using declarationsupport_impl::requireTypeTable;
+using declarationsupport_impl::resolveExtensionMethodSymbolName;
 using declarationsupport_impl::TopLevelDeclKind;
 using declarationsupport_impl::validateEmbeddedStructField;
 using declarationsupport_impl::validateExternCFunctionSignature;
@@ -114,6 +115,7 @@ class InterfaceCollector {
     std::vector<AstTraitDecl *> traitDecls_;
     std::vector<AstTraitImplDecl *> traitImplDecls_;
     std::vector<AstFuncDecl *> funcDecls_;
+    std::vector<AstFuncDecl *> extensionDecls_;
     std::vector<AstGlobalDecl *> globalDecls_;
     std::unordered_set<std::string> materializingAppliedStructs_;
     enum class StructCompletionState {
@@ -254,11 +256,30 @@ class InterfaceCollector {
         bool isGeneric() const { return !typeParams.empty(); }
     };
 
+    struct CollectedExtensionReceiver {
+        ExtensionReceiverKind kind = ExtensionReceiverKind::Value;
+        TypeClass *receiverType = nullptr;
+        TypeClass *baseType = nullptr;
+        string receiverTypeSpelling;
+        string baseTypeSpelling;
+    };
+
     enum class GenericParamContext {
         StructDecl,
         FunctionDecl,
         TraitImplHeader,
     };
+
+    static bool isBuiltinScalarExtensionBase(TypeClass *type) {
+        auto *storageType = stripTopLevelConst(type);
+        return storageType &&
+               (storageType == u8Ty || storageType == i8Ty ||
+                storageType == u16Ty || storageType == i16Ty ||
+                storageType == u32Ty || storageType == i32Ty ||
+                storageType == u64Ty || storageType == i64Ty ||
+                storageType == usizeTy || storageType == f32Ty ||
+                storageType == f64Ty || storageType == boolTy);
+    }
 
     std::vector<ModuleInterface::GenericParamDecl> collectGenericParams(
         const std::vector<AstGenericParam *> *params,
@@ -991,6 +1012,15 @@ class InterfaceCollector {
                           describeTraitImplContext(traitRef, selfRef),
                       "Keep trait impl methods monomorphic for now.");
             }
+            if (funcDecl->hasExtensionReceiver()) {
+                error(funcDecl->loc,
+                      "extension methods must be declared at top level",
+                      "Move `def " +
+                          describeTypeNode(funcDecl->extensionReceiverType(),
+                                           "void") +
+                          "." + toStdString(funcDecl->name) +
+                          "(...)` out of this trait impl body.");
+            }
             if (!funcDecl->hasBody()) {
                 error(funcDecl->loc,
                       "trait impl method `" + toStdString(funcDecl->name) +
@@ -1510,11 +1540,15 @@ class InterfaceCollector {
                            dynamic_cast<AstTraitImplDecl *>(stmt)) {
                 traitImplDecls_.push_back(traitImplDecl);
             } else if (auto *funcDecl = dynamic_cast<AstFuncDecl *>(stmt)) {
-                validateImportAliasConflict(funcDecl);
-                recordTopLevelDeclName(
-                    topLevelDecls_, toStdString(funcDecl->name),
-                    TopLevelDeclKind::Function, funcDecl->loc);
-                funcDecls_.push_back(funcDecl);
+                if (funcDecl->hasExtensionReceiver()) {
+                    extensionDecls_.push_back(funcDecl);
+                } else {
+                    validateImportAliasConflict(funcDecl);
+                    recordTopLevelDeclName(
+                        topLevelDecls_, toStdString(funcDecl->name),
+                        TopLevelDeclKind::Function, funcDecl->loc);
+                    funcDecls_.push_back(funcDecl);
+                }
             } else if (auto *globalDecl = dynamic_cast<AstGlobalDecl *>(stmt)) {
                 validateImportAliasConflict(globalDecl);
                 recordTopLevelDeclName(
@@ -1890,6 +1924,117 @@ class InterfaceCollector {
         }
     }
 
+    CollectedExtensionReceiver collectExtensionReceiver(AstFuncDecl *node) {
+        CollectedExtensionReceiver collected;
+        if (!node || !node->hasExtensionReceiver()) {
+            return collected;
+        }
+
+        if (node->receiverAccess != AccessKind::GetOnly) {
+            error(node->loc,
+                  "`set def` is not valid on extension methods",
+                  "Use `def (T*).name(...)` for writable borrowed receivers.");
+        }
+
+        auto *receiverTypeNode = node->extensionReceiverType();
+        validateGenericTypeNode(
+            receiverTypeNode, {}, node->loc,
+            "extension receiver of `" + toStdString(node->name) + "`");
+        auto *receiverType = resolveType(receiverTypeNode);
+        if (!receiverType) {
+            error(node->loc,
+                  "unknown extension receiver type for `" +
+                      toStdString(node->name) + "`: " +
+                      describeTypeNode(receiverTypeNode, "void"));
+        }
+
+        if (auto *pointerNode = dynamic_cast<PointerTypeNode *>(
+                receiverTypeNode)) {
+            if (pointerNode->dim != 1) {
+                error(node->loc,
+                      "extension receiver `" +
+                          describeTypeNode(receiverTypeNode, "void") +
+                          "` is not supported",
+                      "Borrowed extension receivers must use a single "
+                      "pointer like `(T const*)` or `(T*)`.");
+            }
+            auto *baseNode = pointerNode->base;
+            if (dynamic_cast<PointerTypeNode *>(baseNode) ||
+                dynamic_cast<IndexablePointerTypeNode *>(baseNode) ||
+                dynamic_cast<ArrayTypeNode *>(baseNode) ||
+                dynamic_cast<TupleTypeNode *>(baseNode) ||
+                dynamic_cast<FuncPtrTypeNode *>(baseNode) ||
+                dynamic_cast<DynTypeNode *>(baseNode)) {
+                error(node->loc,
+                      "extension receiver `" +
+                          describeTypeNode(receiverTypeNode, "void") +
+                          "` is not supported",
+                      "Borrowed extension receivers only support builtin "
+                      "scalar or concrete struct base types in v0.");
+            }
+            auto *baseType = resolveType(baseNode);
+            if (!baseType) {
+                error(node->loc,
+                      "unknown extension receiver base type for `" +
+                          toStdString(node->name) + "`: " +
+                          describeTypeNode(baseNode, "void"));
+            }
+            if (!isBuiltinScalarExtensionBase(baseType) &&
+                !stripTopLevelConst(baseType)->as<StructType>()) {
+                error(node->loc,
+                      "extension receiver `" +
+                          describeTypeNode(receiverTypeNode, "void") +
+                          "` is not supported",
+                      "Borrowed extension receivers only support builtin "
+                      "scalar or concrete struct base types in v0.");
+            }
+            auto *pointerType = asUnqualified<PointerType>(receiverType);
+            if (!pointerType) {
+                internalError(node->loc,
+                              "extension receiver pointer type did not "
+                              "resolve to a pointer",
+                              "This looks like an extension receiver type "
+                              "resolution bug.");
+            }
+            collected.kind = isConstQualifiedType(pointerType->getPointeeType())
+                                 ? ExtensionReceiverKind::BorrowedReadOnly
+                                 : ExtensionReceiverKind::BorrowedReadWrite;
+            collected.receiverType = receiverType;
+            collected.baseType = stripTopLevelConst(baseType);
+            collected.receiverTypeSpelling = receiverType->full_name;
+            collected.baseTypeSpelling =
+                collected.baseType ? collected.baseType->full_name : string();
+            return collected;
+        }
+
+        if (dynamic_cast<IndexablePointerTypeNode *>(receiverTypeNode) ||
+            dynamic_cast<ArrayTypeNode *>(receiverTypeNode) ||
+            dynamic_cast<TupleTypeNode *>(receiverTypeNode) ||
+            dynamic_cast<FuncPtrTypeNode *>(receiverTypeNode) ||
+            dynamic_cast<DynTypeNode *>(receiverTypeNode) ||
+            stripTopLevelConst(receiverType)->as<StructType>()) {
+            error(node->loc,
+                  "extension receiver `" +
+                      describeTypeNode(receiverTypeNode, "void") +
+                      "` is not supported",
+                  "Value receivers only support builtin scalar types in v0; "
+                  "composite types must use `(T const*)` or `(T*)`.");
+        }
+        if (!isBuiltinScalarExtensionBase(receiverType)) {
+            error(node->loc,
+                  "extension receiver `" +
+                      describeTypeNode(receiverTypeNode, "void") +
+                      "` is not supported",
+                  "Value receivers only support builtin scalar types in v0.");
+        }
+        collected.kind = ExtensionReceiverKind::Value;
+        collected.receiverType = receiverType;
+        collected.baseType = receiverType;
+        collected.receiverTypeSpelling = receiverType->full_name;
+        collected.baseTypeSpelling = receiverType->full_name;
+        return collected;
+    }
+
     CollectedFunctionInterface collectFunctionInterface(
         AstFuncDecl *node, StructType *methodParent,
         const std::vector<ModuleInterface::GenericParamDecl> *scopedTypeParams =
@@ -1898,7 +2043,7 @@ class InterfaceCollector {
         validateFunctionReceiverAccess(node, methodParent);
         collected.paramNames = extractParamNames(node);
         collected.paramBindingKinds =
-            extractParamBindingKinds(node, methodParent != nullptr);
+            extractParamBindingKinds(node, 0, methodParent != nullptr);
         if (scopedTypeParams) {
             collected.typeParams = *scopedTypeParams;
         }
@@ -2051,6 +2196,15 @@ class InterfaceCollector {
                 if (!funcDecl) {
                     continue;
                 }
+                if (funcDecl->hasExtensionReceiver()) {
+                    error(funcDecl->loc,
+                          "extension methods must be declared at top level",
+                          "Move `def " +
+                              describeTypeNode(funcDecl->extensionReceiverType(),
+                                               "void") +
+                              "." + toStdString(funcDecl->name) +
+                              "(...)` out of the struct body.");
+                }
                 auto collected = collectFunctionInterface(
                     funcDecl, structType,
                     typeDecl ? &typeDecl->typeParams : nullptr);
@@ -2102,6 +2256,164 @@ class InterfaceCollector {
                                         collected.returnTypeNode,
                                         std::move(collected.returnTypeSpelling),
                                         std::move(collected.typeParams));
+        }
+
+        for (auto *funcDecl : extensionDecls_) {
+            auto receiver = collectExtensionReceiver(funcDecl);
+            auto collected = collectFunctionInterface(funcDecl, nullptr);
+            auto explicitParamBindingKinds =
+                collected.paramBindingKinds.size() > 1
+                    ? std::vector<BindingKind>(
+                          collected.paramBindingKinds.begin() + 1,
+                          collected.paramBindingKinds.end())
+                    : std::vector<BindingKind>{};
+            auto explicitParamTypeNodes =
+                collected.paramTypeNodes.size() > 1
+                    ? std::vector<TypeNode *>(collected.paramTypeNodes.begin() + 1,
+                                              collected.paramTypeNodes.end())
+                    : std::vector<TypeNode *>{};
+            auto explicitParamTypeSpellings =
+                collected.paramTypeSpellings.size() > 1
+                    ? std::vector<string>(
+                          collected.paramTypeSpellings.begin() + 1,
+                          collected.paramTypeSpellings.end())
+                    : std::vector<string>{};
+            interface_->declareExtensionMethod(
+                ModuleInterface::ExtensionMethodDecl{
+                    funcDecl->name,
+                    resolveExtensionMethodSymbolName(
+                        &unit_, toStdString(receiver.receiverTypeSpelling),
+                        toStringRef(funcDecl->name), true),
+                    receiver.kind,
+                    receiver.receiverTypeSpelling,
+                    receiver.baseTypeSpelling,
+                    funcDecl->extensionReceiverType(),
+                    collected.type,
+                    extractParamNames(funcDecl, 1),
+                    std::move(explicitParamBindingKinds),
+                    std::move(explicitParamTypeNodes),
+                    std::move(explicitParamTypeSpellings),
+                    collected.returnTypeNode,
+                    std::move(collected.returnTypeSpelling),
+                    std::move(collected.typeParams),
+                    funcDecl,
+                });
+        }
+    }
+
+    void validateVisibleExtensionConflicts() {
+        struct VisibleExtension {
+            const ModuleInterface::ExtensionMethodDecl *decl = nullptr;
+            const CompilationUnit::ImportedModule *importedModule = nullptr;
+        };
+
+        std::vector<VisibleExtension> visible;
+        if (interface_) {
+            for (const auto &decl : interface_->extensionMethods()) {
+                visible.push_back({&decl, nullptr});
+            }
+        }
+        for (const auto &entry : unit_.importedModules()) {
+            const auto &imported = entry.second;
+            if (!imported.interface) {
+                continue;
+            }
+            for (const auto &decl : imported.interface->extensionMethods()) {
+                visible.push_back({&decl, &imported});
+            }
+        }
+
+        std::unordered_map<std::string, const VisibleExtension *> exactNames;
+        for (const auto &visibleDecl : visible) {
+            if (!visibleDecl.decl) {
+                continue;
+            }
+            auto key = toStdString(visibleDecl.decl->receiverTypeSpelling) +
+                       "#" + toStdString(visibleDecl.decl->localName);
+            if (auto found = exactNames.find(key); found != exactNames.end()) {
+                auto leftSource =
+                    found->second->importedModule
+                        ? toStdString(found->second->importedModule->moduleName)
+                        : toStdString(unit_.moduleName());
+                auto rightSource =
+                    visibleDecl.importedModule
+                        ? toStdString(visibleDecl.importedModule->moduleName)
+                        : toStdString(unit_.moduleName());
+                error(visibleDecl.decl->syntaxDecl
+                          ? visibleDecl.decl->syntaxDecl->loc
+                          : unit_.syntaxTree()->loc,
+                      "visible extension method conflict for `" +
+                          toStdString(visibleDecl.decl->receiverTypeSpelling) +
+                          "." + toStdString(visibleDecl.decl->localName) + "`",
+                      "Current v0 has no explicit module-qualified extension "
+                      "call syntax. Rename one definition or remove one of "
+                      "the direct imports (`" + leftSource + "` vs `" +
+                          rightSource + "`).");
+            }
+            exactNames.emplace(std::move(key), &visibleDecl);
+        }
+
+        auto checkStructConflict =
+            [&](const ModuleInterface::TypeDecl &typeDecl,
+                const VisibleExtension &visibleDecl) {
+                auto *structType =
+                    typeDecl.type ? typeDecl.type->as<StructType>() : nullptr;
+                if (!structType || !visibleDecl.decl) {
+                    return;
+                }
+                auto receiverBaseName =
+                    toStdString(visibleDecl.decl->receiverBaseTypeSpelling);
+                auto structName = toStdString(structType->full_name);
+                const bool sameOwner =
+                    receiverBaseName == structName ||
+                    (receiverBaseName.size() > structName.size() &&
+                     receiverBaseName.compare(0, structName.size(),
+                                              structName) == 0 &&
+                     receiverBaseName[structName.size()] == '[');
+                if (!sameOwner) {
+                    return;
+                }
+                auto methodName = toStringRef(visibleDecl.decl->localName);
+                bool hasInherent = structType->getMethodType(methodName) != nullptr;
+                if (!hasInherent) {
+                    for (const auto &method : typeDecl.methodTemplates) {
+                        if (toStringRef(method.localName) == methodName) {
+                            hasInherent = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hasInherent) {
+                    return;
+                }
+                error(visibleDecl.decl->syntaxDecl
+                          ? visibleDecl.decl->syntaxDecl->loc
+                          : unit_.syntaxTree()->loc,
+                      "extension method `" +
+                          toStdString(visibleDecl.decl->receiverBaseTypeSpelling) +
+                          "." + toStdString(visibleDecl.decl->localName) +
+                          "` conflicts with an inherent method",
+                      "Extension methods and ordinary methods share the same "
+                      "ordinary namespace in v0. Rename one of them.");
+            };
+
+        if (interface_) {
+            for (const auto &entry : interface_->types()) {
+                for (const auto &visibleDecl : visible) {
+                    checkStructConflict(entry.second, visibleDecl);
+                }
+            }
+        }
+        for (const auto &entry : unit_.importedModules()) {
+            const auto &imported = entry.second;
+            if (!imported.interface) {
+                continue;
+            }
+            for (const auto &typeEntry : imported.interface->types()) {
+                for (const auto &visibleDecl : visible) {
+                    checkStructConflict(typeEntry.second, visibleDecl);
+                }
+            }
         }
     }
 
@@ -2178,6 +2490,7 @@ public:
         defineTraitMethods();
         declareGlobals();
         declareFunctions();
+        validateVisibleExtensionConflicts();
         auto validatedTraitImpls = validateTraitImpls();
         checkVisibleTraitImplConflicts(validatedTraitImpls);
         declareValidatedTraitImpls(validatedTraitImpls);
@@ -2543,6 +2856,27 @@ materializeUnitInterface(Scope *global, CompilationUnit &unit,
         materializeDeclaredFunction(*global, typeMgr, funcType,
                                     toStringRef(runtimeName),
                                     entry.second.paramNames, false, &unit);
+        materializeReachableMethodBindings(typeMgr, storedType,
+                                           reachableMethodTypes);
+    }
+
+    for (const auto &extensionDecl : interface->extensionMethods()) {
+        if (extensionDecl.isGeneric()) {
+            continue;
+        }
+        auto *storedType = typeMgr->internType(extensionDecl.type);
+        auto *funcType = storedType ? storedType->as<FuncType>() : nullptr;
+        if (!funcType) {
+            internalError(
+                "failed to materialize imported extension method `" +
+                    toStdString(extensionDecl.symbolName) + "` from module `" +
+                    toStdString(unit.path()) + "`",
+                "Imported interfaces should only contain extension methods "
+                "with fully resolved function signatures.");
+        }
+        materializeDeclaredFunction(*global, typeMgr, funcType,
+                                    toStringRef(extensionDecl.symbolName),
+                                    extensionDecl.paramNames, false, &unit);
         materializeReachableMethodBindings(typeMgr, storedType,
                                            reachableMethodTypes);
     }

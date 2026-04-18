@@ -20,6 +20,12 @@ class TupleType;
 class AnyType;
 class AstNode;
 
+enum class ExtensionReceiverKind {
+    Value,
+    BorrowedReadOnly,
+    BorrowedReadWrite,
+};
+
 class ModuleInterface {
 public:
     enum class TopLevelLookupKind {
@@ -121,6 +127,27 @@ public:
         bool isGeneric() const { return !typeParams.empty(); }
     };
 
+    struct ExtensionMethodDecl {
+        string localName;
+        string symbolName;
+        ExtensionReceiverKind receiverKind =
+            ExtensionReceiverKind::Value;
+        string receiverTypeSpelling;
+        string receiverBaseTypeSpelling;
+        TypeNode *receiverTypeNode = nullptr;
+        FuncType *type = nullptr;
+        std::vector<string> paramNames;
+        std::vector<BindingKind> paramBindingKinds;
+        std::vector<TypeNode *> paramTypeNodes;
+        std::vector<string> paramTypeSpellings;
+        TypeNode *returnTypeNode = nullptr;
+        string returnTypeSpelling = "void";
+        std::vector<GenericParamDecl> typeParams;
+        AstFuncDecl *syntaxDecl = nullptr;
+
+        bool isGeneric() const { return !typeParams.empty(); }
+    };
+
     struct GlobalDecl {
         string localName;
         string symbolName;
@@ -155,6 +182,7 @@ private:
     std::unordered_map<string, TraitDecl> localTraits_;
     std::vector<TraitImplDecl> traitImpls_;
     std::unordered_map<string, FunctionDecl> localFunctions_;
+    std::vector<ExtensionMethodDecl> extensionMethods_;
     std::unordered_map<string, GlobalDecl> localGlobals_;
     std::unordered_map<string, ImportedModuleDecl> importedModules_;
 
@@ -234,6 +262,7 @@ public:
                                std::move(returnTypeSpelling),
                                std::move(typeParams));
     }
+    bool declareExtensionMethod(ExtensionMethodDecl method);
     bool declareGlobal(string localName, TypeClass *type,
                        bool isExtern = false);
     bool declareGlobal(std::string localName, TypeClass *type,
@@ -365,6 +394,9 @@ public:
     }
     const std::unordered_map<string, FunctionDecl> &functions() const {
         return localFunctions_;
+    }
+    const std::vector<ExtensionMethodDecl> &extensionMethods() const {
+        return extensionMethods_;
     }
     const std::unordered_map<string, GlobalDecl> &globals() const {
         return localGlobals_;

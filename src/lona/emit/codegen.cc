@@ -717,6 +717,35 @@ class FunctionCompiler {
             auto value = compileExpr(unary->getExpr());
             return emitUnaryOperator(unary->getBinding(), value.get());
         }
+        if (auto *borrow = dynamic_cast<HIRBorrow *>(expr)) {
+            setLocation(borrow);
+            auto value = compileExpr(borrow->getExpr());
+            if (!value) {
+                error("implicit borrow source did not produce a value");
+            }
+            auto *pointerType = asUnqualified<PointerType>(borrow->getType());
+            auto *pointeeType =
+                pointerType ? pointerType->getPointeeType() : nullptr;
+            if (!pointerType || !pointeeType) {
+                error("implicit borrow requires a concrete pointer type");
+            }
+
+            Object *valueObj = value.get();
+            ObjectPtr materializedValue;
+            if (!valueObj->isVariable() || valueObj->isRegVal() ||
+                !valueObj->getllvmValue()) {
+                materializedValue =
+                    materializeLocal(valueObj->getType(), valueObj);
+                valueObj = materializedValue.get();
+            }
+            if (!isConstQualificationConvertible(pointeeType,
+                                                 valueObj->getType())) {
+                error("implicit borrow lowering expected a compatible "
+                      "receiver type");
+            }
+            return makeReadonlyValue(borrow->getType(),
+                                     valueObj->getllvmValue());
+        }
         if (auto *selector = dynamic_cast<HIRSelector *>(expr)) {
             setLocation(selector);
             auto parent = compileExpr(selector->getParent());

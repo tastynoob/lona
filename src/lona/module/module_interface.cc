@@ -106,6 +106,7 @@ ModuleInterface::clear() {
     localTraits_.clear();
     traitImpls_.clear();
     localFunctions_.clear();
+    extensionMethods_.clear();
     localGlobals_.clear();
     importedModules_.clear();
 }
@@ -209,6 +210,15 @@ ModuleInterface::declareFunction(string localName, FuncType *type,
                          std::move(returnTypeSpelling),
                          std::move(typeParams)})
         .second;
+}
+
+bool
+ModuleInterface::declareExtensionMethod(ExtensionMethodDecl method) {
+    if (method.type) {
+        method.type = static_cast<FuncType *>(ownType(method.type));
+    }
+    extensionMethods_.push_back(std::move(method));
+    return true;
 }
 
 bool

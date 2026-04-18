@@ -13,6 +13,10 @@
         class AstVarDecl;
         class AstGlobalDecl;
         class TypeNode;
+        struct ExtensionMethodHead {
+            TypeNode *receiverType = nullptr;
+            AstToken *methodName = nullptr;
+        };
     }
 
     #include <cstdint>
@@ -70,6 +74,19 @@
         }
         return cloned;
     }
+
+    AstVarDecl *
+    makeExtensionSelfParam(TypeNode *receiverType) {
+        auto selfLoc = receiverType ? receiverType->loc : location();
+        AstToken selfToken(TokenType::Field, "self", selfLoc);
+        return new AstVarDecl(BindingKind::Value, selfToken, receiverType);
+    }
+
+    AstFuncDecl *
+    makeExtensionFuncDecl(ExtensionMethodHead *head, AstNode *body,
+                          std::vector<AstGenericParam *> *typeParams,
+                          std::vector<AstNode *> *args, TypeNode *retType,
+                          AbiKind abiKind, AccessKind receiverAccess);
 
     TypeNode *
     makeStructSelfTypeSyntax(const AstToken &structName,
@@ -133,6 +150,7 @@
     TypeNode* typeNode;
     std::vector<TypeNode*>* type_seq;
     std::vector<AstNode*>* pointer_suffix;
+    ExtensionMethodHead* extension_method_head;
 }
 
 %locations
@@ -195,6 +213,8 @@
 %type <var_decl> field_decl var_decl
 
 %type <typeNode> single_type type_primary postfix_type func_ptr_type type_name tuple_type func_param_type
+%type <typeNode> extension_simple_receiver_type
+%type <extension_method_head> extension_method_head
 
 %type <seq> expr_seq param_decl_seq brace_inline_body brace_line_body brace_line_entry_seq call_arg_seq type_bracket_item_seq
 %type <type_seq> type_name_seq
@@ -211,6 +231,12 @@
 %destructor { delete $$; } <tag> <generic_param> <node> <stat_list> <var_decl> <typeNode>
 %destructor { lona::deletePointerVector($$); } <seq> <tags> <generic_param_seq> <type_seq>
 %destructor { delete $$; } <token_seq>
+%destructor {
+    if ($$) {
+        delete $$->receiverType;
+        delete $$;
+    }
+} <extension_method_head>
 
 %start pragram
 
@@ -433,6 +459,54 @@ func_decl
     | opt_set_prefix DEF FIELD opt_type_params '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
         $$ = new AstFuncDecl(*$3, $11, $4, $7, $10, AbiKind::Native,
                              $1 ? AccessKind::GetSet : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines ')' NEWLINE {
+        $$ = makeExtensionFuncDecl($3, nullptr, $4, nullptr, nullptr,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines ')' type_name NEWLINE {
+        $$ = makeExtensionFuncDecl($3, nullptr, $4, nullptr, $8,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines param_decl_seq opt_newlines ')' NEWLINE {
+        $$ = makeExtensionFuncDecl($3, nullptr, $4, $7, nullptr,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines param_decl_seq opt_newlines ')' type_name NEWLINE {
+        $$ = makeExtensionFuncDecl($3, nullptr, $4, $7, $10,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines ')' stat_compound {
+        $$ = makeExtensionFuncDecl($3, $8, $4, nullptr, nullptr,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines ')' type_name stat_compound {
+        $$ = makeExtensionFuncDecl($3, $9, $4, nullptr, $8,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines param_decl_seq opt_newlines ')' stat_compound {
+        $$ = makeExtensionFuncDecl($3, $10, $4, $7, nullptr,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
+    }
+    | opt_set_prefix DEF extension_method_head opt_type_params '(' opt_newlines param_decl_seq opt_newlines ')' type_name stat_compound {
+        $$ = makeExtensionFuncDecl($3, $11, $4, $7, $10,
+                                   AbiKind::Native,
+                                   $1 ? AccessKind::GetSet
+                                      : AccessKind::GetOnly);
     }
     ;
 
@@ -1042,6 +1116,24 @@ dot_like_name
     | dot_like_name '.' opt_newlines FIELD { $$ = new AstDotLike($1, $4); }
     ;
 
+extension_simple_receiver_type
+    : FIELD {
+        $$ = new BaseTypeNode($1->text, @$);
+    }
+    | TYPE {
+        $$ = new BaseTypeNode($1->text, @$);
+    }
+    ;
+
+extension_method_head
+    : extension_simple_receiver_type '.' opt_newlines FIELD {
+        $$ = new ExtensionMethodHead{$1, $4};
+    }
+    | '(' opt_newlines type_name opt_newlines ')' '.' opt_newlines FIELD {
+        $$ = new ExtensionMethodHead{$3, $8};
+    }
+    ;
+
 impl_self_type_atom
     : dot_like_name {
         $$ = new BaseTypeNode($1, @$);
@@ -1067,6 +1159,45 @@ impl_self_type
 
 
 %%
+
+namespace {
+
+AstFuncDecl *
+makeExtensionFuncDecl(ExtensionMethodHead *head, AstNode *body,
+                      std::vector<AstGenericParam *> *typeParams,
+                      std::vector<AstNode *> *args, TypeNode *retType,
+                      AbiKind abiKind, AccessKind receiverAccess) {
+    if (!head || !head->receiverType || !head->methodName) {
+        if (args) {
+            for (auto *arg : *args) {
+                delete arg;
+            }
+        }
+        delete args;
+        delete body;
+        delete retType;
+        delete head;
+        return nullptr;
+    }
+
+    auto *allArgs = new std::vector<AstNode *>;
+    allArgs->push_back(makeExtensionSelfParam(head->receiverType));
+    head->receiverType = nullptr;
+    if (args) {
+        for (auto *arg : *args) {
+            allArgs->push_back(arg);
+        }
+        delete args;
+    }
+
+    auto *decl = new AstFuncDecl(*head->methodName, body, typeParams, allArgs,
+                                 retType, abiKind, receiverAccess, true);
+    delete head->receiverType;
+    delete head;
+    return decl;
+}
+
+}  // namespace
 
 void lona::Parser::error(const location_type &l, const std::string &err_message) {
     driver.reportSyntaxError(l, err_message);

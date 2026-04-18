@@ -217,6 +217,29 @@ def method_program_text(module_name: str, dx_name: str, dy_name: str) -> str:
     )
 
 
+def function_vs_extension_dependency_text(use_extension: bool, delta: int) -> str:
+    if not use_extension:
+        return (
+            f"def foo(self i32) i32 {{\n"
+            f"    ret self + {delta}\n"
+            "}\n"
+        )
+    return (
+        f"def i32.foo() i32 {{\n"
+        f"    ret self + {delta}\n"
+        "}\n"
+    )
+
+
+def function_vs_extension_program_text(module_name: str, value: int) -> str:
+    return (
+        f"import {module_name}\n\n"
+        "def main() i32 {\n"
+        f"    ret {module_name}.foo({value})\n"
+        "}\n"
+    )
+
+
 def indexable_pointer_dependency_text(type_name: str) -> str:
     return (
         f"def first(ptr {type_name}[*]) {type_name} {{\n"
@@ -353,6 +376,28 @@ def run_named_method_interface_hash_case(rng: random.Random, runner: SessionRunn
         1,
         0,
         f"unknown parameter `{first_dx}` for function call",
+    )
+
+
+def run_function_vs_extension_interface_hash_case(
+    rng: random.Random, runner: SessionRunner, root: Path
+) -> None:
+    dep_path = root / "dep.lo"
+    app_path = root / "app.lo"
+    delta = rng.randint(10, 99)
+    argument = rng.randint(1, 9)
+
+    write_file(dep_path, function_vs_extension_dependency_text(False, delta))
+    write_file(app_path, function_vs_extension_program_text("dep", argument))
+    expect_compile_ok(runner.compile(app_path), compiled=2, reused=0)
+
+    write_file(dep_path, function_vs_extension_dependency_text(True, delta))
+    result = runner.compile(app_path)
+    expect_compile_failure(
+        result,
+        1,
+        0,
+        "unknown module member `dep.foo`",
     )
 
 
@@ -884,6 +929,12 @@ def main() -> int:
                 "named-method-interface-hash-invalidation",
                 lambda: run_named_method_interface_hash_case(
                     rng, runner, root / "named_method_interface"
+                ),
+            )
+            suite.add(
+                "function-vs-extension-interface-hash-invalidation",
+                lambda: run_function_vs_extension_interface_hash_case(
+                    rng, runner, root / "function_vs_extension_interface"
                 ),
             )
             suite.add(

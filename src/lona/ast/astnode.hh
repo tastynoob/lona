@@ -811,19 +811,32 @@ public:
     TypeNode *const retType;
     AbiKind abiKind;
     AccessKind receiverAccess = AccessKind::GetOnly;
+    bool extensionMethod = false;
     bool hasTypeParams() const {
         return typeParams != nullptr && !typeParams->empty();
     }
     bool hasArgs() const { return args != nullptr; }
     bool hasBody() const { return body != nullptr; }
     bool isExternC() const { return abiKind == AbiKind::C; }
+    bool hasExtensionReceiver() const { return extensionMethod; }
+    AstVarDecl *extensionReceiverParam() const {
+        if (!extensionMethod || !args || args->empty()) {
+            return nullptr;
+        }
+        return dynamic_cast<AstVarDecl *>(args->front());
+    }
+    TypeNode *extensionReceiverType() const {
+        auto *param = extensionReceiverParam();
+        return param ? param->typeNode : nullptr;
+    }
     void setAbiKind(AbiKind kind) { abiKind = kind; }
 
     AstFuncDecl(AstToken &name, AstNode *body,
                 std::vector<AstGenericParam *> *typeParams = nullptr,
                 std::vector<AstNode *> *args = nullptr,
                 TypeNode *retType = nullptr, AbiKind abiKind = AbiKind::Native,
-                AccessKind receiverAccess = AccessKind::GetOnly);
+                AccessKind receiverAccess = AccessKind::GetOnly,
+                bool extensionMethod = false);
     ~AstFuncDecl() override;
     void toJson(Json &root) override;
 

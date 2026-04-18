@@ -42,6 +42,7 @@ enum class LookupResultKind {
     Ambiguous,
     ValueField,
     Method,
+    ExtensionMethod,
     TypeMember,
     ConstructorSet,
     InjectedMember,

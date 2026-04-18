@@ -445,6 +445,10 @@ AstFuncDecl::toJson(Json &root) {
     root["name"] = this->name.tochara();
     root["abiKind"] = abiKindKeyword(this->abiKind);
     root["receiverAccess"] = accessKindKeyword(this->receiverAccess);
+    root["extensionMethod"] = extensionMethod;
+    if (auto *receiverType = extensionReceiverType()) {
+        root["extensionReceiverType"] = describeTypeNode(receiverType);
+    }
     appendTypeParamNames(root, this->typeParams);
     // if (this->retType) root["ret"] = this->retType->toString();
     if (args) {

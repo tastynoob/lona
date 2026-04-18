@@ -2,9 +2,11 @@
 
 #include "lona/abi/abi.hh"
 #include "lona/ast/type_node_string.hh"
+#include "lona/ast/type_node_tools.hh"
 #include "lona/err/err.hh"
 #include "lona/sema/initializer.hh"
 #include "lona/sema/moduleentry.hh"
+#include "lona/type/buildin.hh"
 
 namespace lona {
 namespace declarationsupport_impl {
@@ -231,6 +233,24 @@ resolveFunctionSymbolName(const CompilationUnit *unit, const string &name,
     return resolved;
 }
 
+bool
+isBuiltinScalarExtensionBase(TypeClass *type) {
+    auto *storageType = stripTopLevelConst(type);
+    return storageType &&
+           (storageType == u8Ty || storageType == i8Ty ||
+            storageType == u16Ty || storageType == i16Ty ||
+            storageType == u32Ty || storageType == i32Ty ||
+            storageType == u64Ty || storageType == i64Ty ||
+            storageType == usizeTy || storageType == f32Ty ||
+            storageType == f64Ty || storageType == boolTy);
+}
+
+[[noreturn]] void
+errorInvalidExtensionReceiver(AstFuncDecl *node, const std::string &message,
+                              const std::string &hint) {
+    error(node ? node->loc : location(), message, hint);
+}
+
 }  // namespace
 
 std::string
@@ -273,13 +293,20 @@ resolveTraitMethodSymbolName(StructType *methodParent, llvm::StringRef traitName
 }
 
 std::vector<string>
-extractParamNames(AstFuncDecl *node) {
+extractParamNames(AstFuncDecl *node, std::size_t skipLeadingArgs) {
     std::vector<string> names;
     if (!node || !node->args) {
         return names;
     }
-    names.reserve(node->args->size());
+    if (skipLeadingArgs >= node->args->size()) {
+        return names;
+    }
+    names.reserve(node->args->size() - skipLeadingArgs);
+    std::size_t index = 0;
     for (auto *arg : *node->args) {
+        if (index++ < skipLeadingArgs) {
+            continue;
+        }
         auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
         if (!varDecl) {
             continue;
@@ -290,20 +317,155 @@ extractParamNames(AstFuncDecl *node) {
 }
 
 std::vector<BindingKind>
-extractParamBindingKinds(AstFuncDecl *node, bool withImplicitSelf) {
+extractParamBindingKinds(AstFuncDecl *node, std::size_t skipLeadingArgs,
+                         bool prependImplicitSelf) {
     std::vector<BindingKind> kinds;
-    if (withImplicitSelf) {
+    if (prependImplicitSelf) {
         kinds.push_back(BindingKind::Value);
     }
     if (!node || !node->args) {
         return kinds;
     }
-    kinds.reserve(kinds.size() + node->args->size());
+    if (skipLeadingArgs >= node->args->size()) {
+        return kinds;
+    }
+    kinds.reserve(kinds.size() + node->args->size() - skipLeadingArgs);
+    std::size_t index = 0;
     for (auto *arg : *node->args) {
+        if (index++ < skipLeadingArgs) {
+            continue;
+        }
         auto *varDecl = dynamic_cast<AstVarDecl *>(arg);
         kinds.push_back(varDecl ? varDecl->bindingKind : BindingKind::Value);
     }
     return kinds;
+}
+
+ExtensionReceiverInfo
+classifyExtensionReceiver(TypeTable *typeMgr, const CompilationUnit *unit,
+                          AstFuncDecl *node) {
+    ExtensionReceiverInfo info;
+    if (!node || !node->hasExtensionReceiver()) {
+        return info;
+    }
+
+    auto *receiverTypeNode = node->extensionReceiverType();
+    auto *receiverType = resolveTypeNode(typeMgr, unit, receiverTypeNode);
+    if (!receiverType) {
+        error(node->loc,
+              "unknown extension receiver type for `" +
+                  toStdString(node->name) + "`: " +
+                  describeTypeNode(receiverTypeNode, "void"),
+              "Declare the receiver type before defining this extension "
+              "method.");
+    }
+
+    if (auto *pointerNode = dynamic_cast<PointerTypeNode *>(receiverTypeNode)) {
+        if (pointerNode->dim != 1) {
+            errorInvalidExtensionReceiver(
+                node,
+                "extension receiver `" +
+                    describeTypeNode(receiverTypeNode, "void") +
+                    "` is not supported",
+                "Borrowed extension receivers must use a single pointer like "
+                "`(T const*)` or `(T*)`.");
+        }
+        auto *baseNode = pointerNode->base;
+        if (dynamic_cast<PointerTypeNode *>(baseNode) ||
+            dynamic_cast<IndexablePointerTypeNode *>(baseNode) ||
+            dynamic_cast<ArrayTypeNode *>(baseNode) ||
+            dynamic_cast<TupleTypeNode *>(baseNode) ||
+            dynamic_cast<FuncPtrTypeNode *>(baseNode) ||
+            dynamic_cast<DynTypeNode *>(baseNode)) {
+            errorInvalidExtensionReceiver(
+                node,
+                "extension receiver `" +
+                    describeTypeNode(receiverTypeNode, "void") +
+                    "` is not supported",
+                "Borrowed extension receivers only support builtin scalar or "
+                "concrete struct base types in v0.");
+        }
+        auto *baseType = resolveTypeNode(typeMgr, unit, baseNode);
+        if (!baseType) {
+            error(node->loc,
+                  "unknown extension receiver base type for `" +
+                      toStdString(node->name) + "`: " +
+                      describeTypeNode(baseNode, "void"));
+        }
+        if (!isBuiltinScalarExtensionBase(baseType) &&
+            !stripTopLevelConst(baseType)->as<StructType>()) {
+            errorInvalidExtensionReceiver(
+                node,
+                "extension receiver `" +
+                    describeTypeNode(receiverTypeNode, "void") +
+                    "` is not supported",
+                "Borrowed extension receivers only support builtin scalar or "
+                "concrete struct base types in v0.");
+        }
+        auto *pointerType = asUnqualified<PointerType>(receiverType);
+        if (!pointerType) {
+            internalError(node->loc,
+                          "extension receiver pointer type did not resolve to "
+                          "a pointer",
+                          "This looks like an extension receiver type "
+                          "resolution bug.");
+        }
+        info.kind = isConstQualifiedType(pointerType->getPointeeType())
+                        ? ExtensionReceiverKind::BorrowedReadOnly
+                        : ExtensionReceiverKind::BorrowedReadWrite;
+        info.receiverType = receiverType;
+        info.baseType = stripTopLevelConst(baseType);
+        info.receiverTypeSpelling = toStdString(receiverType->full_name);
+        info.baseTypeSpelling = info.baseType
+                                    ? toStdString(info.baseType->full_name)
+                                    : std::string();
+        return info;
+    }
+
+    if (dynamic_cast<IndexablePointerTypeNode *>(receiverTypeNode) ||
+        dynamic_cast<ArrayTypeNode *>(receiverTypeNode) ||
+        dynamic_cast<TupleTypeNode *>(receiverTypeNode) ||
+        dynamic_cast<FuncPtrTypeNode *>(receiverTypeNode) ||
+        dynamic_cast<DynTypeNode *>(receiverTypeNode) ||
+        stripTopLevelConst(receiverType)->as<StructType>()) {
+        errorInvalidExtensionReceiver(
+            node,
+            "extension receiver `" +
+                describeTypeNode(receiverTypeNode, "void") +
+                "` is not supported",
+            "Value receivers only support builtin scalar types in v0; "
+            "composite types must use `(T const*)` or `(T*)` receivers.");
+    }
+    if (!isBuiltinScalarExtensionBase(receiverType)) {
+        errorInvalidExtensionReceiver(
+            node,
+            "extension receiver `" +
+                describeTypeNode(receiverTypeNode, "void") +
+                "` is not supported",
+            "Value receivers only support builtin scalar types in v0.");
+    }
+    info.kind = ExtensionReceiverKind::Value;
+    info.receiverType = receiverType;
+    info.baseType = receiverType;
+    info.receiverTypeSpelling = toStdString(receiverType->full_name);
+    info.baseTypeSpelling = toStdString(receiverType->full_name);
+    return info;
+}
+
+std::string
+resolveExtensionMethodSymbolName(const CompilationUnit *unit,
+                                 const std::string &receiverTypeSpelling,
+                                 llvm::StringRef methodName,
+                                 bool exportNamespace) {
+    (void)exportNamespace;
+    auto receiverKey =
+        mangleModuleEntryComponent(string(receiverTypeSpelling));
+    auto prefix = unit ? toStdString(unit->exportNamespacePrefix())
+                       : std::string();
+    if (prefix.empty()) {
+        return receiverKey + "." + methodName.str();
+    }
+    return prefix + "." + receiverKey + "." + methodName.str();
 }
 
 TypeClass *
@@ -333,7 +495,14 @@ interfaceMethodReceiverPointeeType(ModuleInterface *interface,
 
 void
 validateFunctionReceiverAccess(AstFuncDecl *node, StructType *methodParent) {
-    if (!node || methodParent || node->receiverAccess == AccessKind::GetOnly) {
+    if (!node || node->receiverAccess == AccessKind::GetOnly) {
+        return;
+    }
+    if (node->hasExtensionReceiver()) {
+        error(node->loc, "`set def` is not valid on extension methods",
+              "Use `def (T*).name(...)` for writable borrowed receivers.");
+    }
+    if (methodParent) {
         return;
     }
     error(node->loc, "`set def` is only valid on struct methods",
@@ -396,6 +565,18 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
                 StructType *methodParent, CompilationUnit *unit,
                 bool exportNamespace) {
     validateFunctionReceiverAccess(node, methodParent);
+    if (node && node->hasExtensionReceiver()) {
+        if (methodParent) {
+            error(node->loc,
+                  "extension methods must be declared at top level",
+                  "Move `def " + describeTypeNode(node->extensionReceiverType(),
+                                                   "void") +
+                      "." + toStdString(node->name) +
+                      "(...)` out of the struct or impl body.");
+        }
+        return declareExtensionFunction(scope, typeMgr, node, unit,
+                                        exportNamespace);
+    }
     if (node && node->hasTypeParams() && methodParent) {
         return nullptr;
     }
@@ -447,7 +628,7 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
 
     std::vector<TypeClass *> argTypes;
     auto argBindingKinds =
-        extractParamBindingKinds(node, methodParent != nullptr);
+        extractParamBindingKinds(node, 0, methodParent != nullptr);
     TypeClass *retType = nullptr;
     if (node->retType) {
         retType = resolveTypeNode(typeMgr, unit, node->retType);
@@ -545,6 +726,112 @@ declareFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
     } else {
         scope.addObj(llvm::StringRef(llvmName), func);
     }
+    return func;
+}
+
+Function *
+declareExtensionFunction(Scope &scope, TypeTable *typeMgr, AstFuncDecl *node,
+                         CompilationUnit *unit, bool exportNamespace) {
+    if (!node || !node->hasExtensionReceiver()) {
+        return nullptr;
+    }
+    validateFunctionReceiverAccess(node, nullptr);
+    if (node->isExternC()) {
+        error(node->loc,
+              "#[extern \"C\"] is not supported on extension methods",
+              "Declare a top-level wrapper function instead.");
+    }
+    if (node->hasTypeParams()) {
+        return nullptr;
+    }
+
+    auto receiverInfo = classifyExtensionReceiver(typeMgr, unit, node);
+    auto resolvedFunctionName = resolveExtensionMethodSymbolName(
+        unit, receiverInfo.receiverTypeSpelling, toStringRef(node->name),
+        exportNamespace);
+
+    Function *existingFunction = nullptr;
+    if (auto *existing = scope.getObj(llvm::StringRef(resolvedFunctionName))) {
+        existingFunction = existing->as<Function>();
+        if (!existingFunction) {
+            error(node->loc,
+                  "extension method `" + resolvedFunctionName +
+                      "` conflicts with an existing symbol");
+        }
+    }
+
+    std::vector<TypeClass *> argTypes;
+    auto argBindingKinds = extractParamBindingKinds(node);
+    TypeClass *retType = nullptr;
+    if (node->retType) {
+        retType = resolveTypeNode(typeMgr, unit, node->retType);
+        if (!retType) {
+            error(node->loc,
+                  "unknown return type for extension method `" +
+                      toStdString(node->name) +
+                      "`: " + describeTypeNode(node->retType, "void"));
+        }
+        rejectBareFunctionType(
+            retType, node->retType,
+            "unsupported bare function return type for extension method `" +
+                toStdString(node->name) + "`",
+            node->loc);
+        rejectOpaqueStructByValue(
+            retType, node->retType, node->loc,
+            "return type of extension method `" + toStdString(node->name) +
+                "`");
+    }
+
+    if (node->args) {
+        for (auto *arg : *node->args) {
+            if (!arg->is<AstVarDecl>()) {
+                error(node->loc,
+                      "invalid extension method parameter declaration in `" +
+                          toStdString(node->name) + "`");
+            }
+            auto *varDecl = arg->as<AstVarDecl>();
+            auto *type = resolveTypeNode(typeMgr, unit, varDecl->typeNode);
+            if (!type) {
+                error(varDecl->loc,
+                      "unknown type for extension method parameter `" +
+                          toStdString(varDecl->field) + "` in `" +
+                          toStdString(node->name) +
+                          "`: " + describeTypeNode(varDecl->typeNode, "void"));
+            }
+            rejectBareFunctionType(
+                type, varDecl->typeNode,
+                "unsupported bare function parameter type for `" +
+                    toStdString(varDecl->field) + "` in extension method `" +
+                    toStdString(node->name) + "`",
+                varDecl->loc);
+            rejectOpaqueStructByValue(
+                type, varDecl->typeNode, varDecl->loc,
+                "parameter `" + toStdString(varDecl->field) +
+                    "` in extension method `" + toStdString(node->name) +
+                    "`");
+            argTypes.push_back(type);
+        }
+    }
+
+    auto *funcType = typeMgr->getOrCreateFunctionType(
+        argTypes, retType, std::move(argBindingKinds), node->abiKind);
+    if (existingFunction) {
+        auto *existingType = existingFunction->getType()->as<FuncType>();
+        if (existingType != funcType) {
+            reportLocalFunctionConflict(node, resolvedFunctionName,
+                                        existingType, funcType);
+        }
+        return existingFunction;
+    }
+
+    auto *llvmFunc = llvm::Function::Create(
+        getFunctionAbiLLVMType(*typeMgr, funcType, false),
+        llvm::Function::ExternalLinkage, llvm::Twine(resolvedFunctionName),
+        typeMgr->getModule());
+    annotateFunctionAbi(*llvmFunc, funcType->getAbiKind());
+    auto *func =
+        new Function(llvmFunc, funcType, extractParamNames(node, 1), false);
+    scope.addObj(llvm::StringRef(resolvedFunctionName), func);
     return func;
 }
 
