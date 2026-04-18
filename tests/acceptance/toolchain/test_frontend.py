@@ -198,6 +198,74 @@ def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -
     )
 
 
+def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "linked_bitcode_cache/dep.lo",
+        """
+        def add1(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    app_path = compiler.write_source(
+        "linked_bitcode_cache/main.lo",
+        """
+        import dep
+
+        def run() i32 {
+            ret dep.add1(41)
+        }
+
+        ret run()
+        """,
+    )
+
+    first, bitcode_path = compiler.emit_linked_bc(
+        app_path,
+        output_name="linked-default-cache.bc",
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    first.expect_ok()
+    assert bitcode_path.stat().st_size > 0, f"expected non-empty bitcode file: {bitcode_path}"
+    assert_magic_bytes(bitcode_path, b"BC\xc0\xde")
+    assert_contains(first.stderr, "compiled-modules: 2", label="linked bitcode default cache first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="linked bitcode default cache first stats")
+    assert_contains(
+        first.stderr,
+        "reused-module-bitcode: 0",
+        label="linked bitcode default cache first stats",
+    )
+
+    cache_dir = compiler.output_path("linked-default-cache.bc.d")
+    assert cache_dir.is_dir(), f"expected linked-bitcode cache dir: {cache_dir}"
+    assert len(list(cache_dir.glob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+
+    second, bitcode_path_again = compiler.emit_linked_bc(
+        app_path,
+        output_name="linked-default-cache.bc",
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    second.expect_ok()
+    assert bitcode_path_again == bitcode_path
+    assert_magic_bytes(bitcode_path_again, b"BC\xc0\xde")
+    assert_contains(second.stderr, "compiled-modules: 0", label="linked bitcode default cache reuse stats")
+    assert_contains(second.stderr, "reused-modules: 2", label="linked bitcode default cache reuse stats")
+    assert_contains(
+        second.stderr,
+        "reused-module-bitcode: 2",
+        label="linked bitcode default cache reuse stats",
+    )
+    assert_contains(
+        second.stderr,
+        "emitted-module-bitcode: 0",
+        label="linked bitcode default cache reuse stats",
+    )
+
+
 def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "bundle_entry.lo",

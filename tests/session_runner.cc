@@ -17,6 +17,8 @@ buildSessionRunnerOptions(const Json &command) {
         command.value("output_mode", std::string("llvm_ir"));
     if (outputMode == "ast_json") {
         options.outputMode = OutputMode::AstJson;
+    } else if (outputMode == "linked_bitcode") {
+        options.outputMode = OutputMode::LinkedBitcode;
     } else if (outputMode == "linked_object") {
         options.outputMode = OutputMode::LinkedObject;
     } else if (outputMode == "bitcode_bundle") {
@@ -63,7 +65,8 @@ compileSessionRunnerCommand(CompilerSession &session, const Json &command) {
     result["exit_code"] = exitCode;
     const std::string output = out.str();
     result["stdout_size"] = output.size();
-    if (options.outputMode == OutputMode::LinkedObject) {
+    if (options.outputMode == OutputMode::LinkedObject ||
+        options.outputMode == OutputMode::LinkedBitcode) {
         result["stdout"] = "";
     } else {
         result["stdout"] = output;

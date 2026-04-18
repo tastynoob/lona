@@ -38,6 +38,7 @@
 - LLVM IR
 - 模块 bitcode bundle
 - 模块 object bundle
+- 单最终 linked bitcode
 - 单最终 object
 - hosted entry object
 
@@ -79,6 +80,12 @@ lona-ir --emit bc --verify-ir input.lo output.manifest
 lona-ir --emit obj --verify-ir input.lo output.manifest
 ```
 
+生成单最终 linked bitcode：
+
+```bash
+lona-ir --emit linked-bc --verify-ir -O3 input.lo output.bc
+```
+
 显式走 full-LTO 并输出单最终 object：
 
 ```bash
@@ -101,6 +108,9 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 输出模块 bitcode bundle manifest
 - `--emit obj`
   - 输出模块 object bundle manifest
+- `--emit linked-bc`
+  - 输出单最终 linked bitcode
+  - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
 - `--emit linked-obj`
   - 输出单最终 object
   - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
@@ -126,7 +136,7 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 选择 link-time optimization 模式
 - `--cache-dir <dir>`
   - 对 `--emit bc` / `--emit obj` 生效时，指定 bundle 成员目录根
-  - 对 `--emit linked-obj` 生效时，指定模块 bitcode 中间缓存目录
+  - 对 `--emit linked-bc` / `--emit linked-obj` 生效时，指定模块 bitcode 中间缓存目录
 - `--no-cache`
   - 禁用本轮模块 artifact 复用
 - `-g`
@@ -140,6 +150,8 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit bc` 不支持 `--lto full`
 - `--emit obj` 必须显式提供 manifest 输出路径
 - `--emit obj` 不支持 `--lto full`
+- `--emit linked-bc` 支持 `--lto off|full`
+- `--emit linked-bc` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `<output>.d/`
 - `--emit linked-obj` 支持 `--lto off|full`
 - `--emit linked-obj` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `<output>.d/`
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径

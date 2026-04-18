@@ -182,6 +182,37 @@ class CompilerHarness:
         args.extend([str(input_path), str(output_path)])
         return self._run(args), output_path
 
+    def emit_linked_bc(
+        self,
+        input_path: Path,
+        *,
+        output_name: str,
+        verify_ir: bool = True,
+        target: str | None = None,
+        lto: str | None = None,
+        cache_dir: Path | None = None,
+        stats: bool = False,
+        no_cache: bool = False,
+        include_paths: list[Path] | None = None,
+    ) -> tuple[CommandResult, Path]:
+        output_path = self.output_path(output_name)
+        args = ["--emit", "linked-bc"]
+        if verify_ir:
+            args.append("--verify-ir")
+        if stats:
+            args.append("--stats")
+        if no_cache:
+            args.append("--no-cache")
+        if cache_dir is not None:
+            args.extend(["--cache-dir", str(cache_dir)])
+        if target is not None:
+            args.extend(["--target", target])
+        if lto is not None:
+            args.extend(["--lto", lto])
+        self._extend_include_paths(args, include_paths)
+        args.extend([str(input_path), str(output_path)])
+        return self._run(args), output_path
+
     def emit_obj_bundle(
         self,
         input_path: Path,

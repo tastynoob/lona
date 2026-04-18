@@ -27,6 +27,7 @@ enum class OutputMode {
     EntryObject,
     BitcodeBundle,
     ObjectBundle,
+    LinkedBitcode,
     LinkedObject,
 };
 

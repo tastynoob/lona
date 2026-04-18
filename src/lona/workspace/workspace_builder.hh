@@ -86,6 +86,10 @@ class WorkspaceBuilder {
                          const CompileOptions &options,
                          const std::string &outputPath,
                          SessionStats &stats, std::ostream &out) const;
+    int emitBitcodeModule(llvm::Module &module,
+                          const CompileOptions &options,
+                          const std::string &outputPath,
+                          SessionStats &stats, std::ostream &out) const;
     int emitArtifactBundle(CompilationUnit &rootUnit,
                            const CompileOptions &options,
                            const std::string &outputPath,
@@ -113,6 +117,11 @@ public:
                          const std::string &outputPath,
                          const std::string &cacheOutputPath,
                          SessionStats &stats, std::ostream &out) const;
+    int emitLinkedBitcode(CompilationUnit &rootUnit,
+                          const CompileOptions &options,
+                          const std::string &outputPath,
+                          const std::string &artifactCachePath,
+                          SessionStats &stats, std::ostream &out) const;
     int emitLinkedObject(CompilationUnit &rootUnit,
                          const CompileOptions &options,
                          const std::string &outputPath,

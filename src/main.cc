@@ -69,19 +69,19 @@ main(int argc, char *argv[]) {
     cli.add<std::string>(
         "emit", 0,
         "select output artifact: ir, bc (module bitcode bundle), obj (module "
-        "object bundle), linked-obj (single final object), or entry (hosted "
-        "entry object)",
+        "object bundle), linked-bc (single final linked bitcode), linked-obj "
+        "(single final object), or entry (hosted entry object)",
         false, "",
         cmdline::oneof<std::string>("ir", "entry", "bc", "obj",
-                                    "linked-obj"));
+                                    "linked-bc", "linked-obj"));
     cli.add<std::string>("target", 0,
                          "LLVM target triple, for example x86_64-none-elf or "
                          "x86_64-unknown-linux-gnu",
                          false, "");
     cli.add<std::string>(
         "cache-dir", 0,
-        "artifact cache directory for module bundles and linked-object "
-        "bitcode intermediates",
+        "artifact cache directory for module bundles and linked-bitcode / "
+        "linked-object bitcode intermediates",
         false, "./lona_cache");
     cli.add<std::string>(
         "include-dir", 'I',
@@ -123,6 +123,7 @@ main(int argc, char *argv[]) {
     const bool emitEntry = emitTarget == "entry";
     const bool emitBitcodeBundle = emitTarget == "bc";
     const bool emitObject = emitTarget == "obj";
+    const bool emitLinkedBitcode = emitTarget == "linked-bc";
     const bool emitLinkedObject = emitTarget == "linked-obj";
     const std::string ltoMode = cli.get<std::string>("lto");
 
@@ -153,9 +154,10 @@ main(int argc, char *argv[]) {
         std::cerr << cli.usage();
         return 1;
     }
-    if (!(emitBundle || emitLinkedObject) && cli.exist("cache-dir")) {
+    if (!(emitBundle || emitLinkedBitcode || emitLinkedObject) &&
+        cli.exist("cache-dir")) {
         std::cerr << "`--cache-dir` is only supported with `--emit bc`, "
-                     "`--emit obj`, or `--emit linked-obj`\n";
+                     "`--emit obj`, `--emit linked-bc`, or `--emit linked-obj`\n";
         std::cerr << cli.usage();
         return 1;
     }
@@ -173,7 +175,8 @@ main(int argc, char *argv[]) {
     const std::string outputPath =
         emitEntry ? args[0] : (args.size() == 2 ? args[1] : std::string());
     const bool builderWritesOutputDirectly =
-        !outputPath.empty() && (emitEntry || emitLinkedObject);
+        !outputPath.empty() &&
+        (emitEntry || emitLinkedBitcode || emitLinkedObject);
     if (!outputPath.empty() && !builderWritesOutputDirectly) {
         std::ios::openmode fileMode = std::ios::out;
         if (emitEntry || emitLinkedObject) {
@@ -196,15 +199,17 @@ main(int argc, char *argv[]) {
     lona::SessionOptions options;
     const bool compileMode =
         emitIR || emitEntry || emitBitcodeBundle || emitObject ||
-        emitLinkedObject || cli.exist("no-cache") || cli.exist("verify-ir") ||
-        cli.exist("debug") || cli.exist("opt") || cli.exist("target") ||
-        ltoMode != "off";
+        emitLinkedBitcode || emitLinkedObject || cli.exist("no-cache") ||
+        cli.exist("verify-ir") || cli.exist("debug") || cli.exist("opt") ||
+        cli.exist("target") || ltoMode != "off";
     if (emitBitcodeBundle) {
         options.outputMode = lona::OutputMode::BitcodeBundle;
     } else if (emitObject) {
         options.outputMode = lona::OutputMode::ObjectBundle;
     } else if (emitEntry) {
         options.outputMode = lona::OutputMode::EntryObject;
+    } else if (emitLinkedBitcode) {
+        options.outputMode = lona::OutputMode::LinkedBitcode;
     } else if (emitLinkedObject) {
         options.outputMode = lona::OutputMode::LinkedObject;
     } else if (compileMode) {

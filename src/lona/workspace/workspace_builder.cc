@@ -350,6 +350,29 @@ emitObjectData(llvm::Module &module, llvm::StringRef targetTriple) {
     return ModuleArtifact::ByteBuffer(objectData.begin(), objectData.end());
 }
 
+void
+emitBitcodeFile(llvm::Module &module, const std::string &outputPath) {
+    std::error_code error;
+    llvm::raw_fd_ostream out(outputPath, error, llvm::sys::fs::OF_None);
+    if (error) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't open output file `" + outputPath + "`.",
+            "Check that the path is writable and that parent directories "
+            "exist.");
+    }
+
+    llvm::WriteBitcodeToFile(module, out);
+    out.flush();
+    if (out.has_error()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write output file `" + outputPath + "`.",
+            "Check that the path is writable and that the filesystem has "
+            "enough space.");
+    }
+}
+
 ModuleArtifact::ByteBuffer
 emitBitcodeData(llvm::Module &module) {
     llvm::SmallVector<char, 0> bitcodeData;
@@ -707,6 +730,7 @@ using workspace_builder_impl::accumulateOutputEmit;
 using workspace_builder_impl::appendHIRFunctions;
 using workspace_builder_impl::createHostedMainShimModule;
 using workspace_builder_impl::emitBitcodeData;
+using workspace_builder_impl::emitBitcodeFile;
 using workspace_builder_impl::emitObjectData;
 using workspace_builder_impl::emitObjectFile;
 using workspace_builder_impl::entryRoleKeyword;
@@ -1357,6 +1381,38 @@ WorkspaceBuilder::emitObjectModule(llvm::Module &module,
 }
 
 int
+WorkspaceBuilder::emitBitcodeModule(llvm::Module &module,
+                                    const CompileOptions &options,
+                                    const std::string &outputPath,
+                                    SessionStats &stats,
+                                    std::ostream &out) const {
+    ensureNativeAbiVersionField(module, options.targetTriple);
+    if (!outputPath.empty()) {
+        auto emitStart = Clock::now();
+        emitBitcodeFile(module, outputPath);
+        accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()),
+                             0.0);
+        return 0;
+    }
+
+    auto renderStart = Clock::now();
+    auto bytes = emitBitcodeData(module);
+    auto renderMs = elapsedMillis(renderStart, Clock::now());
+    auto writeStart = Clock::now();
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "I couldn't write the emitted linked bitcode file.",
+            "Check that the destination stream or file is writable.");
+    }
+    accumulateOutputEmit(stats, renderMs,
+                         elapsedMillis(writeStart, Clock::now()));
+    return 0;
+}
+
+int
 WorkspaceBuilder::emitArtifactBundle(CompilationUnit &rootUnit,
                                      const CompileOptions &options,
                                      const std::string &outputPath,
@@ -1575,6 +1631,29 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
     irOut.flush();
     accumulateOutputEmit(stats, elapsedMillis(emitStart, Clock::now()), 0.0);
     return 0;
+}
+
+int
+WorkspaceBuilder::emitLinkedBitcode(CompilationUnit &rootUnit,
+                                    const CompileOptions &options,
+                                    const std::string &outputPath,
+                                    const std::string &artifactCachePath,
+                                    SessionStats &stats,
+                                    std::ostream &out) const {
+    std::optional<std::filesystem::path> artifactCacheDir;
+    if (!artifactCachePath.empty()) {
+        artifactCacheDir = std::filesystem::path(artifactCachePath);
+    } else if (!outputPath.empty()) {
+        artifactCacheDir = std::filesystem::path(outputPath + ".d");
+    }
+    LinkedModule linked;
+    int exitCode = prepareLinkedModule(
+        rootUnit, options, artifactCacheDir ? &*artifactCacheDir : nullptr,
+        stats, out, linked);
+    if (exitCode != 0) {
+        return exitCode;
+    }
+    return emitBitcodeModule(*linked.module, options, outputPath, stats, out);
 }
 
 int
