@@ -3287,13 +3287,28 @@ class FunctionAnalyzer {
         const MemberLookup &lookup, const std::string &fieldName,
         const location &loc, const std::string &ownerLabel = std::string()) {
         if (lookup.owner.entity.asType()) {
+            auto *ownerType = lookup.owner.entity.asType();
             auto typeName =
                 ownerLabel.empty()
-                    ? describeResolvedType(lookup.owner.entity.asType())
+                    ? describeResolvedType(ownerType)
                     : ownerLabel;
+            auto *structType = asUnqualified<StructType>(ownerType);
+            if (structType &&
+                (structType->getMethodType(toStringRef(fieldName)) ||
+                 typeMgr->getMethodFunction(structType, toStringRef(fieldName)) ||
+                 lookupGenericMethodTemplate(structType, toStringRef(fieldName),
+                                             loc)
+                     .found())) {
+                error(loc,
+                      "type-qualified method selectors can only be used as "
+                      "direct call callees",
+                      "Write `" + typeName + "." + fieldName +
+                          "(&value, ...)`.");
+            }
             error(loc,
                   "unknown type member `" + typeName + "." + fieldName + "`",
-                  "Static type members are not implemented yet.");
+                  "Only type-qualified method calls like `" + typeName +
+                      ".method(&value, ...)` are currently supported.");
         }
 
         if (lookup.owner.tupleType) {
@@ -3563,6 +3578,24 @@ class FunctionAnalyzer {
         return nullptr;
     }
 
+    const ResolvedEntityRef *resolvedTypeBinding(const AstNode *node) const {
+        auto *binding = resolvedEntityBinding(node);
+        if (!binding || binding->kind() != ResolvedEntityRef::Kind::Type) {
+            return nullptr;
+        }
+        return binding;
+    }
+
+    const ResolvedEntityRef *resolvedGenericTypeBinding(
+        const AstNode *node) const {
+        auto *binding = resolvedEntityBinding(node);
+        if (!binding ||
+            binding->kind() != ResolvedEntityRef::Kind::GenericType) {
+            return nullptr;
+        }
+        return binding;
+    }
+
     const ModuleInterface::TraitDecl *requireVisibleTraitDecl(
         const ResolvedEntityRef *binding, const location &loc,
         const AstNode *syntax) {
@@ -3685,6 +3718,76 @@ class FunctionAnalyzer {
             return nullptr;
         }
         return requireTypeByName(typeName, loc, context);
+    }
+
+    StructType *resolveTypeQualifiedMethodOwnerType(const AstNode *ownerSyntax,
+                                                    const location &loc) {
+        if (auto *binding = resolvedTypeBinding(ownerSyntax)) {
+            auto *ownerType = requireTypeByName(
+                binding->resolvedName(), loc, "type-qualified method owner");
+            auto *structType = asUnqualified<StructType>(ownerType);
+            if (!structType) {
+                error(loc,
+                      "type-qualified method calls require a struct type owner, got `" +
+                          describeResolvedType(ownerType) + "`",
+                      "Only struct methods currently support `Type.method(&value, ...)`.");
+            }
+            return structType;
+        }
+
+        if (auto *binding = resolvedGenericTypeBinding(ownerSyntax)) {
+            diagnoseGenericTypeCall(toStdString(binding->resolvedName()), loc);
+        }
+
+        auto *typeApply = dynamic_cast<const AstTypeApply *>(ownerSyntax);
+        if (!typeApply) {
+            return nullptr;
+        }
+
+        auto *binding = resolvedGenericTypeBinding(typeApply->value);
+        if (!binding) {
+            return nullptr;
+        }
+
+        auto *typeDecl = binding->typeDecl();
+        if (!typeDecl || !typeDecl->isGeneric()) {
+            internalError(
+                loc,
+                "type-qualified method owner is missing its generic type metadata",
+                "This looks like a generic type-qualified method lookup bug.");
+        }
+
+        const auto typeName = describeGenericCallable(typeApply->value);
+        auto *explicitTypeArgs = typeApply->typeArgs;
+        if (!explicitTypeArgs || explicitTypeArgs->empty()) {
+            diagnoseGenericTypeCall(typeName, loc);
+        }
+        if (explicitTypeArgs->size() != typeDecl->typeParams.size()) {
+            error(loc,
+                  "generic type argument count mismatch for `" + typeName +
+                      "`: expected " +
+                      std::to_string(typeDecl->typeParams.size()) + ", got " +
+                      std::to_string(explicitTypeArgs->size()),
+                  "Match the number of `[` `]` type arguments to the generic "
+                  "type parameter list.");
+        }
+
+        std::vector<TypeClass *> genericArgs;
+        genericArgs.reserve(explicitTypeArgs->size());
+        for (std::size_t i = 0; i < explicitTypeArgs->size(); ++i) {
+            auto *type = requireType(
+                explicitTypeArgs->at(i), explicitTypeArgs->at(i)->loc,
+                "unknown generic type argument at index " +
+                    std::to_string(i) + " for `" + typeName + "`");
+            genericArgs.push_back(type);
+        }
+
+        if (auto *structType = materializeVisibleAppliedStructType(
+                *typeDecl, genericArgs, loc, binding->ownerInterface())) {
+            return structType;
+        }
+
+        diagnoseGenericTypeInstantiationPending(typeName, loc);
     }
 
     HIRExpr *buildConcreteTraitMethodCall(
@@ -6218,6 +6321,152 @@ class FunctionAnalyzer {
             calleeSyntax ? calleeSyntax->loc : node->loc);
     }
 
+    HIRExpr *tryAnalyzeTypeQualifiedMethodCall(
+        AstFieldCall *node, AstDotLike *calleeSyntax,
+        std::vector<TypeNode *> *explicitTypeArgs = nullptr) {
+        if (!node || !calleeSyntax) {
+            return nullptr;
+        }
+
+        auto *ownerStructType = resolveTypeQualifiedMethodOwnerType(
+            calleeSyntax->parent, calleeSyntax->loc);
+        if (!ownerStructType) {
+            return nullptr;
+        }
+
+        auto methodName = toStdString(calleeSyntax->field.text);
+        auto genericLookup = lookupGenericMethodTemplate(
+            ownerStructType, toStringRef(methodName), calleeSyntax->loc);
+        const bool hasGenericMethod = genericLookup.found();
+        const bool hasConcreteMethod =
+            ownerStructType->getMethodType(toStringRef(methodName)) != nullptr ||
+            typeMgr->getMethodFunction(ownerStructType,
+                                       toStringRef(methodName)) != nullptr;
+        if (!hasGenericMethod && !hasConcreteMethod) {
+            return nullptr;
+        }
+        if (explicitTypeArgs && !explicitTypeArgs->empty() && !hasGenericMethod) {
+            diagnoseGenericTypeApplyTarget(node->loc);
+        }
+
+        auto normalizedArgs = normalizeCallArgs(node->args, node->loc);
+        if (normalizedArgs.empty()) {
+            error(node->loc,
+                  "type-qualified method call requires the receiver as its first argument",
+                  "Write calls like `" +
+                      describeMemberOwnerSyntax(calleeSyntax) +
+                      "(&value, ...)`, or pass an existing `" +
+                      describeResolvedType(ownerStructType) + "*` receiver pointer.");
+        }
+
+        const auto &receiverSpec = normalizedArgs.front();
+        if (receiverSpec.name.has_value()) {
+            error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
+                  "type-qualified receiver must be passed positionally",
+                  "Write `" + describeMemberOwnerSyntax(calleeSyntax) +
+                      "(&value, ...)`, not a named receiver argument.");
+        }
+        if (receiverSpec.bindingKind == BindingKind::Ref) {
+            error(receiverSpec.syntax ? receiverSpec.syntax->loc : node->loc,
+                  "type-qualified receiver cannot be passed with `ref`",
+                  "Reference binding rules apply to the method's declared "
+                  "parameters, not to the explicit self pointer.");
+        }
+
+        auto *receiverPointer = requireNonCallExpr(receiverSpec.value);
+        auto *receiverPointerType =
+            asUnqualified<PointerType>(receiverPointer->getType());
+        if (!receiverPointerType) {
+            error(receiverSpec.loc,
+                  "type-qualified receiver must be passed as an explicit self pointer",
+                  "Write `" + describeMemberOwnerSyntax(calleeSyntax) +
+                      "(&value, ...)` for values, or `" +
+                      describeMemberOwnerSyntax(calleeSyntax) +
+                      "(ptr, ...)` when you already have a concrete `" +
+                      describeResolvedType(ownerStructType) + "*`.");
+        }
+        auto *receiverStructType = asUnqualified<StructType>(
+            receiverPointerType->getPointeeType());
+        if (!receiverStructType) {
+            error(receiverSpec.loc,
+                  "type-qualified call expects a concrete struct self pointer for `" +
+                      describeMemberOwnerSyntax(calleeSyntax) + "`",
+                  "Pass `&value` or a concrete `" +
+                      describeResolvedType(ownerStructType) +
+                      "*` receiver pointer.");
+        }
+        if (receiverStructType != ownerStructType) {
+            error(receiverSpec.loc,
+                  "type-qualified receiver type mismatch for `" +
+                      describeMemberOwnerSyntax(calleeSyntax) + "`: expected `" +
+                      describeResolvedType(ownerStructType) + "*`, got `" +
+                      describeResolvedType(receiverPointer->getType()) + "`",
+                  "Qualify the call with the receiver's actual type, or pass a `" +
+                      describeResolvedType(ownerStructType) +
+                      "*` to this method.");
+        }
+
+        auto *receiver = implicitDeref(receiverPointer, receiverSpec.loc);
+        if (!receiver) {
+            internalError(
+                receiverSpec.loc,
+                "type-qualified method call failed to dereference its explicit self pointer",
+                "This looks like a type-qualified receiver lowering bug.");
+        }
+
+        CallArgList remainingArgs;
+        remainingArgs.reserve(normalizedArgs.size() > 0 ? normalizedArgs.size() - 1
+                                                        : 0);
+        for (std::size_t i = 1; i < normalizedArgs.size(); ++i) {
+            remainingArgs.push_back(normalizedArgs[i]);
+        }
+
+        if (hasGenericMethod) {
+            auto *ownerInterface =
+                genericLookup.ownerUnit != unit
+                    ? genericLookup.ownerUnit->interface()
+                    : nullptr;
+            auto genericArgs = resolveGenericMethodTypeArgs(
+                *genericLookup.typeDecl, *genericLookup.methodTemplate,
+                ownerStructType, remainingArgs, explicitTypeArgs, node->loc,
+                describeMemberOwnerSyntax(calleeSyntax), ownerInterface);
+            enforceGenericTraitBounds(
+                genericLookup.methodTemplate->typeParams, genericArgs, node->loc,
+                "generic method `" +
+                    describeMemberOwnerSyntax(calleeSyntax) + "`");
+
+            std::vector<TypeClass *> methodTypeArgs;
+            for (std::size_t i =
+                     genericLookup.methodTemplate->enclosingTypeParamCount;
+                 i < genericLookup.methodTemplate->typeParams.size(); ++i) {
+                auto found = genericArgs.find(toStdString(
+                    genericLookup.methodTemplate->typeParams[i].localName));
+                if (found == genericArgs.end() || !found->second) {
+                    internalError(
+                        node->loc,
+                        "generic method `" +
+                            describeMemberOwnerSyntax(calleeSyntax) +
+                            "` is missing a concrete type argument",
+                        "This looks like a generic method inference bug.");
+                }
+                methodTypeArgs.push_back(found->second);
+            }
+
+            auto *methodFunc = instantiateGenericMethod(
+                ownerStructType, genericLookup, genericArgs, methodTypeArgs,
+                node->loc);
+            return lowerDirectGenericMethodCall(
+                methodFunc, receiver, std::move(remainingArgs), node->loc,
+                toStringRef(genericLookup.methodTemplate->localName));
+        }
+
+        auto *callee = makeHIR<HIRSelector>(receiver, methodName, nullptr,
+                                            calleeSyntax->loc,
+                                            HIRSelectorKind::Method);
+        return lowerResolvedCall(callee, std::move(remainingArgs), node->loc,
+                                 false);
+    }
+
     HIRExpr *tryAnalyzeReceiverTraitQualifiedCall(AstFieldCall *node,
                                                   AstDotLike *calleeSyntax) {
         auto *traitSelector =
@@ -6889,6 +7138,11 @@ class FunctionAnalyzer {
             if (auto *dotLikeNode = typeApplyNode->value
                                         ? typeApplyNode->value->as<AstDotLike>()
                                         : nullptr) {
+                if (auto *typeQualifiedMethodCall =
+                        tryAnalyzeTypeQualifiedMethodCall(
+                            node, dotLikeNode, typeApplyNode->typeArgs)) {
+                    return typeQualifiedMethodCall;
+                }
                 if (auto *genericMethodCall = tryAnalyzeGenericMethodCall(
                         node, dotLikeNode, typeApplyNode->typeArgs)) {
                     return genericMethodCall;
@@ -6976,6 +7230,10 @@ class FunctionAnalyzer {
             if (auto *receiverTraitCall =
                     tryAnalyzeReceiverTraitQualifiedCall(node, dotLikeNode)) {
                 return receiverTraitCall;
+            }
+            if (auto *typeQualifiedMethodCall =
+                    tryAnalyzeTypeQualifiedMethodCall(node, dotLikeNode)) {
+                return typeQualifiedMethodCall;
             }
             if (auto *genericMethodCall =
                     tryAnalyzeGenericMethodCall(node, dotLikeNode)) {

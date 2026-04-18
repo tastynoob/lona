@@ -750,7 +750,7 @@ def test_name_conflicts_bare_function_syntax_and_inferred_function_values_are_re
                 ret Counter.zero()
             }
             """,
-            ['unknown type member `Counter.zero`', 'Static type members are not implemented yet.'],
+            ['unknown type member `Counter.zero`', 'Only type-qualified method calls like `Counter.method(&value, ...)` are currently supported.'],
         ),
         (
             "func_param_bad.lo",
@@ -884,6 +884,106 @@ def test_bare_method_values_and_selector_misuse_are_rejected(compiler: CompilerH
         result = compiler.emit_ir(compiler.write_source(name, source)).expect_failed()
         for needle in needles:
             assert_contains(result.stderr, needle, label=f"{name} diagnostic")
+
+
+def test_type_qualified_method_calls_support_explicit_self_pointers(
+    compiler: CompilerHarness,
+) -> None:
+    ir = compiler.emit_ir(
+        compiler.write_source(
+            "type_qualified_method_call_ok.lo",
+            """
+            struct Counter {
+                set value i32
+
+                def read() i32 {
+                    ret self.value
+                }
+
+                set def inc(step i32) i32 {
+                    self.value = self.value + step
+                    ret self.value
+                }
+            }
+
+            def main() i32 {
+                var counter = Counter(value = 40)
+                var ptr Counter* = &counter
+                if Counter.read(ptr) != 40 {
+                    ret 1
+                }
+                if Counter.inc(&counter, 2) != 42 {
+                    ret 2
+                }
+                ret Counter.read(&counter) - 42
+            }
+            """,
+        )
+    ).expect_ok().stdout
+    assert_contains(ir, "define i32 @main()", label="type-qualified method ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Counter\.read\(ptr ",
+        label="type-qualified method ir",
+    )
+    assert_regex(
+        ir,
+        r"call i32 @.*Counter\.inc\(ptr ",
+        label="type-qualified method ir",
+    )
+
+
+def test_type_qualified_method_calls_require_matching_self_pointers(
+    compiler: CompilerHarness,
+) -> None:
+    shared_structs = """
+    struct Counter {
+        value i32
+
+        def read() i32 {
+            ret self.value
+        }
+    }
+
+    struct Other {
+        value i32
+    }
+    """
+
+    cases = [
+        (
+            "type_qualified_method_receiver_pointer_bad.lo",
+            shared_structs
+            + """
+            def main() i32 {
+                var counter = Counter(value = 41)
+                ret Counter.read(counter)
+            }
+            """,
+            [
+                "type-qualified receiver must be passed as an explicit self pointer",
+                "Counter.read(&value, ...)",
+            ],
+        ),
+        (
+            "type_qualified_method_receiver_type_bad.lo",
+            shared_structs
+            + """
+            def main() i32 {
+                var other = Other(value = 41)
+                ret Counter.read(&other)
+            }
+            """,
+            [
+                "type-qualified receiver type mismatch for `Counter.read`",
+                "Counter*`",
+                "Other*`",
+            ],
+        ),
+    ]
+
+    for name, source, needles in cases:
+        _expect_ir_failure(compiler, name, source, needles)
 
 
 def test_call_argument_and_return_type_mismatches_are_rejected(compiler: CompilerHarness) -> None:

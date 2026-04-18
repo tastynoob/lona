@@ -137,6 +137,37 @@ struct Holder {
 - 结构体外部的 `obj.current` 保持可写投影，因此 `obj.current.inc(1)` 允许。
 - 结构体外部的 `obj.link` 如果未标 `set`，只表示这个指针槽位本身只读；`obj.link = other` 不允许，但它不自动把 pointee 升级成 `Counter const*`。
 
+### 5.1 类型限定方法调用
+
+除了常见的 `obj.method(...)`，当前也支持直接通过结构体类型名调用 ordinary method：
+
+```lona
+struct Counter {
+    set value i32
+
+    def read() i32 {
+        ret self.value
+    }
+
+    set def inc(step i32) i32 {
+        self.value = self.value + step
+        ret self.value
+    }
+}
+
+var counter = Counter(value = 40)
+ret Counter.read(&counter) + Counter.inc(&counter, 2)
+```
+
+规则：
+
+- `Type.method(&value, ...)` 是 ordinary struct method 的静态限定调用形式。
+- 这里不会再隐式注入 `self`；第一个源码实参就是显式暴露出来的 receiver。
+- 因此 getter 形式的方法要求 `Self const*`，setter 形式的方法要求 `Self*`。
+- 如果你已经有指针，也可以直接写 `Type.method(ptr, ...)`。
+- 这条语法只绑定 ordinary inherent method，不会把 trait 方法混进来；trait 继续写 `Trait.method(&value, ...)`。
+- applied generic owner 也适用，例如 `Box[i32].read(&box)`、`Box[i32].map[bool](&box, ...)`。
+
 ## 6. 字段与方法可以混合出现
 
 ```lona

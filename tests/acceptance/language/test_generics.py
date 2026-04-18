@@ -1335,6 +1335,76 @@ def test_generic_v0_struct_decl_bounds_and_generic_methods_lower_for_same_module
     )
 
 
+def test_generic_v0_type_qualified_method_calls_support_applied_owners_and_generic_methods(
+    compiler: CompilerHarness,
+) -> None:
+    ir = _emit_ir(
+        compiler,
+        "generic_type_qualified_method_call_round14.lo",
+        """
+        trait Hash {
+            def hash() i32
+        }
+
+        struct Point {
+            value i32
+
+            def hash() i32 {
+                ret self.value + 1
+            }
+        }
+
+        impl Hash for Point {
+            def hash() i32 {
+                ret self.hash()
+            }
+        }
+
+        struct Box[T Hash] {
+            value T
+
+            def hash_value() i32 {
+                ret Hash.hash(&self.value)
+            }
+
+            def echo[U](value U) U {
+                ret value
+            }
+        }
+
+        def main() i32 {
+            var box Box[Point] = Box[Point](value = Point(value = 41))
+            if Box[Point].hash_value(&box) != 42 {
+                ret 1
+            }
+            if Box[Point].echo[i32](&box, 7) != 7 {
+                ret 2
+            }
+            if !Box[Point].echo(&box, true) {
+                ret 3
+            }
+            ret 0
+        }
+        """,
+    )
+    assert_contains(ir, "define i32 @main()", label="type-qualified generic method ir")
+    assert_regex(
+        ir,
+        r"call i32 @.*Box_5b.*Point.*_5d\.hash_value\(ptr ",
+        label="type-qualified generic method ir",
+    )
+    assert_regex(
+        ir,
+        r"@.*Box_5b.*Point.*_5d\.echo__inst__i32",
+        label="type-qualified generic method ir",
+    )
+    assert_regex(
+        ir,
+        r"@.*Box_5b.*Point.*_5d\.echo__inst__bool",
+        label="type-qualified generic method ir",
+    )
+
+
 def test_generic_v0_struct_decl_bounds_are_checked_when_materializing_applied_types(
     compiler: CompilerHarness,
 ) -> None:

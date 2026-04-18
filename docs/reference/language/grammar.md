@@ -306,7 +306,7 @@ param-decl-seq    ::= param-decl
 - `struct Type { impl Trait { ... } }` 是合法的 struct-local trait impl shorthand。
 - struct-local shorthand 会在 parser 阶段补成当前结构体自己的 `selfType`；如果结构体带 generic parameter，它们也会一并继承到 shorthand impl header。
 - struct-local shorthand 不接受自己的 `impl[...]` header generic parameter；如果需要显式写 impl 泛型头，请改用顶层 `impl[...] Trait for Type[...] { ... }`。
-- trait 方法和普通成员方法现在是分离命名空间；`obj.method()` 先找普通成员方法，再在 trait 方法中做唯一匹配，必要时可写成 `obj.Trait.method()` 或 `Trait.method(&obj)` 消歧。
+- trait 方法和普通成员方法现在是分离命名空间；`obj.method()` 先找普通成员方法，再在 trait 方法中做唯一匹配，必要时可写成 `Type.method(&obj)`、`obj.Trait.method()` 或 `Trait.method(&obj)` 这类显式限定形式。
 - 结构体、顶层函数和 C FFI tag 的语义分别见 [struct.md](./struct.md)、[func.md](./func.md) 和 [../runtime/c_ffi.md](../runtime/c_ffi.md)。
 - `global` 的运行时语义与当前初始化限制见 [global.md](./global.md)。
 - trait / impl / `Trait dyn` 的完整语义见 [trait.md](./trait.md)。
