@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tests.harness import (
@@ -94,7 +95,7 @@ def test_bare_targets_emit_only_language_entry(compiler: CompilerHarness) -> Non
         assert_not_contains(ir, "@__lona_argv =", label=f"{target} ir")
 
 
-def test_hosted_target_emits_main_wrapper_and_arg_globals(compiler: CompilerHarness) -> None:
+def test_hosted_target_ir_keeps_only_language_entry(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "entry.lo",
         """
@@ -110,10 +111,11 @@ def test_hosted_target_emits_main_wrapper_and_arg_globals(compiler: CompilerHarn
     assert_contains(ir, 'target triple = "x86_64-unknown-linux-gnu"', label="hosted ir")
     assert_contains(ir, "define i32 @__lona_main__()", label="hosted ir")
     assert_contains(ir, "define i32 @run()", label="hosted ir")
-    assert_contains(ir, "define i32 @main(i32", label="hosted ir")
-    assert_contains(ir, "call i32 @__lona_main__()", label="hosted ir")
-    assert_contains(ir, "@__lona_argc =", label="hosted ir")
-    assert_contains(ir, "@__lona_argv =", label="hosted ir")
+    assert_not_contains(ir, "define i32 @main()", label="hosted ir")
+    assert_not_contains(ir, "define i32 @main(i32", label="hosted ir")
+    assert_not_contains(ir, "call i32 @__lona_main__()", label="hosted ir")
+    assert_not_contains(ir, "@__lona_argc =", label="hosted ir")
+    assert_not_contains(ir, "@__lona_argv =", label="hosted ir")
 
 
 def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) -> None:
@@ -197,6 +199,12 @@ def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -
         label="linked object default cache reuse stats",
     )
 
+    symbols = run_command(["nm", "-g", "--defined-only", str(compiler.output_path("linked-default-cache.o"))], cwd=compiler.repo_root).expect_ok().stdout
+    assert_regex(symbols, r" [TW] __lona_main__$", label="linked object symbols")
+    assert re.search(r" [TW] main$", symbols, re.MULTILINE) is None, symbols
+    assert "__lona_argc" not in symbols, symbols
+    assert "__lona_argv" not in symbols, symbols
+
 
 def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
     compiler: CompilerHarness,
@@ -264,6 +272,58 @@ def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
         "emitted-module-bitcode: 0",
         label="linked bitcode default cache reuse stats",
     )
+
+    bitcode_ir = run_command(
+        ["llvm-dis-18", "-o", "-", str(bitcode_path_again)],
+        cwd=compiler.repo_root,
+    ).expect_ok().stdout
+    assert_contains(bitcode_ir, "define i32 @__lona_main__()", label="linked bitcode ir")
+    assert_not_contains(bitcode_ir, "define i32 @main(i32", label="linked bitcode ir")
+    assert_not_contains(bitcode_ir, "@__lona_argc =", label="linked bitcode ir")
+    assert_not_contains(bitcode_ir, "@__lona_argv =", label="linked bitcode ir")
+
+
+def test_user_defined_main_uses_ordinary_symbol_path_in_linked_outputs(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "user_main_linked.lo",
+        """
+        def main() i32 {
+            ret 7
+        }
+
+        ret main()
+        """,
+    )
+
+    obj_result, obj_path = compiler.emit_linked_obj(
+        input_path,
+        output_name="user-main-linked.o",
+        target="x86_64-unknown-linux-gnu",
+    )
+    obj_result.expect_ok()
+    symbols = run_command(["nm", "-g", "--defined-only", str(obj_path)], cwd=compiler.repo_root).expect_ok().stdout
+    assert_regex(symbols, r" [TW] __lona_main__$", label="user main linked object symbols")
+    assert_regex(symbols, r" [TW] main$", label="user main linked object symbols")
+    assert "__lona_argc" not in symbols, symbols
+    assert "__lona_argv" not in symbols, symbols
+
+    bc_result, bc_path = compiler.emit_linked_bc(
+        input_path,
+        output_name="user-main-linked.bc",
+        target="x86_64-unknown-linux-gnu",
+    )
+    bc_result.expect_ok()
+    bitcode_ir = run_command(
+        ["llvm-dis-18", "-o", "-", str(bc_path)],
+        cwd=compiler.repo_root,
+    ).expect_ok().stdout
+    assert_contains(bitcode_ir, "define i32 @__lona_main__()", label="user main linked bitcode ir")
+    assert_contains(bitcode_ir, "define i32 @main()", label="user main linked bitcode ir")
+    assert_not_contains(bitcode_ir, "define i32 @main(i32", label="user main linked bitcode ir")
+    assert_not_contains(bitcode_ir, "@__lona_argc =", label="user main linked bitcode ir")
+    assert_not_contains(bitcode_ir, "@__lona_argv =", label="user main linked bitcode ir")
 
 
 def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> None:

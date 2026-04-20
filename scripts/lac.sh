@@ -217,29 +217,6 @@ else
             OBJECTS+=("$PATH_VALUE")
         fi
     done < "$MANIFEST_PATH"
-
-    MODULE_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
-    MODULE_DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
-    if ! grep -Eq ' [TW] __lona_main__$' <<<"$MODULE_DEFINED_SYMBOLS"; then
-        cat >&2 <<EOF
-cannot build system executable from $INPUT
-help: the linked object does not expose __lona_main__()
-help: define root-level executable statements in the root module
-EOF
-        exit 1
-    fi
-    if grep -Eq ' [UTW] main$' <<<"$MODULE_SYMBOLS"; then
-        cat >&2 <<EOF
-cannot build system executable from $INPUT
-help: this program already declares or imports a non-entry symbol named \`main\`
-help: rename that symbol or build a non-hosted artifact instead of a system executable
-EOF
-        exit 1
-    fi
-
-    ENTRY_OBJECT="$TMPDIR_LOCAL/lona-hosted-entry.o"
-    "$LONA_IR_BIN" --emit entry --target "$TARGET_TRIPLE" "$ENTRY_OBJECT"
-    OBJECTS+=("$ENTRY_OBJECT")
 fi
 
 if [ "${#OBJECTS[@]}" -eq 0 ]; then
@@ -250,6 +227,29 @@ help: this looks like a compiler multi-object emission bug rather than a user pr
 EOF
     exit 1
 fi
+
+MODULE_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
+MODULE_DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"
+if ! grep -Eq ' [TW] __lona_main__$' <<<"$MODULE_DEFINED_SYMBOLS"; then
+    cat >&2 <<EOF
+cannot build system executable from $INPUT
+help: the linked object does not expose __lona_main__()
+help: define root-level executable statements in the root module
+EOF
+    exit 1
+fi
+if grep -Eq ' [UTW] main$' <<<"$MODULE_SYMBOLS"; then
+    cat >&2 <<EOF
+cannot build system executable from $INPUT
+help: this program already declares or imports a non-entry symbol named \`main\`
+help: rename that symbol or build a non-hosted artifact instead of a system executable
+EOF
+    exit 1
+fi
+
+ENTRY_OBJECT="$TMPDIR_LOCAL/lona-hosted-entry.o"
+"$LONA_IR_BIN" --emit entry --target "$TARGET_TRIPLE" "$ENTRY_OBJECT"
+OBJECTS+=("$ENTRY_OBJECT")
 
 ALL_SYMBOLS="$("$NM_BIN" -g "${OBJECTS[@]}")"
 DEFINED_SYMBOLS="$("$NM_BIN" -g --defined-only "${OBJECTS[@]}")"

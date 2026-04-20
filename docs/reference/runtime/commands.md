@@ -104,15 +104,18 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 默认输出 AST JSON
 - `--emit ir`
   - 输出 LLVM IR
+  - 不会自动补 hosted `main(argc, argv)` wrapper
 - `--emit bc`
   - 输出模块 bitcode bundle manifest
 - `--emit obj`
   - 输出模块 object bundle manifest
 - `--emit linked-bc`
   - 输出单最终 linked bitcode
+  - 不会自动补 hosted `main(argc, argv)` wrapper
   - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
 - `--emit linked-obj`
   - 输出单最终 object
+  - 不会自动补 hosted `main(argc, argv)` wrapper
   - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
 - `--emit entry`
   - 输出 hosted `main(argc, argv)` wrapper object
@@ -157,6 +160,7 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径
 - `--emit entry` 只支持 hosted target；bare target 会直接拒绝
 - `--emit entry` 不支持 `--lto full`
+- `--emit ir` / `--emit linked-bc` / `--emit linked-obj` 都只包含用户代码与语言入口 `__lona_main__`
 - 只要带上编译相关参数，例如 `--target`、`--verify-ir`、`--lto`，默认输出模式就会切到 LLVM IR，而不是 AST JSON
 
 ## 3. `lac`

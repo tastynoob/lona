@@ -173,9 +173,10 @@ def test_system_smoke_programs_and_hosted_entry_checks(compiler: CompilerHarness
     main_obj_result.expect_ok()
     defined_symbols = _nm_text(main_obj, "-g", "--defined-only", cwd=repo_root)
     assert_regex(defined_symbols, r" [TW] __lona_main__$", label="main object symbols")
-    assert_regex(defined_symbols, r" [TW] main$", label="main object symbols")
-    assert_regex(defined_symbols, r" [BD] __lona_argc$", label="main object symbols")
-    assert_regex(defined_symbols, r" [BD] __lona_argv$", label="main object symbols")
+    assert " __lona_argc" not in defined_symbols, defined_symbols
+    assert " __lona_argv" not in defined_symbols, defined_symbols
+    assert_regex(defined_symbols, r" [TW] run$", label="main object symbols")
+    assert not any(line.endswith(" main") for line in defined_symbols.splitlines()), defined_symbols
 
     ffi_obj_result, ffi_obj = compiler.emit_linked_obj(
         ffi_main_program,

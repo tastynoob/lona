@@ -89,11 +89,12 @@ native object 还会额外携带：
 入口选择规则：
 
 1. root 模块的可执行入口仍然固定为 `__lona_main__() -> i32`。
-2. hosted target（例如 `x86_64-unknown-linux-gnu`）会额外补一个 `main(argc, argv)`，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
-3. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
-4. imported 模块如果需要执行顶层语句，编译器会为它们生成内部的模块初始化入口；这些入口不属于稳定外部 ABI。
-5. `__lona_main__` 在执行 root 模块自身顶层语句前，会先触发依赖模块的初始化链；每个模块初始化只执行一次，并保留 `i32` 返回值用于向上传播初始化失败。
-6. 如果当前程序没有建立 `__lona_main__`，两条构建路径都会报错并提示缺少可执行入口。
+2. hosted system 可执行文件路径会通过单独的 `--emit entry` object 提供 `main(argc, argv)` wrapper，并把参数保存到 `@__lona_argc` / `@__lona_argv`。
+3. `--emit ir`、`--emit linked-bc` 和 `--emit linked-obj` 只保留用户代码与 `__lona_main__`，不会隐式生成 hosted wrapper。
+4. bare target（例如 `x86_64-none-elf`）只依赖 `__lona_main__`，不生成 hosted wrapper，也不引入这两个全局。
+5. imported 模块如果需要执行顶层语句，编译器会为它们生成内部的模块初始化入口；这些入口不属于稳定外部 ABI。
+6. `__lona_main__` 在执行 root 模块自身顶层语句前，会先触发依赖模块的初始化链；每个模块初始化只执行一次，并保留 `i32` 返回值用于向上传播初始化失败。
+7. 如果当前程序没有建立 `__lona_main__`，两条构建路径都会报错并提示缺少可执行入口。
 
 如果你要在语言层读取 hosted 参数，现在可以显式声明：
 

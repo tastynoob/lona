@@ -75,11 +75,12 @@ class WorkspaceBuilder {
                             const CompileOptions &options, bool linkedStage,
                             SessionStats &stats, std::ostream &out) const;
     LinkedModule linkArtifacts(const CompilationUnit &rootUnit,
-                               bool hostedEntry,
+                               bool synthesizeHostedEntryShim,
                                SessionStats &stats) const;
     int prepareLinkedModule(CompilationUnit &rootUnit,
                             const CompileOptions &options,
                             const std::filesystem::path *artifactCacheDir,
+                            bool synthesizeHostedEntryShim,
                             SessionStats &stats, std::ostream &out,
                             LinkedModule &linked) const;
     int emitObjectModule(llvm::Module &module,

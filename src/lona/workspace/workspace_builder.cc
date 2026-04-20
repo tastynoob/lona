@@ -1254,7 +1254,8 @@ WorkspaceBuilder::verifyOutputModule(llvm::Module &module,
 
 WorkspaceBuilder::LinkedModule
 WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
-                                bool hostedEntry, SessionStats &stats) const {
+                                bool synthesizeHostedEntryShim,
+                                SessionStats &stats) const {
     auto *rootArtifact =
         workspace_.findArtifact(rootUnit.path(), ModuleEntryRole::Root);
     if (rootArtifact == nullptr) {
@@ -1302,7 +1303,7 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
 
     const bool hasLanguageEntry =
         moduleHasFunctionSymbol(*linkedModule, languageEntryName());
-    if (hasLanguageEntry && hostedEntry &&
+    if (hasLanguageEntry && synthesizeHostedEntryShim &&
         !moduleHasFunctionSymbol(*linkedModule, "main")) {
         auto mergeStart = Clock::now();
         linkSyntheticModule(linker,
@@ -1321,8 +1322,9 @@ WorkspaceBuilder::linkArtifacts(const CompilationUnit &rootUnit,
 int
 WorkspaceBuilder::prepareLinkedModule(
     CompilationUnit &rootUnit, const CompileOptions &options,
-    const std::filesystem::path *artifactCacheDir, SessionStats &stats,
-    std::ostream &out, LinkedModule &linked) const {
+    const std::filesystem::path *artifactCacheDir,
+    bool synthesizeHostedEntryShim, SessionStats &stats, std::ostream &out,
+    LinkedModule &linked) const {
     int exitCode =
         buildArtifacts(rootUnit, options, false, true, artifactCacheDir, stats,
                        out);
@@ -1330,8 +1332,7 @@ WorkspaceBuilder::prepareLinkedModule(
         return exitCode;
     }
 
-    linked = linkArtifacts(rootUnit, targetUsesHostedEntry(options.targetTriple),
-                           stats);
+    linked = linkArtifacts(rootUnit, synthesizeHostedEntryShim, stats);
     if (options.ltoMode == CompileOptions::LTOMode::Full) {
         if (!verifyOutputModule(*linked.module, options, true, stats, out)) {
             return 1;
@@ -1579,29 +1580,6 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
             registerArtifactGenericEmissions(instanceRegistry, *artifact);
             workspace_.storeArtifact(std::move(*artifact));
         }
-
-        bool linkedStage = false;
-        if (targetUsesHostedEntry(options.targetTriple) &&
-            moduleHasFunctionSymbol(context.build.module, languageEntryName()) &&
-            !moduleHasFunctionSymbol(context.build.module, "main")) {
-            auto linkStart = Clock::now();
-            llvm::Linker linker(context.build.module);
-            linkSyntheticModule(
-                linker,
-                createHostedMainShimModule(
-                    context.build.context,
-                    normalizeTargetTriple(options.targetTriple)),
-                "hosted entry shim");
-            auto linkMs = elapsedMillis(linkStart, Clock::now());
-            stats.linkMergeMs += linkMs;
-            stats.linkMs += linkMs;
-            linkedStage = true;
-        }
-
-        if (linkedStage &&
-            !verifyOutputModule(context.build.module, options, true, stats, out)) {
-            return 1;
-        }
         if (options.ltoMode == CompileOptions::LTOMode::Full) {
             auto optimizeStart = Clock::now();
             optimizeModule(context.build.module, options.optLevel);
@@ -1620,7 +1598,8 @@ WorkspaceBuilder::emitIR(CompilationUnit &rootUnit,
 
     LinkedModule linked;
     int exitCode =
-        prepareLinkedModule(rootUnit, options, nullptr, stats, out, linked);
+        prepareLinkedModule(rootUnit, options, nullptr, false, stats, out,
+                            linked);
     if (exitCode != 0) {
         return exitCode;
     }
@@ -1649,7 +1628,7 @@ WorkspaceBuilder::emitLinkedBitcode(CompilationUnit &rootUnit,
     LinkedModule linked;
     int exitCode = prepareLinkedModule(
         rootUnit, options, artifactCacheDir ? &*artifactCacheDir : nullptr,
-        stats, out, linked);
+        false, stats, out, linked);
     if (exitCode != 0) {
         return exitCode;
     }
@@ -1672,7 +1651,7 @@ WorkspaceBuilder::emitLinkedObject(CompilationUnit &rootUnit,
     LinkedModule linked;
     int exitCode = prepareLinkedModule(
         rootUnit, options, artifactCacheDir ? &*artifactCacheDir : nullptr,
-        stats, out, linked);
+        false, stats, out, linked);
     if (exitCode != 0) {
         return exitCode;
     }
