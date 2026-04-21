@@ -34,6 +34,12 @@ public:
     }
     CompilationUnit &loadRootUnit(const std::string &path) const;
     CompilationUnit &loadEntryUnit(const std::string &path) const;
+    std::string moduleRootForFile(const std::string &path) const;
+    std::string moduleRootForFile(const std::string &rootPath,
+                                  const std::string &path) const;
+    std::string canonicalModulePathForFile(const std::string &path) const;
+    std::string canonicalModulePathForFile(const std::string &rootPath,
+                                           const std::string &path) const;
     std::string resolveModuleFilePath(const std::string &modulePath) const;
     std::string resolveModuleFilePath(const std::string &rootPath,
                                       const std::string &modulePath) const;

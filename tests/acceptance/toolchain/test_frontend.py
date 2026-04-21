@@ -177,7 +177,7 @@ def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -
 
     cache_dir = compiler.output_path("linked-default-cache.o.d")
     assert cache_dir.is_dir(), f"expected linked-object bitcode cache dir: {cache_dir}"
-    assert len(list(cache_dir.glob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+    assert len(list(cache_dir.rglob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
 
     second, _ = compiler.emit_linked_obj(
         app_path,
@@ -249,7 +249,7 @@ def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
 
     cache_dir = compiler.output_path("linked-default-cache.bc.d")
     assert cache_dir.is_dir(), f"expected linked-bitcode cache dir: {cache_dir}"
-    assert len(list(cache_dir.glob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+    assert len(list(cache_dir.rglob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
 
     second, bitcode_path_again = compiler.emit_linked_bc(
         app_path,
@@ -370,7 +370,7 @@ def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> N
     for object_path in object_paths:
         assert object_path.is_file(), f"expected emitted bundle object: {object_path}"
         assert object_path.stat().st_size > 0, f"expected non-empty bundle object: {object_path}"
-        assert object_path.parent == expected_bundle_dir
+        assert object_path.parent == expected_bundle_dir / "bundle_entry"
 
 
 def test_entry_emission_produces_hosted_wrapper_object(compiler: CompilerHarness, repo_root: Path) -> None:
@@ -385,7 +385,9 @@ def test_entry_emission_produces_hosted_wrapper_object(compiler: CompilerHarness
     assert_regex(symbols, r" U __lona_main__$", label="entry object symbols")
 
 
-def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHarness) -> None:
+def test_object_bundle_uses_distinct_member_path_for_different_compile_profiles(
+    compiler: CompilerHarness,
+) -> None:
     input_path = compiler.write_source(
         "bundle_profile.lo",
         """
@@ -395,18 +397,14 @@ def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHa
     cache_dir = compiler.output_path("shared-cache")
     linux_result, linux_manifest_path = compiler.emit_obj_bundle(
         input_path,
-        output_name="linux.manifest",
+        output_name="shared-profile.manifest",
         cache_dir=cache_dir,
         target="x86_64-unknown-linux-gnu",
+        stats=True,
     )
     linux_result.expect_ok()
-    bare_result, bare_manifest_path = compiler.emit_obj_bundle(
-        input_path,
-        output_name="bare.manifest",
-        cache_dir=cache_dir,
-        target="x86_64-none-elf",
-    )
-    bare_result.expect_ok()
+    assert_contains(linux_result.stderr, "compiled-modules: 1", label="linux bundle stats")
+    assert_contains(linux_result.stderr, "reused-modules: 0", label="linux bundle stats")
 
     def first_module_path(manifest_path: Path) -> Path:
         manifest = manifest_path.read_text(encoding="utf-8")
@@ -416,7 +414,23 @@ def test_object_bundle_member_names_include_compile_profile(compiler: CompilerHa
                 return Path(parts[3])
         raise AssertionError(f"missing module object entry in {manifest_path}")
 
-    assert first_module_path(linux_manifest_path) != first_module_path(bare_manifest_path)
+    linux_module_path = first_module_path(linux_manifest_path)
+    assert linux_module_path.name.startswith("bundle_profile-"), linux_module_path
+
+    bare_result, bare_manifest_path = compiler.emit_obj_bundle(
+        input_path,
+        output_name="shared-profile.manifest",
+        cache_dir=cache_dir,
+        target="x86_64-none-elf",
+        stats=True,
+    )
+    bare_result.expect_ok()
+    assert_contains(bare_result.stderr, "compiled-modules: 1", label="bare bundle stats")
+    assert_contains(bare_result.stderr, "reused-modules: 0", label="bare bundle stats")
+
+    bare_module_path = first_module_path(bare_manifest_path)
+    assert bare_module_path.name.startswith("bundle_profile-"), bare_module_path
+    assert linux_module_path != bare_module_path
 
 
 def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -> None:
@@ -444,7 +458,7 @@ def test_object_bundle_respects_cache_dir_directory(compiler: CompilerHarness) -
 
     assert object_paths, "expected emitted cache bundle objects"
     for object_path in object_paths:
-        assert object_path.parent == expected_cache_bundle_dir
+        assert object_path.parent == expected_cache_bundle_dir / "bundle_cache"
 
 
 def test_generic_v0_any_pointer_casts_lower_to_plain_ptr_storage(
@@ -922,6 +936,101 @@ def test_object_bundle_reuses_cached_objects_across_cli_invocations(
         "reused-module-objects: 1",
         label="second object bundle stats",
     )
+
+
+def test_object_bundle_does_not_reuse_same_canonical_module_from_different_root_paths(
+    compiler: CompilerHarness,
+) -> None:
+    cache_dir = compiler.output_path("root-isolated-cache")
+
+    left_root = compiler.tmp_path / "root_isolated" / "left"
+    right_root = compiler.tmp_path / "root_isolated" / "right"
+    left_root.mkdir(parents=True, exist_ok=True)
+    right_root.mkdir(parents=True, exist_ok=True)
+
+    left_main = compiler.write_source(
+        "root_isolated/left/main.lo",
+        """
+        import dep
+
+        ret dep.value()
+        """,
+    )
+    compiler.write_source(
+        "root_isolated/left/dep.lo",
+        """
+        def value() i32 {
+            ret 7
+        }
+        """,
+    )
+
+    right_main = compiler.write_source(
+        "root_isolated/right/main.lo",
+        """
+        import dep
+
+        ret dep.value()
+        """,
+    )
+    compiler.write_source(
+        "root_isolated/right/dep.lo",
+        """
+        def value() i32 {
+            ret 7
+        }
+        """,
+    )
+
+    def emit_debug_bundle(input_path: Path, output_name: str) -> tuple[CommandResult, Path]:
+        output_path = compiler.output_path(output_name)
+        result = run_command(
+            [
+                str(compiler.compiler_bin),
+                "--emit",
+                "obj",
+                "--verify-ir",
+                "--stats",
+                "-g",
+                "--cache-dir",
+                str(cache_dir),
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                str(input_path),
+                str(output_path),
+            ],
+            cwd=compiler.repo_root,
+        )
+        return result, output_path
+
+    def bundle_object_paths(manifest_path: Path) -> list[Path]:
+        object_paths = []
+        manifest = manifest_path.read_text(encoding="utf-8")
+        for line in manifest.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4 and parts[0] == "artifact" and parts[1] == "obj":
+                object_paths.append(Path(parts[3]))
+        return object_paths
+
+    first, _ = emit_debug_bundle(left_main, "root-isolated-left.manifest")
+    first.expect_ok()
+    assert_contains(first.stderr, "compiled-modules: 2", label="root isolated first stats")
+    assert_contains(first.stderr, "reused-modules: 0", label="root isolated first stats")
+
+    second, second_manifest_path = emit_debug_bundle(
+        right_main, "root-isolated-right.manifest"
+    )
+    second.expect_ok()
+    assert_contains(second.stderr, "compiled-modules: 2", label="root isolated second stats")
+    assert_contains(second.stderr, "reused-modules: 0", label="root isolated second stats")
+
+    right_objects = bundle_object_paths(second_manifest_path)
+    assert right_objects, f"expected object bundle to list at least one object: {second_manifest_path}"
+    for object_path in right_objects:
+        payload = object_path.read_bytes().decode("latin-1")
+        assert str(left_root) not in payload, (
+            f"unexpected debug path from left root in reused object {object_path}"
+        )
 
 
 def test_object_bundle_no_cache_forces_full_recompile(
@@ -1444,4 +1553,4 @@ def test_bitcode_bundle_emits_only_module_bitcode(compiler: CompilerHarness) -> 
         assert bitcode_path.is_file(), f"expected emitted bundle bitcode: {bitcode_path}"
         assert bitcode_path.stat().st_size > 0, f"expected non-empty bundle bitcode: {bitcode_path}"
         assert bitcode_path.suffix == ".bc"
-        assert bitcode_path.parent == expected_bundle_dir
+        assert bitcode_path.parent == expected_bundle_dir / "bundle_bitcode"

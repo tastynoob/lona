@@ -179,8 +179,8 @@ describeConflictingImportCandidates(const std::vector<std::string> &paths) {
 }
 
 std::string
-canonicalWorkspaceModulePath(const std::string &path,
-                             const std::vector<std::string> &moduleRoots) {
+matchedWorkspaceModuleRoot(const std::string &path,
+                           const std::vector<std::string> &moduleRoots) {
     namespace fs = std::filesystem;
     auto normalized = normalizeModuleFsPath(fs::path(path));
     std::vector<fs::path> matches;
@@ -217,7 +217,17 @@ canonicalWorkspaceModulePath(const std::string &path,
                 ".");
     }
 
-    auto relative = normalized.lexically_relative(matches.front());
+    return matches.front().string();
+}
+
+std::string
+canonicalWorkspaceModulePath(const std::string &path,
+                             const std::vector<std::string> &moduleRoots) {
+    namespace fs = std::filesystem;
+    auto normalized = normalizeModuleFsPath(fs::path(path));
+    auto matchedRoot = normalizeModuleFsPath(
+        fs::path(matchedWorkspaceModuleRoot(path, moduleRoots)));
+    auto relative = normalized.lexically_relative(matchedRoot);
     relative.replace_extension();
     auto modulePath = relative.string();
     if (!modulePath.empty() && modulePath != ".") {
@@ -467,15 +477,24 @@ WorkspaceLoader::setModuleRoots(std::vector<std::string> moduleRoots) {
 CompilationUnit &
 WorkspaceLoader::loadRootUnit(const std::string &path) const {
     auto &unit = workspace_.loadRootUnit(path);
-    auto moduleRoots = moduleRootsFor(toStdString(unit.path()));
+    unit.setModuleRoot(
+        moduleRootForFile(toStdString(unit.path()), toStdString(unit.path())));
     unit.setModulePath(
-        canonicalWorkspaceModulePath(toStdString(unit.path()), moduleRoots));
+        canonicalModulePathForFile(toStdString(unit.path()),
+                                   toStdString(unit.path())));
     return unit;
 }
 
 CompilationUnit &
 WorkspaceLoader::loadEntryUnit(const std::string &path) const {
     auto &unit = workspace_.loadUnit(path);
+    unit.setModuleRoot(moduleRootForFile(toStdString(unit.path())));
+    unit.setModulePath(canonicalModulePathForFile(toStdString(unit.path())));
+    return unit;
+}
+
+std::string
+WorkspaceLoader::moduleRootForFile(const std::string &path) const {
     auto moduleRoots = this->moduleRoots();
     if (moduleRoots.empty()) {
         throw DiagnosticError(
@@ -483,9 +502,31 @@ WorkspaceLoader::loadEntryUnit(const std::string &path) const {
             "root paths are not configured",
             "Use `root <path...>` before opening modules from files.");
     }
-    unit.setModulePath(
-        canonicalWorkspaceModulePath(toStdString(unit.path()), moduleRoots));
-    return unit;
+    return matchedWorkspaceModuleRoot(path, moduleRoots);
+}
+
+std::string
+WorkspaceLoader::moduleRootForFile(const std::string &rootPath,
+                                   const std::string &path) const {
+    return matchedWorkspaceModuleRoot(path, moduleRootsFor(rootPath));
+}
+
+std::string
+WorkspaceLoader::canonicalModulePathForFile(const std::string &path) const {
+    auto moduleRoots = this->moduleRoots();
+    if (moduleRoots.empty()) {
+        throw DiagnosticError(
+            DiagnosticError::Category::Driver,
+            "root paths are not configured",
+            "Use `root <path...>` before opening modules from files.");
+    }
+    return canonicalWorkspaceModulePath(path, moduleRoots);
+}
+
+std::string
+WorkspaceLoader::canonicalModulePathForFile(const std::string &rootPath,
+                                            const std::string &path) const {
+    return canonicalWorkspaceModulePath(path, moduleRootsFor(rootPath));
 }
 
 std::string
@@ -537,8 +578,8 @@ WorkspaceLoader::discoverUnitDependencies(CompilationUnit &unit) const {
         }
         auto importPath = resolveWorkspaceImportPath(*importNode, searchRoots);
         auto &dependencyUnit = workspace_.loadUnit(importPath);
-        dependencyUnit.setModulePath(
-            canonicalWorkspaceModulePath(importPath, searchRoots));
+        dependencyUnit.setModuleRoot(moduleRootForFile(importPath));
+        dependencyUnit.setModulePath(canonicalModulePathForFile(importPath));
         if (!isValidWorkspaceModuleName(dependencyUnit.moduleName())) {
             throw DiagnosticError(
                 DiagnosticError::Category::Semantic, importNode->loc,

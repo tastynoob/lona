@@ -1734,9 +1734,9 @@ class FunctionAnalyzer {
             return true;
         }
         if (const auto *emitter = registry->emitterModuleKey(key)) {
-            return *emitter == unit->moduleKey();
+            return *emitter == unit->path();
         }
-        registry->claim(key, unit->moduleKey());
+        registry->claim(key, unit->path());
         return true;
     }
 
@@ -1752,8 +1752,8 @@ class FunctionAnalyzer {
                           "This looks like a generic instantiation bug.");
         }
         GenericInstanceKey key;
-        key.requesterModuleKey = unit->moduleKey();
-        key.ownerModuleKey = ownerUnit->moduleKey();
+        key.requesterModuleKey = unit->path();
+        key.ownerModuleKey = ownerUnit->path();
         key.kind = GenericInstanceKind::Function;
         key.templateName = functionDecl.localName;
         key.concreteTypeArgs = buildConcreteTypeArgNames(
@@ -1774,8 +1774,8 @@ class FunctionAnalyzer {
                           "This looks like a generic method instantiation bug.");
         }
         GenericInstanceKey key;
-        key.requesterModuleKey = unit->moduleKey();
-        key.ownerModuleKey = templateUnit->moduleKey();
+        key.requesterModuleKey = unit->path();
+        key.ownerModuleKey = templateUnit->path();
         key.kind = GenericInstanceKind::Method;
         key.templateName = typeDecl.exportedName;
         key.methodName = string(methodName);
@@ -1804,8 +1804,8 @@ class FunctionAnalyzer {
                 "This looks like a trait impl instantiation bug.");
         }
         GenericInstanceKey key;
-        key.requesterModuleKey = unit->moduleKey();
-        key.ownerModuleKey = ownerUnit->moduleKey();
+        key.requesterModuleKey = unit->path();
+        key.ownerModuleKey = ownerUnit->path();
         key.kind = GenericInstanceKind::Method;
         key.templateName = traitImplTemplateName(implDecl);
         key.methodName = string(methodName);

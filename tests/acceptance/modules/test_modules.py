@@ -7,7 +7,6 @@ import re
 from tests.harness import assert_contains, assert_not_contains, assert_regex
 from tests.harness.compiler import CompilerHarness, run_command
 
-
 def test_method_self_lowering_uses_struct_gep(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "method_self.lo",
@@ -2767,6 +2766,43 @@ def test_import_links_functions_types_and_constructors(compiler: CompilerHarness
         """,
     )
     compiler.emit_ir(main_path).expect_ok()
+
+
+def test_default_root_directory_uses_canonical_module_keys_for_init_symbols(
+    compiler: CompilerHarness,
+) -> None:
+    compiler.write_source(
+        "default_root_keys/math.lo",
+        """
+        def inc(v i32) i32 {
+            ret v + 1
+        }
+        """,
+    )
+    main_path = compiler.write_source(
+        "default_root_keys/main.lo",
+        """
+        import math
+
+        def run() i32 {
+            ret math.inc(4)
+        }
+
+        ret run()
+        """,
+    )
+
+    ir = compiler.emit_ir(main_path).expect_ok().stdout
+    assert_contains(ir, "@__main_init_state__", label="default root init ir")
+    assert_contains(ir, "@__main_init_result__", label="default root init ir")
+    assert_contains(ir, "@__math_init_state__", label="default root init ir")
+    assert_contains(ir, "@__math_init_result__", label="default root init ir")
+    assert_contains(ir, "call i32 @__math_init_entry__()", label="default root init ir")
+    assert re.search(
+        r"@__.*(?:_2f|_5c).*_init_(?:state|result|entry)__",
+        ir,
+        re.MULTILINE,
+    ) is None, ir
 
 
 def test_imported_type_annotations_accept_dot_like_names(

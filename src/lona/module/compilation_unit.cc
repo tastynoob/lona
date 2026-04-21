@@ -1099,8 +1099,8 @@ buildStructInstanceKey(const CompilationUnit &requesterUnit,
                        const ModuleInterface::TypeDecl &typeDecl,
                        const std::vector<TypeClass *> &appliedTypeArgs) {
     GenericInstanceKey key;
-    key.requesterModuleKey = requesterUnit.moduleKey();
-    key.ownerModuleKey = ownerUnit.moduleKey();
+    key.requesterModuleKey = requesterUnit.path();
+    key.ownerModuleKey = ownerUnit.path();
     key.kind = GenericInstanceKind::Struct;
     key.templateName = typeDecl.exportedName;
     key.concreteTypeArgs = buildConcreteTypeArgNames(appliedTypeArgs);
@@ -1485,7 +1485,11 @@ void
 CompilationUnit::refreshSource(const SourceBuffer &source) {
     const auto oldPath = toStdString(path_);
     const auto newPath = source.path();
-    const auto newKey = compilation_unit_impl::deriveModuleKey(newPath);
+    const bool keepCanonicalModuleKey =
+        oldPath == newPath && !modulePath_.empty() && moduleKey_ == modulePath_;
+    const auto newKey =
+        keepCanonicalModuleKey ? toStdString(modulePath_)
+                               : compilation_unit_impl::deriveModuleKey(newPath);
     const auto newName = compilation_unit_impl::deriveModuleName(newPath);
     const auto newHash = hashModuleSource(source.content());
     const bool changed = !source_ || path_ != newPath || !moduleInterface_ ||
@@ -1520,15 +1524,40 @@ CompilationUnit::exportNamespacePrefix() const {
                       .c_str());
 }
 
+string
+CompilationUnit::moduleIdentity() const {
+    if (moduleRoot_.empty()) {
+        return moduleKey_;
+    }
+    string identity = moduleRoot_;
+    identity += "::";
+    identity += moduleKey_;
+    return identity;
+}
+
+void
+CompilationUnit::setModuleRoot(string moduleRoot) {
+    if (moduleRoot_ == moduleRoot) {
+        return;
+    }
+    moduleRoot_ = std::move(moduleRoot);
+    clearResolvedTypes();
+}
+
 void
 CompilationUnit::setModulePath(string modulePath) {
     if (modulePath.empty()) {
         modulePath = moduleName_;
     }
-    if (modulePath_ == modulePath) {
+    auto moduleKey = modulePath;
+    if (moduleKey.empty()) {
+        moduleKey = moduleName_;
+    }
+    if (modulePath_ == modulePath && moduleKey_ == moduleKey) {
         return;
     }
 
+    moduleKey_ = std::move(moduleKey);
     modulePath_ = std::move(modulePath);
     if (moduleInterface_) {
         moduleInterface_->refresh(path_, moduleKey_, moduleName_, modulePath_,

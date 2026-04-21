@@ -36,13 +36,16 @@ class WorkspaceBuilder {
         const CompilationUnit &unit) const;
     static ModuleEntryRole artifactEntryRoleFor(
         const CompilationUnit &unit, const CompilationUnit &rootUnit);
-    std::string bundleMemberFileName(const ModuleArtifact &artifact,
+    std::string bundleMemberFileName(const CompilationUnit &unit,
+                                     const ModuleArtifact &artifact,
                                      BundleArtifactKind kind) const;
     std::filesystem::path bundleMemberPath(
+        const CompilationUnit &unit,
         const ModuleArtifact &artifact,
         const std::filesystem::path &bundleDir,
         BundleArtifactKind kind) const;
-    void persistArtifactOutput(const ModuleArtifact &artifact,
+    void persistArtifactOutput(const CompilationUnit &unit,
+                               const ModuleArtifact &artifact,
                                const std::filesystem::path &artifactCacheDir,
                                BundleArtifactKind kind) const;
     bool matchesArtifact(const CompilationUnit &unit,

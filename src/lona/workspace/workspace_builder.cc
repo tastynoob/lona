@@ -29,6 +29,7 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/SHA256.h>
 #include <llvm/Support/raw_os_ostream.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Triple.h>
@@ -643,11 +644,100 @@ writeArtifactMetadata(const std::filesystem::path &path,
     }
 }
 
+std::string
+sanitizeBundleMemberStem(std::string stem) {
+    if (stem.empty()) {
+        stem = "module";
+    }
+    for (char &ch : stem) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (!(std::isalnum(byte) || ch == '_' || ch == '-')) {
+            ch = '_';
+        }
+    }
+    return stem;
+}
+
+std::string
+genericInstanceFingerprint(const ModuleArtifact &artifact) {
+    std::vector<std::string> entries;
+    entries.reserve(artifact.genericInstanceRecords().size());
+    for (const auto &record : artifact.genericInstanceRecords()) {
+        std::ostringstream entry;
+        entry << static_cast<int>(record.key.kind) << "|"
+              << record.key.ownerModuleKey << "|" << record.key.templateName
+              << "|" << record.key.methodName << "|"
+              << (record.emittedSymbolNames.empty() ? "0" : "1") << "|"
+              << record.revision.ownerInterfaceHash << "|"
+              << record.revision.ownerImplementationHash << "|"
+              << record.revision.ownerVisibleImportHash << "|"
+              << record.revision.boundVisibleStateHash;
+        for (const auto &arg : record.key.concreteTypeArgs) {
+            entry << "|arg=" << arg;
+        }
+        entries.push_back(entry.str());
+    }
+    std::sort(entries.begin(), entries.end());
+    std::ostringstream fingerprint;
+    for (const auto &entry : entries) {
+        fingerprint << entry << '\n';
+    }
+    return fingerprint.str();
+}
+
+std::string
+sha256Hex(llvm::StringRef input) {
+    llvm::SHA256 sha;
+    sha.update(input);
+    auto digest = sha.final();
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (auto byte : digest) {
+        out << std::setw(2) << static_cast<unsigned int>(byte);
+    }
+    return out.str();
+}
+
+std::string
+bundleCacheHash(const std::string &rootPath, const ModuleArtifact &artifact,
+                llvm::StringRef kindTag) {
+    std::ostringstream key;
+    key << "root=" << rootPath
+        << "\nkind=" << kindTag.str()
+        << "\ntarget=" << artifact.targetTriple()
+        << "\nopt=" << artifact.optLevel()
+        << "\ndebug=" << (artifact.debugInfo() ? "1" : "0")
+        << "\nentry-role="
+        << (artifact.entryRole() == ModuleEntryRole::Root ? "root"
+                                                          : "dependency")
+        << "\ngeneric=\n"
+        << genericInstanceFingerprint(artifact);
+    return sha256Hex(key.str());
+}
+
+std::string
+bundleMetadataSuffix() {
+    return ".meta.json";
+}
+
+std::filesystem::path
+bundleMemberPathFromMetadata(const std::filesystem::path &metadataPath) {
+    auto metadata = metadataPath.string();
+    auto suffix = bundleMetadataSuffix();
+    if (metadata.size() <= suffix.size() ||
+        metadata.compare(metadata.size() - suffix.size(), suffix.size(),
+                         suffix) != 0) {
+        return {};
+    }
+    metadata.resize(metadata.size() - suffix.size());
+    return std::filesystem::path(metadata);
+}
+
 const CompilationUnit *
 findUnitByModuleKey(const ModuleGraph &moduleGraph, const string &moduleKey) {
     for (const auto &path : moduleGraph.loadOrder()) {
         const auto *unit = moduleGraph.find(path);
-        if (unit && unit->moduleKey() == moduleKey) {
+        if (unit && unit->path() == moduleKey) {
             return unit;
         }
     }
@@ -660,7 +750,7 @@ matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
                               const ModuleArtifact &artifact,
                               const GenericInstanceRegistry &instanceRegistry) {
     for (const auto &record : artifact.genericInstanceRecords()) {
-        if (record.key.requesterModuleKey != requesterUnit.moduleKey()) {
+        if (record.key.requesterModuleKey != requesterUnit.path()) {
             return false;
         }
         const auto *ownerUnit =
@@ -680,7 +770,7 @@ matchesGenericInstanceRecords(const ModuleGraph &moduleGraph,
         }
         const bool artifactEmits = !record.emittedSymbolNames.empty();
         const bool shouldEmit =
-            instanceRegistry.shouldEmitIn(record.key, requesterUnit.moduleKey());
+            instanceRegistry.shouldEmitIn(record.key, requesterUnit.path());
         if (artifactEmits != shouldEmit) {
             return false;
         }
@@ -696,8 +786,9 @@ registerArtifactGenericEmissions(GenericInstanceRegistry &instanceRegistry,
             record.emittedSymbolNames.empty()) {
             continue;
         }
-        instanceRegistry.claim(record.key, artifact.moduleKey());
-        instanceRegistry.noteEmission(record.key, artifact.moduleKey(),
+        auto moduleIdentity = artifact.path();
+        instanceRegistry.claim(record.key, moduleIdentity);
+        instanceRegistry.noteEmission(record.key, moduleIdentity,
                                       record.emittedSymbolNames);
     }
 }
@@ -745,6 +836,7 @@ using workspace_builder_impl::parseArtifactBitcodeModule;
 using workspace_builder_impl::readBinaryFileIfPresent;
 using workspace_builder_impl::readArtifactMetadataIfPresent;
 using workspace_builder_impl::registerArtifactGenericEmissions;
+using workspace_builder_impl::sanitizeBundleMemberStem;
 using workspace_builder_impl::verifyCompiledModule;
 using workspace_builder_impl::writeArtifactMetadata;
 using workspace_builder_impl::writeBinaryFile;
@@ -892,62 +984,92 @@ WorkspaceBuilder::collectDependencyInterfaceHashes(
 }
 
 std::string
-WorkspaceBuilder::bundleMemberFileName(const ModuleArtifact &artifact,
+WorkspaceBuilder::bundleMemberFileName(const CompilationUnit &unit,
+                                       const ModuleArtifact &artifact,
                                        BundleArtifactKind kind) const {
-    std::string stem = artifact.moduleName().empty()
-                           ? "module"
-                           : toStdString(artifact.moduleName());
-    for (char &ch : stem) {
-        const unsigned char byte = static_cast<unsigned char>(ch);
-        if (!(std::isalnum(byte) || ch == '_' || ch == '-')) {
-            ch = '_';
-        }
-    }
-
-    std::vector<std::pair<string, std::uint64_t>> dependencies(
-        artifact.dependencyInterfaceHashes().begin(),
-        artifact.dependencyInterfaceHashes().end());
-    std::sort(
-        dependencies.begin(), dependencies.end(),
-        [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
-
-    std::ostringstream cacheKey;
-    cacheKey << artifact.moduleKey() << "|" << artifact.targetTriple() << "|"
-             << (kind == BundleArtifactKind::Object ? "O" : "B")
-             << artifact.optLevel() << "|"
-             << (artifact.debugInfo() ? "g" : "ng")
-             << "|src=" << artifact.sourceHash()
-             << "|iface=" << artifact.interfaceHash()
-             << "|impl=" << artifact.implementationHash();
-    for (const auto &[dependencyKey, dependencyHash] : dependencies) {
-        cacheKey << "|dep=" << dependencyKey << ":" << dependencyHash;
-    }
-
-    std::ostringstream suffix;
-    suffix << std::hex << std::setw(16) << std::setfill('0')
-           << static_cast<unsigned long long>(
-                  std::hash<std::string>{}(cacheKey.str()));
-    const char *roleSuffix =
-        artifact.entryRole() == ModuleEntryRole::Root ? "root" : "dependency";
+    const auto rootPath =
+        unit.moduleRoot().empty() ? toStdString(unit.path())
+                                  : toStdString(unit.moduleRoot());
     const char *extension =
         kind == BundleArtifactKind::Object ? ".o" : ".bc";
-    return stem + "-" + roleSuffix + "-" + suffix.str() + extension;
+    auto stem = sanitizeBundleMemberStem(
+        artifact.moduleName().empty() ? toStdString(unit.moduleName())
+                                      : toStdString(artifact.moduleName()));
+    auto kindTag =
+        kind == BundleArtifactKind::Object ? llvm::StringRef("obj")
+                                           : llvm::StringRef("bc");
+    return stem + "-" +
+           workspace_builder_impl::bundleCacheHash(rootPath, artifact, kindTag) +
+           extension;
+}
+
+std::filesystem::path
+bundleMemberDirectory(const CompilationUnit &unit,
+                      const ModuleArtifact &artifact,
+                      const std::filesystem::path &bundleDir) {
+    auto moduleDir = std::filesystem::path(
+        unit.modulePath().empty() ? toStdString(unit.moduleKey())
+                                  : toStdString(unit.modulePath()));
+    if (moduleDir.empty()) {
+        moduleDir = artifact.moduleName().empty()
+                        ? std::filesystem::path("module")
+                        : std::filesystem::path(toStdString(artifact.moduleName()));
+    }
+    return bundleDir / moduleDir;
+}
+
+std::vector<std::filesystem::path>
+bundleMetadataPaths(const CompilationUnit &unit, const ModuleArtifact &artifact,
+                    const std::filesystem::path &bundleDir) {
+    namespace fs = std::filesystem;
+    auto memberDir = bundleMemberDirectory(unit, artifact, bundleDir);
+    if (!fs::exists(memberDir) || !fs::is_directory(memberDir)) {
+        return {};
+    }
+
+    std::vector<fs::path> metadataPaths;
+    const auto rootPath =
+        unit.moduleRoot().empty() ? toStdString(unit.path())
+                                  : toStdString(unit.moduleRoot());
+    auto expectedPrefix = sanitizeBundleMemberStem(
+                              artifact.moduleName().empty()
+                                  ? toStdString(unit.moduleName())
+                                  : toStdString(artifact.moduleName())) +
+                          "-";
+    for (const auto &entry : fs::directory_iterator(memberDir)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        auto filename = entry.path().filename().string();
+        if (!filename.starts_with(expectedPrefix) ||
+            !filename.ends_with(
+                workspace_builder_impl::bundleMetadataSuffix())) {
+            continue;
+        }
+        metadataPaths.push_back(entry.path());
+    }
+    std::sort(metadataPaths.begin(), metadataPaths.end());
+    return metadataPaths;
 }
 
 std::filesystem::path
 WorkspaceBuilder::bundleMemberPath(
+    const CompilationUnit &unit,
     const ModuleArtifact &artifact,
     const std::filesystem::path &bundleDir, BundleArtifactKind kind) const {
-    return bundleDir / bundleMemberFileName(artifact, kind);
+    return bundleMemberDirectory(unit, artifact, bundleDir) /
+           bundleMemberFileName(unit, artifact, kind);
 }
 
 void
 WorkspaceBuilder::persistArtifactOutput(
+    const CompilationUnit &unit,
     const ModuleArtifact &artifact,
     const std::filesystem::path &artifactCacheDir,
     BundleArtifactKind kind) const {
-    std::filesystem::create_directories(artifactCacheDir);
-    const auto memberPath = bundleMemberPath(artifact, artifactCacheDir, kind);
+    const auto memberPath =
+        bundleMemberPath(unit, artifact, artifactCacheDir, kind);
+    std::filesystem::create_directories(memberPath.parent_path());
     if (kind == BundleArtifactKind::Object) {
         if (!artifact.hasObjectCode()) {
             throw DiagnosticError(
@@ -967,7 +1089,9 @@ WorkspaceBuilder::persistArtifactOutput(
         }
         writeBinaryFile(memberPath, artifact.bitcode());
     }
-    writeArtifactMetadata(std::filesystem::path(memberPath.string() + ".meta.json"),
+    writeArtifactMetadata(
+        std::filesystem::path(memberPath.string() +
+                              workspace_builder_impl::bundleMetadataSuffix()),
                           artifact);
 }
 
@@ -977,7 +1101,10 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
                                   const CompileOptions &options,
                                   ModuleEntryRole entryRole,
                                   const GenericInstanceRegistry &instanceRegistry) const {
-    if (artifact.sourceHash() != unit.sourceHash() ||
+    if (artifact.path() != unit.path() ||
+        artifact.moduleKey() != unit.moduleKey() ||
+        artifact.moduleName() != unit.moduleName() ||
+        artifact.sourceHash() != unit.sourceHash() ||
         artifact.interfaceHash() != unit.interfaceHash() ||
         artifact.implementationHash() != unit.implementationHash()) {
         return false;
@@ -1116,7 +1243,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 if (artifactCacheDir != nullptr &&
                     (requireObjects != requireBitcode)) {
                     persistArtifactOutput(
-                        *cachedArtifact, *artifactCacheDir,
+                        *queuedUnit, *cachedArtifact, *artifactCacheDir,
                         requireObjects ? BundleArtifactKind::Object
                                        : BundleArtifactKind::Bitcode);
                 }
@@ -1132,40 +1259,61 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
                 const auto bundleKind = requireObjects
                                             ? BundleArtifactKind::Object
                                             : BundleArtifactKind::Bitcode;
-                auto memberPath =
-                    bundleMemberPath(artifact, *artifactCacheDir, bundleKind);
-                auto metadataPath = std::filesystem::path(
-                    memberPath.string() +
-                    ".meta.json");
                 auto cacheRestoreStart = Clock::now();
-                auto cachedMetadata =
-                    readArtifactMetadataIfPresent(metadataPath);
+                auto metadataPaths =
+                    bundleMetadataPaths(*queuedUnit, artifact, *artifactCacheDir);
                 stats.cacheRestoreMs +=
                     elapsedMillis(cacheRestoreStart, Clock::now());
-                if (cachedMetadata.has_value() &&
-                    matchesArtifact(*queuedUnit, *cachedMetadata, options,
-                                    artifact.entryRole(), instanceRegistry)) {
-                    auto cachedBytes = readBinaryFileIfPresent(memberPath);
-                    if (cachedBytes.has_value()) {
-                        if (bundleKind == BundleArtifactKind::Object) {
-                            cachedMetadata->setObjectCode(
-                                std::move(*cachedBytes));
-                        } else {
-                            cachedMetadata->setBitcode(std::move(*cachedBytes));
-                        }
-                        auto restoredArtifact = std::move(*cachedMetadata);
-                        registerArtifactGenericEmissions(instanceRegistry,
-                                                        restoredArtifact);
-                        workspace_.storeArtifact(std::move(restoredArtifact));
-                        queuedUnit->markCompiled();
-                        ++stats.reusedModules;
-                        if (bundleKind == BundleArtifactKind::Object) {
-                            ++stats.reusedModuleObjects;
-                        } else {
-                            ++stats.reusedModuleBitcode;
-                        }
-                        return 0;
+                for (const auto &metadataPath : metadataPaths) {
+                    auto cachedMetadata =
+                        readArtifactMetadataIfPresent(metadataPath);
+                    if (!cachedMetadata.has_value() ||
+                        !matchesArtifact(*queuedUnit, *cachedMetadata, options,
+                                        artifact.entryRole(),
+                                        instanceRegistry)) {
+                        continue;
                     }
+                    auto memberPath =
+                        workspace_builder_impl::bundleMemberPathFromMetadata(
+                            metadataPath);
+                    const bool kindMatches =
+                        (bundleKind == BundleArtifactKind::Object &&
+                         memberPath.extension() == ".o") ||
+                        (bundleKind == BundleArtifactKind::Bitcode &&
+                         memberPath.extension() == ".bc");
+                    if (!kindMatches) {
+                        continue;
+                    }
+                    auto cachedBytes = readBinaryFileIfPresent(memberPath);
+                    if (!cachedBytes.has_value()) {
+                        continue;
+                    }
+                    auto restoredArtifact =
+                        createArtifact(*queuedUnit, options, rootUnit);
+                    if (bundleKind == BundleArtifactKind::Object) {
+                        restoredArtifact.setObjectCode(std::move(*cachedBytes));
+                    } else {
+                        restoredArtifact.setBitcode(std::move(*cachedBytes));
+                    }
+                    restoredArtifact.setContainsNativeAbi(
+                        cachedMetadata->containsNativeAbi());
+                    restoredArtifact.setGenericInstanceRecords(
+                        cachedMetadata->genericInstanceRecords());
+                    if (artifactCacheDir != nullptr) {
+                        persistArtifactOutput(*queuedUnit, restoredArtifact,
+                                             *artifactCacheDir, bundleKind);
+                    }
+                    registerArtifactGenericEmissions(instanceRegistry,
+                                                    restoredArtifact);
+                    workspace_.storeArtifact(std::move(restoredArtifact));
+                    queuedUnit->markCompiled();
+                    ++stats.reusedModules;
+                    if (bundleKind == BundleArtifactKind::Object) {
+                        ++stats.reusedModuleObjects;
+                    } else {
+                        ++stats.reusedModuleBitcode;
+                    }
+                    return 0;
                 }
             }
             int moduleExitCode =
@@ -1176,7 +1324,7 @@ WorkspaceBuilder::buildArtifacts(CompilationUnit &rootUnit,
             }
             if (artifactCacheDir != nullptr && (requireObjects != requireBitcode)) {
                 persistArtifactOutput(
-                    artifact, *artifactCacheDir,
+                    *queuedUnit, artifact, *artifactCacheDir,
                     requireObjects ? BundleArtifactKind::Object
                                    : BundleArtifactKind::Bitcode);
             }
@@ -1498,7 +1646,7 @@ WorkspaceBuilder::emitArtifactBundle(CompilationUnit &rootUnit,
                     " emission bug.");
         }
 
-        fs::path memberPath = bundleMemberPath(*artifact, bundleDir, kind);
+        fs::path memberPath = bundleMemberPath(*unit, *artifact, bundleDir, kind);
         out << "artifact\t" << manifestKind << '\t'
             << entryRoleKeyword(artifact->entryRole()) << '\t'
             << fs::absolute(memberPath).string() << '\n';

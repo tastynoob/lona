@@ -71,6 +71,7 @@ private:
     string path_;
     string moduleKey_;
     string moduleName_;
+    string moduleRoot_;
     string modulePath_;
     const SourceBuffer *source_ = nullptr;
     AstNode *syntaxTree_ = nullptr;
@@ -100,7 +101,9 @@ public:
     const string &path() const { return path_; }
     const string &moduleKey() const { return moduleKey_; }
     const string &moduleName() const { return moduleName_; }
+    const string &moduleRoot() const { return moduleRoot_; }
     const string &modulePath() const { return modulePath_; }
+    string moduleIdentity() const;
     string exportNamespacePrefix() const;
     const SourceBuffer &source() const;
     std::uint64_t sourceHash() const;
@@ -122,6 +125,10 @@ public:
 
     void attachInterface(std::shared_ptr<ModuleInterface> moduleInterface);
     void refreshSource(const SourceBuffer &source);
+    void setModuleRoot(string moduleRoot);
+    void setModuleRoot(std::string moduleRoot) {
+        setModuleRoot(string(std::move(moduleRoot)));
+    }
     void setModulePath(string modulePath);
     void setModulePath(std::string modulePath) {
         setModulePath(string(std::move(modulePath)));
