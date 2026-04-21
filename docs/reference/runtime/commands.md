@@ -112,11 +112,11 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit linked-bc`
   - 输出单最终 linked bitcode
   - 不会自动补 hosted `main(argc, argv)` wrapper
-  - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
+  - 模块级中间产物默认以 bitcode 形式缓存到 `./lona_cache/`
 - `--emit linked-obj`
   - 输出单最终 object
   - 不会自动补 hosted `main(argc, argv)` wrapper
-  - 模块级中间产物默认以 bitcode 形式缓存到 `<output>.d/`
+  - 模块级中间产物默认以 bitcode 形式缓存到 `./lona_cache/`
 - `--emit entry`
   - 输出 hosted `main(argc, argv)` wrapper object
 
@@ -154,9 +154,9 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit obj` 必须显式提供 manifest 输出路径
 - `--emit obj` 不支持 `--lto full`
 - `--emit linked-bc` 支持 `--lto off|full`
-- `--emit linked-bc` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `<output>.d/`
+- `--emit linked-bc` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `./lona_cache/`
 - `--emit linked-obj` 支持 `--lto off|full`
-- `--emit linked-obj` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `<output>.d/`
+- `--emit linked-obj` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `./lona_cache/`
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径
 - `--emit entry` 只支持 hosted target；bare target 会直接拒绝
 - `--emit entry` 不支持 `--lto full`

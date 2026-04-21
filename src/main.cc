@@ -218,7 +218,7 @@ main(int argc, char *argv[]) {
         options.outputMode = lona::OutputMode::AstJson;
     }
     options.outputPath = outputPath;
-    options.artifactCachePath = emitBundle
+    options.artifactCachePath = (emitBundle || emitLinkedBitcode || emitLinkedObject)
                                     ? cli.get<std::string>("cache-dir")
                                     : (cli.exist("cache-dir")
                                            ? cli.get<std::string>("cache-dir")

@@ -434,7 +434,7 @@ artifact 可复用的条件是：
 - 同一 `CompilerSession` 内，多次构建可复用 `ModuleArtifact`
 - 同一 `CompilerSession` 内，多次构建可复用模块 object / bitcode artifact
 - 多次独立 CLI 调用 `lona-ir --emit bc` 或 `--emit obj` 时，可通过同一个 `cache-dir/<manifest>.d/` 复用模块 bundle 成员
-- 多次独立 CLI 调用 `lona-ir --emit linked-obj out.o` 时，可默认通过 `out.o.d/` 复用模块 bitcode；显式传 `--cache-dir <dir>` 时则改用该目录
+- 多次独立 CLI 调用 `lona-ir --emit linked-bc out.bc` 或 `--emit linked-obj out.o` 时，可默认通过 `./lona_cache/` 复用模块 bitcode；显式传 `--cache-dir <dir>` 时则改用该目录
 - 当模块 body 改变但接口不变时，只重编该模块
 - 当模块接口改变时，直接 importer 会失效并重新编译
 

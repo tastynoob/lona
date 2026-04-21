@@ -140,7 +140,7 @@ def test_pure_c_abi_object_skips_native_abi_marker(compiler: CompilerHarness) ->
 
 def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -> None:
     compiler.write_source(
-        "linked_object_cache/dep.lo",
+        "linked_object_default_cache_dep.lo",
         """
         def add1(v i32) i32 {
             ret v + 1
@@ -148,12 +148,12 @@ def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -
         """,
     )
     app_path = compiler.write_source(
-        "linked_object_cache/main.lo",
+        "linked_object_default_cache_root.lo",
         """
-        import dep
+        import linked_object_default_cache_dep
 
         def run() i32 {
-            ret dep.add1(41)
+            ret linked_object_default_cache_dep.add1(41)
         }
 
         ret run()
@@ -175,9 +175,18 @@ def test_linked_object_reuses_default_bitcode_cache(compiler: CompilerHarness) -
         label="linked object default cache first stats",
     )
 
-    cache_dir = compiler.output_path("linked-default-cache.o.d")
+    cache_dir = compiler.repo_root / "lona_cache"
     assert cache_dir.is_dir(), f"expected linked-object bitcode cache dir: {cache_dir}"
-    assert len(list(cache_dir.rglob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+    assert (cache_dir / "linked_object_default_cache_root").is_dir(), (
+        f"expected linked-object root module cache dir under {cache_dir}"
+    )
+    assert (cache_dir / "linked_object_default_cache_dep").is_dir(), (
+        f"expected linked-object dependency cache dir under {cache_dir}"
+    )
+    assert len(list(cache_dir.rglob("*.bc"))) >= 2, (
+        f"expected cached module bitcode under {cache_dir}"
+    )
+    assert not compiler.output_path("linked-default-cache.o.d").exists()
 
     second, _ = compiler.emit_linked_obj(
         app_path,
@@ -210,7 +219,7 @@ def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
     compiler: CompilerHarness,
 ) -> None:
     compiler.write_source(
-        "linked_bitcode_cache/dep.lo",
+        "linked_bitcode_default_cache_dep.lo",
         """
         def add1(v i32) i32 {
             ret v + 1
@@ -218,12 +227,12 @@ def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
         """,
     )
     app_path = compiler.write_source(
-        "linked_bitcode_cache/main.lo",
+        "linked_bitcode_default_cache_root.lo",
         """
-        import dep
+        import linked_bitcode_default_cache_dep
 
         def run() i32 {
-            ret dep.add1(41)
+            ret linked_bitcode_default_cache_dep.add1(41)
         }
 
         ret run()
@@ -247,9 +256,18 @@ def test_linked_bitcode_emits_single_final_module_and_reuses_default_cache(
         label="linked bitcode default cache first stats",
     )
 
-    cache_dir = compiler.output_path("linked-default-cache.bc.d")
+    cache_dir = compiler.repo_root / "lona_cache"
     assert cache_dir.is_dir(), f"expected linked-bitcode cache dir: {cache_dir}"
-    assert len(list(cache_dir.rglob("*.bc"))) == 2, f"expected cached module bitcode in {cache_dir}"
+    assert (cache_dir / "linked_bitcode_default_cache_root").is_dir(), (
+        f"expected linked-bitcode root module cache dir under {cache_dir}"
+    )
+    assert (cache_dir / "linked_bitcode_default_cache_dep").is_dir(), (
+        f"expected linked-bitcode dependency cache dir under {cache_dir}"
+    )
+    assert len(list(cache_dir.rglob("*.bc"))) >= 2, (
+        f"expected cached module bitcode under {cache_dir}"
+    )
+    assert not compiler.output_path("linked-default-cache.bc.d").exists()
 
     second, bitcode_path_again = compiler.emit_linked_bc(
         app_path,
