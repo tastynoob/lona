@@ -10,4 +10,6 @@
 说明：
 
 - 这里只放“现在怎么用”。
+- 当前已经接入最小 managed 构建入口 `lona-ir --emit mbc`，具体参数见 [commands.md](commands.md)。
+- `managed` 运行时实现当前在独立仓库 [lona-MVM](https://github.com/Lona-Lang/lona-MVM)。
 - 像目标模式分层、内部 ABI 版本和早期 hosted build 方案，移到了 `docs/internals/` 或 `docs/archive/`。

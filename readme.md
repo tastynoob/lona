@@ -26,9 +26,10 @@
 - generic v0
 - trait / impl / `Trait dyn`
 - hosted / bare 两条构建路径
+- 最小 `managed` bitcode 构建入口 `lona-ir --emit mbc`
 - `lona-query` 查询与静态分析工具
 
-所以今天的 `lona` 更准确地说，是一个**已经具备可用语言前端、查询工具和 native 构建入口的实验性系统语言项目**。
+所以今天的 `lona` 更准确地说，是一个**已经具备可用语言前端、查询工具、native 构建入口，以及最小 managed bitcode 构建模式的实验性系统语言项目**。
 
 不过，`lona` 的目标并不是在功能数量上与发展了几十年的 C/C++ 比拼。
 它关心的是另一件事：
@@ -108,14 +109,23 @@ flowchart LR
 - 目标能力在 `HIR` 之后分流
 - 需要托管运行时参与的特性，只在 `managed` 路径下开放
 
-当前仓库已经有 `native` 方向的基础执行链路；`managed` 方向仍然属于长期目标。
+当前仓库已经有：
+
+- `native` 方向的基础执行链路
+- 一个最小 `managed` 构建入口：`lona-ir --emit mbc`
+
+当前 `mbc` 仍然复用 linked bitcode 输出，只打开最基础的 managed 编译约束，还不是完整的托管目标实现。
+
+`managed` 运行时实现当前放在独立仓库：
+
+- [lona-MVM](https://github.com/Lona-Lang/lona-MVM)
 
 ## 🛠️ 当前仓库已经完成的事情
 
 目前仓库里的工具入口已经做了拆分：
 
 - `lona-ir`
-  - 专注做一件事：把 `.lo` 编译成目标相关的文本 LLVM IR、bundle/object 产物，或显式 LTO 的最终 object
+  - 专注做一件事：把 `.lo` 编译成目标相关的文本 LLVM IR、bundle/object 产物、最终 linked bitcode / object，或最小 managed bitcode
 - `lona-query`
   - 面向静态分析、编辑器工具和后续 LSP 外壳的查询前端
   - 复用 parser、模块加载、`resolve` 和 `analysis`
@@ -135,6 +145,10 @@ flowchart LR
 
 - 文本 LLVM IR 只在显式 `--emit ir` 时生成
 - 默认构建和增量复用围绕模块 bitcode / object artifact 展开
+- `--emit mbc` 当前是最小 managed 模式
+  - 输出仍然是 linked bitcode
+  - 当前主要用于接通 managed 目标链路和基础约束
+  - 完整托管运行时能力由 `lona-MVM` 提供
 
 ## 📦 快速开始
 
@@ -176,6 +190,7 @@ make install
 ```bash
 lona-ir --version
 lona-ir --emit ir --target x86_64-none-elf input.lo output.ll
+lona-ir --emit mbc --target x86_64-unknown-linux-gnu input.lo output-managed.bc
 lona-ir --emit obj --target x86_64-unknown-linux-gnu input.lo output.manifest
 lona-ir --emit linked-obj --lto full --target x86_64-unknown-linux-gnu input.lo output.o
 lona-query input.lo
@@ -207,6 +222,7 @@ agent安装提示词：
 - [`lona-query` 使用](docs/reference/runtime/query.md)
 - [目标模式与执行边界](docs/internals/runtime/target_modes.md)
 - [本地构建与运行](docs/reference/runtime/native_build.md)
+- [lona-MVM](https://github.com/Lona-Lang/lona-MVM)
 
 ## 📄 License
 
