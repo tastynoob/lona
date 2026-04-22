@@ -113,6 +113,12 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 输出单最终 linked bitcode
   - 不会自动补 hosted `main(argc, argv)` wrapper
   - 模块级中间产物默认以 bitcode 形式缓存到 `./lona_cache/`
+- `--emit mbc`
+  - 输出单最终 managed linked bitcode
+  - 当前输出内容和 `linked-bc` 一样，但会开启 managed 编译模式
+  - 当前 managed 模式只额外限制两类指针操作：任何涉及 `T*` / `T[*]` 的 `cast[T](...)` 都会报错；对 `T[*]` 元素取地址，例如 `&items(0)`，也会报错
+  - 函数调用仍按普通 pointer 传参，不做额外托管态传播
+  - 模块级中间产物默认以 bitcode 形式缓存到 `./lona_cache/`
 - `--emit linked-obj`
   - 输出单最终 object
   - 不会自动补 hosted `main(argc, argv)` wrapper
@@ -139,7 +145,7 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
   - 选择 link-time optimization 模式
 - `--cache-dir <dir>`
   - 对 `--emit bc` / `--emit obj` 生效时，指定 bundle 成员目录根
-  - 对 `--emit linked-bc` / `--emit linked-obj` 生效时，指定模块 bitcode 中间缓存目录
+  - 对 `--emit linked-bc` / `--emit mbc` / `--emit linked-obj` 生效时，指定模块 bitcode 中间缓存目录
 - `--no-cache`
   - 禁用本轮模块 artifact 复用
 - `-g`
@@ -155,12 +161,14 @@ lona-ir --emit entry --target x86_64-unknown-linux-gnu hosted-entry.o
 - `--emit obj` 不支持 `--lto full`
 - `--emit linked-bc` 支持 `--lto off|full`
 - `--emit linked-bc` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `./lona_cache/`
+- `--emit mbc` 支持 `--lto off|full`
+- `--emit mbc` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `./lona_cache/`
 - `--emit linked-obj` 支持 `--lto off|full`
 - `--emit linked-obj` 如果没有显式传 `--cache-dir`，会默认把模块 bitcode cache 写到 `./lona_cache/`
 - `--emit entry` 只接受输出 object 路径，不接受输入源码路径
 - `--emit entry` 只支持 hosted target；bare target 会直接拒绝
 - `--emit entry` 不支持 `--lto full`
-- `--emit ir` / `--emit linked-bc` / `--emit linked-obj` 都只包含用户代码与语言入口 `__lona_main__`
+- `--emit ir` / `--emit linked-bc` / `--emit mbc` / `--emit linked-obj` 都只包含用户代码与语言入口 `__lona_main__`
 - 只要带上编译相关参数，例如 `--target`、`--verify-ir`、`--lto`，默认输出模式就会切到 LLVM IR，而不是 AST JSON
 
 ## 3. `lac`

@@ -158,6 +158,11 @@ CompilerSession::runFile(const std::string &inputPath,
                 unit, options.compile, options.outputPath,
                 options.artifactCachePath, lastStats_, out));
         }
+        if (options.outputMode == OutputMode::ManagedBitcode) {
+            return finish(builder_.emitLinkedBitcode(
+                unit, options.compile, options.outputPath,
+                options.artifactCachePath, lastStats_, out));
+        }
         if (options.outputMode == OutputMode::LinkedObject) {
             return finish(builder_.emitLinkedObject(
                 unit, options.compile, options.outputPath,

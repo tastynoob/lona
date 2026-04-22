@@ -16,6 +16,7 @@ protected:
     llvm::StringMap<ObjectPtr> variables;
     Scope *parent = nullptr;
     TypeTable *typeTable = nullptr;
+    bool managedMode_ = false;
 
 public:
     llvm::IRBuilder<> &builder;
@@ -27,7 +28,8 @@ public:
         : builder(parent->builder),
           module(parent->module),
           parent(parent),
-          typeTable(parent->typeTable) {}
+          typeTable(parent->typeTable),
+          managedMode_(parent->managedMode_) {}
 
     virtual ~Scope() = default;
 
@@ -36,6 +38,8 @@ public:
 
     void setTypeTable(TypeTable *table) { typeTable = table; }
     TypeTable *types() const { return typeTable; }
+    void setManagedMode(bool managedMode) { managedMode_ = managedMode; }
+    bool managedMode() const { return managedMode_; }
     llvm::Type *getLLVMType(TypeClass *type) const;
     llvm::FunctionType *getLLVMFunctionType(FuncType *type) const;
     void bindMethodFunction(StructType *parent, llvm::StringRef name,

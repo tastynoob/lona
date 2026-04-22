@@ -25,7 +25,9 @@ IRPipelineContext::IRPipelineContext(CompilationUnit &entryUnit,
       options(options),
       out(out),
       stats(stats),
-      build(entryUnit, options.targetTriple) {}
+      build(entryUnit, options.targetTriple) {
+    build.global.setManagedMode(options.managedMode);
+}
 
 void
 CompilePipeline::addStage(std::string name, StageFn run) {

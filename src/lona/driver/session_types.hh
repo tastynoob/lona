@@ -16,6 +16,7 @@ struct CompileOptions {
     bool verifyIR = false;
     bool debugInfo = false;
     bool noCache = false;
+    bool managedMode = false;
     std::string targetTriple;
     std::vector<std::string> includePaths;
     LTOMode ltoMode = LTOMode::Off;
@@ -28,6 +29,7 @@ enum class OutputMode {
     BitcodeBundle,
     ObjectBundle,
     LinkedBitcode,
+    ManagedBitcode,
     LinkedObject,
 };
 

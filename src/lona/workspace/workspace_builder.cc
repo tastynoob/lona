@@ -548,6 +548,7 @@ encodeArtifactMetadata(const ModuleArtifact &artifact) {
     root["target_triple"] = toStdString(artifact.targetTriple());
     root["opt_level"] = artifact.optLevel();
     root["debug_info"] = artifact.debugInfo();
+    root["managed_mode"] = artifact.managedMode();
     root["entry_role"] = entryRoleKeyword(artifact.entryRole());
     root["contains_native_abi"] = artifact.containsNativeAbi();
     root["dependency_interface_hashes"] = Json::object();
@@ -591,6 +592,7 @@ decodeArtifactMetadata(const Json &root) {
     artifact.setCompileProfile(root.at("target_triple").get<std::string>(),
                                root.at("opt_level").get<int>(),
                                root.at("debug_info").get<bool>(),
+                               root.value("managed_mode", false),
                                parseEntryRole(root.at("entry_role").get<std::string>()));
     artifact.setContainsNativeAbi(root.value("contains_native_abi", false));
 
@@ -707,6 +709,7 @@ bundleCacheHash(const std::string &rootPath, const ModuleArtifact &artifact,
         << "\ntarget=" << artifact.targetTriple()
         << "\nopt=" << artifact.optLevel()
         << "\ndebug=" << (artifact.debugInfo() ? "1" : "0")
+        << "\nmanaged=" << (artifact.managedMode() ? "1" : "0")
         << "\nentry-role="
         << (artifact.entryRole() == ModuleEntryRole::Root ? "root"
                                                           : "dependency")
@@ -1113,6 +1116,7 @@ WorkspaceBuilder::matchesArtifact(const CompilationUnit &unit,
             normalizeTargetTriple(options.targetTriple) ||
         artifact.optLevel() != options.optLevel ||
         artifact.debugInfo() != options.debugInfo ||
+        artifact.managedMode() != options.managedMode ||
         artifact.entryRole() != entryRole) {
         return false;
     }
@@ -1155,7 +1159,8 @@ WorkspaceBuilder::createArtifact(const CompilationUnit &unit,
     artifact.setDependencyInterfaceHashes(
         collectDependencyInterfaceHashes(unit));
     artifact.setCompileProfile(normalizeTargetTriple(options.targetTriple),
-                               options.optLevel, options.debugInfo, entryRole);
+                               options.optLevel, options.debugInfo,
+                               options.managedMode, entryRole);
     return artifact;
 }
 

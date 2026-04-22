@@ -344,6 +344,181 @@ def test_user_defined_main_uses_ordinary_symbol_path_in_linked_outputs(
     assert_not_contains(bitcode_ir, "@__lona_argv =", label="user main linked bitcode ir")
 
 
+def test_managed_bitcode_emits_single_final_module_and_uses_distinct_cache_profile(
+    compiler: CompilerHarness,
+) -> None:
+    dep_path = compiler.write_source(
+        "managed_bitcode_profile_dep.lo",
+        """
+        def add1(n i32) i32 {
+            ret n + 1
+        }
+        """,
+    )
+    app_path = compiler.write_source(
+        "managed_bitcode_profile_root.lo",
+        f"""
+        import {dep_path.stem}
+
+        def main() i32 {{
+            ret {dep_path.stem}.add1(41)
+        }}
+
+        ret main()
+        """,
+    )
+    cache_dir = compiler.output_path("managed-bitcode-cache")
+
+    linked_result, _ = compiler.emit_linked_bc(
+        app_path,
+        output_name="managed-profile-linked.bc",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    linked_result.expect_ok()
+    assert_contains(linked_result.stderr, "compiled-modules: 2", label="linked bitcode profile stats")
+    assert_contains(linked_result.stderr, "reused-modules: 0", label="linked bitcode profile stats")
+
+    managed_result, managed_path = compiler.emit_managed_bc(
+        app_path,
+        output_name="managed-profile-managed.bc",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    managed_result.expect_ok()
+    assert managed_path.is_file(), f"expected managed bitcode output: {managed_path}"
+    assert_magic_bytes(managed_path, b"BC\xc0\xde")
+    assert_contains(managed_result.stderr, "compiled-modules: 2", label="managed bitcode profile stats")
+    assert_contains(managed_result.stderr, "reused-modules: 0", label="managed bitcode profile stats")
+    assert len(list(cache_dir.rglob("*.bc"))) == 4, (
+        f"expected distinct linked/managed cache files in {cache_dir}"
+    )
+
+    managed_reuse, managed_path_again = compiler.emit_managed_bc(
+        app_path,
+        output_name="managed-profile-managed.bc",
+        cache_dir=cache_dir,
+        target="x86_64-unknown-linux-gnu",
+        stats=True,
+    )
+    managed_reuse.expect_ok()
+    assert managed_path_again == managed_path
+    assert_contains(managed_reuse.stderr, "compiled-modules: 0", label="managed bitcode cache reuse stats")
+    assert_contains(managed_reuse.stderr, "reused-modules: 2", label="managed bitcode cache reuse stats")
+    assert_contains(
+        managed_reuse.stderr,
+        "reused-module-bitcode: 2",
+        label="managed bitcode cache reuse stats",
+    )
+
+
+def test_managed_bitcode_rejects_pointer_casts(compiler: CompilerHarness) -> None:
+    input_path = compiler.write_source(
+        "managed_pointer_cast_bad.lo",
+        """
+        def main() i32 {
+            var ptr u8* = null
+            var bits usize = cast[usize](ptr)
+            ret 0
+        }
+        """,
+    )
+
+    result, _ = compiler.emit_managed_bc(
+        input_path,
+        output_name="managed-pointer-cast.bc",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_failed()
+    assert_contains(
+        result.stderr,
+        "managed mode does not allow casts involving pointer or indexable-pointer values",
+        label="managed pointer cast failure",
+    )
+
+
+def test_managed_bitcode_rejects_indexable_pointer_casts(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "managed_indexable_pointer_cast_bad.lo",
+        """
+        def convert(items u8[*]) usize {
+            ret cast[usize](items)
+        }
+
+        ret 0
+        """,
+    )
+
+    result, _ = compiler.emit_managed_bc(
+        input_path,
+        output_name="managed-indexable-cast.bc",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_failed()
+    assert_contains(
+        result.stderr,
+        "managed mode does not allow casts involving pointer or indexable-pointer values",
+        label="managed indexable pointer cast failure",
+    )
+
+
+def test_managed_bitcode_rejects_borrowing_indexable_pointer_elements(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "managed_index_borrow_bad.lo",
+        """
+        def first(items u8[*]) u8* {
+            ret &items(0)
+        }
+
+        ret 0
+        """,
+    )
+
+    result, _ = compiler.emit_managed_bc(
+        input_path,
+        output_name="managed-index-borrow.bc",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_failed()
+    assert_contains(
+        result.stderr,
+        "managed mode does not allow taking the address of an element from an indexable pointer",
+        label="managed index borrow failure",
+    )
+
+
+def test_managed_bitcode_allows_pointer_call_arguments(
+    compiler: CompilerHarness,
+) -> None:
+    input_path = compiler.write_source(
+        "managed_pointer_call_ok.lo",
+        """
+        def touch(ptr u8*) i32 {
+            ret 0
+        }
+
+        def main() i32 {
+            var ptr u8* = null
+            ret touch(ptr)
+        }
+        """,
+    )
+
+    result, output_path = compiler.emit_managed_bc(
+        input_path,
+        output_name="managed-pointer-call-ok.bc",
+        target="x86_64-unknown-linux-gnu",
+    )
+    result.expect_ok()
+    assert_magic_bytes(output_path, b"BC\xc0\xde")
+
+
 def test_object_bundle_emits_only_module_objects(compiler: CompilerHarness) -> None:
     input_path = compiler.write_source(
         "bundle_entry.lo",

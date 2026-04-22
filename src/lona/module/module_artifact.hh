@@ -28,6 +28,7 @@ private:
     string targetTriple_;
     int optLevel_ = 0;
     bool debugInfo_ = false;
+    bool managedMode_ = false;
     ModuleEntryRole entryRole_ = ModuleEntryRole::Dependency;
     ByteBuffer bitcode_;
     ByteBuffer objectCode_;
@@ -60,6 +61,7 @@ public:
     const string &targetTriple() const { return targetTriple_; }
     int optLevel() const { return optLevel_; }
     bool debugInfo() const { return debugInfo_; }
+    bool managedMode() const { return managedMode_; }
     ModuleEntryRole entryRole() const { return entryRole_; }
     const ByteBuffer &bitcode() const { return bitcode_; }
     bool hasBitcode() const { return !bitcode_.empty(); }
@@ -74,11 +76,12 @@ public:
     void setDependencyInterfaceHashes(
         std::unordered_map<string, std::uint64_t> dependencyInterfaceHashes);
     void setCompileProfile(string targetTriple, int optLevel, bool debugInfo,
-                           ModuleEntryRole entryRole);
+                           bool managedMode, ModuleEntryRole entryRole);
     void setCompileProfile(std::string targetTriple, int optLevel,
-                           bool debugInfo, ModuleEntryRole entryRole) {
+                           bool debugInfo, bool managedMode,
+                           ModuleEntryRole entryRole) {
         setCompileProfile(string(std::move(targetTriple)), optLevel, debugInfo,
-                          entryRole);
+                          managedMode, entryRole);
     }
     void setBitcode(ByteBuffer bitcode);
     void setObjectCode(ByteBuffer objectCode);

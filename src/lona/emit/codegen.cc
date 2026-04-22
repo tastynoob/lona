@@ -176,6 +176,33 @@ class FunctionCompiler {
         error(message, hint);
     }
 
+    void ensureManagedPointerCastAllowed(TypeClass *sourceType,
+                                         TypeClass *targetType) {
+        if (!scope || !scope->managedMode()) {
+            return;
+        }
+        if (!isPointerLikeType(sourceType) && !isPointerLikeType(targetType)) {
+            return;
+        }
+        error("managed mode does not allow casts involving pointer or "
+              "indexable-pointer values",
+              "Pass pointer values directly without `cast[T](...)`.");
+    }
+
+    void ensureManagedIndexAddressAllowed(const HIRExpr *expr) {
+        if (!scope || !scope->managedMode()) {
+            return;
+        }
+        auto *index = dynamic_cast<const HIRIndex *>(expr);
+        if (!index ||
+            !asUnqualified<IndexablePointerType>(index->getTarget()->getType())) {
+            return;
+        }
+        error("managed mode does not allow taking the address of an element "
+              "from an indexable pointer",
+              "Borrow the whole indexable pointer instead of `&ptr(i)`.");
+    }
+
     llvm::Constant *buildByteStringArrayConstant(const ::string &bytes) {
         std::vector<std::uint8_t> data;
         data.reserve(bytes.size() + 1);
@@ -714,11 +741,15 @@ class FunctionCompiler {
         }
         if (auto *unary = dynamic_cast<HIRUnaryOper *>(expr)) {
             setLocation(unary);
+            if (unary->getBinding().kind == UnaryOperatorKind::AddressOf) {
+                ensureManagedIndexAddressAllowed(unary->getExpr());
+            }
             auto value = compileExpr(unary->getExpr());
             return emitUnaryOperator(unary->getBinding(), value.get());
         }
         if (auto *borrow = dynamic_cast<HIRBorrow *>(expr)) {
             setLocation(borrow);
+            ensureManagedIndexAddressAllowed(borrow->getExpr());
             auto value = compileExpr(borrow->getExpr());
             if (!value) {
                 error("implicit borrow source did not produce a value");
@@ -1141,6 +1172,7 @@ class FunctionCompiler {
 
         auto *sourceType = source->getType();
         auto *targetType = cast->getType();
+        ensureManagedPointerCastAllowed(sourceType, targetType);
         auto *value = source->get(scope);
         if (sourceType == targetType) {
             return makeReadonlyValue(targetType, value);
@@ -1205,6 +1237,7 @@ class FunctionCompiler {
 
         auto *sourceType = source->getType();
         auto *targetType = cast->getType();
+        ensureManagedPointerCastAllowed(sourceType, targetType);
         auto *sourceValue = source->get(scope);
         if (sourceType == targetType) {
             return makeReadonlyValue(targetType, sourceValue);
